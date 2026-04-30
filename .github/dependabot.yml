@@ -6,21 +6,18 @@
 version: 2
 updates:
   - package-ecosystem: uv
-    directory: "/backend"
+    directories:
+      - "/backend"
+      - "/agent"
+      - "/testkit"
+      - "/e2e-examples"
     schedule:
       interval: daily
-  - package-ecosystem: uv
-    directory: "/agent"
-    schedule:
-      interval: daily
-  - package-ecosystem: uv
-    directory: "/testkit"
-    schedule:
-      interval: daily
-  - package-ecosystem: uv
-    directory: "/e2e-examples"
-    schedule:
-      interval: daily
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        group-by: dependency-name
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
