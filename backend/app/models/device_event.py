@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, func
+from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.device import Device
+
+
+class DeviceEventType(enum.StrEnum):
+    health_check_fail = "health_check_fail"
+    connectivity_lost = "connectivity_lost"
+    node_crash = "node_crash"
+    node_restart = "node_restart"
+    hardware_health_changed = "hardware_health_changed"
+    connectivity_restored = "connectivity_restored"
+    lifecycle_deferred_stop = "lifecycle_deferred_stop"
+    lifecycle_auto_stopped = "lifecycle_auto_stopped"
+    lifecycle_recovery_suppressed = "lifecycle_recovery_suppressed"
+    lifecycle_recovery_failed = "lifecycle_recovery_failed"
+    lifecycle_recovery_backoff = "lifecycle_recovery_backoff"
+    lifecycle_recovered = "lifecycle_recovered"
+    lifecycle_run_excluded = "lifecycle_run_excluded"
+    lifecycle_run_restored = "lifecycle_run_restored"
+
+
+class DeviceEvent(Base):
+    __tablename__ = "device_events"
+    __table_args__ = (Index("ix_device_events_device_id_created_at", "device_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[DeviceEventType] = mapped_column(Enum(DeviceEventType), nullable=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    device: Mapped[Device] = relationship("Device", back_populates="events")

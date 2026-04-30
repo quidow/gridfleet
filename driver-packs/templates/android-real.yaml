@@ -1,0 +1,73 @@
+template_metadata:
+  id: appium-uiautomator2-android-real
+  display_name: "Appium UiAutomator2 — Android Real Device"
+  target_driver_summary: "UiAutomator2 driver for real Android phones and tablets via ADB"
+  source_pack_id: appium-uiautomator2
+  prerequisite_host_tools:
+    - adb
+    - node
+    - npm
+
+schema_version: 1
+id: local/uiautomator2-android-real
+release: "2026.04.0"
+display_name: "Appium UiAutomator2 — Android Real Device"
+maintainer: ""
+license: ""
+appium_server:
+  source: npm
+  package: appium
+  version: ">=2.5,<3"
+  recommended: "2.11.5"
+  known_bad: []
+appium_driver:
+  source: npm
+  package: appium-uiautomator2-driver
+  version: ">=3,<5"
+  recommended: "3.6.0"
+  known_bad: []
+platforms:
+  - id: android_mobile
+    display_name: "Android (real device)"
+    automation_name: UiAutomator2
+    appium_platform_name: Android
+    device_types: [real_device]
+    connection_types: [usb, network]
+    grid_slots: [native, chrome]
+    capabilities:
+      stereotype:
+        "appium:platformName": "Android"
+      session_required: []
+    identity:
+      scheme: serial_number
+      scope: host
+    display:
+      icon_kind: mobile
+    health_checks:
+      - id: adb_connected
+        label: ADB Connected
+      - id: adb_responsive
+        label: ADB Responsive
+      - id: boot_completed
+        label: Boot Completed
+      - id: ping
+        label: IP Reachable
+    lifecycle_actions:
+      - id: state
+      - id: reconnect
+    connection_behavior:
+      default_device_type: real_device
+      default_connection_type: usb
+      requires_ip_address: false
+      requires_connection_target: true
+      allow_transport_identity_until_host_resolution: true
+      host_resolution_action: resolve
+    parallel_resources:
+      ports:
+        - capability_name: "appium:systemPort"
+          start: 8200
+        - capability_name: "appium:chromedriverPort"
+          start: 9515
+        - capability_name: "appium:mjpegServerPort"
+          start: 9200
+      derived_data_path: false

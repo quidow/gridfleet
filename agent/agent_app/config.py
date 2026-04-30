@@ -1,0 +1,44 @@
+from pydantic import model_validator
+from pydantic_settings import BaseSettings
+
+
+class AgentSettings(BaseSettings):
+    manager_url: str = "http://localhost:8000"
+    manager_auth_username: str | None = None
+    manager_auth_password: str | None = None
+    registration_refresh_interval_sec: int = 30
+    agent_port: int = 5100
+    grid_hub_url: str = "http://selenium-hub:4444"
+    grid_publish_url: str = "tcp://localhost:4442"
+    grid_subscribe_url: str = "tcp://localhost:4443"
+    selenium_server_jar: str = "/opt/gridfleet-agent/selenium-server.jar"
+    runtime_root: str = "/opt/gridfleet-agent/runtimes"
+    appium_port_range_start: int = 4723
+    appium_port_range_end: int = 4823
+    grid_node_port_start: int = 5555
+    adb_reconnect_port: int = 5555
+    advertise_ip: str | None = None
+    enable_web_terminal: bool = False
+    terminal_token: str | None = None
+    terminal_shell: str | None = None
+
+    model_config = {"env_prefix": "AGENT_"}
+
+    @model_validator(mode="after")
+    def validate_manager_auth(self) -> "AgentSettings":
+        has_username = bool(self.manager_auth_username)
+        has_password = bool(self.manager_auth_password)
+        if has_username != has_password:
+            raise ValueError("AGENT_MANAGER_AUTH_USERNAME and AGENT_MANAGER_AUTH_PASSWORD must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_terminal(self) -> "AgentSettings":
+        if self.terminal_token is not None and not self.terminal_token.strip():
+            raise ValueError("AGENT_TERMINAL_TOKEN must not be blank when set")
+        if self.enable_web_terminal and not self.terminal_token:
+            raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true")
+        return self
+
+
+agent_settings = AgentSettings()

@@ -1,0 +1,677 @@
+import asyncio
+import os
+import platform
+import re
+import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import httpx
+from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
+from pydantic import BaseModel, Field
+
+from agent_app import __version__
+from agent_app.appium_process import AppiumProcessManager, sanitize_appium_driver_capabilities
+from agent_app.capabilities import (
+    capabilities_refresh_loop,
+    get_capabilities_snapshot,
+    refresh_capabilities_snapshot,
+)
+from agent_app.config import agent_settings
+from agent_app.driver_doctor import run_driver_doctor
+from agent_app.host_telemetry import get_host_telemetry
+from agent_app.observability import RequestContextMiddleware, configure_logging
+from agent_app.pack.adapter_dispatch import dispatch_feature_action
+from agent_app.pack.adapter_loader import load_adapter
+from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.discovery import enumerate_pack_candidates
+from agent_app.pack.dispatch import (
+    adapter_health_check,
+    adapter_lifecycle_action,
+    adapter_normalize_device,
+    adapter_telemetry,
+)
+from agent_app.pack.host_identity import HostIdentity
+from agent_app.pack.manifest import DesiredPack, resolve_desired_platform
+from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv
+from agent_app.pack.runtime_registry import RuntimeRegistry
+from agent_app.pack.sidecar_supervisor import SidecarSupervisor
+from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
+from agent_app.pack.tarball_fetch import download_and_verify
+from agent_app.pack.version_catalog import NpmVersionCatalog
+from agent_app.plugin_manager import get_installed_plugins, sync_plugins
+from agent_app.terminal_ws import handle_terminal
+from agent_app.tools_manager import ensure_tools, get_tool_status
+
+configure_logging()
+
+appium_mgr = AppiumProcessManager()
+tools_ensure_lock = asyncio.Lock()
+
+
+def _manager_auth() -> httpx.BasicAuth | None:
+    username = agent_settings.manager_auth_username
+    password = agent_settings.manager_auth_password
+    if not username or not password:
+        return None
+    return httpx.BasicAuth(username, password)
+
+
+class HttpPackStateClient(PackStateClient):
+    def __init__(self, base_url: str, host_id: str) -> None:
+        self._base = base_url.rstrip("/")
+        self._host_id = host_id
+
+    async def fetch_desired(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=15.0, auth=_manager_auth()) as client:
+            resp = await client.get(
+                f"{self._base}/agent/driver-packs/desired",
+                params={"host_id": self._host_id},
+            )
+            resp.raise_for_status()
+            return resp.json()  # type: ignore[no-any-return]
+
+    async def post_status(self, payload: dict[str, Any]) -> None:
+        async with httpx.AsyncClient(timeout=15.0, auth=_manager_auth()) as client:
+            resp = await client.post(f"{self._base}/agent/driver-packs/status", json=payload)
+            resp.raise_for_status()
+
+
+async def _start_pack_loop_when_ready(
+    app: FastAPI,
+    host_identity: HostIdentity,
+    backend_url: str,
+    runtime_registry: RuntimeRegistry,
+    adapter_registry: AdapterRegistry,
+    sidecar_supervisor: SidecarSupervisor,
+) -> None:
+    host_id = await host_identity.wait()
+    app.state.pack_state_loop_enabled = True
+    client = HttpPackStateClient(backend_url, host_id)
+    runtime_mgr = AppiumRuntimeManager()
+    adapter_loader = _build_adapter_loader(backend_url, adapter_registry)
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=runtime_mgr,
+        host_id=host_id,
+        runtime_registry=runtime_registry,
+        adapter_registry=adapter_registry,
+        adapter_loader=adapter_loader,
+        sidecar_supervisor=sidecar_supervisor,
+        version_catalog=NpmVersionCatalog(),
+        driver_doctor_runner=_run_driver_doctor,
+    )
+    app.state.pack_state_loop = loop
+    await loop.run_forever()
+
+
+async def _run_driver_doctor(driver_name: str, env: RuntimeEnv) -> dict[str, object]:
+    return await run_driver_doctor(driver_name, appium_bin=env.appium_bin, appium_home=env.appium_home)
+
+
+def _build_adapter_loader(
+    backend_url: str,
+    adapter_registry: AdapterRegistry,
+) -> AdapterLoaderFn:
+    """Return an ``AdapterLoaderFn`` that fetches a pack tarball and loads its adapter."""
+
+    base = backend_url.rstrip("/")
+
+    async def _load(pack: DesiredPack, env: RuntimeEnv) -> None:
+        if not pack.tarball_sha256:
+            return
+        runtime_dir = Path(env.appium_home)
+        tarball_dir = runtime_dir / "tarballs"
+        async with httpx.AsyncClient(base_url=base, timeout=60.0) as client:
+            tarball_path = await download_and_verify(
+                client=client,
+                pack_id=pack.id,
+                release=pack.release,
+                expected_sha256=pack.tarball_sha256,
+                dest_dir=tarball_dir,
+            )
+        adapter = await load_adapter(
+            pack_id=pack.id,
+            release=pack.release,
+            tarball_path=tarball_path,
+            runtime_dir=runtime_dir,
+            venv_python=sys.executable,
+        )
+        adapter_registry.set(pack.id, pack.release, adapter)
+
+    return _load
+
+
+def _get_network_devices() -> list[dict[str, Any]]:
+    """Return network devices from currently running Appium processes."""
+    devices: list[dict[str, Any]] = []
+    for info in appium_mgr.list_running():
+        if re.match(r"\d+\.\d+\.\d+\.\d+:\d+", info.connection_target):
+            ip, _, port_str = info.connection_target.rpartition(":")
+            devices.append({"connection_target": info.connection_target, "ip_address": ip, "port": int(port_str)})
+    return devices
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from agent_app.registration import registration_loop
+
+    await refresh_capabilities_snapshot()
+    capabilities_task = asyncio.create_task(capabilities_refresh_loop(refresh_immediately=False))
+
+    host_identity = HostIdentity()
+    runtime_registry = RuntimeRegistry()
+    adapter_registry = AdapterRegistry()
+    sidecar_supervisor = SidecarSupervisor()
+    app.state.host_identity = host_identity
+    app.state.runtime_registry = runtime_registry
+    app.state.adapter_registry = adapter_registry
+    app.state.sidecar_supervisor = sidecar_supervisor
+    app.state.pack_state_loop_enabled = False
+    app.state.pack_state_loop = None
+
+    env_host_id = os.environ.get("AGENT_HOST_ID")
+    backend_url = os.environ.get("AGENT_BACKEND_URL") or agent_settings.manager_url
+    if env_host_id:
+        host_identity.set(env_host_id)
+        app.state.pack_state_loop_enabled = True
+
+    reg_task = asyncio.create_task(
+        registration_loop(
+            agent_settings.manager_url,
+            agent_settings.agent_port,
+            host_identity,
+            on_advertised_ip_change=appium_mgr.refresh_grid_relay_advertise_ip,
+        )
+    )
+    appium_mgr.set_runtime_registry(runtime_registry)
+    appium_mgr.set_adapter_registry(adapter_registry)
+
+    pack_task: asyncio.Task[None] | None = None
+    if backend_url:
+        pack_task = asyncio.create_task(
+            _start_pack_loop_when_ready(
+                app, host_identity, backend_url, runtime_registry, adapter_registry, sidecar_supervisor
+            )
+        )
+
+    try:
+        yield
+    finally:
+        if pack_task is not None:
+            pack_task.cancel()
+        reg_task.cancel()
+        capabilities_task.cancel()
+        await appium_mgr.shutdown()
+        await sidecar_supervisor.shutdown()
+
+
+app = FastAPI(title="GridFleet Agent", version="0.1.0", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
+
+
+class AppiumStartRequest(BaseModel):
+    connection_target: str
+    port: int
+    grid_url: str
+    plugins: list[str] | None = None
+    extra_caps: dict[str, Any] | None = None
+    stereotype_caps: dict[str, Any] | None = None
+    allocated_caps: dict[str, Any] | None = None
+    device_type: str | None = None
+    ip_address: str | None = None
+    session_override: bool = True
+    headless: bool = True
+    pack_id: str
+    platform_id: str
+    appium_platform_name: str | None = None
+    workaround_env: dict[str, str] | None = None
+    insecure_features: list[str] = []
+    grid_slots: list[str] = ["native"]
+    lifecycle_actions: list[dict[str, Any]] = []
+    connection_behavior: dict[str, Any] = {}
+
+
+class AppiumStopRequest(BaseModel):
+    port: int
+
+
+class AppiumProbeRequest(BaseModel):
+    capabilities: dict[str, Any]
+    timeout_sec: int = 120
+
+
+class PluginConfig(BaseModel):
+    name: str
+    version: str
+    source: str
+    package: str | None = None
+
+
+class PluginSyncRequest(BaseModel):
+    plugins: list[PluginConfig]
+
+
+class ToolsEnsureRequest(BaseModel):
+    appium_version: str | None = None
+    selenium_jar_version: str | None = None
+
+
+class FeatureActionRequest(BaseModel):
+    pack_id: str
+    args: dict[str, Any] = {}
+    device_identity_value: str | None = None
+
+
+class NormalizeDeviceRequest(BaseModel):
+    pack_id: str
+    pack_release: str
+    platform_id: str
+    raw_input: dict[str, Any]
+
+
+class NormalizeDeviceResponse(BaseModel):
+    identity_scheme: str
+    identity_scope: str
+    identity_value: str
+    connection_target: str
+    ip_address: str
+    device_type: str
+    connection_type: str
+    os_version: str
+    manufacturer: str = ""
+    model: str = ""
+    model_number: str = ""
+    software_versions: dict[str, str] = Field(default_factory=dict)
+    field_errors: list[dict[str, str]]
+
+
+class _FeatureActionContext:
+    """Concrete LifecycleContext used when dispatching feature actions."""
+
+    __slots__ = ("device_identity_value", "host_id")
+
+    def __init__(self, host_id: str, device_identity_value: str) -> None:
+        self.host_id = host_id
+        self.device_identity_value = device_identity_value
+
+
+def _latest_desired(request: Request) -> list[Any]:
+    loop = getattr(request.app.state, "pack_state_loop", None)
+    return list(loop.latest_desired_packs or []) if loop else []
+
+
+def _release_for_pack(request: Request, pack_id: str) -> str | None:
+    for pack in _latest_desired(request):
+        if getattr(pack, "id", None) == pack_id:
+            return str(getattr(pack, "release", ""))
+    return None
+
+
+def _probe_failure_detail(response: httpx.Response, *, fallback: str) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text or fallback
+
+    if isinstance(payload, dict):
+        value = payload.get("value")
+        if isinstance(value, dict):
+            message = value.get("message")
+            if isinstance(message, str) and message:
+                return message
+            error = value.get("error")
+            if isinstance(error, str) and error:
+                return error
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail:
+            return detail
+        message = payload.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return fallback
+
+
+@app.get("/agent/health")
+async def health() -> dict[str, Any]:
+    capabilities = get_capabilities_snapshot()
+    payload: dict[str, Any] = {
+        "status": "ok",
+        "hostname": platform.node(),
+        "os_type": platform.system().lower(),
+        "version": __version__,
+        "missing_prerequisites": capabilities.get("missing_prerequisites", []),
+    }
+    payload["appium_processes"] = appium_mgr.process_snapshot()
+    return payload
+
+
+@app.get("/agent/host/telemetry")
+async def host_telemetry() -> dict[str, Any]:
+    return await get_host_telemetry()
+
+
+@app.get("/agent/pack/devices")
+async def pack_devices(
+    request: Request,
+) -> dict[str, Any]:
+    loop = getattr(request.app.state, "pack_state_loop", None)
+    desired = loop.latest_desired_packs if loop else None
+    adapter_registry = getattr(request.app.state, "adapter_registry", None)
+    host_identity = getattr(request.app.state, "host_identity", None)
+    host_id_value = host_identity.get() if host_identity is not None else None
+    return await enumerate_pack_candidates(
+        desired,
+        adapter_registry=adapter_registry,
+        host_id=host_id_value or "",
+    )
+
+
+@app.get("/agent/pack/devices/{connection_target}/properties")
+async def pack_device_properties_route(
+    request: Request,
+    connection_target: str,
+    pack_id: str = Query(...),
+) -> dict[str, Any]:
+    from agent_app.pack.discovery import pack_device_properties
+
+    loop = getattr(request.app.state, "pack_state_loop", None)
+    desired = loop.latest_desired_packs if loop else None
+    adapter_registry = getattr(request.app.state, "adapter_registry", None)
+    host_identity = getattr(request.app.state, "host_identity", None)
+    host_id_value = host_identity.get() if host_identity is not None else None
+    data = await pack_device_properties(
+        connection_target,
+        pack_id,
+        desired,
+        adapter_registry=adapter_registry,
+        host_id=host_id_value or "",
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Pack device {connection_target} not found")
+    return data
+
+
+@app.get("/agent/pack/devices/{connection_target}/health")
+async def pack_device_health_route(
+    request: Request,
+    connection_target: str,
+    pack_id: str = Query(...),
+    platform_id: str = Query(...),
+    device_type: str = Query(...),
+    connection_type: str | None = Query(None),
+    ip_address: str | None = Query(None),
+    allow_boot: bool = Query(False),
+    headless: bool = Query(True),
+) -> dict[str, Any]:
+    """Pack-shaped device health check dispatched through the loaded adapter."""
+    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
+    if platform_def is None:
+        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
+    adapter_registry = getattr(request.app.state, "adapter_registry", None)
+    release = _release_for_pack(request, pack_id)
+    if adapter_registry is not None and release is not None:
+        payload = await adapter_health_check(
+            adapter_registry=adapter_registry,
+            pack_id=pack_id,
+            pack_release=release,
+            identity_value=connection_target,
+            allow_boot=allow_boot,
+            platform_id=platform_id,
+            device_type=device_type,
+            connection_type=connection_type,
+        )
+        if payload is not None:
+            return payload
+    return {
+        "healthy": None,
+        "checks": [
+            {
+                "check_id": "adapter_unavailable",
+                "ok": False,
+                "message": f"Adapter not loaded for pack {pack_id}:{platform_id}",
+            }
+        ],
+    }
+
+
+@app.get("/agent/pack/devices/{connection_target}/telemetry")
+async def pack_device_telemetry_route(
+    request: Request,
+    connection_target: str,
+    pack_id: str = Query(...),
+    platform_id: str = Query(...),
+    device_type: str = Query(...),
+    connection_type: str | None = Query(None),
+    ip_address: str | None = Query(None),
+) -> dict[str, Any]:
+    """Pack-shaped device telemetry dispatched through the loaded adapter."""
+    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
+    if platform_def is None:
+        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
+    adapter_registry = getattr(request.app.state, "adapter_registry", None)
+    release = _release_for_pack(request, pack_id)
+    telemetry = (
+        await adapter_telemetry(
+            adapter_registry=adapter_registry,
+            pack_id=pack_id,
+            pack_release=release,
+            identity_value=connection_target,
+            connection_target=connection_target,
+        )
+        if adapter_registry is not None and release is not None
+        else None
+    )
+    if telemetry is None:
+        raise HTTPException(status_code=404, detail=f"Device {connection_target} not found or not connected")
+    return telemetry
+
+
+@app.post("/agent/pack/devices/{connection_target}/lifecycle/{action}")
+async def pack_device_lifecycle_route(
+    request: Request,
+    connection_target: str,
+    action: str,
+    pack_id: str = Query(...),
+    platform_id: str = Query(...),
+    args: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Pack-shaped device lifecycle action dispatched through the loaded adapter."""
+    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
+    if platform_def is None:
+        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
+    adapter_registry = getattr(request.app.state, "adapter_registry", None)
+    host_identity = getattr(request.app.state, "host_identity", None)
+    host_id_value = host_identity.get() if host_identity is not None else ""
+    release = _release_for_pack(request, pack_id)
+    if adapter_registry is not None and release is not None:
+        payload = await adapter_lifecycle_action(
+            adapter_registry=adapter_registry,
+            pack_id=pack_id,
+            pack_release=release,
+            host_id=host_id_value or "",
+            identity_value=connection_target,
+            action=action,
+            args=args,
+        )
+        if payload is not None:
+            return payload
+    return {
+        "success": False,
+        "detail": f"Adapter not loaded for pack {pack_id}:{platform_id}",
+    }
+
+
+@app.post("/agent/pack/features/{feature_id}/actions/{action_id}")
+async def feature_action_route(
+    request: Request,
+    feature_id: str,
+    action_id: str,
+    body: FeatureActionRequest,
+) -> dict[str, Any]:
+    """Dispatch a feature action to the pack's adapter.
+
+    Body: ``{pack_id: str, args: dict, device_identity_value: str | None}``.
+    Returns ``FeatureActionResult`` serialised as JSON.
+    Responds 404 when no adapter is loaded for ``pack_id``.
+    """
+    adapter_registry: AdapterRegistry | None = getattr(request.app.state, "adapter_registry", None)
+    adapter = adapter_registry.get_current(body.pack_id) if adapter_registry is not None else None
+    if adapter is None:
+        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {body.pack_id!r}")
+
+    host_identity: HostIdentity | None = getattr(request.app.state, "host_identity", None)
+    host_id_value = host_identity.get() if host_identity is not None else ""
+
+    ctx = _FeatureActionContext(
+        host_id=host_id_value or "",
+        device_identity_value=body.device_identity_value or "",
+    )
+    result = await dispatch_feature_action(adapter, feature_id, action_id, body.args, ctx)
+    return {"ok": result.ok, "detail": result.detail, "data": result.data}
+
+
+@app.post("/agent/pack/devices/normalize", response_model=NormalizeDeviceResponse)
+async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) -> dict[str, Any]:
+    adapter_registry: AdapterRegistry | None = getattr(request.app.state, "adapter_registry", None)
+    host_identity: HostIdentity | None = getattr(request.app.state, "host_identity", None)
+    host_id_value = host_identity.get() if host_identity is not None else ""
+    if adapter_registry is None:
+        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
+
+    result = await adapter_normalize_device(
+        adapter_registry=adapter_registry,
+        pack_id=req.pack_id,
+        pack_release=req.pack_release,
+        host_id=host_id_value or "",
+        platform_id=req.platform_id,
+        raw_input=req.raw_input,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
+    return result
+
+
+@app.post("/agent/appium/start")
+async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
+    try:
+        info = await appium_mgr.start(
+            connection_target=req.connection_target,
+            platform_id=req.platform_id,
+            port=req.port,
+            grid_url=req.grid_url,
+            plugins=req.plugins,
+            extra_caps=req.extra_caps,
+            stereotype_caps=req.stereotype_caps,
+            session_override=req.session_override,
+            device_type=req.device_type,
+            ip_address=req.ip_address,
+            headless=req.headless,
+            pack_id=req.pack_id,
+            appium_platform_name=req.appium_platform_name,
+            workaround_env=req.workaround_env,
+            insecure_features=req.insecure_features,
+            grid_slots=req.grid_slots,
+            lifecycle_actions=req.lifecycle_actions,
+            connection_behavior=req.connection_behavior,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
+
+
+@app.post("/agent/appium/stop")
+async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
+    await appium_mgr.stop(req.port)
+    return {"stopped": True, "port": req.port}
+
+
+@app.get("/agent/appium/{port}/status")
+async def appium_status(port: int) -> dict[str, Any]:
+    return await appium_mgr.status(port)
+
+
+@app.post("/agent/appium/{port}/probe-session")
+async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
+    base_url = f"http://127.0.0.1:{port}"
+    payload = {
+        "capabilities": {
+            "alwaysMatch": sanitize_appium_driver_capabilities(req.capabilities),
+            "firstMatch": [{}],
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=req.timeout_sec) as client:
+        try:
+            create_resp = await client.post(f"{base_url}/session", json=payload)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail=f"Appium probe timed out: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Appium probe failed: {exc}") from exc
+
+        if create_resp.status_code >= 400:
+            detail = _probe_failure_detail(create_resp, fallback="Session create failed")
+            raise HTTPException(status_code=502, detail=detail)
+
+        try:
+            data = create_resp.json()
+        except ValueError:
+            raise HTTPException(status_code=502, detail="Session create returned invalid JSON") from None
+
+        session_id = data.get("sessionId")
+        if not session_id and isinstance(data.get("value"), dict):
+            session_id = data["value"].get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            raise HTTPException(status_code=502, detail="Session create did not return a session id")
+
+        try:
+            delete_resp = await client.delete(f"{base_url}/session/{session_id}")
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail=f"Session cleanup timed out: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Session created but cleanup failed: {exc}") from exc
+
+        if delete_resp.status_code >= 400:
+            detail = _probe_failure_detail(
+                delete_resp,
+                fallback=f"Session created but cleanup failed ({delete_resp.status_code})",
+            )
+            raise HTTPException(status_code=502, detail=detail)
+
+    return {"ok": True}
+
+
+@app.get("/agent/appium/{port}/logs")
+async def appium_logs(port: int, lines: int = 100) -> dict[str, Any]:
+    log_lines = appium_mgr.get_logs(port, lines=min(lines, 5000))
+    return {"port": port, "lines": log_lines, "count": len(log_lines)}
+
+
+@app.get("/agent/plugins")
+async def list_plugins() -> list[dict[str, str]]:
+    return await get_installed_plugins()
+
+
+@app.post("/agent/plugins/sync")
+async def sync_agent_plugins(req: PluginSyncRequest) -> dict[str, Any]:
+    configs = [plugin.model_dump() for plugin in req.plugins]
+    return await sync_plugins(configs)
+
+
+@app.get("/agent/tools/status")
+async def agent_tools_status() -> dict[str, Any]:
+    return await get_tool_status()
+
+
+@app.post("/agent/tools/ensure")
+async def ensure_agent_tools(req: ToolsEnsureRequest) -> dict[str, Any]:
+    async with tools_ensure_lock:
+        return await ensure_tools(req.appium_version, req.selenium_jar_version)
+
+
+@app.websocket("/agent/terminal")
+async def agent_terminal(ws: WebSocket) -> None:
+    await handle_terminal(ws)

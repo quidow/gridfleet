@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: gridfleet
+      POSTGRES_PASSWORD: gridfleet
+      POSTGRES_DB: gridfleet
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gridfleet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  selenium-hub:
+    image: selenium/hub:4.41.0
+    ports:
+      - "4442:4442"
+      - "4443:4443"
+      - "4444:4444"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@postgres:5432/gridfleet
+      GRIDFLEET_GRID_HUB_URL: http://selenium-hub:4444
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      selenium-hub:
+        condition: service_healthy
+    volumes:
+      - driver-pack-storage:/var/lib/gridfleet/driver-packs
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    profiles:
+      - debug
+
+volumes:
+  pgdata:
+  driver-pack-storage:

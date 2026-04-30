@@ -1,0 +1,36 @@
+schema_version: 1
+id: uploaded/sidecar-fixture
+release: 0.1.0
+display_name: Sidecar Fixture
+maintainer: tests
+license: MIT
+appium_server:
+  source: npm
+  package: appium
+  version: ">=2.5,<3"
+  recommended: "2.19.0"
+  known_bad: []
+appium_driver:
+  source: npm
+  package: appium-sidecar-fixture-driver
+  version: ">=1,<2"
+  recommended: "1.0.0"
+  known_bad: []
+platforms:
+  - id: sidecar_device
+    display_name: Sidecar Device
+    automation_name: Sidecar
+    appium_platform_name: SidecarOS
+    device_types: [real_device]
+    connection_types: [network]
+    grid_slots: [native]
+    capabilities:
+      stereotype: {}
+    identity:
+      scheme: sidecar_serial
+      scope: global
+features:
+  test_sidecar:
+    display_name: Test Sidecar
+    sidecar:
+      adapter_hook: sidecar_lifecycle

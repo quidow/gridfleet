@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gridfleet-testkit"
+version = "0.1.0"
+description = "Supported pytest and run-orchestration helpers for GridFleet integrations"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "GridFleet contributors" }]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "pytest>=9.0.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/quidow/gridfleet"
+Repository = "https://github.com/quidow/gridfleet"
+Documentation = "https://github.com/quidow/gridfleet/tree/main/docs/reference/testkit.md"
+Issues = "https://github.com/quidow/gridfleet/issues"
+Security = "https://github.com/quidow/gridfleet/security/advisories/new"
+
+[project.optional-dependencies]
+appium = [
+    "Appium-Python-Client>=4.5",
+]
+dev = [
+    "pytest>=9.0.3",
+    "mypy>=1.10",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["appium", "appium.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "test_client",
+    "test_pytest_plugin",
+    "test_appium",
+]
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disable_error_code = ["attr-defined", "arg-type", "var-annotated"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH", "RUF"]
+ignore = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"

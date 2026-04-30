@@ -1,0 +1,59 @@
+schema_version: 1
+id: appium-roku-dlenroc
+release: 2026.04.0
+display_name: "Roku (dlenroc)"
+maintainer: gridfleet-team
+license: Apache-2.0
+appium_server:
+  source: npm
+  package: appium
+  version: "==3.3.1"
+  recommended: "3.3.1"
+  known_bad: []
+appium_driver:
+  source: github
+  github_repo: dlenroc/appium-roku-driver#b34f49a8652d70f669cac7ec86805ed4378aaff8
+  package: "@dlenroc/appium-roku-driver"
+  version: "==0.13.3"
+  recommended: "0.13.3"
+  known_bad: []
+platforms:
+  - id: roku_network
+    display_name: "Roku (network)"
+    automation_name: Roku
+    appium_platform_name: roku
+    device_types: [real_device]
+    connection_types: [network]
+    grid_slots: [native]
+    display:
+      icon_kind: set_top
+    health_checks:
+      - id: ping
+        label: IP Reachable
+      - id: ecp
+        label: ECP Reachable
+      - id: developer_mode
+        label: Developer Mode
+    capabilities:
+      stereotype:
+        "appium:platformName": "roku"
+        "appium:automationName": "Roku"
+    default_capabilities:
+      "appium:ip": "{device.ip_address}"
+    identity:
+      scheme: roku_serial
+      scope: global
+    device_fields_schema:
+      - id: roku_password
+        label: "Developer password"
+        type: string
+        required_for_session: true
+        sensitive: true
+        capability_name: "appium:password"
+    lifecycle_actions: []
+    connection_behavior:
+      default_device_type: real_device
+      default_connection_type: network
+      requires_ip_address: true
+      requires_connection_target: false
+workarounds: []

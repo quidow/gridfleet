@@ -1,0 +1,32 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: bash -c 'cd backend && uv run ruff format --check app/ tests/ && cd ../agent && uv run ruff format --check agent_app/ tests/'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-lint
+        name: ruff lint
+        entry: bash -c 'cd backend && uv run ruff check app/ tests/ && cd ../agent && uv run ruff check agent_app/ tests/'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: mypy-backend
+        name: mypy (backend)
+        entry: bash -c 'cd backend && uv run mypy app/'
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^backend/
+
+      - id: mypy-agent
+        name: mypy (agent)
+        entry: bash -c 'cd agent && uv run mypy agent_app/'
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^agent/

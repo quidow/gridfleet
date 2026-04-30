@@ -1,0 +1,515 @@
+from __future__ import annotations
+
+from typing import Any, cast
+from urllib.parse import quote
+
+import httpx
+
+from app.agent_client import (
+    AgentClientFactory,
+    AgentHttpClient,
+    JsonBody,
+    QueryParams,
+)
+from app.agent_client import (
+    request as agent_request,
+)
+from app.errors import AgentUnreachableError
+
+
+def agent_base_url(host: str, agent_port: int) -> str:
+    return f"http://{host}:{agent_port}"
+
+
+async def _send_request(
+    method: str,
+    url: str,
+    *,
+    endpoint: str,
+    host: str,
+    timeout: float | int,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    params: QueryParams = None,
+    json_body: JsonBody = None,
+) -> httpx.Response:
+    client_manager = http_client_factory(timeout=timeout)
+    async with client_manager as client:
+        response = await agent_request(
+            method,
+            url,
+            endpoint=endpoint,
+            host=host,
+            client=cast("AgentHttpClient", client),
+            params=params,
+            json_body=json_body,
+            timeout=timeout,
+        )
+    return response
+
+
+def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        raise AgentUnreachableError(host, f"Agent {action} failed on host {host} (HTTP {status_code})") from exc
+
+
+def _as_dict(payload: object) -> dict[str, Any] | None:
+    return payload if isinstance(payload, dict) else None
+
+
+def _as_list(payload: object) -> list[dict[str, Any]]:
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _response_error_detail(response: httpx.Response) -> str | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text or None
+
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail:
+            return detail
+        message = payload.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+async def agent_health(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 5,
+) -> dict[str, Any] | None:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/health",
+        endpoint="agent_health",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        return None
+    return _as_dict(response.json())
+
+
+async def agent_host_telemetry(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 5,
+) -> dict[str, Any] | None:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/host/telemetry",
+        endpoint="agent_host_telemetry",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        return None
+    return _as_dict(response.json())
+
+
+async def appium_logs(
+    host: str,
+    agent_port: int,
+    port: int,
+    *,
+    lines: int,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/logs",
+        endpoint="appium_logs",
+        host=host,
+        http_client_factory=http_client_factory,
+        params={"lines": lines},
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="fetch Appium logs")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent fetch Appium logs failed on host {host} (invalid payload)")
+    return payload
+
+
+async def appium_status(
+    host: str,
+    agent_port: int,
+    port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 5,
+) -> dict[str, Any] | None:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/status",
+        endpoint="appium_status",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        return None
+    return _as_dict(response.json())
+
+
+async def appium_probe_session(
+    host: str,
+    agent_port: int,
+    port: int,
+    *,
+    capabilities: dict[str, Any],
+    timeout_sec: int,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int | None = None,
+) -> tuple[bool, str | None]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/probe-session",
+        endpoint="appium_probe_session",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body={"capabilities": capabilities, "timeout_sec": timeout_sec},
+        timeout=timeout if timeout is not None else timeout_sec,
+    )
+    if response.status_code != 200:
+        return False, _response_error_detail(response) or f"Probe session failed (HTTP {response.status_code})"
+
+    payload = _as_dict(response.json())
+    if payload is None or payload.get("ok") is not True:
+        return False, "Probe session returned an invalid payload"
+    return True, None
+
+
+async def appium_start(
+    agent_base: str,
+    *,
+    host: str,
+    payload: dict[str, Any],
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int,
+) -> httpx.Response:
+    return await _send_request(
+        "POST",
+        f"{agent_base}/agent/appium/start",
+        endpoint="appium_start",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body=payload,
+        timeout=timeout,
+    )
+
+
+async def appium_stop(
+    agent_base: str,
+    *,
+    host: str,
+    port: int,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> httpx.Response:
+    return await _send_request(
+        "POST",
+        f"{agent_base}/agent/appium/stop",
+        endpoint="appium_stop",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body={"port": port},
+        timeout=timeout,
+    )
+
+
+async def list_plugins(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 15,
+) -> list[dict[str, Any]]:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/plugins",
+        endpoint="plugins_list",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="list plugins")
+    return _as_list(response.json())
+
+
+async def sync_plugins(
+    host: str,
+    agent_port: int,
+    *,
+    plugins: list[dict[str, Any]],
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 180,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/plugins/sync",
+        endpoint="plugins_sync",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body={"plugins": plugins},
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="sync plugins")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent sync plugins failed on host {host} (invalid payload)")
+    return payload
+
+
+async def get_tool_status(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 15,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/tools/status",
+        endpoint="tools_status",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="fetch tool status")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent fetch tool status failed on host {host} (invalid payload)")
+    return payload
+
+
+async def ensure_tools(
+    host: str,
+    agent_port: int,
+    *,
+    appium_version: str | None,
+    selenium_jar_version: str | None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 360,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/tools/ensure",
+        endpoint="tools_ensure",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body={
+            "appium_version": appium_version,
+            "selenium_jar_version": selenium_jar_version,
+        },
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="ensure tools")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent ensure tools failed on host {host} (invalid payload)")
+    return payload
+
+
+async def get_pack_devices(
+    host: str,
+    agent_port: int,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 45,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices",
+        endpoint="pack_devices",
+        host=host,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="list pack devices")
+    return _as_dict(response.json()) or {}
+
+
+async def get_pack_device_properties(
+    host: str,
+    agent_port: int,
+    connection_target: str,
+    pack_id: str,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> dict[str, Any] | None:
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/properties",
+        endpoint="pack_device_properties",
+        host=host,
+        http_client_factory=http_client_factory,
+        params={"pack_id": pack_id},
+        timeout=timeout,
+    )
+    if response.status_code == 404:
+        return None
+    _raise_for_status(response, host=host, action="fetch pack device properties")
+    return _as_dict(response.json())
+
+
+async def normalize_pack_device(
+    host: str,
+    agent_port: int,
+    *,
+    pack_id: str,
+    pack_release: str,
+    platform_id: str,
+    raw_input: dict[str, Any],
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 15,
+) -> dict[str, Any] | None:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices/normalize",
+        endpoint="pack_device_normalize",
+        host=host,
+        http_client_factory=http_client_factory,
+        json_body={
+            "pack_id": pack_id,
+            "pack_release": pack_release,
+            "platform_id": platform_id,
+            "raw_input": raw_input,
+        },
+        timeout=timeout,
+    )
+    if response.status_code == 404:
+        return None
+    _raise_for_status(response, host=host, action="normalize pack device")
+    return _as_dict(response.json())
+
+
+async def pack_device_health(
+    host: str,
+    agent_port: int,
+    connection_target: str,
+    *,
+    pack_id: str,
+    platform_id: str,
+    device_type: str = "real_device",
+    connection_type: str | None = None,
+    ip_address: str | None = None,
+    allow_boot: bool = False,
+    headless: bool | None = None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "pack_id": pack_id,
+        "platform_id": platform_id,
+        "device_type": device_type,
+        "allow_boot": allow_boot,
+    }
+    if connection_type is not None:
+        params["connection_type"] = connection_type
+    if ip_address is not None:
+        params["ip_address"] = ip_address
+    if headless is not None:
+        params["headless"] = headless
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/health",
+        endpoint="pack_device_health",
+        host=host,
+        http_client_factory=http_client_factory,
+        params=params,
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="fetch pack device health")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent fetch pack device health failed on host {host} (invalid payload)")
+    return payload
+
+
+async def pack_device_telemetry(
+    host: str,
+    agent_port: int,
+    connection_target: str,
+    *,
+    pack_id: str,
+    platform_id: str,
+    device_type: str,
+    connection_type: str | None,
+    ip_address: str | None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> dict[str, Any] | None:
+    params: dict[str, Any] = {
+        "pack_id": pack_id,
+        "platform_id": platform_id,
+        "device_type": device_type,
+    }
+    if connection_type is not None:
+        params["connection_type"] = connection_type
+    if ip_address is not None:
+        params["ip_address"] = ip_address
+    response = await _send_request(
+        "GET",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/telemetry",
+        endpoint="pack_device_telemetry",
+        host=host,
+        http_client_factory=http_client_factory,
+        params=params,
+        timeout=timeout,
+    )
+    if response.status_code == 404:
+        return None
+    _raise_for_status(response, host=host, action="fetch pack device telemetry")
+    return _as_dict(response.json())
+
+
+async def pack_device_lifecycle_action(
+    host: str,
+    agent_port: int,
+    connection_target: str,
+    *,
+    pack_id: str,
+    platform_id: str,
+    action: str,
+    args: dict[str, Any] | None = None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 15,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/lifecycle/{action}",
+        endpoint="pack_device_lifecycle_action",
+        host=host,
+        http_client_factory=http_client_factory,
+        params={"pack_id": pack_id, "platform_id": platform_id},
+        json_body=args or {},
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action=f"run pack device lifecycle action {action}")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent lifecycle action {action} failed on host {host} (invalid payload)")
+    return payload
+
+
+def response_json_dict(response: httpx.Response) -> dict[str, Any]:
+    payload = _as_dict(response.json())
+    return payload if payload is not None else {}

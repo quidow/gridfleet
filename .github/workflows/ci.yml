@@ -1,0 +1,274 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gridfleet
+          POSTGRES_PASSWORD: gridfleet
+          POSTGRES_DB: gridfleet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gridfleet -d gridfleet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@127.0.0.1:5432/gridfleet
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: backend
+          python-version: "3.12"
+          cache-dependency-glob: |
+            backend/pyproject.toml
+            backend/uv.lock
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --extra dev --locked
+
+      - name: Check formatting
+        working-directory: backend
+        run: uv run --locked --extra dev ruff format --check app/ tests/
+
+      - name: Lint
+        working-directory: backend
+        run: uv run --locked --extra dev ruff check app/ tests/
+
+      - name: Type check
+        working-directory: backend
+        run: uv run --locked --extra dev mypy app/
+
+      - name: Test
+        working-directory: backend
+        run: uv run --locked --extra dev pytest -q -n auto
+
+  agent:
+    name: Agent
+    runs-on: ubuntu-latest
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: agent
+          python-version: "3.12"
+          cache-dependency-glob: |
+            agent/pyproject.toml
+            agent/uv.lock
+
+      - name: Install dependencies
+        working-directory: agent
+        run: uv sync --extra dev --locked
+
+      - name: Check formatting
+        working-directory: agent
+        run: uv run --locked --extra dev ruff format --check agent_app/ tests/
+
+      - name: Lint
+        working-directory: agent
+        run: uv run --locked --extra dev ruff check agent_app/ tests/
+
+      - name: Type check
+        working-directory: agent
+        run: uv run --locked --extra dev mypy agent_app/
+
+      - name: Test
+        working-directory: agent
+        run: uv run --locked --extra dev pytest -q
+
+  testkit:
+    name: Testkit
+    runs-on: ubuntu-latest
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: testkit
+          python-version: "3.12"
+          cache-dependency-glob: |
+            testkit/pyproject.toml
+            testkit/uv.lock
+
+      - name: Install dependencies
+        working-directory: testkit
+        run: uv sync --extra dev --extra appium --locked
+
+      - name: Check formatting
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff format --check gridfleet_testkit/ tests/ examples/
+
+      - name: Lint
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff check gridfleet_testkit/ tests/ examples/
+
+      - name: Type check
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium mypy gridfleet_testkit/ tests/ examples/
+
+      - name: Test
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium pytest -q
+
+  e2e-examples:
+    name: E2E Examples
+    runs-on: ubuntu-latest
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: e2e-examples
+          python-version: "3.12"
+          cache-dependency-glob: |
+            e2e-examples/pyproject.toml
+            e2e-examples/uv.lock
+            testkit/pyproject.toml
+            testkit/uv.lock
+
+      - name: Install dependencies
+        working-directory: e2e-examples
+        run: uv sync --extra dev --extra appium --locked
+
+      - name: Check formatting
+        working-directory: e2e-examples
+        run: uv run --locked --extra dev --extra appium ruff format --check e2e_examples/ tests/
+
+      - name: Lint
+        working-directory: e2e-examples
+        run: uv run --locked --extra dev --extra appium ruff check e2e_examples/ tests/
+
+      - name: Type check
+        working-directory: e2e-examples
+        run: uv run --locked --extra dev --extra appium mypy e2e_examples/ tests/
+
+      - name: Test
+        working-directory: e2e-examples
+        run: uv run --locked --extra dev --extra appium pytest -q
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gridfleet
+          POSTGRES_PASSWORD: gridfleet
+          POSTGRES_DB: gridfleet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gridfleet -d gridfleet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@127.0.0.1:5432/gridfleet
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+
+      - name: Install Playwright system deps
+        working-directory: frontend
+        run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+
+      - name: Test mocked e2e
+        working-directory: frontend
+        run: npm run test:e2e:mocked
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: frontend
+          python-version: "3.12"
+          cache-dependency-glob: |
+            backend/pyproject.toml
+            backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --extra dev --locked
+
+      - name: Run backend migrations
+        working-directory: backend
+        run: uv run --locked --extra dev alembic upgrade head
+
+      - name: Test live e2e
+        working-directory: frontend
+        run: npm run test:e2e:live

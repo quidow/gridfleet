@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest';
+import { formatEventDetails, severityForEventType, SEEDED_EVENT_TYPES } from './eventRegistry';
+
+describe('eventRegistry', () => {
+  it('covers every full-demo seeded event type', () => {
+    expect(SEEDED_EVENT_TYPES).toEqual([
+      'run.completed',
+      'run.failed',
+      'run.cancelled',
+      'host.offline',
+      'host.online',
+      'device.maintenance_start',
+      'device.maintenance_end',
+      'webhook.delivered',
+      'webhook.failed',
+      'config.updated',
+      'session.stuck',
+      'device.verified',
+      'lifecycle.incident_open',
+      'lifecycle.incident_resolved',
+      'node.crash',
+      'node.restart',
+    ]);
+
+    for (const type of SEEDED_EVENT_TYPES) {
+      const formatted = formatEventDetails(type, { seed: true, event_type: type });
+      expect(formatted.kind).toBe('text');
+      expect(formatted.text).not.toContain('undefined');
+    }
+  });
+
+  it('formats named run and host events as sentences', () => {
+    expect(formatEventDetails('run.completed', { name: 'live-run-00' })).toEqual({
+      kind: 'text',
+      text: 'live-run-00 completed',
+    });
+    expect(formatEventDetails('run.failed', { name: 'live-run-01', reason: 'heartbeat timeout' })).toEqual({
+      kind: 'text',
+      text: 'live-run-01 failed: heartbeat timeout',
+    });
+    expect(formatEventDetails('host.offline', { hostname: 'lab-linux-02' })).toEqual({
+      kind: 'text',
+      text: 'lab-linux-02 went offline',
+    });
+  });
+
+  it('formats node and lifecycle events without leaking undefined', () => {
+    expect(formatEventDetails('node.crash', { device_name: 'Pixel 7' })).toEqual({
+      kind: 'text',
+      text: 'Appium node for Pixel 7 crashed',
+    });
+    expect(formatEventDetails('lifecycle.incident_open', { device_name: 'Pixel 7' })).toEqual({
+      kind: 'text',
+      text: 'Incident opened: Pixel 7',
+    });
+  });
+
+  it('falls back to raw JSON for unknown non-empty payloads', () => {
+    const formatted = formatEventDetails('new.event', { answer: 42 });
+    expect(formatted.kind).toBe('json');
+    expect(formatted.text).toContain('"answer": 42');
+    expect(formatted.text).not.toContain(': undefined');
+  });
+
+  it('returns no-details fallback for unknown empty payloads', () => {
+    expect(formatEventDetails('new.event', {})).toEqual({ kind: 'empty', text: 'No details' });
+  });
+
+  it('derives severity from registry', () => {
+    expect(severityForEventType('run.failed')).toBe('danger');
+    expect(severityForEventType('run.completed')).toBe('success');
+    expect(severityForEventType('host.offline')).toBe('danger');
+    expect(severityForEventType('host.online')).toBe('success');
+    expect(severityForEventType('lifecycle.incident_open')).toBe('warning');
+    expect(severityForEventType('lifecycle.incident_resolved')).toBe('success');
+    expect(severityForEventType('node.restart')).toBe('info');
+    expect(severityForEventType('unknown.type')).toBe('neutral');
+  });
+});

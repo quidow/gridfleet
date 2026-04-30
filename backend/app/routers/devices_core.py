@@ -1,0 +1,187 @@
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.device import ConnectionType, DeviceAvailabilityStatus, DeviceType, HardwareHealthStatus
+from app.models.session import Session
+from app.routers.device_route_helpers import get_device_or_404
+from app.schemas.device import (
+    DeviceDetail,
+    DevicePatch,
+    DeviceRead,
+    HardwareTelemetryState,
+    SessionOutcomeHeatmapRow,
+    SessionRead,
+)
+from app.schemas.device_filters import DeviceQueryFilters, DeviceSortBy, DeviceSortDir
+from app.services import (
+    capability_service,
+    device_config_masking,
+    device_health_summary,
+    device_presenter,
+    device_service,
+    platform_label_service,
+    run_service,
+    session_service,
+)
+from app.services.device_identity_conflicts import DeviceIdentityConflictError
+
+router = APIRouter()
+
+
+def _extract_tag_filters(request: Request) -> dict[str, str] | None:
+    tags = {
+        key.removeprefix("tags."): value
+        for key, value in request.query_params.multi_items()
+        if key.startswith("tags.") and key != "tags."
+    }
+    return tags or None
+
+
+def build_device_query_filters(
+    request: Request,
+    pack_id: str | None = Query(None),
+    platform_id: str | None = Query(None),
+    availability_status: DeviceAvailabilityStatus | None = Query(None),
+    host_id: uuid.UUID | None = Query(None),
+    identity_value: str | None = Query(None),
+    connection_target: str | None = Query(None),
+    device_type: DeviceType | None = Query(None),
+    connection_type: ConnectionType | None = Query(None),
+    os_version: str | None = Query(None),
+    search: str | None = Query(None),
+    hardware_health_status: HardwareHealthStatus | None = Query(None),
+    hardware_telemetry_state: HardwareTelemetryState | None = Query(None),
+    needs_attention: bool | None = Query(None),
+    sort_by: DeviceSortBy = Query("created_at"),
+    sort_dir: DeviceSortDir = Query("desc"),
+) -> DeviceQueryFilters:
+    return DeviceQueryFilters(
+        pack_id=pack_id,
+        platform_id=platform_id,
+        availability_status=availability_status,
+        host_id=host_id,
+        identity_value=identity_value,
+        connection_target=connection_target,
+        device_type=device_type,
+        connection_type=connection_type,
+        os_version=os_version,
+        search=search,
+        hardware_health_status=hardware_health_status,
+        hardware_telemetry_state=hardware_telemetry_state,
+        needs_attention=needs_attention,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        tags=_extract_tag_filters(request),
+    )
+
+
+@router.get("")
+async def list_devices(
+    filters: DeviceQueryFilters = Depends(build_device_query_filters),
+    limit: int | None = Query(None, ge=1, le=500),
+    offset: int | None = Query(None, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]] | dict[str, Any]:
+    if limit is not None:
+        effective_offset = offset if offset is not None else 0
+        devices, total = await device_service.list_devices_paginated(db, filters, limit, effective_offset)
+    else:
+        devices = await device_service.list_devices_by_filters(db, filters)
+        total = None
+
+    reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
+    health_summary_map = await device_health_summary.get_health_summary_map(db, [str(device.id) for device in devices])
+    sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(db, devices)
+    label_map = await platform_label_service.load_platform_label_map(
+        db,
+        ((device.pack_id, device.platform_id) for device in devices),
+    )
+    serialized: list[dict[str, Any]] = []
+    for device in devices:
+        reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
+        payload = await device_presenter.serialize_device(
+            db,
+            device,
+            reservation_context=reservation_context,
+            health_summary=health_summary_map.get(str(device.id)),
+            sensitive_key_map=sensitive_key_map,
+            platform_label=label_map.get((device.pack_id, device.platform_id)),
+        )
+        serialized.append(payload)
+
+    if total is not None:
+        return {
+            "items": serialized,
+            "total": total,
+            "limit": limit,
+            "offset": effective_offset,
+        }
+    return serialized
+
+
+@router.get("/{device_id}", response_model=DeviceDetail)
+async def get_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    device = await get_device_or_404(device_id, db)
+    health_summary = await device_health_summary.get_health_snapshot(db, str(device.id))
+    platform_label = await platform_label_service.load_platform_label(
+        db,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+    )
+    return await device_presenter.serialize_device_detail(
+        db,
+        device,
+        health_summary=device_health_summary.build_public_health_summary(health_summary),
+        platform_label=platform_label,
+    )
+
+
+@router.get("/{device_id}/capabilities")
+async def device_capabilities(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    device = await get_device_or_404(device_id, db)
+    return await capability_service.get_device_capabilities(db, device)
+
+
+@router.patch("/{device_id}", response_model=DeviceRead)
+async def update_device(device_id: uuid.UUID, data: DevicePatch, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    try:
+        device = await device_service.update_device(db, device_id, data)
+    except DeviceIdentityConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return await device_presenter.serialize_device(db, device)
+
+
+@router.delete("/{device_id}", status_code=204)
+async def delete_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+    deleted = await device_service.delete_device(db, device_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+
+@router.get("/{device_id}/sessions", response_model=list[SessionRead])
+async def device_sessions(
+    device_id: uuid.UUID,
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db),
+) -> list[Session]:
+    await get_device_or_404(device_id, db)
+    return await session_service.get_device_sessions(db, device_id, limit=limit)
+
+
+@router.get("/{device_id}/session-outcome-heatmap", response_model=list[SessionOutcomeHeatmapRow])
+async def device_session_outcome_heatmap(
+    device_id: uuid.UUID,
+    days: int = Query(90, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionOutcomeHeatmapRow]:
+    await get_device_or_404(device_id, db)
+    rows = await session_service.get_device_session_outcome_heatmap_rows(db, device_id, days=days)
+    return [SessionOutcomeHeatmapRow(timestamp=timestamp, status=status) for timestamp, status in rows]

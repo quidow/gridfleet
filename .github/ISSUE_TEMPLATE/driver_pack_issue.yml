@@ -1,0 +1,58 @@
+name: Driver-pack issue
+description: Report a driver-pack, manifest, adapter, discovery, readiness, or capability problem.
+title: "[Driver pack]: "
+labels: ["driver-pack", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Driver packs may execute code on host agents. Do not attach unreviewed proprietary adapter wheels, credentials, or private device data.
+  - type: input
+    id: pack
+    attributes:
+      label: Pack and platform
+      placeholder: "pack_id@release, platform_id"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Problem kind
+      options:
+        - Manifest validation
+        - Discovery
+        - Device normalization
+        - Readiness/setup fields
+        - Capability rendering
+        - Appium runtime install
+        - Adapter hook
+        - Sidecar/action
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+    validations:
+      required: true
+  - type: textarea
+    id: manifest
+    attributes:
+      label: Minimal sanitized manifest snippet
+      render: yaml
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized backend/agent/Appium logs
+      render: shell
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context

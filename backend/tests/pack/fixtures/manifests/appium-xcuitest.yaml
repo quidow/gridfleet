@@ -1,0 +1,231 @@
+schema_version: 1
+id: appium-xcuitest
+release: 2026.04.12
+display_name: Appium XCUITest
+maintainer: gridfleet-team
+license: Apache-2.0
+requires:
+  host_os: [macos]
+appium_server:
+  source: npm
+  package: appium
+  version: ">=2.5,<3"
+  recommended: "2.19.0"
+  known_bad: []
+appium_driver:
+  source: npm
+  package: appium-xcuitest-driver
+  version: ">=7,<10"
+  recommended: "9.3.1"
+  known_bad: ["9.0.0"]
+workarounds:
+  - id: tvos_devicectl_preference
+    applies_when:
+      platform_ids: [tvos]
+      device_types: [real_device]
+    env:
+      APPIUM_XCUITEST_PREFER_DEVICECTL: "1"
+platforms:
+  - id: ios
+    display_name: "iOS"
+    automation_name: XCUITest
+    appium_platform_name: iOS
+    device_types: [real_device, simulator]
+    connection_types: [usb, network, virtual]
+    grid_slots: [native]
+    capabilities:
+      stereotype:
+        "appium:platformName": "iOS"
+        "appium:automationName": "XCUITest"
+      session_required: ["appium:bundleId"]
+    identity:
+      scheme: apple_udid
+      scope: global
+    device_fields_schema:
+      - id: bundle_id
+        label: "Application bundle ID"
+        type: string
+        required_for_session: true
+        capability_name: "appium:bundleId"
+    display:
+      icon_kind: mobile
+    health_checks:
+      - id: devicectl_visible
+        label: devicectl Visible
+      - id: devicectl_paired
+        label: Device Paired
+      - id: devicectl_tunnel
+        label: CoreDevice Tunnel
+      - id: ios_booted
+        label: OS Booted
+      - id: developer_mode
+        label: Developer Mode
+      - id: ddi_services
+        label: Developer Services
+      - id: simulator_booted
+        label: Simulator Booted
+      - id: simulator_responsive
+        label: Simulator Responsive
+      - id: ping
+        label: IP Reachable
+    lifecycle_actions:
+      - id: state
+      - id: reconnect
+    connection_behavior:
+      default_device_type: real_device
+      default_connection_type: usb
+      requires_ip_address: false
+      requires_connection_target: true
+    device_type_overrides:
+      real_device:
+        device_fields_schema:
+          - id: bundle_id
+            label: "Application bundle ID"
+            type: string
+            required_for_session: true
+            capability_name: "appium:bundleId"
+          - id: use_preinstalled_wda
+            label: "Use pre-installed WDA"
+            type: bool
+            default: false
+            capability_name: "appium:usePreinstalledWDA"
+          - id: updated_wda_bundle_id
+            label: "Updated WDA bundle ID"
+            type: string
+            capability_name: "appium:updatedWDABundleId"
+          - id: updated_wda_bundle_id_suffix
+            label: "Updated WDA bundle ID suffix"
+            type: string
+            capability_name: "appium:updatedWDABundleIdSuffix"
+          - id: prebuilt_wda_path
+            label: "Prebuilt WDA path"
+            type: path
+            capability_name: "appium:prebuiltWDAPath"
+          - id: wda_launch_timeout
+            label: "WDA launch timeout (ms)"
+            type: int
+            capability_name: "appium:wdaLaunchTimeout"
+          - id: xcode_org_id
+            label: "Xcode team ID"
+            type: string
+            capability_name: "appium:xcodeOrgId"
+          - id: xcode_signing_id
+            label: "Xcode signing ID"
+            type: string
+            default: "Apple Development"
+            capability_name: "appium:xcodeSigningId"
+          - id: xcode_config_file
+            label: "Xcode config file"
+            type: path
+            capability_name: "appium:xcodeConfigFile"
+          - id: show_xcode_log
+            label: "Show Xcode log"
+            type: bool
+            default: false
+            capability_name: "appium:showXcodeLog"
+      simulator:
+        identity:
+          scheme: simulator_udid
+          scope: host
+        lifecycle_actions:
+          - id: state
+          - id: boot
+          - id: shutdown
+        connection_behavior:
+          default_device_type: simulator
+          default_connection_type: virtual
+          requires_ip_address: false
+          requires_connection_target: true
+    parallel_resources:
+      ports:
+        - capability_name: "appium:wdaLocalPort"
+          start: 8100
+        - capability_name: "appium:mjpegServerPort"
+          start: 9100
+      derived_data_path: true
+  - id: tvos
+    display_name: "tvOS"
+    automation_name: XCUITest
+    appium_platform_name: tvOS
+    device_types: [real_device, simulator]
+    connection_types: [usb, network, virtual]
+    grid_slots: [native]
+    capabilities:
+      stereotype:
+        "appium:platformName": "tvOS"
+        "appium:automationName": "XCUITest"
+      session_required: ["appium:bundleId"]
+    identity:
+      scheme: apple_udid
+      scope: global
+    display:
+      icon_kind: tv
+    health_checks:
+      - id: devicectl_visible
+        label: devicectl Visible
+      - id: devicectl_paired
+        label: Device Paired
+      - id: ios_booted
+        label: OS Booted
+      - id: developer_mode
+        label: Developer Mode
+      - id: simulator_booted
+        label: Simulator Booted
+      - id: simulator_responsive
+        label: Simulator Responsive
+      - id: ping
+        label: IP Reachable
+    lifecycle_actions:
+      - id: state
+      - id: reconnect
+    connection_behavior:
+      default_device_type: real_device
+      default_connection_type: usb
+      requires_ip_address: false
+      requires_connection_target: true
+    device_type_overrides:
+      real_device:
+        default_capabilities:
+          "appium:platformVersion": "{device.os_version}"
+          "appium:usePreinstalledWDA": true
+        device_fields_schema:
+          - id: wda_base_url
+            label: "WDA base URL"
+            type: network_endpoint
+            required_for_session: true
+            capability_name: "appium:wdaBaseUrl"
+          - id: use_preinstalled_wda
+            label: "Use pre-installed WDA"
+            type: bool
+            default: true
+            capability_name: "appium:usePreinstalledWDA"
+          - id: updated_wda_bundle_id
+            label: "Updated WDA bundle ID"
+            type: string
+            required_for_session: true
+            capability_name: "appium:updatedWDABundleId"
+        connection_behavior:
+          default_device_type: real_device
+          default_connection_type: usb
+          requires_ip_address: false
+          requires_connection_target: true
+      simulator:
+        identity:
+          scheme: simulator_udid
+          scope: host
+        lifecycle_actions:
+          - id: state
+          - id: boot
+          - id: shutdown
+        connection_behavior:
+          default_device_type: simulator
+          default_connection_type: virtual
+          requires_ip_address: false
+          requires_connection_target: true
+    parallel_resources:
+      ports:
+        - capability_name: "appium:wdaLocalPort"
+          start: 8100
+        - capability_name: "appium:mjpegServerPort"
+          start: 9100
+      derived_data_path: true

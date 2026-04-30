@@ -1,0 +1,72 @@
+{
+  "name": "gridfleet-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "React operator UI for GridFleet",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quidow/gridfleet.git",
+    "directory": "frontend"
+  },
+  "bugs": {
+    "url": "https://github.com/quidow/gridfleet/issues"
+  },
+  "homepage": "https://github.com/quidow/gridfleet#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run test:e2e:mocked && npm run test:e2e:live",
+    "test:e2e:mocked": "node scripts/run-playwright.mjs test --config playwright.config.ts",
+    "test:e2e:live": "node scripts/run-playwright.mjs test --config playwright.live.config.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/ibm-plex-sans": "^5.2.8",
+    "@monaco-editor/react": "^4.7.0",
+    "@tailwindcss/vite": "^4.2.4",
+    "@tanstack/react-query": "^5.100.6",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "axios": "^1.15.2",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.5",
+    "react-router-dom": "^7.14.2",
+    "recharts": "^3.8.1",
+    "sonner": "^2.0.7",
+    "tailwindcss": "^4.2.2"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.2",
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.59.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
+    "jsdom": "^29.1.0",
+    "knip": "^6.8.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.59.1",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "dompurify": "^3.4.1"
+  }
+}

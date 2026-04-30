@@ -1,0 +1,362 @@
+/**
+ * Design tokens for GridFleet frontend.
+ *
+ * Tailwind v4 CSS-first config. `@theme` exposes values as utilities
+ * (font-sans, font-display, font-mono, text-accent, bg-surface-*, etc.).
+ *
+ * Light is the default. Dark mode activates when `.dark` class is present
+ * on <html> or any ancestor — use the `dark:` variant on utilities.
+ *
+ * Aesthetic direction: precision-enterprise (see frontend/docs/design-direction.md).
+ *   - Single committed accent: teal. Brand / active / focus only — NEVER status.
+ *   - Motion is short and standard-eased. No bounce/spring in default flows.
+ *   - Numerics use tabular-nums + slashed-zero via `.metric-numeric`.
+ *
+ * Token inventory:
+ *   Surfaces: --color-surface-0/1/2, --color-border, --color-border-strong
+ *   Text:     --color-text-1 (primary), --color-text-2 (secondary), --color-text-3 (muted)
+ *   Accent:   --color-accent (brand/active/focus — NEVER for status)
+ *   Status:   --color-success-{soft,strong,foreground}, same shape for warning, danger, info, neutral
+ *   Sidebar:  --color-sidebar-{surface,text,text-muted,heading,active-bg,hover-bg,border}
+ *   Device:   --color-device-type-{real,emulator,simulator}-{bg,fg}
+ *   Platform: --color-platform-{0..7,generic}
+ *   Lifecycle:--color-lifecycle-{idle,deferred,backoff,excluded,suppressed,recoverable,manual}
+ *   Fonts:    --font-sans (body), --font-display (headings), --font-mono (numerics, code)
+ *   Motion:   --duration-{instant,fast,base,slow}, --ease-{standard,emphasized}
+ *   Sizing:   --max-height-modal (modal body cap)
+ *
+ * Component tokens (kept small — resist adding colors/typography here):
+ *   .page-gutter        — page shell padding with extra bottom breathing room
+ *   .card               — white card surface (bg + border)
+ *   .card-padding       — inner padding for card contents
+ *   .section-gap        — bottom margin between page-level sections
+ *   .heading-page       — H1/page heading scale
+ *   .heading-section    — H2/card section heading scale
+ *   .heading-subsection — H3/sub-section heading scale
+ *   .section-header-text — supporting label style for section chrome
+ *   .metric-numeric     — tabular-nums + slashed-zero for big numbers
+ *   .fade-in-stagger    — staggered cold-load entrance for direct children (≤5 children)
+ *   .hover-lift         — 1px translateY + soft shadow on hover (160ms)
+ *
+ * Motion respects `prefers-reduced-motion: reduce` — entrance animation
+ * collapses to opacity:1 and hover-lift drops the transform (shadow tick allowed).
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'IBM Plex Sans Variable', 'IBM Plex Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-accent: #0d9488;
+  --color-accent-hover: #0f766e;
+  --color-accent-soft: #ccfbf1;
+  --color-accent-ring: rgba(13, 148, 136, 0.32);
+  --color-accent-on: #ffffff;
+  --color-danger-on: #ffffff;
+  --color-warning-on: #ffffff;
+
+  --color-surface-0: #f9fafb;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eef2f6;
+  --color-surface-soft: #f3f4f6;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-text-1: #0f172a;
+  --color-text-2: #475569;
+  --color-text-3: #94a3b8;
+
+  --color-success-soft: #dcfce7;
+  --color-success-strong: #22c55e;
+  --color-success-foreground: #166534;
+
+  --color-warning-soft: #fef3c7;
+  --color-warning-strong: #f59e0b;
+  --color-warning-foreground: #92400e;
+
+  --color-danger-soft: #fee2e2;
+  --color-danger-strong: #ef4444;
+  --color-danger-foreground: #991b1b;
+
+  --color-info-soft: #dbeafe;
+  --color-info-strong: #3b82f6;
+  --color-info-foreground: #1e40af;
+
+  --color-neutral-soft: #f3f4f6;
+  --color-neutral-strong: #6b7280;
+  --color-neutral-foreground: #374151;
+
+  --color-sidebar-surface: #111827;
+  --color-sidebar-text: #d1d5db;
+  --color-sidebar-text-muted: #9ca3af;
+  --color-sidebar-heading: #ffffff;
+  --color-sidebar-active-bg: #1f2937;
+  --color-sidebar-hover-bg: #1f2937;
+  --color-sidebar-border: #1f2937;
+
+  --color-device-type-real-bg: #f3f4f6;
+  --color-device-type-real-fg: #374151;
+  --color-device-type-emulator-bg: #cffafe;
+  --color-device-type-emulator-fg: #155e75;
+  --color-device-type-simulator-bg: #ede9fe;
+  --color-device-type-simulator-fg: #6d28d9;
+
+  --color-platform-0: #2563eb;
+  --color-platform-1: #16a34a;
+  --color-platform-2: #9333ea;
+  --color-platform-3: #ea580c;
+  --color-platform-4: #0891b2;
+  --color-platform-5: #be123c;
+  --color-platform-6: #4f46e5;
+  --color-platform-7: #7c3aed;
+  --color-platform-generic: #6b7280;
+
+  --color-lifecycle-idle: #cbd5e1;
+  --color-lifecycle-deferred: #94a3b8;
+  --color-lifecycle-backoff: #f59e0b;
+  --color-lifecycle-excluded: #ef4444;
+  --color-lifecycle-suppressed: #a855f7;
+  --color-lifecycle-recoverable: #3b82f6;
+  --color-lifecycle-manual: #64748b;
+
+  --duration-instant: 80ms;
+  --duration-fast: 160ms;
+  --duration-base: 240ms;
+  --duration-slow: 360ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1.2);
+
+  --max-height-modal: 90vh;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --color-accent: #5eead4;
+    --color-accent-hover: #99f6e4;
+    --color-accent-soft: rgba(94, 234, 212, 0.16);
+    --color-accent-ring: rgba(94, 234, 212, 0.30);
+    --color-accent-on: #042f2e;
+    --color-danger-on: #450a0a;
+    --color-warning-on: #3f2e0c;
+
+    --color-surface-0: #16161a;
+    --color-surface-1: #1f1f24;
+    --color-surface-2: #2a2a30;
+    --color-surface-soft: #1b1b20;
+    --color-border: #3a3a42;
+    --color-border-strong: #4a4a50;
+    --color-text-1: #f4f4f5;
+    --color-text-2: #b0b0b7;
+    --color-text-3: #939399;
+
+    --color-success-soft: #24382d;
+    --color-success-strong: #34d399;
+    --color-success-foreground: #9ddbb1;
+
+    --color-warning-soft: #413423;
+    --color-warning-strong: #fbbf24;
+    --color-warning-foreground: #e1c088;
+
+    --color-danger-soft: #43292c;
+    --color-danger-strong: #f87171;
+    --color-danger-foreground: #efaaaa;
+
+    --color-info-soft: #32384a;
+    --color-info-strong: #60a5fa;
+    --color-info-foreground: #c0c8ff;
+
+    --color-neutral-soft: #37373d;
+    --color-neutral-strong: #a1a1aa;
+    --color-neutral-foreground: #d1d1d7;
+
+    --color-sidebar-surface: #0c0c0f;
+    --color-sidebar-text: #b0b0b7;
+    --color-sidebar-text-muted: #7a7a84;
+    --color-sidebar-heading: #f4f4f5;
+    --color-sidebar-active-bg: #1f1f24;
+    --color-sidebar-hover-bg: #18181c;
+    --color-sidebar-border: #3a3a42;
+
+    --color-device-type-real-bg: #37373d;
+    --color-device-type-real-fg: #d4d4d8;
+    --color-device-type-emulator-bg: #1e3a44;
+    --color-device-type-emulator-fg: #a5f3fc;
+    --color-device-type-simulator-bg: #373149;
+    --color-device-type-simulator-fg: #ccbdf6;
+
+    --color-platform-0: #aac0eb;
+    --color-platform-1: #87d59d;
+    --color-platform-2: #c0b4ed;
+    --color-platform-3: #ddb67a;
+    --color-platform-4: #79cad8;
+    --color-platform-5: #e4a1b2;
+    --color-platform-6: #aba8f2;
+    --color-platform-7: #c4b5fd;
+    --color-platform-generic: #a1a1aa;
+
+    --color-lifecycle-idle: #52525b;
+    --color-lifecycle-deferred: #6b7280;
+    --color-lifecycle-backoff: #cfa65c;
+    --color-lifecycle-excluded: #d97a7a;
+    --color-lifecycle-suppressed: #c084fc;
+    --color-lifecycle-recoverable: #8f98d6;
+    --color-lifecycle-manual: #94a3b8;
+  }
+
+  html,
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-surface-0);
+    color: var(--color-text-1);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
+
+  .tabular-nums,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Page gutter: applied by the Layout shell; pages should not add their own top-level padding. */
+  .page-gutter {
+    @apply px-6 pb-10 pt-6;
+  }
+
+  /* Card surface */
+  .card {
+    @apply rounded-lg border border-border bg-surface-1;
+  }
+
+  /* Card inner padding — use on the direct child of .card or as a standalone padding token. */
+  .card-padding {
+    @apply p-5;
+  }
+
+  /* Section gap — vertical spacing between major sections on a page. */
+  .section-gap {
+    @apply mb-8;
+  }
+
+  /* Heading scale: page, card section, and subsection. */
+  .heading-page {
+    @apply font-display text-2xl font-semibold text-text-1;
+  }
+
+  .heading-section {
+    @apply font-display text-base font-semibold text-text-1;
+  }
+
+  .heading-subsection {
+    @apply font-display text-sm font-semibold text-text-1;
+  }
+
+  /* Heading label — small uppercase micro-label; replaces scattered `text-[11px] font-semibold uppercase tracking-wide text-text-3`. */
+  .heading-label {
+    @apply font-display text-[11px] font-semibold uppercase tracking-wide text-text-3;
+  }
+
+  .devices-table-shell {
+    container-type: inline-size;
+  }
+
+  .devices-table-shell table {
+    table-layout: fixed;
+  }
+
+  @container (max-width: 1079px) {
+    .devices-table-optional-narrow {
+      display: none;
+    }
+  }
+
+  @container (max-width: 899px) {
+    .devices-table-optional-narrow,
+    .devices-table-optional-connection {
+      display: none;
+    }
+  }
+
+  @supports not (container-type: inline-size) {
+    @media (max-width: 1350px) {
+      .devices-table-optional-narrow {
+        display: none;
+      }
+    }
+
+    @media (max-width: 950px) {
+      .devices-table-optional-narrow,
+      .devices-table-optional-connection {
+        display: none;
+      }
+    }
+  }
+
+  /* Section-header text style — small, medium-weight, gray label above a card's content. */
+  .section-header-text {
+    @apply text-sm font-medium text-text-2;
+  }
+
+  /* Big-number treatment: tabular figures + slashed zero. */
+  .metric-numeric {
+    font-variant-numeric: tabular-nums slashed-zero;
+  }
+
+  /* Cold-load entrance: each direct child fades + lifts in, staggered 80ms. */
+  .fade-in-stagger > * {
+    opacity: 0;
+    transform: translateY(4px);
+    animation: fade-in-stagger var(--duration-base) var(--ease-standard) forwards;
+  }
+  .fade-in-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .fade-in-stagger > *:nth-child(2) { animation-delay: 80ms; }
+  .fade-in-stagger > *:nth-child(3) { animation-delay: 160ms; }
+  .fade-in-stagger > *:nth-child(4) { animation-delay: 240ms; }
+  .fade-in-stagger > *:nth-child(5) { animation-delay: 320ms; }
+  .fade-in-stagger > *:nth-child(n+6) { animation-delay: 400ms; }
+
+  @keyframes fade-in-stagger {
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Hover-lift: 1px rise + soft shadow tick, 160ms standard ease. */
+  .hover-lift {
+    transition:
+      transform var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px -6px rgba(15, 23, 42, 0.18);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fade-in-stagger > * {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+    .hover-lift {
+      transition: box-shadow var(--duration-fast) var(--ease-standard);
+    }
+    .hover-lift:hover {
+      transform: none;
+    }
+  }
+}

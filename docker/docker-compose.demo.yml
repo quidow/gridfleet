@@ -1,0 +1,12 @@
+# Override that re-points the backend container at gridfleet_demo.
+# Usage (via scripts/demo-mode.sh on|off; not typically invoked directly):
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d backend
+
+services:
+  backend:
+    environment:
+      GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@postgres:5432/gridfleet_demo
+      # Freeze the fleet: skip all leader-owned background loops so the seeded
+      # demo dashboard stays "healthy" instead of drifting to offline/stale as
+      # heartbeat/health/reaper loops run against the non-existent fleet.
+      GRIDFLEET_FREEZE_BACKGROUND_LOOPS: "1"

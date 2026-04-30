@@ -1,0 +1,149 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gridfleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-gridfleet}
+    command:
+      - postgres
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+    expose:
+      - "5432"
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    mem_limit: 1g
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  selenium-hub:
+    image: selenium/hub:4.41.0
+    restart: unless-stopped
+    ports:
+      - "${GRID_PUBLISH_PORT:-4442}:4442"
+      - "${GRID_SUBSCRIBE_PORT:-4443}:4443"
+      - "${GRID_HUB_PORT:-4444}:4444"
+    networks:
+      - internal
+      - public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    mem_limit: 512m
+    cpus: 0.75
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      GRIDFLEET_DATABASE_URL: ${GRIDFLEET_DATABASE_URL:?set GRIDFLEET_DATABASE_URL in docker/.env}
+      GRIDFLEET_DB_POOL_SIZE: ${GRIDFLEET_DB_POOL_SIZE:-10}
+      GRIDFLEET_DB_MAX_OVERFLOW: ${GRIDFLEET_DB_MAX_OVERFLOW:-20}
+      GRIDFLEET_REQUEST_TIMEOUT_SEC: ${GRIDFLEET_REQUEST_TIMEOUT_SEC:-30}
+      GRIDFLEET_ENV: ${GRIDFLEET_ENV:-production}
+      GRIDFLEET_AUTH_ENABLED: ${GRIDFLEET_AUTH_ENABLED:-true}
+      GRIDFLEET_AUTH_USERNAME: ${GRIDFLEET_AUTH_USERNAME:-}
+      GRIDFLEET_AUTH_PASSWORD: ${GRIDFLEET_AUTH_PASSWORD:-}
+      GRIDFLEET_AUTH_SESSION_SECRET: ${GRIDFLEET_AUTH_SESSION_SECRET:-}
+      GRIDFLEET_AUTH_SESSION_TTL_SEC: ${GRIDFLEET_AUTH_SESSION_TTL_SEC:-28800}
+      GRIDFLEET_AUTH_COOKIE_SECURE: ${GRIDFLEET_AUTH_COOKIE_SECURE:-true}
+      GRIDFLEET_MACHINE_AUTH_USERNAME: ${GRIDFLEET_MACHINE_AUTH_USERNAME:-}
+      GRIDFLEET_MACHINE_AUTH_PASSWORD: ${GRIDFLEET_MACHINE_AUTH_PASSWORD:-}
+      GRIDFLEET_GRID_HUB_URL: ${GRIDFLEET_GRID_HUB_URL:-http://selenium-hub:4444}
+      GRIDFLEET_HEARTBEAT_INTERVAL_SEC: ${GRIDFLEET_HEARTBEAT_INTERVAL_SEC:-15}
+      GRIDFLEET_MAX_MISSED_HEARTBEATS: ${GRIDFLEET_MAX_MISSED_HEARTBEATS:-3}
+      GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC: ${GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC:-300}
+      GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC: ${GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC:-600}
+      GRIDFLEET_APPIUM_PORT_RANGE_START: ${GRIDFLEET_APPIUM_PORT_RANGE_START:-4723}
+      GRIDFLEET_APPIUM_PORT_RANGE_END: ${GRIDFLEET_APPIUM_PORT_RANGE_END:-4823}
+      GRIDFLEET_MIN_AGENT_VERSION: ${GRIDFLEET_MIN_AGENT_VERSION:-0.1.0}
+      GRIDFLEET_HOST_AUTO_ACCEPT: ${GRIDFLEET_HOST_AUTO_ACCEPT:-false}
+      GRIDFLEET_RUN_REAPER_INTERVAL_SEC: ${GRIDFLEET_RUN_REAPER_INTERVAL_SEC:-15}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      selenium-hub:
+        condition: service_healthy
+    volumes:
+      - driver-pack-storage-prod:/var/lib/gridfleet/driver-packs
+    networks:
+      - internal
+      - public
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5).status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 45s
+    mem_limit: 1g
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - public
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  pgdata-prod:
+  driver-pack-storage-prod:
+
+networks:
+  internal:
+    internal: true
+  public:

@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible problem in GridFleet.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include credentials, real device identifiers, private hostnames, private IP topology, database dumps, or sensitive logs. For vulnerabilities, use SECURITY.md instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Backend
+        - Agent
+        - Frontend
+        - Docker/deployment
+        - Driver packs/adapters
+        - Testkit/e2e examples
+        - Documentation
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest steps that reproduce the issue.
+      placeholder: |
+        1. Start stack with ...
+        2. Register host ...
+        3. Click/run ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: "commit SHA, branch, or tag"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Local Docker compose
+        - Production Docker compose
+        - Native agent
+        - CI/testkit
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "OS, Python, Node, Docker, Appium, Selenium Grid versions if relevant"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove credentials, hostnames, device identifiers, IP topology, and private data.
+      render: shell

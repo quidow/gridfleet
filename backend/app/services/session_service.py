@@ -1,0 +1,410 @@
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
+
+from app.models.appium_node import AppiumNode
+from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.session import Session, SessionStatus
+from app.services import run_service
+from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.event_bus import event_bus
+from app.services.session_filters import exclude_non_test_sessions, exclude_reserved_sessions
+
+
+def _session_requested_metadata_payload(session: Session) -> dict[str, Any]:
+    return {
+        "requested_pack_id": session.requested_pack_id,
+        "requested_platform_id": session.requested_platform_id,
+        "requested_device_type": (
+            str(session.requested_device_type) if session.requested_device_type is not None else None
+        ),
+        "requested_connection_type": (
+            str(session.requested_connection_type) if session.requested_connection_type is not None else None
+        ),
+        "requested_capabilities": session.requested_capabilities,
+    }
+
+
+def build_session_started_event_payload(
+    session: Session,
+    *,
+    device: Device | None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "session_id": session.session_id,
+        "device_id": str(device.id) if device is not None else None,
+        "device_name": device.name if device is not None else None,
+        "test_name": session.test_name,
+        "run_id": run_id,
+        **_session_requested_metadata_payload(session),
+    }
+    return payload
+
+
+def build_session_ended_event_payload(
+    session: Session,
+    *,
+    device: Device | None,
+) -> dict[str, Any]:
+    payload = {
+        "session_id": session.session_id,
+        "device_id": str(device.id) if device is not None else None,
+        "device_name": device.name if device is not None else None,
+        "status": str(session.status),
+        **_session_requested_metadata_payload(session),
+    }
+    if session.error_type is not None:
+        payload["error_type"] = session.error_type
+    if session.error_message is not None:
+        payload["error_message"] = session.error_message
+    return payload
+
+
+async def publish_session_started_event(
+    session: Session,
+    *,
+    device: Device | None,
+    run_id: str | None = None,
+) -> None:
+    await event_bus.publish(
+        "session.started", build_session_started_event_payload(session, device=device, run_id=run_id)
+    )
+
+
+async def publish_session_ended_event(
+    session: Session,
+    *,
+    device: Device | None,
+) -> None:
+    await event_bus.publish("session.ended", build_session_ended_event_payload(session, device=device))
+
+
+def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
+    return or_(
+        Session.started_at < cursor.timestamp,
+        and_(Session.started_at == cursor.timestamp, Session.id < cursor.item_id),
+    )
+
+
+def _newer_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
+    return or_(
+        Session.started_at > cursor.timestamp,
+        and_(Session.started_at == cursor.timestamp, Session.id > cursor.item_id),
+    )
+
+
+async def _has_session_rows(
+    db: AsyncSession,
+    stmt: Select[tuple[Session]],
+    predicate: ColumnElement[bool],
+) -> bool:
+    result = await db.execute(stmt.where(predicate).order_by(None).limit(1))
+    return result.scalar_one_or_none() is not None
+
+
+async def list_sessions_cursor(
+    db: AsyncSession,
+    device_id: uuid.UUID | None = None,
+    status: SessionStatus | None = None,
+    pack_id: str | None = None,
+    platform_id: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    run_id: uuid.UUID | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    direction: str = "older",
+) -> CursorPage[Session]:
+    stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
+    stmt = exclude_reserved_sessions(stmt)
+
+    if device_id is not None:
+        stmt = stmt.where(Session.device_id == device_id)
+    if status is not None:
+        stmt = stmt.where(Session.status == status)
+    if pack_id is not None:
+        stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+    if platform_id is not None:
+        stmt = stmt.where(func.coalesce(Device.platform_id, Session.requested_platform_id) == platform_id)
+    if started_after is not None:
+        stmt = stmt.where(Session.started_at >= started_after)
+    if started_before is not None:
+        stmt = stmt.where(Session.started_at <= started_before)
+    if run_id is not None:
+        stmt = stmt.where(Session.run_id == run_id)
+
+    page_stmt = stmt
+    cursor_token = decode_cursor(cursor) if cursor else None
+    if cursor_token is not None:
+        predicate = _newer_than_cursor(cursor_token) if direction == "newer" else _older_than_cursor(cursor_token)
+        page_stmt = page_stmt.where(predicate)
+
+    if direction == "newer":
+        page_stmt = page_stmt.order_by(asc(Session.started_at), asc(Session.id))
+    else:
+        page_stmt = page_stmt.order_by(desc(Session.started_at), desc(Session.id))
+
+    result = await db.execute(page_stmt.limit(limit))
+    items = list(result.scalars().all())
+    if direction == "newer":
+        items.reverse()
+
+    if not items:
+        return CursorPage(items=[], limit=limit, next_cursor=None, prev_cursor=None)
+
+    first_item = items[0]
+    last_item = items[-1]
+    has_newer = await _has_session_rows(db, stmt, _newer_than_cursor(CursorToken(first_item.started_at, first_item.id)))
+    has_older = await _has_session_rows(db, stmt, _older_than_cursor(CursorToken(last_item.started_at, last_item.id)))
+    return CursorPage(
+        items=items,
+        limit=limit,
+        next_cursor=encode_cursor(last_item.started_at, last_item.id) if has_older else None,
+        prev_cursor=encode_cursor(first_item.started_at, first_item.id) if has_newer else None,
+    )
+
+
+async def list_sessions(
+    db: AsyncSession,
+    device_id: uuid.UUID | None = None,
+    status: SessionStatus | None = None,
+    pack_id: str | None = None,
+    platform_id: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    run_id: uuid.UUID | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "started_at",
+    sort_dir: str = "desc",
+) -> tuple[list[Session], int]:
+    stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
+    stmt = exclude_reserved_sessions(stmt)
+    platform_id_expr = func.coalesce(Device.platform_id, Session.requested_platform_id)
+
+    if device_id is not None:
+        stmt = stmt.where(Session.device_id == device_id)
+    if status is not None:
+        stmt = stmt.where(Session.status == status)
+    if pack_id is not None:
+        stmt = stmt.where(func.coalesce(Device.pack_id, Session.requested_pack_id) == pack_id)
+    if platform_id is not None:
+        stmt = stmt.where(platform_id_expr == platform_id)
+    if started_after is not None:
+        stmt = stmt.where(Session.started_at >= started_after)
+    if started_before is not None:
+        stmt = stmt.where(Session.started_at <= started_before)
+    if run_id is not None:
+        stmt = stmt.where(Session.run_id == run_id)
+
+    count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
+    total = int((await db.execute(count_stmt)).scalar_one())
+
+    duration_expr = func.coalesce(Session.ended_at, func.now()) - Session.started_at
+    order_map = {
+        "session_id": Session.session_id,
+        "device": func.lower(func.coalesce(Device.name, "")),
+        "test_name": func.lower(func.coalesce(Session.test_name, "")),
+        "platform": platform_id_expr,
+        "started_at": Session.started_at,
+        "duration": duration_expr,
+        "status": Session.status,
+    }
+    order_expr = order_map.get(sort_by, Session.started_at)
+    order_fn = asc if sort_dir == "asc" else desc
+
+    stmt = (
+        stmt.order_by(
+            order_fn(order_expr),
+            order_fn(Session.started_at),
+            order_fn(Session.id),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total
+
+
+async def get_session(db: AsyncSession, session_id: str) -> Session | None:
+    stmt = select(Session).where(Session.session_id == session_id).options(selectinload(Session.device))
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _resolve_device_for_session(
+    db: AsyncSession,
+    *,
+    device_id: uuid.UUID | None,
+    connection_target: str | None,
+) -> Device | None:
+    if device_id is not None:
+        stmt = (
+            select(Device)
+            .where(Device.id == device_id)
+            .options(selectinload(Device.host), selectinload(Device.appium_node))
+        )
+        result = await db.execute(stmt)
+        device = result.scalar_one_or_none()
+        if device is not None:
+            return device
+
+    if not connection_target:
+        return None
+
+    stmt = (
+        select(Device)
+        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
+        .where(
+            or_(
+                Device.connection_target == connection_target,
+                AppiumNode.active_connection_target == connection_target,
+            )
+        )
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def register_session(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    test_name: str | None,
+    device_id: uuid.UUID | None = None,
+    connection_target: str | None = None,
+    status: SessionStatus = SessionStatus.running,
+    requested_pack_id: str | None = None,
+    requested_platform_id: str | None = None,
+    requested_device_type: DeviceType | None = None,
+    requested_connection_type: ConnectionType | None = None,
+    requested_capabilities: dict[str, Any] | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> Session:
+    existing = await get_session(db, session_id)
+    if existing is not None:
+        return existing
+
+    device = await _resolve_device_for_session(
+        db,
+        device_id=device_id,
+        connection_target=connection_target,
+    )
+
+    reservation_run_id: uuid.UUID | None = None
+    if device is not None:
+        reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
+        if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry):
+            reservation_run_id = reservation_run.id
+
+    session = Session(
+        session_id=session_id,
+        device_id=device.id if device is not None else None,
+        test_name=test_name,
+        status=status,
+        ended_at=datetime.now(UTC) if status != SessionStatus.running else None,
+        requested_pack_id=requested_pack_id,
+        requested_platform_id=requested_platform_id,
+        requested_device_type=requested_device_type,
+        requested_connection_type=requested_connection_type,
+        requested_capabilities=requested_capabilities,
+        error_type=error_type,
+        error_message=error_message,
+        run_id=reservation_run_id,
+    )
+    db.add(session)
+    activated_run = None
+    if device is not None and status == SessionStatus.running:
+        await set_device_availability_status(device, DeviceAvailabilityStatus.busy, publish_event=False)
+        activated_run = await run_service.signal_active_for_device_session(db, device.id)
+    await db.commit()
+    await db.refresh(session)
+    await publish_session_started_event(
+        session,
+        device=device,
+        run_id=str(activated_run.id) if activated_run is not None else None,
+    )
+    if status != SessionStatus.running:
+        await publish_session_ended_event(session, device=device)
+    return session
+
+
+async def get_device_sessions(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    limit: int = 50,
+) -> list[Session]:
+    stmt = select(Session).where(Session.device_id == device_id).order_by(Session.started_at.desc()).limit(limit)
+    stmt = exclude_non_test_sessions(stmt)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_device_session_outcome_heatmap_rows(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    days: int,
+) -> list[tuple[datetime, SessionStatus]]:
+    window_start = datetime.now(UTC) - timedelta(days=days)
+    stmt = (
+        select(Session.started_at, Session.status)
+        .where(
+            Session.device_id == device_id,
+            Session.started_at >= window_start,
+            Session.status.in_((SessionStatus.passed, SessionStatus.failed, SessionStatus.error)),
+        )
+        .order_by(asc(Session.started_at))
+    )
+    stmt = exclude_non_test_sessions(stmt)
+    result = await db.execute(stmt)
+    return [(row.started_at, row.status) for row in result.all()]
+
+
+async def update_session_status(
+    db: AsyncSession,
+    session_id: str,
+    status: SessionStatus,
+) -> Session | None:
+    session = await get_session(db, session_id)
+    if session is None:
+        return None
+    device = session.device
+    if device is None:
+        device = await db.get(Device, session.device_id)
+
+    should_publish_ended = (
+        session.status == SessionStatus.running and session.ended_at is None and status != SessionStatus.running
+    )
+    session.status = status
+    if status != SessionStatus.running and session.ended_at is None:
+        session.ended_at = datetime.now(UTC)
+    if (
+        status != SessionStatus.running
+        and device is not None
+        and device.availability_status == DeviceAvailabilityStatus.busy
+    ):
+        running_stmt = select(Session).where(
+            Session.device_id == session.device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+            Session.session_id != session_id,
+        )
+        running_result = await db.execute(running_stmt)
+        still_running = running_result.scalars().first() is not None
+        if not still_running:
+            await restore_post_busy_availability_status(db, device)
+    await db.commit()
+    await db.refresh(session)
+    if should_publish_ended:
+        await publish_session_ended_event(session, device=device)
+    return session

@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.device import Device
+
+
+class NodeState(enum.StrEnum):
+    running = "running"
+    stopped = "stopped"
+    error = "error"
+
+
+class AppiumNode(Base):
+    __tablename__ = "appium_nodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    grid_url: Mapped[str] = mapped_column(String, nullable=False)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    container_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
+    state: Mapped[NodeState] = mapped_column(Enum(NodeState), default=NodeState.stopped, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    device: Mapped[Device] = relationship("Device", back_populates="appium_node")
