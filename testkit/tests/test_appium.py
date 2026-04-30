@@ -63,9 +63,7 @@ AMBIGUOUS_CATALOG = {
         {
             "id": "local/custom",
             "state": "enabled",
-            "platforms": [
-                {"id": "android_mobile", "appium_platform_name": "Android", "automation_name": "Custom"}
-            ],
+            "platforms": [{"id": "android_mobile", "appium_platform_name": "Android", "automation_name": "Custom"}],
         },
     ]
 }
