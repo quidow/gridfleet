@@ -28,7 +28,7 @@ appium = [
 dev = [
     "mypy>=1.20.2",
     "pytest>=8.0",
-    "ruff>=0.4",
+    "ruff>=0.15.12",
 ]
 
 [tool.uv.sources]
