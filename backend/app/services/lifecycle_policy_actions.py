@@ -85,7 +85,7 @@ async def exclude_run_if_needed(
         )
         if "appium_node" not in device.__dict__:
             await db.refresh(device, ["appium_node"])
-        await maintenance_service.enter_maintenance(db, device, drain=False, commit=False)
+        await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
     return run, entry
 
 

@@ -17,7 +17,11 @@ async def enter_maintenance(
     *,
     drain: bool = False,
     commit: bool = True,
+    allow_reserved: bool = False,
 ) -> Device:
+    if not allow_reserved and device.availability_status == DeviceAvailabilityStatus.reserved:
+        raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
+
     old_availability_status = device.availability_status.value
     device.availability_status = DeviceAvailabilityStatus.maintenance
 

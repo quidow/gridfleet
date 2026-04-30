@@ -612,7 +612,7 @@ async def report_preparation_failure(
     set_action(current_state, "ci_preparation_failed")
     write_state(device, current_state)
 
-    await maintenance_service.enter_maintenance(db, device, drain=False, commit=False)
+    await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
     await device_health_summary.update_device_checks(db, device, healthy=False, summary=reason)
     if device.appium_node is not None:
         await device_health_summary.update_node_state(
