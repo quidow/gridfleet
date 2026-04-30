@@ -124,7 +124,7 @@ def _build_adapter_loader(
             return
         runtime_dir = Path(env.appium_home)
         tarball_dir = runtime_dir / "tarballs"
-        async with httpx.AsyncClient(base_url=base, timeout=60.0) as client:
+        async with httpx.AsyncClient(base_url=base, timeout=60.0, auth=_manager_auth()) as client:
             tarball_path = await download_and_verify(
                 client=client,
                 pack_id=pack.id,
