@@ -29,7 +29,7 @@ appium = [
 dev = [
     "pytest>=9.0.3",
     "mypy>=1.10",
-    "ruff>=0.4",
+    "ruff>=0.15.12",
 ]
 
 [tool.pytest.ini_options]
