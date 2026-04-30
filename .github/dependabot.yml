@@ -10,7 +10,6 @@ updates:
       - "/backend"
       - "/agent"
       - "/testkit"
-      - "/e2e-examples"
     schedule:
       interval: daily
     groups:
