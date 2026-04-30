@@ -404,6 +404,16 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
+        key="reservations.claim_ttl_seconds",
+        category="reservations",
+        setting_type="int",
+        default=120,
+        description="How long a worker device claim stays valid without release",
+        env_var="GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS",
+        min_value=10,
+        max_value=3600,
+    ),
+    SettingDefinition(
         key="reservations.reaper_interval_sec",
         category="reservations",
         setting_type="int",

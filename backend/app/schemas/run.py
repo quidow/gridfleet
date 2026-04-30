@@ -61,6 +61,8 @@ class ReservedDeviceInfo(BaseModel):
     excluded: bool = False
     exclusion_reason: str | None = None
     excluded_at: str | None = None
+    claimed_by: str | None = None
+    claimed_at: str | None = None
 
 
 class SessionCounts(BaseModel):
@@ -124,6 +126,32 @@ class RunCreateResponse(BaseModel):
     ttl_minutes: int
     heartbeat_timeout_sec: int
     created_at: datetime
+
+
+class ClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str | None = Field(default=None, min_length=1)
+
+
+class ClaimResponse(BaseModel):
+    device_id: str
+    identity_value: str
+    connection_target: str | None = None
+    pack_id: str
+    platform_id: str
+    platform_label: str | None = None
+    os_version: str
+    host_ip: str | None = None
+    claimed_by: str
+    claimed_at: str
+
+
+class ReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str
+    worker_id: str = Field(min_length=1)
 
 
 class HeartbeatResponse(BaseModel):

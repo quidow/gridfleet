@@ -43,6 +43,8 @@ class DeviceReservation(Base):
     excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -62,4 +64,6 @@ class DeviceReservation(Base):
             "excluded": self.excluded,
             "exclusion_reason": self.exclusion_reason,
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,
+            "claimed_by": self.claimed_by,
+            "claimed_at": self.claimed_at.isoformat() if self.claimed_at is not None else None,
         }
