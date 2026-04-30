@@ -42,3 +42,29 @@ export function duration(start: string, end: string | null): string {
   const hrs = Math.floor(mins / 60);
   return `${hrs}h ${mins % 60}m`;
 }
+
+export function managedDeviceConfigKeys(fields: Array<{ id: string }>): Set<string> {
+  return new Set(fields.map((field) => field.id));
+}
+
+export function omitManagedDeviceConfig(
+  config: Record<string, unknown> | undefined,
+  managedKeys: Set<string>,
+): Record<string, unknown> | undefined {
+  if (config === undefined) return undefined;
+  return Object.fromEntries(Object.entries(config).filter(([key]) => !managedKeys.has(key)));
+}
+
+export function restoreManagedDeviceConfig(
+  editableConfig: Record<string, unknown>,
+  sourceConfig: Record<string, unknown> | undefined,
+  managedKeys: Set<string>,
+): Record<string, unknown> {
+  const restored = { ...editableConfig };
+  for (const key of managedKeys) {
+    if (sourceConfig && key in sourceConfig) {
+      restored[key] = sourceConfig[key];
+    }
+  }
+  return restored;
+}

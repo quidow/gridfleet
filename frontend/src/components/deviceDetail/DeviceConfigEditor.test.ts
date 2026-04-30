@@ -3,7 +3,7 @@ import {
   managedDeviceConfigKeys,
   omitManagedDeviceConfig,
   restoreManagedDeviceConfig,
-} from './DeviceConfigEditor';
+} from './utils';
 
 describe('DeviceConfigEditor config projection', () => {
   it('omits manifest-managed fields from editable JSON and restores them on save', () => {
