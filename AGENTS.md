@@ -1,0 +1,143 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Repository Overview
+
+GridFleet is a control plane for Appium + Selenium Grid device labs. It is a multi-component monorepo, **not** a single application. Each component has its own toolchain and dependency manifest:
+
+- `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, leader-owned background loops. Python 3.12, managed by `uv`.
+- `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes and Selenium Grid relay nodes. Python 3.12, managed by `uv`.
+- `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
+- `testkit/` — supported Python pytest/Appium helper package (`gridfleet_testkit`). Python 3.12, managed by `uv`.
+- `e2e-examples/` — standalone consumer project simulating an external CI client.
+- `driver-packs/` — curated manifests + adapter source. Tarballs are NOT checked in; build with `scripts/build_driver_tarballs.py`.
+- `docker/` — `docker-compose.yml` (dev), `docker-compose.prod.yml` (prod), `docker-compose.demo.yml` (frozen demo).
+
+When changing code in one component, run that component's checks. Cross-component changes (e.g. backend/agent contracts, backend/frontend API shapes) need both sides validated.
+
+## Common Commands
+
+Activate component virtualenvs with `uv sync --extra dev` (or the variants below) before first use.
+
+### Backend (`cd backend`)
+```bash
+uv run ruff format --check app/ tests/
+uv run ruff check app/ tests/
+uv run mypy app/                          # strict mypy + pydantic plugin
+uv run pytest -q -n auto                  # parallel via pytest-xdist
+uv run pytest -q tests/test_devices_api.py::test_name   # single test
+uv run alembic upgrade head               # apply migrations
+uv run alembic revision --autogenerate -m "msg"
+uv run uvicorn app.main:app --reload      # dev server on :8000
+```
+Tests marked `db` need a real Postgres (use the docker compose `postgres` service). Coverage threshold is 90% (`pyproject.toml`). Line length 120.
+
+### Agent (`cd agent`)
+```bash
+uv run ruff format --check agent_app/ tests/
+uv run ruff check agent_app/ tests/
+uv run mypy agent_app/
+uv run pytest -q
+uv run uvicorn agent_app.main:app --reload --port 5100
+```
+The agent has no DB. `test_no_driver_imports.py` enforces that the agent core stays driver-agnostic.
+
+### Frontend (`cd frontend`)
+```bash
+npm ci
+npm run dev                               # Vite on :5173
+npm run lint                              # ESLint
+npx tsc --noEmit                          # type-check (build also runs `tsc -b`)
+npm run build
+npm run test                              # Vitest unit
+npm run test:e2e:mocked                   # Playwright with mocked backend
+npm run test:e2e:live                     # Playwright against live backend+frontend
+```
+Live e2e requires backend, Postgres, and the frontend dev server running.
+
+### Testkit / examples
+```bash
+cd testkit && uv run --extra dev --extra appium pytest -q
+cd e2e-examples && uv run --extra dev --extra appium pytest -q
+```
+
+### Stack
+```bash
+cd docker && docker compose up --build -d            # full dev stack
+./scripts/seed_demo.sh full_demo                     # seed demo DB
+./scripts/demo-mode.sh on                            # point backend at demo DB + freeze loops
+```
+
+### Driver-pack tarballs
+```bash
+python3 scripts/build_driver_tarballs.py             # build all curated packs into dist/driver-packs
+python3 scripts/build_driver_pack_tarball.py --pack-dir <dir> --out <path> --id <id> --release <ver>
+```
+Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent hosts — treat as untrusted RCE surface.
+
+## Architecture: What Spans Multiple Files
+
+### Backend control plane and the leader-loop pattern
+The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~14 background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain) but only the elected leader actually runs maintenance work.
+
+Leader election uses **PostgreSQL advisory locks** via `app/services/control_plane_leader.py`. When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips all of them — the demo compose sets this so seeded state does not drift.
+
+### Settings: env vars vs DB registry
+There are two distinct config surfaces. Do not conflate them:
+- **Process env vars** (`backend/app/config.py`, `agent/agent_app/config.py`) — read once at startup. `GRIDFLEET_DATABASE_URL`, `GRIDFLEET_AUTH_*`, `AGENT_*`, etc.
+- **Settings registry** (`app/services/settings_registry.py`, `app/services/settings_service.py`) — DB-backed runtime settings editable via the Settings UI. A handful of `GRIDFLEET_*` env vars only seed the *initial* registry default for fresh installs (e.g. `GRIDFLEET_HEARTBEAT_INTERVAL_SEC`, `GRIDFLEET_GRID_HUB_URL`). After the first boot the DB row wins.
+
+See `docs/reference/environment.md` and `docs/reference/settings.md` before adding a new knob.
+
+### Driver-pack model (the most important architectural rule)
+**Core orchestration must stay driver-agnostic.** Platform-specific behavior — discovery probes, readiness fields, lifecycle actions, capability defaults, health labels — lives in driver-pack manifests under `driver-packs/curated/` and adapter wheels under `driver-packs/adapters/`.
+
+Backend pack pipeline: `app/services/pack_*.py` (ingest, storage, lifecycle, release, desired-state, dispatch, drain). Agent pack pipeline: `agent/agent_app/pack/` (manifest, runtime, adapter_loader, dispatch, state loop, sidecar_supervisor, tarball_fetch). The agent pulls a desired pack list from the backend, downloads the verified tarball (sha256-pinned), installs it into an isolated `APPIUM_HOME` runtime under `AGENT_RUNTIME_ROOT`, and loads the adapter into a separate venv.
+
+If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, stop — push it into the manifest or adapter instead. The agent test `test_no_driver_imports.py` actively guards this for the agent side.
+
+### Host agent lifecycle
+1. Agent registers with manager (`AGENT_MANAGER_URL`) on a periodic refresh.
+2. Backend signals "start node" → agent allocates an Appium port (`AGENT_APPIUM_PORT_RANGE_*`) and a Grid relay port (`AGENT_GRID_NODE_PORT_START`).
+3. Agent spawns `appium` from the runtime venv and a Selenium Grid relay (Java + `AGENT_SELENIUM_SERVER_JAR`) pointed at `AGENT_GRID_HUB_URL`.
+4. Health checks watch ADB / driver viability and gracefully terminate the Appium process when the device disappears.
+5. Backend `node_health_loop` and `device_connectivity_loop` reconcile what the agent reports against DB state.
+
+Sessions go **directly to the Grid hub** (`:4444`); the manager does not proxy WebDriver traffic. The manager owns reservations, run lifecycle, and capability matching; the hub owns request routing.
+
+### Frontend conventions
+- `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror `app/schemas/`.
+- `src/hooks/` wraps `react-query` with explicit polling intervals (5–15s) — operator screens are real-time dashboards, not request/response.
+- `src/types/` mirrors backend Pydantic schemas; keep them in sync when changing API shapes.
+- Reuse `components/` primitives (`DataTable`, `Badge`, `FilterBar`, `FetchError`) instead of inventing new ones.
+- Tailwind-only spacing — no hardcoded pixels. See `docs/guides/frontend-development.md`.
+
+### Auth gate
+Off by default for local dev. When `GRIDFLEET_AUTH_ENABLED=true`:
+- Backend fails fast at startup unless operator creds, machine creds, and session secret are all set.
+- All `/api/*`, `/agent/*`, `/metrics`, `/docs`, `/redoc` are protected. `/health/live`, `/health/ready`, `/api/health` stay open.
+- Browser sessions need `X-CSRF-Token` for non-GET; machine clients use Basic auth and skip CSRF.
+- Production compose (`docker-compose.prod.yml`) sets auth on and `GRIDFLEET_HOST_AUTO_ACCEPT=false` (operators approve hosts manually).
+
+## Conventions
+
+- **Migrations:** every schema change needs an Alembic revision in `backend/alembic/versions/`. Run `uv run alembic upgrade head` after pulling changes that touch models.
+- **Strict typing:** `mypy --strict` on both backend and agent. Pydantic plugin is enabled.
+- **Ruff lint set:** `E,F,W,I,N,UP,B,A,SIM,TCH,RUF,ANN`. SQLAlchemy `Mapped[]` columns under `app/models/` are exempt from `TCH003` because runtime types are required.
+- **Tests:** pytest-asyncio in `auto` mode. Backend uses `pytest-xdist` (`-n auto`); the `db` marker means "needs the real test database". Frontend unit = Vitest, frontend e2e = Playwright with mocked + live configs.
+- **Pre-commit** (`.pre-commit-config.yaml`) runs ruff format + lint + mypy on the affected component. Install hooks once with `pre-commit install`.
+- **No real lab data in commits:** no real device IDs, hostnames, credentials, screenshots from private labs, or DB dumps (`CONTRIBUTING.md`).
+
+## Documentation Map
+
+When you need product/operator context that the code does not encode, look here before grepping:
+
+- `docs/reference/architecture.md` — manager, agent, frontend split (canonical)
+- `docs/reference/environment.md` — every supported env var
+- `docs/reference/settings.md` — DB settings registry surface
+- `docs/reference/api.md` — `/api` route catalog
+- `docs/reference/capabilities.md` — how Appium caps are derived from device state
+- `docs/reference/events-and-webhooks.md` — SSE + webhook event names
+- `docs/guides/security.md` — threat model and network boundaries
+- `docs/runbooks/` — incident response with exact commands
