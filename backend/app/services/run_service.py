@@ -848,14 +848,50 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     )
 
 
+async def _mark_running_sessions_released(db: AsyncSession, run: TestRun, released_at: datetime) -> None:
+    stmt = select(Session).where(
+        Session.run_id == run.id,
+        Session.status == SessionStatus.running,
+        Session.ended_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+    if not sessions:
+        return
+
+    error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
+    for session in sessions:
+        session.status = SessionStatus.error
+        session.ended_at = released_at
+        session.error_type = "run_released"
+        session.error_message = error_message
+
+
+async def _device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
+    stmt = (
+        select(Session.id)
+        .where(
+            Session.device_id == device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
 async def _release_devices(db: AsyncSession, run: TestRun) -> None:
     """Release all active reservations for this run and restore device statuses."""
 
     active_reservations = [reservation for reservation in run.device_reservations if reservation.released_at is None]
+    released_at = datetime.now(UTC)
+    await _mark_running_sessions_released(db, run, released_at)
+
     if not active_reservations:
+        await db.commit()
         return
 
-    released_at = datetime.now(UTC)
     for reservation in active_reservations:
         reservation.released_at = released_at
         reservation.claimed_by = None
@@ -863,7 +899,12 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
         stmt = select(Device).where(Device.id == reservation.device_id)
         result = await db.execute(stmt)
         device = result.scalar_one_or_none()
-        if device and device.availability_status == DeviceAvailabilityStatus.reserved:
+        if device and device.availability_status in {DeviceAvailabilityStatus.reserved, DeviceAvailabilityStatus.busy}:
+            old_availability_status = device.availability_status
+            if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
+                db, device.id
+            ):
+                continue
             if await is_ready_for_use_async(db, device):
                 device.availability_status = DeviceAvailabilityStatus.available
             else:
@@ -873,7 +914,7 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
                 {
                     "device_id": str(device.id),
                     "device_name": device.name,
-                    "old_availability_status": "reserved",
+                    "old_availability_status": old_availability_status.value,
                     "new_availability_status": device.availability_status.value,
                     "reason": f"Run '{run.name}' ended ({run.state.value})",
                 },

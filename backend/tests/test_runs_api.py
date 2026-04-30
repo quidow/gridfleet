@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
@@ -481,6 +481,44 @@ async def test_force_release(client: AsyncClient, db_session: AsyncSession, defa
     reservations = reservation_result.scalars().all()
     assert len(reservations) == 1
     assert reservations[0].released_at is not None
+
+
+async def test_force_release_restores_busy_run_devices(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-fr-busy-1", "Busy Force Release")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+    device_id = uuid.UUID(device["id"])
+
+    db_session.add(
+        Session(
+            session_id="force-release-running-session",
+            device_id=device_id,
+            run_id=run_id,
+            status=SessionStatus.running,
+        )
+    )
+    device_row = await db_session.get(Device, device_id)
+    assert device_row is not None
+    device_row.availability_status = DeviceAvailabilityStatus.busy
+    await db_session.commit()
+
+    resp = await client.post(f"/api/runs/{run['id']}/force-release")
+    assert resp.status_code == 200
+
+    await db_session.refresh(device_row)
+    assert device_row.availability_status == DeviceAvailabilityStatus.available
+
+    session_result = await db_session.execute(
+        select(Session).where(Session.session_id == "force-release-running-session")
+    )
+    session = session_result.scalar_one()
+    assert session.status == SessionStatus.error
+    assert session.ended_at is not None
+    assert session.error_message == "Force released by admin"
 
 
 async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
