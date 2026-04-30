@@ -67,9 +67,15 @@ async def replace_device_config(
     new_config: dict[str, Any],
     changed_by: str | None = None,
 ) -> dict[str, Any]:
-    from app.services.device_config_masking import mask_device_config
+    from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
 
     previous = device.device_config or {}
+    new_config = await preserve_masked_device_config_values(
+        db,
+        device,
+        existing_config=previous,
+        next_config=new_config,
+    )
     if device_readiness.payload_requires_reverification(device, {"device_config": new_config}):
         device.verified_at = None
     device.device_config = new_config
@@ -101,10 +107,16 @@ async def merge_device_config(
     partial_config: dict[str, Any],
     changed_by: str | None = None,
 ) -> dict[str, Any]:
-    from app.services.device_config_masking import mask_device_config
+    from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
 
     previous = device.device_config or {}
     merged = _deep_merge(previous, partial_config)
+    merged = await preserve_masked_device_config_values(
+        db,
+        device,
+        existing_config=previous,
+        next_config=merged,
+    )
     if device_readiness.payload_requires_reverification(device, {"device_config": merged}):
         device.verified_at = None
     device.device_config = merged

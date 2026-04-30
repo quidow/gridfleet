@@ -16,6 +16,7 @@ from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, 
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
 from app.models.job import Job
+from app.services.config_service import MASK_VALUE
 from app.services.device_verification import clear_verification_jobs
 from app.services.device_verification_execution import _health_failure_detail
 from app.services.job_queue import reset_stale_running_jobs, run_pending_jobs_once
@@ -844,6 +845,65 @@ async def test_existing_device_verification_can_replace_device_config(
     config_resp = await client.get(f"/api/devices/{device.id}/config", params={"reveal": True})
     assert config_resp.status_code == 200
     assert config_resp.json() == {"new": True}
+
+
+async def test_existing_device_verification_preserves_masked_sensitive_config(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value=f"roku-mask-{uuid.uuid4()}",
+        connection_target="192.168.1.55",
+        name="Masked Roku",
+        os_version="12.5",
+        availability_status=DeviceAvailabilityStatus.offline,
+        device_config={"roku_password": "super-secret", "label": "den"},
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.55",
+    )
+    db_session.add(device)
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    start_temporary = AsyncMock(return_value=TemporaryNodeHandle(port=4723, pid=12345))
+    with (
+        patch("app.services.node_manager.RemoteNodeManager.start_temporary_node", new=start_temporary),
+        patch("app.services.node_manager.RemoteNodeManager.stop_temporary_node", new=AsyncMock()),
+        patch(
+            "app.services.device_verification.httpx.AsyncClient",
+            return_value=_mock_http_client(
+                payload={"healthy": True, "checks": [{"check_id": "ecp_reachable", "ok": True, "message": ""}]}
+            ),
+        ),
+        patch(
+            "app.services.device_verification.session_viability.probe_session_via_grid",
+            new=AsyncMock(return_value=(True, None)),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/devices/{device.id}/verification-jobs",
+            json={
+                "host_id": default_host_id,
+                "device_config": {"roku_password": MASK_VALUE, "label": "living room"},
+                "replace_device_config": True,
+            },
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "completed"
+    config_resp = await client.get(f"/api/devices/{device.id}/config", params={"reveal": True})
+    assert config_resp.status_code == 200
+    assert config_resp.json() == {"roku_password": "super-secret", "label": "living room"}
 
 
 async def test_existing_device_verification_stops_running_node_before_updated_probe(

@@ -11,6 +11,8 @@ import SetupVerificationModal from '../../pages/devices/SetupVerificationModal';
 import Button from '../ui/Button';
 import type { ConfigAuditEntry, DeviceDetail } from '../../types';
 import { formatDateTime } from '../../utils/dateFormatting';
+import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
+import { findPlatformDescriptor } from '../../hooks/usePlatformDescriptor';
 
 interface Props {
   device: DeviceDetail;
@@ -22,11 +24,43 @@ function formatDate(dateStr: string): string {
   return formatDateTime(dateStr);
 }
 
+export function managedDeviceConfigKeys(fields: Array<{ id: string }>): Set<string> {
+  return new Set(fields.map((field) => field.id));
+}
+
+export function omitManagedDeviceConfig(
+  config: Record<string, unknown> | undefined,
+  managedKeys: Set<string>,
+): Record<string, unknown> | undefined {
+  if (config === undefined) return undefined;
+  return Object.fromEntries(Object.entries(config).filter(([key]) => !managedKeys.has(key)));
+}
+
+export function restoreManagedDeviceConfig(
+  editableConfig: Record<string, unknown>,
+  sourceConfig: Record<string, unknown> | undefined,
+  managedKeys: Set<string>,
+): Record<string, unknown> {
+  const restored = { ...editableConfig };
+  for (const key of managedKeys) {
+    if (sourceConfig && key in sourceConfig) {
+      restored[key] = sourceConfig[key];
+    }
+  }
+  return restored;
+}
+
 export default function DeviceConfigEditor({ device }: Props) {
   const { id: deviceId } = device;
   const [reveal, setReveal] = useState(false);
   const { data: config, refetch } = useDeviceConfig(deviceId, reveal);
   const { data: history } = useConfigHistory(deviceId);
+  const { data: catalog = [] } = useDriverPackCatalog();
+  const descriptor = findPlatformDescriptor(catalog, device.pack_id, device.platform_id);
+  const managedKeys = useMemo(
+    () => managedDeviceConfigKeys(descriptor?.deviceFieldsSchema ?? []),
+    [descriptor],
+  );
 
   const [editorValue, setEditorValue] = useState('');
   const [isValid, setIsValid] = useState(true);
@@ -37,7 +71,11 @@ export default function DeviceConfigEditor({ device }: Props) {
   const [pendingVerificationConfig, setPendingVerificationConfig] = useState<Record<string, unknown> | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  const syncedEditorValue = useMemo(() => (config !== undefined ? JSON.stringify(config, null, 2) : ''), [config]);
+  const editableConfig = useMemo(() => omitManagedDeviceConfig(config, managedKeys), [config, managedKeys]);
+  const syncedEditorValue = useMemo(
+    () => (editableConfig !== undefined ? JSON.stringify(editableConfig, null, 2) : ''),
+    [editableConfig],
+  );
   const activeEditorValue = isDirty ? editorValue : syncedEditorValue;
   const activeIsValid = isDirty ? isValid : true;
   const hasNoOverrides = config !== undefined && Object.keys(config).length === 0 && !isDirty;
@@ -75,8 +113,8 @@ export default function DeviceConfigEditor({ device }: Props) {
 
   async function handleSave() {
     try {
-      const parsed = JSON.parse(activeEditorValue);
-      setPendingVerificationConfig(parsed);
+      const parsed = JSON.parse(activeEditorValue) as Record<string, unknown>;
+      setPendingVerificationConfig(restoreManagedDeviceConfig(parsed, config, managedKeys));
       setShowConfirm(false);
     } catch {
       // JSON parse error — shouldn't happen since we validate

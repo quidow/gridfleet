@@ -31,9 +31,17 @@ def _mask_keys(config: dict[str, Any], sensitive_keys: set[str]) -> dict[str, An
 
 
 async def sensitive_config_keys_for_device(session: AsyncSession, device: Device) -> set[str]:
+    return await sensitive_config_keys_for_pack_platform(
+        session,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+    )
+
+
+async def sensitive_config_keys_for_pack_platform(session: AsyncSession, *, pack_id: str, platform_id: str) -> set[str]:
     pack = await session.scalar(
         select(DriverPack)
-        .where(DriverPack.id == device.pack_id)
+        .where(DriverPack.id == pack_id)
         .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
     )
     if pack is None:
@@ -41,7 +49,7 @@ async def sensitive_config_keys_for_device(session: AsyncSession, device: Device
 
     release = selected_release(pack.releases, pack.current_release)
     platform = (
-        next((row for row in release.platforms if row.manifest_platform_id == device.platform_id), None)
+        next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
         if release is not None
         else None
     )
@@ -57,6 +65,45 @@ async def sensitive_config_keys_for_device(session: AsyncSession, device: Device
             if isinstance(capability_name, str):
                 keys.add(capability_name)
     return keys
+
+
+def preserve_masked_sensitive_values(
+    *,
+    existing_config: dict[str, Any] | None,
+    next_config: dict[str, Any],
+    sensitive_keys: set[str],
+) -> dict[str, Any]:
+    existing = existing_config or {}
+    preserved: dict[str, Any] = {}
+    for key, value in next_config.items():
+        existing_value = existing.get(key)
+        if isinstance(value, dict):
+            preserved[key] = preserve_masked_sensitive_values(
+                existing_config=existing_value if isinstance(existing_value, dict) else {},
+                next_config=value,
+                sensitive_keys=sensitive_keys,
+            )
+            continue
+        if value == MASK_VALUE and key in existing and (key in sensitive_keys or SENSITIVE_PATTERNS.search(key)):
+            preserved[key] = copy.deepcopy(existing_value)
+            continue
+        preserved[key] = copy.deepcopy(value)
+    return preserved
+
+
+async def preserve_masked_device_config_values(
+    session: AsyncSession,
+    device: Device,
+    *,
+    existing_config: dict[str, Any] | None,
+    next_config: dict[str, Any],
+) -> dict[str, Any]:
+    sensitive_keys = await sensitive_config_keys_for_device(session, device)
+    return preserve_masked_sensitive_values(
+        existing_config=existing_config,
+        next_config=next_config,
+        sensitive_keys=sensitive_keys,
+    )
 
 
 async def load_sensitive_config_key_map(
