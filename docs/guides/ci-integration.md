@@ -17,6 +17,22 @@ This repository now includes a standalone client project under `e2e-examples/`.
 
 Use that project when you want a complete reference implementation instead of assembling the lower-level snippets below by hand.
 
+## Authentication
+
+When the manager runs with `GRIDFLEET_AUTH_ENABLED=true` (the recommended production setting), every `/api/*` call requires HTTP Basic auth using the manager's machine credentials.
+
+- The `gridfleet_testkit` Python client picks up `GRIDFLEET_TESTKIT_USERNAME` and `GRIDFLEET_TESTKIT_PASSWORD` automatically and sends them on every request.
+- Raw `curl` examples need the same credentials passed via `-u`. Set the two env vars once and use them in every API call:
+
+```bash
+export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
+export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
+curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -X POST "$GRIDFLEET_URL/api/runs" -H "Content-Type: application/json" -d '...'
+```
+
+When auth is disabled (`GRIDFLEET_AUTH_ENABLED=false`), leave the two env vars unset and omit `-u`. The snippets below assume `GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` are exported when auth is on; drop the `-u` flag if it is off.
+
 ## API Overview
 
 | Endpoint | Method | Purpose |
@@ -99,8 +115,8 @@ When a run reserves multiple devices, pytest-xdist workers can atomically claim 
 Claim one device for a worker:
 
 ```bash
-curl -sf -X POST \
-  "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
+curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
   -H "Content-Type: application/json" \
   -d "{\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
 ```
@@ -113,8 +129,8 @@ The response has the same routing fields as a reserved device plus:
 Release the claim when that worker is done with the device:
 
 ```bash
-curl -sf -X POST \
-  "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
+curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
   -H "Content-Type: application/json" \
   -d "{\"device_id\":\"$DEVICE_ID\",\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
 ```
@@ -149,8 +165,8 @@ If CI discovers that one reserved device failed setup, it can report that exact 
 Use:
 
 ```bash
-curl -sf -X POST \
-  "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
+curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "ADB authorization failed on device during CI setup",
@@ -181,6 +197,8 @@ on: [push]
 env:
   GRIDFLEET_URL: http://192.168.1.100:8000
   GRID_URL: http://192.168.1.100:4444
+  GRIDFLEET_TESTKIT_USERNAME: ${{ secrets.GRIDFLEET_TESTKIT_USERNAME }}
+  GRIDFLEET_TESTKIT_PASSWORD: ${{ secrets.GRIDFLEET_TESTKIT_PASSWORD }}
 
 jobs:
   test:
@@ -191,7 +209,8 @@ jobs:
       - name: Reserve devices
         id: reserve
         run: |
-          RESPONSE=$(curl -sf -X POST $GRIDFLEET_URL/api/runs \
+          RESPONSE=$(curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+            -X POST $GRIDFLEET_URL/api/runs \
             -H "Content-Type: application/json" \
             -d '{
               "name": "firetv-regression-${{ github.run_id }}",
@@ -209,7 +228,8 @@ jobs:
       - name: Start heartbeat
         run: |
           while true; do
-            curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/heartbeat > /dev/null 2>&1
+            curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+              -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/heartbeat > /dev/null 2>&1
             sleep 30
           done &
           echo "HEARTBEAT_PID=$!" >> $GITHUB_ENV
@@ -222,8 +242,8 @@ jobs:
             if ! ./scripts/install_apk.sh \
               --device "$TARGET" \
               --apk "s3://builds/myapp-${{ github.sha }}.apk"; then
-              curl -sf -X POST \
-                "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
+              curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+                -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
                 -H "Content-Type: application/json" \
                 -d '{
                   "message": "APK install failed during CI preparation",
@@ -233,7 +253,7 @@ jobs:
           done
 
       - name: Signal ready
-        run: curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
+        run: curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
 
       - name: Run tests
         run: |
@@ -247,8 +267,8 @@ jobs:
         if: always()
         run: |
           kill $HEARTBEAT_PID 2>/dev/null || true
-          curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/complete || \
-          curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/cancel || true
+          curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/complete || \
+          curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/cancel || true
 ```
 
 ### Multi-Platform Matrix Workflow
@@ -260,6 +280,8 @@ on: [push]
 env:
   GRIDFLEET_URL: http://192.168.1.100:8000
   GRID_URL: http://192.168.1.100:4444
+  GRIDFLEET_TESTKIT_USERNAME: ${{ secrets.GRIDFLEET_TESTKIT_USERNAME }}
+  GRIDFLEET_TESTKIT_PASSWORD: ${{ secrets.GRIDFLEET_TESTKIT_PASSWORD }}
 
 jobs:
   test:
@@ -306,7 +328,8 @@ jobs:
           fi
           REQ="$REQ, \"count\": ${{ matrix.count }}}]"
 
-          RESPONSE=$(curl -sf -X POST $GRIDFLEET_URL/api/runs \
+          RESPONSE=$(curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+            -X POST $GRIDFLEET_URL/api/runs \
             -H "Content-Type: application/json" \
             -d "{
               \"name\": \"${{ matrix.platform }}-${{ github.run_id }}\",
@@ -320,7 +343,8 @@ jobs:
       - name: Start heartbeat
         run: |
           while true; do
-            curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/heartbeat > /dev/null 2>&1
+            curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+              -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/heartbeat > /dev/null 2>&1
             sleep 30
           done &
           echo "HEARTBEAT_PID=$!" >> $GITHUB_ENV
@@ -331,8 +355,8 @@ jobs:
             DEVICE_ID=$(echo "$DEVICE" | jq -r '.device_id')
             TARGET=$(echo "$DEVICE" | jq -r '.connection_target')
             if ! ${{ matrix.prep_script }} --device "$TARGET" ${{ matrix.prep_args }}; then
-              curl -sf -X POST \
-                "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
+              curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+                -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/devices/$DEVICE_ID/preparation-failed" \
                 -H "Content-Type: application/json" \
                 -d "{
                   \"message\": \"${{ matrix.platform }} preparation failed on $TARGET\",
@@ -342,7 +366,7 @@ jobs:
           done
 
       - name: Signal ready
-        run: curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
+        run: curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
 
       - name: Run ${{ matrix.platform }} tests
         run: |
@@ -356,8 +380,8 @@ jobs:
         if: always()
         run: |
           kill $HEARTBEAT_PID 2>/dev/null || true
-          curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/complete || \
-          curl -sf -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/cancel || true
+          curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/complete || \
+          curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/cancel || true
 ```
 
 ## Python Client Usage

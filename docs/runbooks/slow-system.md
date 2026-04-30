@@ -2,6 +2,15 @@
 
 Use this runbook when the UI feels sluggish, sessions queue for longer than expected, or operators report that the manager is "up" but not keeping up.
 
+When `GRIDFLEET_AUTH_ENABLED=true`, every `/api/*` and `/metrics` call below requires HTTP Basic auth with the manager's machine credentials. Export the same machine credentials the testkit uses and pass them with `-u`:
+
+```bash
+export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
+export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
+```
+
+`/health/live`, `/health/ready`, `/api/health`, and the Selenium Grid `/status` endpoint stay open and do not need `-u`.
+
 ## 1. Confirm the backend is actually ready
 
 ```bash
@@ -14,7 +23,7 @@ If `/health/ready` is unhealthy, stop here and focus on the failing `checks` ent
 ## 2. Check metrics for backlog or loop failures
 
 ```bash
-curl -s http://localhost:8000/metrics | \
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | \
   egrep '^(pending_jobs|active_sessions|background_loop_errors_total|background_loop_runs_total|agent_calls_total|webhook_deliveries_total)'
 ```
 
@@ -60,9 +69,9 @@ If most connections are stuck `active` for a long time, inspect the backend logs
 ## 5. Check whether the issue is queue pressure or device scarcity
 
 ```bash
-curl -s http://localhost:8000/api/runs | python -m json.tool
-curl -s 'http://localhost:8000/api/devices?status=available' | python -m json.tool
-curl -s 'http://localhost:8000/api/devices?status=offline' | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/runs | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://localhost:8000/api/devices?status=available' | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://localhost:8000/api/devices?status=offline' | python -m json.tool
 ```
 
 Interpretation:

@@ -2,10 +2,19 @@
 
 Use this runbook when a host stays `pending`, flips `offline`, or stops returning discovery/health results.
 
+When `GRIDFLEET_AUTH_ENABLED=true`, every `/api/*` call below requires HTTP Basic auth with the manager's machine credentials. Export them once and pass with `-u`:
+
+```bash
+export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
+export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
+```
+
+`/api/health` stays open and does not need `-u`.
+
 ## 1. Identify the host state in the manager
 
 ```bash
-curl -s http://localhost:8000/api/hosts | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts | python -m json.tool
 curl -s http://localhost:8000/api/health | python -m json.tool
 ```
 
@@ -71,13 +80,13 @@ Check that:
 If the host is still `pending` but expected:
 
 ```bash
-curl -X POST http://localhost:8000/api/hosts/HOST_ID/approve
+curl -X POST -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts/HOST_ID/approve
 ```
 
 After connectivity is restored, refresh discovery:
 
 ```bash
-curl -X POST http://localhost:8000/api/hosts/HOST_ID/discover | python -m json.tool
+curl -X POST -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts/HOST_ID/discover | python -m json.tool
 ```
 
 ## 7. When to escalate
