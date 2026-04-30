@@ -4,6 +4,7 @@ import signal
 from typing import Any
 
 import httpx
+import pytest
 
 from gridfleet_testkit.client import (
     GridFleetClient,
@@ -218,6 +219,76 @@ def test_run_state_methods_hit_expected_endpoints(monkeypatch):
         ("POST", "http://manager/api/runs/run-1/complete", 10),
         ("POST", "http://manager/api/runs/run-1/cancel", 10),
     ]
+
+
+def test_claim_device_calls_api(monkeypatch):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-01T00:00:00Z"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    result = client.claim_device("run-123", worker_id="gw0")
+
+    assert result["device_id"] == "dev-1"
+    assert result["claimed_by"] == "gw0"
+    assert recorded == {
+        "url": "http://manager/api/runs/run-123/claim",
+        "json": {"worker_id": "gw0"},
+        "timeout": 10,
+    }
+
+
+def test_release_device_calls_api(monkeypatch):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"status": "released"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.release_device("run-123", device_id="dev-1", worker_id="gw0")
+
+    assert recorded == {
+        "url": "http://manager/api/runs/run-123/release",
+        "json": {"device_id": "dev-1", "worker_id": "gw0"},
+        "timeout": 10,
+    }
+
+
+def test_release_device_raises_for_conflict(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "Device dev-1 is claimed by another worker"}, status_code=409)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(httpx.HTTPStatusError):
+        client.release_device("run-123", device_id="dev-1", worker_id="gw0")
 
 
 def test_report_preparation_failure_posts_expected_payload(monkeypatch):
