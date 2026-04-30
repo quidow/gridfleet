@@ -1,10 +1,13 @@
 import asyncio
+import uuid
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.device import DeviceAvailabilityStatus
 from app.models.host import Host
+from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.services.device_locking import lock_device, lock_devices
 from tests.helpers import create_device
 
@@ -81,3 +84,26 @@ async def test_lock_device_blocks_concurrent_writer(
     release.set()
     await asyncio.wait_for(asyncio.gather(first, second), timeout=5.0)
     assert log == ["first-locked", "first-committed", "second-locked"]
+
+
+async def test_get_device_for_update_or_404_returns_locked_device(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="api-locked")
+    await db_session.commit()
+
+    loaded = await get_device_for_update_or_404(device.id, db_session)
+
+    assert loaded.id == device.id
+
+
+async def test_get_device_for_update_or_404_raises_404_for_missing(
+    db_session: AsyncSession,
+) -> None:
+    missing_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc:
+        await get_device_for_update_or_404(missing_id, db_session)
+
+    assert exc.value.status_code == 404
