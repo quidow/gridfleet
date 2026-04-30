@@ -24,6 +24,8 @@ Use that project when you want a complete reference implementation instead of as
 | `/api/runs` | POST | Create a reservation |
 | `/api/runs` | GET | List runs (filterable by state) |
 | `/api/runs/{id}` | GET | Run detail with reserved devices |
+| `/api/runs/{id}/claim` | POST | Atomically claim one reserved device for a worker |
+| `/api/runs/{id}/release` | POST | Release one worker claim back to the run |
 | `/api/runs/{id}/ready` | POST | Signal preparation complete |
 | `/api/runs/{id}/active` | POST | Signal tests are running |
 | `/api/runs/{id}/devices/{device_id}/preparation-failed` | POST | Exclude one reserved device after CI preparation fails |
@@ -89,6 +91,41 @@ Roku is not installed by default; import the curated Roku driver or upload a Rok
   "created_at": "2026-03-27T10:00:00Z"
 }
 ```
+
+## Worker Claim/Release For pytest-xdist
+
+When a run reserves multiple devices, pytest-xdist workers can atomically claim devices instead of sharing the `devices` array through client-side locking.
+
+Claim one device for a worker:
+
+```bash
+curl -sf -X POST \
+  "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
+  -H "Content-Type: application/json" \
+  -d "{\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
+```
+
+The response has the same routing fields as a reserved device plus:
+
+- `claimed_by`: the worker id, or an anonymous generated id when omitted
+- `claimed_at`: when the claim lease started
+
+Release the claim when that worker is done with the device:
+
+```bash
+curl -sf -X POST \
+  "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
+  -H "Content-Type: application/json" \
+  -d "{\"device_id\":\"$DEVICE_ID\",\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
+```
+
+Practical notes:
+
+- a successful claim always returns one currently unclaimed, non-excluded device from the run
+- concurrent workers are safe; claims are selected with database row locking
+- release requires the same `worker_id` that owns the claim
+- stale claims become reclaimable after `reservations.claim_ttl_seconds` seconds; default `120`
+- the run still needs the normal heartbeat and final `complete` or `cancel` call
 
 ## Safety Nets
 

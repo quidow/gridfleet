@@ -16,6 +16,51 @@ The manager uses it to:
 
 The manager does not run your test suite itself. It protects and tracks the reserved fleet slice while CI or operators do the preparation and execution work.
 
+## Claiming Devices Inside A Run
+
+Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Those workers can claim reserved devices one at a time instead of coordinating device assignment in client code.
+
+Use:
+
+```bash
+curl -sf -X POST \
+  "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
+  -H "Content-Type: application/json" \
+  -d '{"worker_id":"gw0"}'
+```
+
+The response is one reserved device plus claim metadata:
+
+```json
+{
+  "device_id": "device-uuid",
+  "identity_value": "R58M...",
+  "connection_target": "R58M...",
+  "pack_id": "appium-uiautomator2",
+  "platform_id": "android_mobile",
+  "platform_label": "Android",
+  "os_version": "14",
+  "host_ip": "10.0.0.20",
+  "claimed_by": "gw0",
+  "claimed_at": "2026-04-30T12:00:00+00:00"
+}
+```
+
+Claiming is atomic at the database layer. Concurrent workers either receive different devices or a `409` when no unclaimed, non-excluded reserved devices remain. A claim is a lease on an existing reservation; it does not release the device from the run.
+
+When a worker finishes with its device but the run should remain alive, release only that claim:
+
+```bash
+curl -sf -X POST \
+  "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"device-uuid","worker_id":"gw0"}'
+```
+
+Release is owner-checked. The `worker_id` must match the active claim owner, which prevents one worker from accidentally releasing another worker's device. Completing, cancelling, expiring, or force-releasing the run clears all claim state while releasing the underlying reservations.
+
+Stale claims are reclaimed lazily by the next claim request after `reservations.claim_ttl_seconds` elapses. The default is `120` seconds and can be overridden with `GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS`.
+
 ## Where Operators See Runs
 
 `Test Runs` is the primary surface for investigating execution flows. Start there when a CI job failed or behaved unexpectedly. The `Sessions` page remains available as an advanced explorer for cross-run debugging and for sessions that predate or fall outside a run (use `Sessions → Sessions (advanced)` in the sidebar).
