@@ -1,8 +1,8 @@
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
+from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -86,6 +86,28 @@ def _reserved_entry_for_device(
     if not matching:
         return None
     return matching[-1]
+
+
+def _generated_worker_id() -> str:
+    return f"anonymous-{uuid.uuid4().hex[:8]}"
+
+
+def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
+    return ReservedDeviceInfo(
+        device_id=str(entry.device_id),
+        identity_value=entry.identity_value,
+        connection_target=entry.connection_target,
+        pack_id=entry.pack_id,
+        platform_id=entry.platform_id,
+        platform_label=entry.platform_label,
+        os_version=entry.os_version,
+        host_ip=entry.host_ip,
+        excluded=entry.excluded,
+        exclusion_reason=entry.exclusion_reason,
+        excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
+        claimed_by=entry.claimed_by,
+        claimed_at=entry.claimed_at.isoformat() if entry.claimed_at is not None else None,
+    )
 
 
 async def _find_matching_devices(
@@ -632,6 +654,99 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
+async def claim_device(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    worker_id: str | None = None,
+) -> ReservedDeviceInfo:
+    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
+    run = run_result.scalar_one_or_none()
+    if run is None:
+        await db.rollback()
+        raise ValueError("Run not found")
+    if run.state in TERMINAL_STATES:
+        state_value = run.state.value
+        await db.rollback()
+        raise ValueError(f"Cannot claim device from run in terminal state '{state_value}'")
+
+    now = datetime.now(UTC)
+    ttl_seconds = int(settings_service.get("reservations.claim_ttl_seconds"))
+    stale_before = now - timedelta(seconds=ttl_seconds)
+
+    await db.execute(
+        update(DeviceReservation)
+        .where(DeviceReservation.run_id == run_id)
+        .where(DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.claimed_by.is_not(None))
+        .where(
+            or_(
+                DeviceReservation.claimed_at.is_(None),
+                DeviceReservation.claimed_at <= stale_before,
+            )
+        )
+        .values(claimed_by=None, claimed_at=None)
+    )
+
+    candidate_result = await db.execute(
+        select(DeviceReservation)
+        .where(DeviceReservation.run_id == run_id)
+        .where(DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.excluded == false())
+        .where(DeviceReservation.claimed_by.is_(None))
+        .order_by(DeviceReservation.created_at, DeviceReservation.id)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    candidate = candidate_result.scalar_one_or_none()
+    if candidate is None:
+        await db.rollback()
+        raise ValueError("No unclaimed devices available in this run")
+
+    candidate.claimed_by = worker_id or _generated_worker_id()
+    candidate.claimed_at = now
+    info = _reservation_to_claim_response(candidate)
+    await db.commit()
+    return info
+
+
+async def release_claimed_device(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    device_id: uuid.UUID,
+    worker_id: str,
+) -> None:
+    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
+    run = run_result.scalar_one_or_none()
+    if run is None:
+        await db.rollback()
+        raise ValueError("Run not found")
+
+    result = await db.execute(
+        select(DeviceReservation)
+        .where(DeviceReservation.run_id == run_id)
+        .where(DeviceReservation.device_id == device_id)
+        .where(DeviceReservation.released_at.is_(None))
+        .with_for_update()
+        .limit(1)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        await db.rollback()
+        raise ValueError(f"Device {device_id} is not reserved by this run")
+    if entry.claimed_by is None:
+        await db.rollback()
+        raise ValueError(f"Device {device_id} is not claimed")
+    if entry.claimed_by != worker_id:
+        await db.rollback()
+        raise ValueError(f"Device {device_id} is claimed by another worker")
+
+    entry.claimed_by = None
+    entry.claimed_at = None
+    await db.commit()
+
+
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await get_run(db, run_id)
     if run is None:
@@ -743,6 +858,8 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
     released_at = datetime.now(UTC)
     for reservation in active_reservations:
         reservation.released_at = released_at
+        reservation.claimed_by = None
+        reservation.claimed_at = None
         stmt = select(Device).where(Device.id == reservation.device_id)
         result = await db.execute(stmt)
         device = result.scalar_one_or_none()

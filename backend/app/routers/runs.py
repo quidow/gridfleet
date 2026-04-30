@@ -2,14 +2,17 @@ import uuid
 from datetime import UTC, date, datetime, time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.models.test_run import RunState
 from app.schemas.run import (
+    ClaimRequest,
+    ClaimResponse,
     HeartbeatResponse,
+    ReleaseRequest,
     ReservedDeviceInfo,
     RunCreate,
     RunCreateResponse,
@@ -208,3 +211,60 @@ async def force_release(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=404, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
+
+
+@router.post("/{run_id}/claim", response_model=ClaimResponse)
+async def claim_device(
+    run_id: uuid.UUID,
+    data: ClaimRequest | None = Body(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> ClaimResponse:
+    payload = data or ClaimRequest()
+    try:
+        info = await run_service.claim_device(db, run_id, worker_id=payload.worker_id)
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from e
+        raise HTTPException(status_code=409, detail=msg) from e
+
+    assert info.claimed_by is not None
+    assert info.claimed_at is not None
+    return ClaimResponse(
+        device_id=info.device_id,
+        identity_value=info.identity_value,
+        connection_target=info.connection_target,
+        pack_id=info.pack_id,
+        platform_id=info.platform_id,
+        platform_label=info.platform_label,
+        os_version=info.os_version,
+        host_ip=info.host_ip,
+        claimed_by=info.claimed_by,
+        claimed_at=info.claimed_at,
+    )
+
+
+@router.post("/{run_id}/release", status_code=200)
+async def release_device(
+    run_id: uuid.UUID,
+    data: ReleaseRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        device_id = uuid.UUID(data.device_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail="Invalid device_id") from e
+
+    try:
+        await run_service.release_claimed_device(
+            db,
+            run_id,
+            device_id=device_id,
+            worker_id=data.worker_id,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from e
+        raise HTTPException(status_code=409, detail=msg) from e
+    return {"status": "released"}

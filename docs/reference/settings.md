@@ -11,7 +11,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `notifications` | Notifications | 3 |
 | `devices` | Device Defaults | 2 |
 | `agent` | Agent | 4 |
-| `reservations` | Reservations | 4 |
+| `reservations` | Reservations | 5 |
 | `retention` | Data Retention | 4 |
 
 ## Registry
@@ -48,6 +48,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |
 | `reservations.max_ttl_minutes` | `reservations` | `int` | `180` | none | `1..1440` | Hard cap for reservation TTL |
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |
+| `reservations.claim_ttl_seconds` | `reservations` | `int` | `120` | `GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS` | `10..3600` | Claim lease duration before a stale worker claim can be reclaimed |
 | `reservations.reaper_interval_sec` | `reservations` | `int` | `15` | `GRIDFLEET_RUN_REAPER_INTERVAL_SEC` | `5..300` | Interval for the stale-run reaper loop |
 | `retention.sessions_days` | `retention` | `int` | `90` | none | `1..3650` | Delete completed sessions older than N days |
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |
