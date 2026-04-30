@@ -70,6 +70,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
             app.dependency_overrides.pop(get_db, None)
 
     statuses = await asyncio.gather(maintenance_request(), run_create_request())
+    assert all(s < 500 for s in statuses), f"Server error in concurrent calls: {statuses}"
 
     async with db_session_maker() as verify:
         reservation = (
@@ -89,7 +90,8 @@ async def test_run_create_and_maintenance_cannot_overlap(
             f"HTTP statuses were {statuses}."
         )
     else:
-        assert device_row.availability_status in {
-            DeviceAvailabilityStatus.maintenance,
-            DeviceAvailabilityStatus.available,
-        }, f"No reservation but device row is {device_row.availability_status}. statuses={statuses}"
+        if any(s in (200, 201) for s in statuses):
+            assert device_row.availability_status == DeviceAvailabilityStatus.maintenance, (
+                f"No reservation but device row is {device_row.availability_status}; "
+                f"expected maintenance because at least one request succeeded. statuses={statuses}"
+            )
