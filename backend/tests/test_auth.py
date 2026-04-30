@@ -139,21 +139,37 @@ async def test_health_endpoints_stay_open_but_metrics_are_protected(
     assert authed_metrics.status_code == 200
 
 
-async def test_execution_plane_paths_stay_open(
+async def test_execution_plane_paths_require_auth(
     client: AsyncClient,
     auth_settings: dict[str, str],
 ) -> None:
     runs_list = await client.get("/api/runs")
-    assert runs_list.status_code == 200
+    assert runs_list.status_code == 401
 
     sessions_list = await client.get("/api/sessions")
-    assert sessions_list.status_code == 200
+    assert sessions_list.status_code == 401
 
     catalog = await client.get("/api/driver-packs/catalog")
-    assert catalog.status_code == 200
+    assert catalog.status_code == 401
 
-    hosts = await client.get("/api/hosts")
-    assert hosts.status_code == 401
+
+async def test_execution_plane_paths_accept_machine_auth(
+    client: AsyncClient,
+    auth_settings: dict[str, str],
+) -> None:
+    machine_headers = _basic_auth_header(
+        auth_settings["machine_auth_username"],
+        auth_settings["machine_auth_password"],
+    )
+
+    runs_list = await client.get("/api/runs", headers=machine_headers)
+    assert runs_list.status_code == 200
+
+    sessions_list = await client.get("/api/sessions", headers=machine_headers)
+    assert sessions_list.status_code == 200
+
+    catalog = await client.get("/api/driver-packs/catalog", headers=machine_headers)
+    assert catalog.status_code == 200
 
 
 async def test_browser_mutations_require_csrf(
