@@ -99,10 +99,15 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     )
     events: list[str] = []
     reported: list[tuple[str, str]] = []
+
+    def record_reported_status(session_id: str, status: str) -> None:
+        events.append("report")
+        reported.append((session_id, status))
+
     monkeypatch.setattr(
         pytest_plugin,
         "_report_session_status",
-        lambda session_id, status: (events.append("report"), reported.append((session_id, status))),
+        record_reported_status,
     )
 
     request = FakeRequest(
