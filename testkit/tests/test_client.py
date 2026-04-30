@@ -9,6 +9,7 @@ import pytest
 from gridfleet_testkit.client import (
     GridFleetClient,
     HeartbeatThread,
+    _default_auth,
     register_run_cleanup,
 )
 
@@ -40,6 +41,7 @@ def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
         *,
         params: dict[str, Any] | None = None,
         timeout: int | None = None,
+        auth: Any = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return next(responses)
@@ -64,6 +66,7 @@ def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
         *,
         params: dict[str, Any] | None = None,
         timeout: int | None = None,
+        auth: Any = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return DummyResponse({"appium:udid": "emulator-5554"})
@@ -87,6 +90,7 @@ def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
         *,
         params: dict[str, Any] | None = None,
         timeout: int | None = None,
+        auth: Any = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return DummyResponse({"packs": []})
@@ -110,6 +114,7 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -149,6 +154,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -197,7 +203,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
 def test_run_state_methods_hit_expected_endpoints(monkeypatch):
     calls: list[tuple[str, str, int | None]] = []
 
-    def fake_post(url: str, *, timeout: int) -> DummyResponse:
+    def fake_post(url: str, *, timeout: int, auth: Any = None) -> DummyResponse:
         calls.append(("POST", url, timeout))
         if url.endswith("/heartbeat"):
             return DummyResponse({"state": "active"})
@@ -229,6 +235,7 @@ def test_claim_device_calls_api(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -257,6 +264,7 @@ def test_release_device_calls_api(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -281,6 +289,7 @@ def test_release_device_raises_for_conflict(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         return DummyResponse({"detail": "Device dev-1 is claimed by another worker"}, status_code=409)
 
@@ -299,6 +308,7 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -377,3 +387,92 @@ def test_register_run_cleanup_falls_back_to_cancel(monkeypatch):
 
     assert thread.stopped is True
     assert client.calls == ["complete:run-3", "cancel:run-3"]
+
+
+def test_default_auth_returns_none_when_env_unset(monkeypatch):
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", None)
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", None)
+
+    assert _default_auth() is None
+
+
+def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+
+    auth = _default_auth()
+    assert isinstance(auth, httpx.BasicAuth)
+
+
+def test_client_threads_default_auth_into_requests(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["auth"] = auth
+        return DummyResponse({"id": "run-1"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.reserve_devices(name="run", requirements=[])
+
+    assert isinstance(captured["auth"], httpx.BasicAuth)
+
+
+def test_client_explicit_auth_overrides_env_default(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["auth"] = auth
+        return DummyResponse({"id": "run-1"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    explicit = httpx.BasicAuth("override-user", "override-pass")
+    client = GridFleetClient("http://manager/api", auth=explicit)
+    client.reserve_devices(name="run", requirements=[])
+
+    assert captured["auth"] is explicit
+
+
+def test_heartbeat_thread_passes_auth(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    explicit = httpx.BasicAuth("hb-user", "hb-pass")
+    thread = HeartbeatThread("http://manager/api", "run-x", interval=0, auth=explicit)
+
+    def fake_post(
+        url: str,
+        *,
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["url"] = url
+        captured["auth"] = auth
+        thread._stop_event.set()
+        return DummyResponse({"state": "active"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    thread.run()
+
+    assert captured["url"] == "http://manager/api/runs/run-x/heartbeat"
+    assert captured["auth"] is explicit

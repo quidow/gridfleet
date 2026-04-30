@@ -174,6 +174,7 @@ def test_register_session_prefers_manager_device_id(monkeypatch: pytest.MonkeyPa
         *,
         json: dict[str, object],
         timeout: int,
+        auth: object = None,
     ) -> object:
         captured["url"] = url
         captured["json"] = json
