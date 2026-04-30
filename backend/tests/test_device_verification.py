@@ -11,6 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
@@ -843,6 +844,85 @@ async def test_existing_device_verification_can_replace_device_config(
     config_resp = await client.get(f"/api/devices/{device.id}/config", params={"reveal": True})
     assert config_resp.status_code == 200
     assert config_resp.json() == {"new": True}
+
+
+async def test_existing_device_verification_stops_running_node_before_updated_probe(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"running-verify-{uuid.uuid4()}",
+        connection_target="running-verify-target",
+        name="Running Verify Device",
+        os_version="14",
+        availability_status=DeviceAvailabilityStatus.available,
+        device_config={"newCommandTimeout": 60},
+        host_id=uuid.UUID(default_host_id),
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    events: list[str] = []
+
+    async def stop_running_node(_db: AsyncSession, stopped_device: Device) -> AppiumNode:
+        events.append(f"stop:{stopped_device.id}")
+        assert stopped_device.id == device.id
+        assert stopped_device.appium_node is not None
+        return stopped_device.appium_node
+
+    async def start_updated_node(_db: AsyncSession, probe_device: Device, **_kwargs: object) -> TemporaryNodeHandle:
+        events.append(f"start:{probe_device.device_config}")
+        assert probe_device.device_config == {"newCommandTimeout": 120}
+        return TemporaryNodeHandle(port=4724, pid=67890)
+
+    with (
+        patch("app.services.node_manager.RemoteNodeManager.stop_node", new=AsyncMock(side_effect=stop_running_node)),
+        patch(
+            "app.services.node_manager.RemoteNodeManager.start_temporary_node",
+            new=AsyncMock(side_effect=start_updated_node),
+        ),
+        patch(
+            "app.services.device_verification.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
+        ),
+        patch(
+            "app.services.device_verification.session_viability.probe_session_via_grid",
+            new=AsyncMock(return_value=(True, None)),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/devices/{device.id}/verification-jobs",
+            json={
+                "host_id": default_host_id,
+                "device_config": {"newCommandTimeout": 120},
+                "replace_device_config": True,
+            },
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "completed"
+    assert events[:2] == [f"stop:{device.id}", "start:{'newCommandTimeout': 120}"]
 
 
 async def test_android_network_verification_resolves_stable_identity_before_save(

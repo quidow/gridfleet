@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -102,7 +102,13 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4740, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4740,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        started_at=datetime.now(UTC) - timedelta(seconds=31),
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -117,6 +123,52 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
         await _check_nodes(db_session)
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
+    await db_session.refresh(node)
+    assert node.state == NodeState.running
+
+
+async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="nh-grid-fresh",
+        connection_target="nh-grid-fresh",
+        name="Fresh Grid Relay Phone",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4742,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    with (
+        patch("app.services.node_health._check_node_health", return_value=True),
+        patch(
+            "app.services.node_health.grid_service.get_grid_status",
+            new_callable=AsyncMock,
+            return_value={"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}},
+        ),
+    ):
+        await _check_nodes(db_session)
+
+    assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     await db_session.refresh(node)
     assert node.state == NodeState.running
 

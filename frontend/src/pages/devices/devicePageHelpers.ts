@@ -100,11 +100,24 @@ export function buildUpdatePayload(
     payload.connection_target = form.connection_target ?? device.connection_target;
   }
 
-  if (form.device_config && Object.keys(form.device_config).length > 0) {
+  if (form.device_config !== undefined && !configsEqual(form.device_config, device.device_config ?? {})) {
     payload.device_config = form.device_config;
   }
 
   return payload;
+}
+
+function configsEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) return JSON.stringify(left) === JSON.stringify(right);
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => key in rightRecord && configsEqual(leftRecord[key], rightRecord[key]));
 }
 
 export function readOnlyValue(value: string | null | undefined): string {

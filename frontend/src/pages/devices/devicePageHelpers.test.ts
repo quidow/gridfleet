@@ -41,6 +41,16 @@ const device = {
 } satisfies DeviceRead;
 
 describe('buildUpdatePayload', () => {
+  it('omits unchanged config when saving unrelated edits', () => {
+    const payload = buildUpdatePayload(
+      { name: 'Living Room Roku', device_config: { roku_password: '********' } },
+      { ...device, name: 'Roku', device_config: { roku_password: '********' } },
+      {},
+    );
+    expect(payload.name).toBe('Living Room Roku');
+    expect(payload).not.toHaveProperty('device_config');
+  });
+
   it('stores manifest fields in device_config instead of top-level payload keys', () => {
     const payload = buildUpdatePayload(
       { host_id: 'host-1', device_config: { roku_password: 'secret123' } },

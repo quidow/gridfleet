@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -106,6 +107,16 @@ async def _check_node_health(
         return False
 
 
+def _grid_registration_grace_active(node: AppiumNode) -> bool:
+    started_at = node.started_at
+    if started_at is None:
+        return False
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    age_seconds = (datetime.now(UTC) - started_at).total_seconds()
+    return 0 <= age_seconds < int(settings_service.get("appium.startup_timeout_sec"))
+
+
 async def _restart_node_via_agent(db: AsyncSession, device: Device, node: AppiumNode) -> bool:
     """Attempt to restart a node through its host agent."""
     try:
@@ -166,6 +177,14 @@ async def _check_nodes(db: AsyncSession) -> None:
         device = request.device
         node_key = str(node.id)
         if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
+            if _grid_registration_grace_active(node):
+                logger.info(
+                    "Node health check for device %s (port %d) is waiting for Selenium Grid registration",
+                    device.name,
+                    node.port,
+                )
+                await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+                continue
             healthy = False
             logger.warning(
                 "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",

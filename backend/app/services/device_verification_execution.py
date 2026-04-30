@@ -141,6 +141,37 @@ async def run_cleanup(
     return None
 
 
+async def stop_existing_managed_node_for_update(
+    job: dict[str, Any],
+    db: AsyncSession,
+    context: PreparedVerificationContext,
+) -> str | None:
+    if context.mode != "update" or context.existing_device is None:
+        return None
+
+    existing_device = context.existing_device
+    node = existing_device.appium_node
+    if node is None or node.state != NodeState.running:
+        return None
+
+    await set_stage(
+        job,
+        "node_start",
+        "running",
+        detail="Stopping existing managed node before starting updated verification node",
+    )
+    try:
+        manager = get_node_manager(existing_device)
+        await manager.stop_node(db, existing_device)
+    except NodeManagerError as exc:
+        detail = f"Failed to stop existing managed node before verification: {exc}"
+        await set_stage(job, "node_start", "failed", detail=detail)
+        await set_stage(job, "cleanup", "skipped", detail="Existing node stop failed before temporary node startup")
+        return detail
+
+    return None
+
+
 async def retain_verified_node(
     job: dict[str, Any],
     db: AsyncSession,
@@ -316,6 +347,10 @@ async def execute_verification_context(
     )
 
     try:
+        existing_stop_error = await stop_existing_managed_node_for_update(job, db, context)
+        if existing_stop_error is not None:
+            return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
+
         health_error = await run_device_health(job, device, http_client_factory=http_client_factory)
         if health_error is not None:
             return VerificationExecutionOutcome(status="failed", error=health_error)
