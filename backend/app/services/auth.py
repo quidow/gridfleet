@@ -27,9 +27,7 @@ AUTH_OPEN_PATHS = {
     "/health/live",
     "/health/ready",
     "/api/health",
-    "/api/driver-packs/catalog",
 }
-AUTH_OPEN_PREFIXES = ("/api/runs", "/api/sessions")
 PROTECTED_PREFIXES = ("/api/", "/agent/", "/docs", "/redoc")
 PROTECTED_EXACT_PATHS = {"/metrics", "/openapi.json"}
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -74,8 +72,6 @@ def is_auth_enabled() -> bool:
 
 def is_protected_path(path: str) -> bool:
     if path in AUTH_OPEN_PATHS or path in AUTH_STATE_EXEMPT_PATHS:
-        return False
-    if path.startswith(AUTH_OPEN_PREFIXES):
         return False
     if path in PROTECTED_EXACT_PATHS:
         return True

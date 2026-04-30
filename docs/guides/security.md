@@ -21,8 +21,7 @@ GridFleet supports a login gate for production-style deployments:
   - machine clients such as host agents, CI helpers, and metrics scrapers use `Authorization: Basic ...` with the dedicated machine credential pair
 - Mutating browser requests must include `X-CSRF-Token`. The frontend injects this automatically after session bootstrap.
 - Health probes stay open on `/health/live`, `/health/ready`, and `/api/health`.
-- Execution-plane paths stay open so CI/testkit can operate without credentials: `/api/runs/*` (reservation lifecycle), `/api/sessions/*` (session telemetry), and `/api/driver-packs/catalog` (read-only catalog). The Selenium Grid Hub is itself unauthenticated, so gating only the reservation API would add friction without real security benefit.
-- All other `/api/*`, `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are protected when auth is enabled.
+- All `/api/*`, `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are protected when auth is enabled. CI/testkit clients must send machine Basic auth (`GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` matching the manager's `GRIDFLEET_MACHINE_AUTH_*` pair) to call reservation, session, or driver-pack catalog endpoints. The Selenium Grid Hub itself remains unauthenticated and lives behind the same network boundary.
 
 Network boundaries still matter even with the auth gate enabled:
 

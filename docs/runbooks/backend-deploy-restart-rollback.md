@@ -2,6 +2,15 @@
 
 Use this runbook for the manual production compose deployment model shipped in Phase 70.
 
+When `GRIDFLEET_AUTH_ENABLED=true`, every `/api/*` call below requires HTTP Basic auth with the manager's machine credentials. Export them once and pass with `-u`:
+
+```bash
+export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
+export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
+```
+
+`/health/live`, `/health/ready` stay open and do not need `-u`.
+
 ## 1. Pre-deploy checklist
 
 From the repo root:
@@ -74,8 +83,8 @@ After restore, repeat:
 
 ```bash
 curl -s http://localhost:8000/health/ready | python -m json.tool
-curl -s http://localhost:8000/api/hosts | python -m json.tool
-curl -s http://localhost:8000/api/devices?status=offline | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/hosts | python -m json.tool
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://localhost:8000/api/devices?status=offline' | python -m json.tool
 ```
 
 ## 6. Close-out

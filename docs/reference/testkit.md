@@ -10,7 +10,7 @@
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`
 - Supported direct-driver helpers: `get_connection_target_from_driver`, `get_device_config_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
-- Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
+- Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
 - Manual hardware examples live under `testkit/examples/`
 
 The example screenshot scripts are examples, not CI-backed conformance tests. The maintained support promise is the installable package and documented import pattern.
@@ -109,6 +109,8 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | --- | --- | --- |
 | `GRID_URL` | `http://localhost:4444` | Selenium Grid hub URL used by the Appium fixture |
 | `GRIDFLEET_API_URL` | `http://localhost:8000/api` | GridFleet API base used for session reporting, config lookup, run helpers, and driver-pack catalog lookup |
+| `GRIDFLEET_TESTKIT_USERNAME` | unset | Machine-auth username sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_USERNAME`. |
+| `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -13,10 +14,22 @@ AGENT_URL = os.getenv("GRIDFLEET_VALIDATE_AGENT_URL", "http://localhost:5100").r
 GRID_URL = os.getenv("GRIDFLEET_VALIDATE_GRID_URL", "http://localhost:4444").rstrip("/")
 PACK_ID = os.getenv("GRIDFLEET_VALIDATE_PACK_ID", "appium-uiautomator2")
 TIMEOUT = float(os.getenv("GRIDFLEET_VALIDATE_TIMEOUT", "10"))
+BASIC_AUTH_USERNAME = os.getenv("GRIDFLEET_VALIDATE_BASIC_AUTH_USERNAME")
+BASIC_AUTH_PASSWORD = os.getenv("GRIDFLEET_VALIDATE_BASIC_AUTH_PASSWORD")
+
+
+def _auth_headers(url: str) -> dict[str, str]:
+    if not BASIC_AUTH_USERNAME or not BASIC_AUTH_PASSWORD:
+        return {}
+    if not url.startswith(BACKEND_URL):
+        return {}
+    token = base64.b64encode(f"{BASIC_AUTH_USERNAME}:{BASIC_AUTH_PASSWORD}".encode()).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
 
 
 def _get_json(url: str) -> dict[str, Any] | list[Any]:
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json", **_auth_headers(url)}
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -29,11 +42,8 @@ def _get_json(url: str) -> dict[str, Any] | list[Any]:
 
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any] | list[Any]:
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-    )
+    headers = {"Content-Type": "application/json", "Accept": "application/json", **_auth_headers(url)}
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             raw = resp.read().decode("utf-8")

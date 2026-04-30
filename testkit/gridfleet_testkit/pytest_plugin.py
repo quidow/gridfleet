@@ -13,7 +13,7 @@ from .appium import (
     build_appium_options,
     get_device_config_for_driver,
 )
-from .client import GRID_URL, GRIDFLEET_API_URL, GridFleetClient
+from .client import GRID_URL, GRIDFLEET_API_URL, GridFleetClient, _default_auth
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -39,6 +39,7 @@ def _report_session_status(session_id: str, status: str) -> None:
             f"{GRIDFLEET_API_URL}/sessions/{session_id}/status",
             json={"status": status},
             timeout=5,
+            auth=_default_auth(),
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
@@ -68,6 +69,7 @@ def _register_session(driver: Any, test_name: str) -> None:
             f"{GRIDFLEET_API_URL}/sessions",
             json=payload,
             timeout=5,
+            auth=_default_auth(),
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
@@ -85,6 +87,7 @@ def _register_error_session(payload: dict[str, Any]) -> None:
             f"{GRIDFLEET_API_URL}/sessions",
             json=payload,
             timeout=5,
+            auth=_default_auth(),
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
