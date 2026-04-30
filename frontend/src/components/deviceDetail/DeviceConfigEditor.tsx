@@ -10,45 +10,15 @@ import LoadingSpinner from '../LoadingSpinner';
 import SetupVerificationModal from '../../pages/devices/SetupVerificationModal';
 import Button from '../ui/Button';
 import type { ConfigAuditEntry, DeviceDetail } from '../../types';
-import { formatDateTime } from '../../utils/dateFormatting';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { findPlatformDescriptor } from '../../hooks/usePlatformDescriptor';
+import { formatDate, managedDeviceConfigKeys, omitManagedDeviceConfig, restoreManagedDeviceConfig } from './utils';
 
 interface Props {
   device: DeviceDetail;
 }
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
-
-function formatDate(dateStr: string): string {
-  return formatDateTime(dateStr);
-}
-
-export function managedDeviceConfigKeys(fields: Array<{ id: string }>): Set<string> {
-  return new Set(fields.map((field) => field.id));
-}
-
-export function omitManagedDeviceConfig(
-  config: Record<string, unknown> | undefined,
-  managedKeys: Set<string>,
-): Record<string, unknown> | undefined {
-  if (config === undefined) return undefined;
-  return Object.fromEntries(Object.entries(config).filter(([key]) => !managedKeys.has(key)));
-}
-
-export function restoreManagedDeviceConfig(
-  editableConfig: Record<string, unknown>,
-  sourceConfig: Record<string, unknown> | undefined,
-  managedKeys: Set<string>,
-): Record<string, unknown> {
-  const restored = { ...editableConfig };
-  for (const key of managedKeys) {
-    if (sourceConfig && key in sourceConfig) {
-      restored[key] = sourceConfig[key];
-    }
-  }
-  return restored;
-}
 
 export default function DeviceConfigEditor({ device }: Props) {
   const { id: deviceId } = device;

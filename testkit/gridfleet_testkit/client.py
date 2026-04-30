@@ -134,6 +134,23 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
+    def claim_device(self, run_id: str, *, worker_id: str) -> dict[str, Any]:
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/claim",
+            json={"worker_id": worker_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def release_device(self, run_id: str, *, device_id: str, worker_id: str) -> None:
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/release",
+            json={"device_id": device_id, "worker_id": worker_id},
+            timeout=10,
+        )
+        resp.raise_for_status()
+
     def report_preparation_failure(
         self,
         run_id: str,

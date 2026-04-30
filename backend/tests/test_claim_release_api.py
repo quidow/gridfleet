@@ -464,6 +464,101 @@ async def test_claims_cleared_on_run_complete(
         assert device["claimed_at"] is None
 
 
+async def test_release_after_run_complete_is_idempotent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Release of a device whose claim was already cleared by run completion should succeed."""
+    d1 = await _make_device(db_session, default_host_id, "idem-001")
+    d1.availability_status = DeviceAvailabilityStatus.available
+    await db_session.commit()
+
+    run_id = await _create_api_run(client, "Idempotent Release Run")
+
+    claim_resp = await client.post(f"/api/runs/{run_id}/claim", json={"worker_id": "gw0"})
+    assert claim_resp.status_code == 200
+    claimed_device_id = claim_resp.json()["device_id"]
+
+    ready_resp = await client.post(f"/api/runs/{run_id}/ready")
+    assert ready_resp.status_code == 200
+    active_resp = await client.post(f"/api/runs/{run_id}/active")
+    assert active_resp.status_code == 200
+    complete_resp = await client.post(f"/api/runs/{run_id}/complete")
+    assert complete_resp.status_code == 200
+
+    release_resp = await client.post(
+        f"/api/runs/{run_id}/release",
+        json={"device_id": claimed_device_id, "worker_id": "gw0"},
+    )
+    assert release_resp.status_code == 200
+    assert release_resp.json() == {"status": "released"}
+
+
+async def test_release_after_run_cancel_is_idempotent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Release of a device whose claim was already cleared by run cancellation should succeed."""
+    d1 = await _make_device(db_session, default_host_id, "idem-002")
+    d1.availability_status = DeviceAvailabilityStatus.available
+    await db_session.commit()
+
+    run_id = await _create_api_run(client, "Idempotent Cancel Release Run")
+
+    claim_resp = await client.post(f"/api/runs/{run_id}/claim", json={"worker_id": "gw0"})
+    assert claim_resp.status_code == 200
+    claimed_device_id = claim_resp.json()["device_id"]
+
+    ready_resp = await client.post(f"/api/runs/{run_id}/ready")
+    assert ready_resp.status_code == 200
+    active_resp = await client.post(f"/api/runs/{run_id}/active")
+    assert active_resp.status_code == 200
+    cancel_resp = await client.post(f"/api/runs/{run_id}/cancel")
+    assert cancel_resp.status_code == 200
+
+    release_resp = await client.post(
+        f"/api/runs/{run_id}/release",
+        json={"device_id": claimed_device_id, "worker_id": "gw0"},
+    )
+    assert release_resp.status_code == 200
+    assert release_resp.json() == {"status": "released"}
+
+
+async def test_release_after_run_expire_is_idempotent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Release of a device whose claim was already cleared by run expiry should succeed."""
+    d1 = await _make_device(db_session, default_host_id, "idem-003")
+    d1.availability_status = DeviceAvailabilityStatus.available
+    await db_session.commit()
+
+    run_id = await _create_api_run(client, "Idempotent Expire Release Run")
+
+    claim_resp = await client.post(f"/api/runs/{run_id}/claim", json={"worker_id": "gw0"})
+    assert claim_resp.status_code == 200
+    claimed_device_id = claim_resp.json()["device_id"]
+
+    ready_resp = await client.post(f"/api/runs/{run_id}/ready")
+    assert ready_resp.status_code == 200
+    active_resp = await client.post(f"/api/runs/{run_id}/active")
+    assert active_resp.status_code == 200
+
+    run = await run_service.get_run(db_session, uuid.UUID(run_id))
+    assert run is not None
+    await run_service.expire_run(db_session, run, "Heartbeat timeout")
+
+    release_resp = await client.post(
+        f"/api/runs/{run_id}/release",
+        json={"device_id": claimed_device_id, "worker_id": "gw0"},
+    )
+    assert release_resp.status_code == 200
+    assert release_resp.json() == {"status": "released"}
+
+
 async def test_create_reserved_run_can_seed_claimed_devices(
     db_session: AsyncSession,
     default_host_id: str,

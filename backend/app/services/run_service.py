@@ -727,7 +727,6 @@ async def release_claimed_device(
         select(DeviceReservation)
         .where(DeviceReservation.run_id == run_id)
         .where(DeviceReservation.device_id == device_id)
-        .where(DeviceReservation.released_at.is_(None))
         .with_for_update()
         .limit(1)
     )
@@ -735,6 +734,11 @@ async def release_claimed_device(
     if entry is None:
         await db.rollback()
         raise ValueError(f"Device {device_id} is not reserved by this run")
+
+    if entry.released_at is not None:
+        await db.rollback()
+        return
+
     if entry.claimed_by is None:
         await db.rollback()
         raise ValueError(f"Device {device_id} is not claimed")
