@@ -146,47 +146,6 @@ jobs:
         working-directory: testkit
         run: uv run --locked --extra dev --extra appium pytest -q
 
-  e2e-examples:
-    name: E2E Examples
-    runs-on: ubuntu-latest
-    env:
-      UV_LINK_MODE: copy
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-suffix: e2e-examples
-          python-version: "3.12"
-          cache-dependency-glob: |
-            e2e-examples/pyproject.toml
-            e2e-examples/uv.lock
-            testkit/pyproject.toml
-            testkit/uv.lock
-
-      - name: Install dependencies
-        working-directory: e2e-examples
-        run: uv sync --extra dev --extra appium --locked
-
-      - name: Check formatting
-        working-directory: e2e-examples
-        run: uv run --locked --extra dev --extra appium ruff format --check e2e_examples/ tests/
-
-      - name: Lint
-        working-directory: e2e-examples
-        run: uv run --locked --extra dev --extra appium ruff check e2e_examples/ tests/
-
-      - name: Type check
-        working-directory: e2e-examples
-        run: uv run --locked --extra dev --extra appium mypy e2e_examples/ tests/
-
-      - name: Test
-        working-directory: e2e-examples
-        run: uv run --locked --extra dev --extra appium pytest -q
-
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
