@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import inspect as sa_inspect
+
 if TYPE_CHECKING:
     from app.models.appium_node import AppiumNode
     from app.models.device import Device
@@ -54,6 +56,12 @@ def state(device: Device) -> dict[str, Any]:
 
 
 def write_state(device: Device, next_state: dict[str, Any]) -> None:
+    device_state = sa_inspect(device, raiseerr=False)
+    assert device_state is not None and device_state.persistent, (
+        "Device must be persistent in a session; callers that write lifecycle_policy_state "
+        "must load it through lock_device in the same transaction"
+    )
+
     defaults = default_state()
     device.lifecycle_policy_state = {key: next_state.get(key, default) for key, default in defaults.items()}
 
