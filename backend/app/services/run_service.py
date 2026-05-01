@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -613,11 +614,10 @@ async def report_preparation_failure(
     if not reason:
         raise ValueError("Preparation failure message is required")
 
-    stmt = select(Device).options(selectinload(Device.appium_node)).where(Device.id == device_id)
-    result = await db.execute(stmt)
-    device = result.scalar_one_or_none()
-    if device is None:
-        raise ValueError("Device not found")
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=False)
+    except NoResultFound:
+        raise ValueError("Device not found") from None
 
     run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
     assert run is not None
