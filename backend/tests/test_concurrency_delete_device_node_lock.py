@@ -134,3 +134,90 @@ async def test_delete_device_locks_row_before_reading_node_state(
         assert node_row is None, "appium_node row stranded after device delete"
     else:
         assert device_row is not None, "delete returned False but device is gone"
+
+
+async def test_delete_device_rechecks_node_state_after_stop_commit(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A start after stop_node's internal commit must be observed before delete."""
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="del-after-stop-race",
+        availability_status=DeviceAvailabilityStatus.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4725,
+        grid_url="http://grid:4444",
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    device_id = device.id
+
+    first_stop_committed = asyncio.Event()
+    allow_delete_relock = asyncio.Event()
+    starter_committed = asyncio.Event()
+    stop_calls = 0
+
+    async def observed_stop_node(self: object, db: AsyncSession, dev: Device) -> AppiumNode:
+        nonlocal stop_calls
+
+        stop_calls += 1
+        assert dev.appium_node is not None
+        dev.appium_node.state = NodeState.stopped
+        await db.commit()
+        if stop_calls == 1:
+            first_stop_committed.set()
+            await allow_delete_relock.wait()
+        return dev.appium_node
+
+    async def deleter() -> bool:
+        async with db_session_maker() as db:
+            with patch(
+                "app.services.node_manager.RemoteNodeManager.stop_node",
+                new=observed_stop_node,
+            ):
+                return await device_service.delete_device(db, device_id)
+
+    async def starter() -> str:
+        await first_stop_committed.wait()
+        async with db_session_maker() as db:
+            try:
+                locked_device = await device_locking.lock_device(db, device_id)
+            except NoResultFound:
+                return "deleted_before_start"
+            assert locked_device.appium_node is not None
+            locked_device.appium_node.state = NodeState.running
+            await db.commit()
+            starter_committed.set()
+            return "started"
+
+    delete_task = asyncio.create_task(deleter())
+    starter_task = asyncio.create_task(starter())
+    await asyncio.wait_for(starter_committed.wait(), timeout=5.0)
+    allow_delete_relock.set()
+    deleted, starter_result = await asyncio.wait_for(
+        asyncio.gather(delete_task, starter_task),
+        timeout=5.0,
+    )
+
+    assert starter_result == "started"
+    assert stop_calls >= 2, (
+        "delete_device re-locked after stop_node committed but did not re-check "
+        "that a concurrent starter had made the node running again"
+    )
+    assert deleted is True
+
+    async with db_session_maker() as verify:
+        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
+        node_row = (
+            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
+        ).scalar_one_or_none()
+
+    assert device_row is None
+    assert node_row is None
