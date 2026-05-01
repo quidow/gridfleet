@@ -47,3 +47,6 @@ frontend/test-results
 
 # Worktrees
 .worktrees/
+
+# Superpowers working docs
+.superpowers/

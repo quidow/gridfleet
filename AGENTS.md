@@ -132,6 +132,8 @@ Off by default for local dev. When `GRIDFLEET_AUTH_ENABLED=true`:
 
 ## Documentation Map
 
+Superpowers-related working docs and plans belong under the project-root `.superpowers/` directory, not under `docs/superpowers/`.
+
 When you need product/operator context that the code does not encode, look here before grepping:
 
 - `docs/reference/architecture.md` — manager, agent, frontend split (canonical)
