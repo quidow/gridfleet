@@ -10,7 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
-from app.services import appium_resource_allocator, capability_service, device_service, session_viability
+from app.services import (
+    appium_resource_allocator,
+    capability_service,
+    device_locking,
+    device_service,
+    session_viability,
+)
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
 from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.device_identity import appium_connection_target
@@ -181,6 +187,10 @@ async def retain_verified_node(
 ) -> str | None:
     await set_stage(job, "cleanup", "running", detail="Retaining verified node as the managed Appium node")
     try:
+        # Hold a row lock for the read-modify-write window that ends at the next commit.
+        # On the refresh path, restart_node commits internally and drives availability
+        # via mark_node_started; that path's locking is tracked separately.
+        device = await device_locking.lock_device(db, device.id)
         target_owner_key = appium_resource_allocator.managed_owner_key(device.id)
         source_owner_key = handle.owner_key
         needs_registration_refresh = bool(source_owner_key and source_owner_key != target_owner_key)
