@@ -334,11 +334,19 @@ async def restart_node_via_agent(
     *,
     http_client_factory: AgentClientFactory,
 ) -> bool:
+    from app.services import appium_node_locking, device_locking
+
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     try:
         host = require_management_host(device, action="restart Appium nodes")
     except NodeManagerError:
         return False
+
+    device = await device_locking.lock_device(db, device.id)
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    if locked_node is None:
+        return False
+    node = locked_node
 
     agent_base = f"http://{host.ip}:{host.agent_port}"
     allocated_caps = await appium_resource_allocator.get_owner_capabilities(
