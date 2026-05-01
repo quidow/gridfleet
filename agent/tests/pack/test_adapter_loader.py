@@ -320,7 +320,8 @@ PACK_LABEL = "pack_b"
         release.set()
 
         assert await hook_task == "pack_a"
-        await load_task
+        loaded_b = await load_task
+        assert loaded_b.pack_id == "pack-b"
     finally:
         release.set()
         sys.path[:] = original_path
