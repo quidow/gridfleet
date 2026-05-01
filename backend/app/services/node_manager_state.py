@@ -11,7 +11,20 @@ from app.services.event_bus import event_bus
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> None:
+    """Acquire ``SELECT ... FOR UPDATE`` on the device row.
+
+    Holds the PG row lock until the next commit without touching the ORM
+    identity map, so callers that already locked the device see no
+    populate_existing surprises and unlocked callers become compliant
+    with the device_locking invariant.
+    """
+    await db.execute(select(Device.id).where(Device.id == device_id).with_for_update())
 
 
 async def allocate_port(db: AsyncSession) -> int:
@@ -88,6 +101,7 @@ async def mark_node_started(
     pid: int | None,
     active_connection_target: str | None = None,
 ) -> AppiumNode:
+    await _hold_device_row_lock(db, device.id)
     node = upsert_node(db, device, port, pid, active_connection_target)
     next_status = await ready_device_availability_status(db, device)
     await set_device_availability_status(device, next_status)
@@ -107,6 +121,7 @@ async def mark_node_started(
 
 
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
+    await _hold_device_row_lock(db, device.id)
     node = device.appium_node
     assert node is not None
     node.state = NodeState.stopped
