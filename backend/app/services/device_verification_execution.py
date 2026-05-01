@@ -181,10 +181,13 @@ async def retain_verified_node(
     await set_stage(job, "cleanup", "running", detail="Retaining verified node as the managed Appium node")
     try:
         target_owner_key = appium_resource_allocator.managed_owner_key(device.id)
-        if handle.owner_key and handle.owner_key != target_owner_key:
+        source_owner_key = handle.owner_key
+        needs_registration_refresh = bool(source_owner_key and source_owner_key != target_owner_key)
+        if needs_registration_refresh:
+            assert source_owner_key is not None
             await appium_resource_allocator.transfer_owner(
                 db,
-                source_owner_key=handle.owner_key,
+                source_owner_key=source_owner_key,
                 target_owner_key=target_owner_key,
             )
             handle.owner_key = target_owner_key
@@ -208,6 +211,19 @@ async def retain_verified_node(
             node.pid = handle.pid
             node.active_connection_target = handle.active_connection_target
             node.state = NodeState.running
+
+        if needs_registration_refresh:
+            await db.commit()
+            await set_stage(
+                job,
+                "cleanup",
+                "running",
+                detail="Refreshing retained node Grid registration",
+            )
+            refreshed_node = await get_node_manager(device).restart_node(db, device)
+            handle.port = refreshed_node.port
+            handle.pid = refreshed_node.pid
+            handle.active_connection_target = refreshed_node.active_connection_target
 
         device.availability_status = DeviceAvailabilityStatus.available
         await db.commit()
