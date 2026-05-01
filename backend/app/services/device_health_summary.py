@@ -143,9 +143,9 @@ async def _restore_available_for_healthy_signal(
 
 async def patch_health_snapshot(db: AsyncSession, device: Device | str, updates: dict[str, Any]) -> dict[str, Any]:
     device_key = str(device.id) if isinstance(device, Device) else str(device)
-    current = await get_health_snapshot(db, device_key) or {}
-    next_snapshot = {**current, **updates, "last_checked_at": updates.get("last_checked_at", _now_iso())}
-    await control_plane_state_store.set_value(db, HEALTH_SUMMARY_NAMESPACE, device_key, next_snapshot)
+    patch = {**updates, "last_checked_at": updates.get("last_checked_at", _now_iso())}
+    await control_plane_state_store.patch_value(db, HEALTH_SUMMARY_NAMESPACE, device_key, patch)
+    next_snapshot = await get_health_snapshot(db, device_key) or patch
     await _restore_available_for_healthy_signal(db, device, next_snapshot)
     return next_snapshot
 
