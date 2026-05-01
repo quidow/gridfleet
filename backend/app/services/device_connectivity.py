@@ -382,10 +382,17 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     )
                     await device_health_summary.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
-                    await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
-                    await control_plane_state_store.set_value(
-                        db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
-                    )
+                    if locked_device.availability_status in ACTIVE_STATES:
+                        await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+                        await control_plane_state_store.set_value(
+                            db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
+                        )
+                    else:
+                        logger.info(
+                            "Device %s (%s) left active state before lifecycle write — skipping",
+                            locked_device.name,
+                            locked_device.identity_value,
+                        )
                     continue
                 logger.warning(
                     "Device %s (%s) disconnected from host %s",
