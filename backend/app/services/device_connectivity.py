@@ -197,17 +197,20 @@ async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
 
 
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:
-    node = device.appium_node
-    if node is None or node.state == NodeState.stopped:
+    from app.services import appium_node_locking, device_locking
+
+    locked_device = await device_locking.lock_device(db, device.id)
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    if locked_node is None or locked_node.state == NodeState.stopped:
         return None
 
-    stopped = await _stop_node_via_agent(device, node)
+    stopped = await _stop_node_via_agent(locked_device, locked_node)
     if stopped:
-        node.state = NodeState.stopped
-        node.pid = None
+        locked_node.state = NodeState.stopped
+        locked_node.pid = None
     else:
-        node.state = NodeState.error
-    await device_health_summary.update_node_state(db, device, running=False, state=node.state.value)
+        locked_node.state = NodeState.error
+    await device_health_summary.update_node_state(db, locked_device, running=False, state=locked_node.state.value)
     return stopped
 
 
