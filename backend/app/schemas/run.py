@@ -14,7 +14,7 @@ class DeviceRequirement(BaseModel):
     count: int | None = Field(default=None, ge=1)
     allocation: Literal["all_available"] | None = None
     min_count: int | None = Field(default=None, ge=1)
-    tags: dict[str, Any] | None = None
+    tags: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def validate_allocation(self) -> "DeviceRequirement":

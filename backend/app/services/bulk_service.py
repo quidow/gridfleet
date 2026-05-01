@@ -137,7 +137,7 @@ async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], au
 
 
 async def bulk_update_tags(
-    db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, Any], merge: bool = True
+    db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     for device in devices:

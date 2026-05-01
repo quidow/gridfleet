@@ -98,7 +98,7 @@ class Device(Base):
         default=DeviceAvailabilityStatus.offline,
         nullable=False,
     )
-    tags: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
+    tags: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True, default=dict)
     manufacturer: Mapped[str | None] = mapped_column(String, nullable=True)
     model: Mapped[str | None] = mapped_column(String, nullable=True)
     model_number: Mapped[str | None] = mapped_column(String, nullable=True)

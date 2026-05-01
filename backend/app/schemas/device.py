@@ -16,6 +16,8 @@ from app.models.device import (
 )
 from app.models.session import Session, SessionStatus
 
+DeviceTags = dict[str, str]
+
 
 class DeviceCreate(BaseModel):
     name: str
@@ -29,7 +31,7 @@ class DeviceCreate(BaseModel):
     host_id: uuid.UUID
     device_type: DeviceType
     connection_type: ConnectionType
-    tags: dict[str, Any] | None = None
+    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -50,7 +52,7 @@ class DeviceUpdate(BaseModel):
     host_id: uuid.UUID | None = None
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
-    tags: dict[str, Any] | None = None
+    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -81,7 +83,7 @@ class DeviceVerificationCreate(BaseModel):
     name: str
     os_version: str = "unknown"
     host_id: uuid.UUID
-    tags: dict[str, Any] | None = None
+    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -105,7 +107,7 @@ class DeviceVerificationUpdate(BaseModel):
     name: str | None = None
     os_version: str | None = None
     host_id: uuid.UUID
-    tags: dict[str, Any] | None = None
+    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -122,7 +124,7 @@ class DevicePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
-    tags: dict[str, Any] | None = None
+    tags: DeviceTags | None = None
     manufacturer: str | None = None
     model: str | None = None
     model_number: str | None = None
@@ -214,7 +216,7 @@ class DeviceRead(BaseModel):
     os_version: str
     host_id: uuid.UUID
     availability_status: DeviceAvailabilityStatus
-    tags: dict[str, Any] | None
+    tags: DeviceTags | None
     manufacturer: str | None
     model: str | None
     model_number: str | None
@@ -355,7 +357,7 @@ class BulkAutoManageUpdate(BaseModel):
 
 class BulkTagsUpdate(BaseModel):
     device_ids: list[uuid.UUID]
-    tags: dict[str, Any]
+    tags: DeviceTags
     merge: bool = True
 
 
