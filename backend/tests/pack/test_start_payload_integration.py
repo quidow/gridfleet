@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceType
+from app.models.host import Host, HostStatus, OSType
 from app.services import node_manager_remote
 from app.services.node_manager_remote import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
@@ -275,13 +277,53 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
 async def test_restart_merges_pack_stereotype_over_legacy_caps(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    _android_real_device: MagicMock,
 ) -> None:
     """Parallel assertion for the restart path (`restart_node_via_agent` at
     `backend/app/services/node_manager_remote.py:288`, containing the
     `restart_pack_overrides` block around line 313-317).
     """
     await seed_test_packs(db_session)
+
+    # Persist a real host so the Device FK constraint is satisfied.
+    host = Host(
+        hostname=f"restart-test-host-{uuid.uuid4().hex[:8]}",
+        ip="10.0.2.1",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.flush()
+
+    # Use a real Device ORM instance so lock_device's SELECT FOR UPDATE finds the row.
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"restart-test-{uuid.uuid4().hex[:8]}",
+        connection_target="ABCD1234",
+        name="gate-pixel",
+        model="Pixel 6",
+        manufacturer="Google",
+        os_version="14",
+        host_id=host.id,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        ip_address=None,
+        tags={},
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # Persist a matching AppiumNode so lock_appium_node_for_device finds the row.
+    appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://localhost:4444",
+        state=NodeState.running,
+    )
+    db_session.add(appium_node)
     await db_session.commit()
 
     captured: dict[str, Any] = {}
@@ -314,7 +356,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         return None
 
     legacy_caps = {
-        "appium:gridfleet:deviceId": str(_android_real_device.id),
+        "appium:gridfleet:deviceId": str(device.id),
         "appium:platform": "android_mobile",
         "appium:device_type": "real_device",
     }
@@ -356,7 +398,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
 
     await restart_node_via_agent(
         db_session,
-        _android_real_device,
+        device,
         node,
         http_client_factory=AsyncMock(),
     )
@@ -366,7 +408,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     assert payload["platform_id"] == "android_mobile"
     assert payload["insecure_features"] == ["uiautomator2:chromedriver_autodownload"]
     stereotype = payload["stereotype_caps"]
-    assert stereotype["appium:gridfleet:deviceId"] == str(_android_real_device.id)
+    assert stereotype["appium:gridfleet:deviceId"] == str(device.id)
     assert stereotype["appium:platform"] == "android_mobile"
     assert stereotype["appium:device_type"] == "real_device"
     assert stereotype["platformName"] == "Android"

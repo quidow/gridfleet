@@ -133,7 +133,10 @@ async def stop_node_and_mark_offline(
     reason: str,
     manager_resolver: NodeManagerResolver,
 ) -> None:
+    from app.services import appium_node_locking
+
     device = await _lock_for_state_write(db, device)
+    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     await record_event(
         db,
         device.id,
@@ -147,16 +150,14 @@ async def stop_node_and_mark_offline(
         {"error": reason, "source": source, "will_restart": bool(device.auto_manage)},
     )
 
-    node = device.__dict__.get("appium_node")
     if node is not None and node.state == NodeState.running:
         try:
             manager = manager_resolver(device)
             await manager.stop_node(db, device)
         except Exception:
             device.availability_status = DeviceAvailabilityStatus.offline
-            if node is not None:
-                node.state = NodeState.error
-                node.pid = None
+            node.state = NodeState.error
+            node.pid = None
             await db.commit()
     else:
         device.availability_status = DeviceAvailabilityStatus.offline

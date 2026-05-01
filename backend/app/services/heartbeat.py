@@ -199,7 +199,15 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
         node = nodes_by_port.get(port)
         if node is None:
             continue
-        device = node.device
+        # Acquire Device → AppiumNode locks before mutating node state.
+        from app.services import appium_node_locking, device_locking
+
+        device_id = node.device.id
+        locked_device = await device_locking.lock_device(db, device_id)
+        locked_node = await appium_node_locking.lock_appium_node_for_device(db, device_id)
+        if locked_node is None:
+            continue
+        device = locked_device
         kind = str(event["kind"])
         process = _restart_process(event.get("process"))
         attempt = _coerce_int(event.get("attempt")) or 0
@@ -229,10 +237,10 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
 
         if kind == "restart_succeeded":
             if process == "appium" and pid is not None:
-                node.pid = pid
-            await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, str(node.id))
+                locked_node.pid = pid
+            await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, str(locked_node.id))
             if process == "appium":
-                node.state = NodeState.running
+                locked_node.state = NodeState.running
                 await event_bus.publish(
                     "node.state_changed",
                     {
@@ -252,7 +260,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                     "recovered_from": "agent_auto_restart",
                 },
             )
-            await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+            await device_health_summary.update_node_state(db, device, running=True, state=locked_node.state.value)
             continue
 
         error_message = _restart_error_message(kind, process, exit_code)

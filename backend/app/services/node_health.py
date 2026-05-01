@@ -150,6 +150,16 @@ async def _process_node_health(
     grid_device_ids: set[str] | None,
 ) -> None:
     node_key = str(node.id)
+
+    from app.services import appium_node_locking
+
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    if locked_node is None:
+        # Node was deleted between the caller's lock_device and here. Bail out
+        # quietly; lower layers will reconcile on the next sweep.
+        return
+    node = locked_node
+
     if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
         if _grid_registration_grace_active(node):
             logger.info(
@@ -272,8 +282,6 @@ async def _process_node_health(
                 detail="Node restart was suppressed after repeated health check failures",
                 source="node_health",
             )
-            # node refers to the same identity-mapped AppiumNode object as locked_device.appium_node;
-            # the FOR UPDATE on Device does NOT lock AppiumNode, so this write is best-effort.
             node.state = NodeState.error
             await device_health_summary.update_node_state(db, device, running=False, state="error")
             await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
@@ -353,8 +361,6 @@ async def _process_node_health(
                 detail="Automatic node restart failed after repeated health check failures",
                 source="node_health",
             )
-            # node refers to the same identity-mapped AppiumNode object as locked_device.appium_node;
-            # the FOR UPDATE on Device does NOT lock AppiumNode, so this write is best-effort.
             node.state = NodeState.error
             await device_health_summary.update_node_state(db, device, running=False, state="error")
             await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
