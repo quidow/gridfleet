@@ -147,10 +147,13 @@ async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
     )
 
     assert adapter is not None
+    site_dir = str((runtime_dir / "site").resolve())
+    assert site_dir in sys.path
+
     extra = await adapter.pre_session(spec=type("S", (), {"capabilities": {}})())
+
     assert extra == {"appium:vendorMagic": "set"}
-    # site/ is on sys.path
-    assert str((runtime_dir / "site").resolve()) in sys.path
+    assert site_dir not in sys.path
 
 
 @pytest.mark.asyncio
