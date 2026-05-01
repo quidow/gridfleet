@@ -44,3 +44,6 @@ dist/
 .idea
 testing/screenshots
 frontend/test-results
+
+# Worktrees
+.worktrees/
