@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import Select, asc, desc, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,6 +27,7 @@ from app.schemas.device_filters import DeviceQueryFilters
 from app.services import (
     device_attention,
     device_health_summary,
+    device_locking,
     device_readiness,
     device_write,
     hardware_telemetry,
@@ -272,8 +273,9 @@ async def update_device(
     *,
     enforce_patch_contract: bool = True,
 ) -> Device | None:
-    device = await get_device(db, device_id)
-    if device is None:
+    try:
+        device = await device_locking.lock_device(db, device_id)
+    except NoResultFound:
         return None
 
     if enforce_patch_contract:

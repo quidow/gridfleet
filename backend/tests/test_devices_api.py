@@ -691,6 +691,38 @@ async def test_update_device(client: AsyncClient, db_session: AsyncSession, defa
 
 
 @pytest.mark.asyncio
+async def test_update_device_acquires_row_lock(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    real_lock = device_service.device_locking.lock_device
+    spy = AsyncMock(side_effect=real_lock)
+
+    with patch("app.services.device_service.device_locking.lock_device", spy):
+        resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Locked Update"})
+
+    assert resp.status_code == 200
+    spy.assert_awaited_once()
+    args, _ = spy.await_args
+    assert str(args[1]) == device_id
+
+
+@pytest.mark.asyncio
+async def test_update_device_returns_none_when_device_missing(client: AsyncClient, db_session: AsyncSession) -> None:
+    import uuid
+
+    missing_id = uuid.uuid4()
+    result = await device_service.update_device(
+        db_session,
+        missing_id,
+        cast("Any", MagicMock(spec=[])),
+        enforce_patch_contract=False,
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_patch_rejects_immutable_fields(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
