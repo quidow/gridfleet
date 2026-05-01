@@ -14,6 +14,7 @@ from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import grid_service, lifecycle_policy, run_service, session_service
 from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
@@ -26,6 +27,9 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
 
     Returns {session_id: {connection_target, test_name, capabilities}} mapping.
     Grid 4 stores sessions under node.slots[].session (not node.sessions).
+
+    Probe sessions (set by session_viability) are filtered out so the sync
+    loop does not persist transient probe activity as real sessions.
     """
     sessions: dict[str, dict[str, Any]] = {}
     value = grid_data.get("value", {})
@@ -41,9 +45,20 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
             if not sid or sid == RESERVED_SESSION_ID:
                 continue
             caps = sess.get("capabilities", {})
-            connection_target = caps.get("appium:udid") or caps.get("appium:deviceName")
-            device_id = caps.get("gridfleet:deviceId") or caps.get("appium:gridfleet:deviceId")
-            test_name = caps.get("gridfleet:testName")
+            if isinstance(caps, dict):
+                if caps.get("gridfleet:probeSession") is True:
+                    continue
+                if caps.get("gridfleet:testName") == PROBE_TEST_NAME:
+                    continue
+            connection_target = (
+                (caps.get("appium:udid") or caps.get("appium:deviceName")) if isinstance(caps, dict) else None
+            )
+            device_id = (
+                (caps.get("gridfleet:deviceId") or caps.get("appium:gridfleet:deviceId"))
+                if isinstance(caps, dict)
+                else None
+            )
+            test_name = caps.get("gridfleet:testName") if isinstance(caps, dict) else None
             sessions[sid] = {
                 "connection_target": connection_target,
                 "device_id": device_id,
@@ -118,8 +133,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
         )
         db.add(session)
 
-        # Mark device busy
-        await set_device_availability_status(device, DeviceAvailabilityStatus.busy, publish_event=False)
+        # Mark device busy under row lock
+        from app.services import device_locking
+
+        locked_device = await device_locking.lock_device(db, device.id)
+        await set_device_availability_status(locked_device, DeviceAvailabilityStatus.busy, publish_event=False)
         activated_run = await run_service.signal_active_for_device_session(db, device.id)
         await session_service.publish_session_started_event(
             session,
@@ -163,7 +181,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
             if device is not None and await lifecycle_policy.handle_session_finished(db, device):
                 continue
             if device and device.availability_status == DeviceAvailabilityStatus.busy:
-                await restore_post_busy_availability_status(db, device)
+                from app.services import device_locking
+
+                locked_device = await device_locking.lock_device(db, device.id)
+                if locked_device.availability_status == DeviceAvailabilityStatus.busy:
+                    await restore_post_busy_availability_status(db, locked_device)
 
     await db.commit()
 
