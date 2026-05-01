@@ -58,7 +58,8 @@ async def test_download_and_verify_replaces_existing_file_atomically(
     expected = hashlib.sha256(body).hexdigest()
     dest = tmp_path / "packs"
     dest.mkdir()
-    target = dest / "1.0.0.tar.gz"
+    identity_hash = hashlib.sha256(b"pack-a\x001.0.0").hexdigest()[:12]
+    target = dest / f"pack-a-1.0.0-{identity_hash}.tar.gz"
     target.write_bytes(b"old")
     replaced: list[tuple[Path, Path]] = []
     original_replace = tarball_fetch.os.replace
@@ -85,5 +86,5 @@ async def test_download_and_verify_replaces_existing_file_atomically(
     assert path == target
     assert target.read_bytes() == body
     assert replaced and replaced[0][1] == target
-    assert replaced[0][0].name.startswith(".1.0.0.")
+    assert replaced[0][0].name.startswith(f".{target.name}.")
     assert list(dest.glob("*.tmp")) == []
