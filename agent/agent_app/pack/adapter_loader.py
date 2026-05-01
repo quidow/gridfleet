@@ -57,10 +57,21 @@ def _drop_adapter_modules() -> None:
             sys.modules.pop(name, None)
 
 
-def _activate_adapter_site(install_dir: Path) -> None:
+@dataclass(frozen=True)
+class _SiteActivation:
+    install_dir_str: str
+
+
+def _activate_adapter_site(install_dir: Path) -> _SiteActivation:
     install_dir_str = str(install_dir)
     sys.path[:] = [entry for entry in sys.path if entry != install_dir_str]
     sys.path.insert(0, install_dir_str)
+    _drop_adapter_modules()
+    return _SiteActivation(install_dir_str=install_dir_str)
+
+
+def _deactivate_adapter_site(activation: _SiteActivation) -> None:
+    sys.path[:] = [entry for entry in sys.path if entry != activation.install_dir_str]
     _drop_adapter_modules()
 
 
@@ -85,11 +96,14 @@ class _IsolatedAdapter:
 
         async def _wrapped(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - dynamic adapter return
             async with _adapter_call_lock:
-                _activate_adapter_site(self._install_dir)
-                result = attr(*args, **kwargs)
-                if inspect.isawaitable(result):
-                    return await result
-                return result
+                activation = _activate_adapter_site(self._install_dir)
+                try:
+                    result = attr(*args, **kwargs)
+                    if inspect.isawaitable(result):
+                        return await result
+                    return result
+                finally:
+                    _deactivate_adapter_site(activation)
 
         return _wrapped
 
@@ -246,18 +260,19 @@ async def load_adapter(
         wheel = _extract_wheel(tarball_path, wheel_dir)
         await _install_wheel(wheel, install_dir)
 
-        # Drop any cached ``adapter`` package tree imported against a different
-        # ``site/`` directory before resolving against the current one.
-        _activate_adapter_site(install_dir)
-        try:
-            module = importlib.import_module("adapter")
-        except ImportError as exc:
-            raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
+        async with _adapter_call_lock:
+            # Drop any cached ``adapter`` package tree imported against a different
+            # ``site/`` directory before resolving against the current one.
+            _ = _activate_adapter_site(install_dir)
+            try:
+                module = importlib.import_module("adapter")
+            except ImportError as exc:
+                raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
 
-        cls = getattr(module, "Adapter", None)
-        if cls is None:
-            raise AdapterLoadError("adapter module does not expose class Adapter")
+            cls = getattr(module, "Adapter", None)
+            if cls is None:
+                raise AdapterLoadError("adapter module does not expose class Adapter")
 
-        instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
+            instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
         _cache[key] = instance
         return instance

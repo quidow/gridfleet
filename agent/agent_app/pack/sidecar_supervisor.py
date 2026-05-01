@@ -208,15 +208,19 @@ class SidecarSupervisor:
                     raise
 
                 # The handle may have been removed by stop() between sleeps.
-                handle = self._handles.get(key)
-                if handle is None:
-                    return
+                async with self._lock:
+                    if key not in self._handles:
+                        return
 
                 try:
                     status = await dispatch_sidecar_lifecycle(adapter, feature_id, "status")
                 except Exception as exc:
-                    handle.last_error = str(exc)
-                    handle.last_status = SidecarStatus(ok=False, detail=str(exc), state="error")
+                    async with self._lock:
+                        handle = self._handles.get(key)
+                        if handle is None:
+                            return
+                        handle.last_error = str(exc)
+                        handle.last_status = SidecarStatus(ok=False, detail=str(exc), state="error")
                     logger.warning(
                         "sidecar status poll failed for %s/%s/%s: %s",
                         pack_id,
@@ -226,8 +230,12 @@ class SidecarSupervisor:
                     )
                     return
 
-                handle.last_status = status
-                handle.last_error = None
+                async with self._lock:
+                    handle = self._handles.get(key)
+                    if handle is None:
+                        return
+                    handle.last_status = status
+                    handle.last_error = None
                 if not status.ok:
                     logger.info(
                         "sidecar %s/%s/%s reported not-ok status; stopping poll loop",

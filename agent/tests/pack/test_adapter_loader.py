@@ -14,6 +14,7 @@ import.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 import tarfile
@@ -25,6 +26,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from agent_app.pack import adapter_loader
 from agent_app.pack.adapter_loader import (
     AdapterLoadError,
     _adapter_cache_clear,
@@ -79,6 +81,10 @@ Tag: py3-none-any
 """
 
 _WHEEL_RECORD = ""  # contents written dynamically below
+
+
+def _adapter_module_names() -> list[str]:
+    return [name for name in sys.modules if name == "adapter" or name.startswith("adapter.")]
 
 
 def _build_handcrafted_wheel(
@@ -147,10 +153,13 @@ async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
     )
 
     assert adapter is not None
+    site_dir = str((runtime_dir / "site").resolve())
+    assert site_dir in sys.path
+
     extra = await adapter.pre_session(spec=type("S", (), {"capabilities": {}})())
+
     assert extra == {"appium:vendorMagic": "set"}
-    # site/ is on sys.path
-    assert str((runtime_dir / "site").resolve()) in sys.path
+    assert site_dir not in sys.path
 
 
 @pytest.mark.asyncio
@@ -241,6 +250,84 @@ class Adapter:
 
     assert await second.normalize_device(None) == "android"
     assert await first.normalize_device(None) == "roku"
+
+
+@pytest.mark.asyncio
+async def test_load_adapter_does_not_reactivate_site_during_in_flight_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _adapter_cache_clear()
+    original_path = list(sys.path)
+    original_modules = {name: sys.modules[name] for name in _adapter_module_names()}
+    pack_a_dir = (tmp_path / "runtime-a" / "site").resolve()
+    (pack_a_dir / "adapter").mkdir(parents=True)
+    (pack_a_dir / "adapter" / "__init__.py").write_text(
+        "PACK_LABEL = 'pack_a'\n",
+        encoding="utf-8",
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowInstance:
+        async def import_after_interleaved_load(self) -> str:
+            import adapter  # type: ignore[import-not-found]
+
+            assert adapter.PACK_LABEL == "pack_a"
+            started.set()
+            await release.wait()
+            import adapter as adapter_after  # type: ignore[import-not-found]
+
+            return adapter_after.PACK_LABEL
+
+    body = """\
+class Adapter:
+    PACK_LABEL = "pack_b"
+
+PACK_LABEL = "pack_b"
+"""
+    pack_b_tarball = _build_named_tarball_with_adapter_wheel(tmp_path, "pack-b", body=body)
+    real_install = adapter_loader._install_wheel
+    installed = asyncio.Event()
+
+    async def tracked_install(wheel: Path, target_dir: Path) -> None:
+        await real_install(wheel, target_dir)
+        installed.set()
+
+    monkeypatch.setattr(adapter_loader, "_install_wheel", tracked_install)
+
+    try:
+        wrapped_a = adapter_loader._IsolatedAdapter(
+            _SlowInstance(),
+            pack_a_dir,
+            pack_id="pack-a",
+            release="0.0.1",
+        )
+        hook_task = asyncio.create_task(wrapped_a.import_after_interleaved_load())
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        load_task = asyncio.create_task(
+            load_adapter(
+                pack_id="pack-b",
+                release="0.0.1",
+                tarball_path=pack_b_tarball,
+                runtime_dir=tmp_path / "runtime-b",
+                venv_python=sys.executable,
+            )
+        )
+        await asyncio.wait_for(installed.wait(), timeout=1)
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await hook_task == "pack_a"
+        loaded_b = await load_task
+        assert loaded_b.pack_id == "pack-b"
+    finally:
+        release.set()
+        sys.path[:] = original_path
+        for name in _adapter_module_names():
+            sys.modules.pop(name, None)
+        sys.modules.update(original_modules)
 
 
 @pytest.mark.asyncio
