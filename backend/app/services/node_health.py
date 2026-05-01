@@ -47,6 +47,10 @@ NODE_HEALTH_PROBE_TIMEOUT_SEC = 15
 class NodeHealthCheckRequest:
     node: AppiumNode
     device: Device
+    observed_state: NodeState
+    observed_port: int
+    observed_pid: int | None
+    observed_active_connection_target: str | None
     probe_capabilities: dict[str, Any] | None = None
 
 
@@ -148,6 +152,10 @@ async def _process_node_health(
     *,
     healthy: bool,
     grid_device_ids: set[str] | None,
+    observed_state: NodeState | None = None,
+    observed_port: int | None = None,
+    observed_pid: int | None = None,
+    observed_active_connection_target: str | None = None,
 ) -> None:
     node_key = str(node.id)
 
@@ -158,7 +166,27 @@ async def _process_node_health(
         # Node was deleted between the caller's lock_device and here. Bail out
         # quietly; lower layers will reconcile on the next sweep.
         return
+
+    if (
+        observed_state is not None
+        and observed_port is not None
+        and (
+            locked_node.state != observed_state
+            or locked_node.port != observed_port
+            or locked_node.pid != observed_pid
+            or locked_node.active_connection_target != observed_active_connection_target
+        )
+    ):
+        logger.info(
+            "Node health check for device %s skipped stale probe result after node changed",
+            device.name,
+        )
+        return
+
     node = locked_node
+
+    if locked_node.state != NodeState.running:
+        return
 
     if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
         if _grid_registration_grace_active(node):
@@ -385,6 +413,10 @@ async def _check_nodes(db: AsyncSession) -> None:
         NodeHealthCheckRequest(
             node=node,
             device=node.device,
+            observed_state=node.state,
+            observed_port=node.port,
+            observed_pid=node.pid,
+            observed_active_connection_target=node.active_connection_target,
             probe_capabilities=await _build_probe_capabilities_for_node(db, node.device),
         )
         for node in nodes
@@ -418,6 +450,10 @@ async def _check_nodes(db: AsyncSession) -> None:
             locked_device,
             healthy=healthy,
             grid_device_ids=grid_device_ids,
+            observed_state=request.observed_state,
+            observed_port=request.observed_port,
+            observed_pid=request.observed_pid,
+            observed_active_connection_target=request.observed_active_connection_target,
         )
         await db.commit()
 
