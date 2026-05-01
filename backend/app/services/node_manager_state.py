@@ -108,6 +108,9 @@ async def mark_node_started(
     active_connection_target: str | None = None,
 ) -> AppiumNode:
     await _hold_device_row_lock(db, device.id)
+    from app.services import appium_node_locking
+
+    await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = upsert_node(db, device, port, pid, active_connection_target)
     next_status = await ready_device_availability_status(db, device)
     await set_device_availability_status(device, next_status)
@@ -128,6 +131,9 @@ async def mark_node_started(
 
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     await _hold_device_row_lock(db, device.id)
+    from app.services import appium_node_locking
+
+    await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = device.appium_node
     assert node is not None
     node.state = NodeState.stopped

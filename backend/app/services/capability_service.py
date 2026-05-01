@@ -88,9 +88,18 @@ async def _get_live_active_connection_target(db: AsyncSession, device: Device) -
     if node is not None and node.active_connection_target:
         return node.active_connection_target
 
+    # The node exists but active_connection_target is not yet cached — we must
+    # fetch it from the host snapshot and persist it.  Acquire Device + AppiumNode
+    # row locks BEFORE the slow host-snapshot call so that concurrent writers
+    # (mark_node_started / mark_node_stopped) cannot race the same column.
+    from app.services import appium_node_locking, device_locking
+
+    await device_locking.lock_device(db, device.id)
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+
     active_connection_target = await _active_target_from_host_snapshot(db, device)
-    if node is not None and active_connection_target:
-        node.active_connection_target = active_connection_target
+    if locked_node is not None and active_connection_target:
+        locked_node.active_connection_target = active_connection_target
         await db.flush()
     return active_connection_target
 

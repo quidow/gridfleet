@@ -186,13 +186,29 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
     assert await capability_service._get_live_active_connection_target(db, device) == "emulator-5554"
     db.flush.assert_not_awaited()
 
+    # When there is no cached target, the helper must acquire Device + AppiumNode
+    # locks and persist the value returned by the host-snapshot probe.
+    locked_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub",
+        state=NodeState.running,
+        active_connection_target=None,
+    )
     device.appium_node.active_connection_target = None
-    with patch(
-        "app.services.capability_service._active_target_from_host_snapshot",
-        new=AsyncMock(return_value="emulator-5556"),
+    with (
+        patch(
+            "app.services.capability_service._active_target_from_host_snapshot",
+            new=AsyncMock(return_value="emulator-5556"),
+        ),
+        patch("app.services.device_locking.lock_device", new=AsyncMock()),
+        patch(
+            "app.services.appium_node_locking.lock_appium_node_for_device",
+            new=AsyncMock(return_value=locked_node),
+        ),
     ):
         assert await capability_service._get_live_active_connection_target(db, device) == "emulator-5556"
-    assert device.appium_node.active_connection_target == "emulator-5556"
+    assert locked_node.active_connection_target == "emulator-5556"
     db.flush.assert_awaited_once()
 
 
@@ -203,7 +219,11 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
 
     emulator = _device(device_type=DeviceType.emulator)
     emulator.appium_node = AppiumNode(device_id=emulator.id, port=4723, grid_url="http://hub", state=NodeState.running)
-    with patch("app.services.capability_service._active_target_from_host_snapshot", new=AsyncMock(return_value=None)):
+    with (
+        patch("app.services.capability_service._active_target_from_host_snapshot", new=AsyncMock(return_value=None)),
+        patch("app.services.device_locking.lock_device", new=AsyncMock()),
+        patch("app.services.appium_node_locking.lock_appium_node_for_device", new=AsyncMock(return_value=None)),
+    ):
         assert await capability_service._get_live_active_connection_target(db, emulator) is None
 
 
