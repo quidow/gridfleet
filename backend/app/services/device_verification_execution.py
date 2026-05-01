@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AgentCallError
@@ -203,8 +202,9 @@ async def retain_verified_node(
             )
             handle.owner_key = target_owner_key
 
-        result = await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))
-        node = result.scalar_one_or_none()
+        from app.services import appium_node_locking
+
+        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if node is None:
             node = AppiumNode(
                 device_id=device.id,
