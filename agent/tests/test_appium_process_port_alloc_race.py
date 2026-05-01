@@ -41,6 +41,8 @@ async def test_advertise_ip_refresh_holds_start_lock_during_restart() -> None:
             starter_acquired.set()
             mgr._start_lock.release()
         except TimeoutError:
+            # Expected when the fix is in place — refresher holds the lock
+            # for longer than the starter's 50 ms wait window.
             pass
 
     starter_task = asyncio.create_task(starter())
@@ -48,8 +50,7 @@ async def test_advertise_ip_refresh_holds_start_lock_during_restart() -> None:
     await inside_restart.wait()
     await asyncio.sleep(0.1)
     proceed_restart.set()
-    await starter_task
-    await refresher_task
+    await asyncio.gather(starter_task, refresher_task)
 
     assert not starter_acquired.is_set(), (
         "starter acquired _start_lock while refresher was inside "
