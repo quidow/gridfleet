@@ -15,7 +15,13 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts
-from app.services import device_health_summary, lifecycle_incident_service, maintenance_service, platform_label_service
+from app.services import (
+    device_health_summary,
+    device_locking,
+    lifecycle_incident_service,
+    maintenance_service,
+    platform_label_service,
+)
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
@@ -896,33 +902,40 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
         await db.commit()
         return
 
+    device_ids = sorted({reservation.device_id for reservation in active_reservations})
+    locked_devices = {device.id: device for device in await device_locking.lock_devices(db, device_ids)}
+
     for reservation in active_reservations:
         reservation.released_at = released_at
         reservation.claimed_by = None
         reservation.claimed_at = None
-        stmt = select(Device).where(Device.id == reservation.device_id)
-        result = await db.execute(stmt)
-        device = result.scalar_one_or_none()
-        if device and device.availability_status in {DeviceAvailabilityStatus.reserved, DeviceAvailabilityStatus.busy}:
-            old_availability_status = device.availability_status
-            if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
-                db, device.id
-            ):
-                continue
-            if await is_ready_for_use_async(db, device):
-                device.availability_status = DeviceAvailabilityStatus.available
-            else:
-                device.availability_status = DeviceAvailabilityStatus.offline
-            await event_bus.publish(
-                "device.availability_changed",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "old_availability_status": old_availability_status.value,
-                    "new_availability_status": device.availability_status.value,
-                    "reason": f"Run '{run.name}' ended ({run.state.value})",
-                },
-            )
+        device = locked_devices.get(reservation.device_id)
+        if device is None:
+            continue
+        if device.availability_status not in {
+            DeviceAvailabilityStatus.reserved,
+            DeviceAvailabilityStatus.busy,
+        }:
+            continue
+        old_availability_status = device.availability_status
+        if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
+            db, device.id
+        ):
+            continue
+        if await is_ready_for_use_async(db, device):
+            device.availability_status = DeviceAvailabilityStatus.available
+        else:
+            device.availability_status = DeviceAvailabilityStatus.offline
+        await event_bus.publish(
+            "device.availability_changed",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_availability_status": old_availability_status.value,
+                "new_availability_status": device.availability_status.value,
+                "reason": f"Run '{run.name}' ended ({run.state.value})",
+            },
+        )
     await db.commit()
 
 
