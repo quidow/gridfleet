@@ -359,10 +359,14 @@ async def _check_hosts(db: AsyncSession) -> None:
                     },
                 )
                 host.status = HostStatus.offline
-                # Mark all devices on this host as offline
-                device_stmt = select(Device).where(Device.host_id == host.id)
-                device_result = await db.execute(device_stmt)
-                for device in device_result.scalars().all():
+                # Mark all devices on this host as offline. lock_devices
+                # acquires SELECT FOR UPDATE on each row in id order so
+                # availability_status writes serialize against concurrent writers.
+                from app.services import device_locking
+
+                device_id_stmt = select(Device.id).where(Device.host_id == host.id)
+                device_ids = list((await db.execute(device_id_stmt)).scalars().all())
+                for device in await device_locking.lock_devices(db, device_ids):
                     await event_bus.publish(
                         "device.availability_changed",
                         {
