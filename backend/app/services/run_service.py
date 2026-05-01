@@ -354,6 +354,18 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
     return result.scalar_one_or_none()
 
 
+async def _get_run_for_update(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
+    stmt = (
+        select(TestRun)
+        .where(TestRun.id == run_id)
+        .options(selectinload(TestRun.device_reservations))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_device_reservation_with_entry(
     db: AsyncSession,
     device_id: uuid.UUID,
@@ -550,7 +562,7 @@ async def list_runs_cursor(
 
 
 async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
     if run.state != RunState.preparing:
@@ -567,7 +579,7 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
     if run.state != RunState.ready:
@@ -662,10 +674,11 @@ async def report_preparation_failure(
 
 
 async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
     if run.state in TERMINAL_STATES:
+        await db.commit()
         return run
 
     run.last_heartbeat = datetime.now(UTC)
@@ -773,7 +786,7 @@ async def release_claimed_device(
 
 
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
     if run.state in TERMINAL_STATES:
@@ -782,9 +795,8 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     now = datetime.now(UTC)
     run.state = RunState.completed
     run.completed_at = now
+    await _release_devices(db, run, commit=False)
     await db.commit()
-
-    await _release_devices(db, run)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -803,7 +815,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
     if run.state in TERMINAL_STATES:
@@ -811,9 +823,8 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
+    await _release_devices(db, run, commit=False)
     await db.commit()
-
-    await _release_devices(db, run)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -829,16 +840,15 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    run = await get_run(db, run_id)
+    run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
 
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
+    await _release_devices(db, run, commit=False)
     await db.commit()
-
-    await _release_devices(db, run)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -856,18 +866,24 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
 
-    run.state = RunState.expired
-    run.error = reason
-    run.completed_at = datetime.now(UTC)
-    await db.commit()
+    locked_run = await _get_run_for_update(db, run.id)
+    if locked_run is None:
+        return
+    if locked_run.state in TERMINAL_STATES:
+        await db.commit()
+        return
 
-    await _release_devices(db, run)
+    locked_run.state = RunState.expired
+    locked_run.error = reason
+    locked_run.completed_at = datetime.now(UTC)
+    await _release_devices(db, locked_run, commit=False)
+    await db.commit()
 
     await event_bus.publish(
         "run.expired",
         {
-            "run_id": str(run.id),
-            "name": run.name,
+            "run_id": str(locked_run.id),
+            "name": locked_run.name,
             "reason": reason,
         },
     )
@@ -906,7 +922,7 @@ async def _device_has_running_session(db: AsyncSession, device_id: uuid.UUID) ->
     return result.scalar_one_or_none() is not None
 
 
-async def _release_devices(db: AsyncSession, run: TestRun) -> None:
+async def _release_devices(db: AsyncSession, run: TestRun, *, commit: bool = True) -> None:
     """Release all active reservations for this run and restore device statuses."""
 
     active_reservations = [reservation for reservation in run.device_reservations if reservation.released_at is None]
@@ -914,7 +930,8 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
     await _mark_running_sessions_released(db, run, released_at)
 
     if not active_reservations:
-        await db.commit()
+        if commit:
+            await db.commit()
         return
 
     device_ids = sorted({reservation.device_id for reservation in active_reservations})
@@ -956,7 +973,8 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
                 "reason": f"Run '{run.name}' ended ({run.state.value})",
             },
         )
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def fetch_session_counts(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, SessionCounts]:
