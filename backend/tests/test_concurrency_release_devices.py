@@ -71,7 +71,6 @@ async def test_release_devices_does_not_stomp_offline_writer(
             run_obj.completed_at = datetime.now(UTC)
             started.set()
             await proceed.wait()
-            await session.commit()
             await run_service._release_devices(session, run_obj)
 
     async def stomper() -> None:
@@ -186,6 +185,11 @@ async def test_release_devices_serializes_with_concurrent_writer(
             await session.commit()
 
     await asyncio.gather(releaser(), stomper())
+
+    assert stomper_can_go.is_set(), (
+        "racing_is_ready was never called — _release_devices was refactored to skip "
+        "is_ready_for_use_async; the mock injection point is no longer valid"
+    )
 
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
