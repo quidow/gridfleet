@@ -22,9 +22,15 @@ async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> None:
     Holds the PG row lock until the next commit without touching the ORM
     identity map, so callers that already locked the device see no
     populate_existing surprises and unlocked callers become compliant
-    with the device_locking invariant.
+    with the device_locking invariant. Raises ``NodeManagerError`` if the
+    row no longer exists, so callers stop before mutating in-memory state
+    or publishing events for a stale device.
     """
-    await db.execute(select(Device.id).where(Device.id == device_id).with_for_update())
+    locked_id = await db.scalar(select(Device.id).where(Device.id == device_id).with_for_update())
+    if locked_id is None:
+        from app.services.node_manager_types import NodeManagerError
+
+        raise NodeManagerError(f"Device {device_id} no longer exists")
 
 
 async def allocate_port(db: AsyncSession) -> int:
