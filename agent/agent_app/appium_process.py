@@ -1125,33 +1125,34 @@ class AppiumProcessManager:
                 os.unlink(toml_path)
 
     async def stop(self, port: int) -> None:
-        self._intentional_stop_ports.add(port)
-        self._cancel_task(self._appium_restart_tasks, port)
-        self._cancel_task(self._appium_watch_tasks, port)
+        async with self._start_lock:
+            self._intentional_stop_ports.add(port)
+            self._cancel_task(self._appium_restart_tasks, port)
+            self._cancel_task(self._appium_watch_tasks, port)
 
-        # Stop Grid Node first
-        await self._stop_grid_node_process(port)
+            # Stop Grid Node first
+            await self._stop_grid_node_process(port)
 
-        # Stop Appium
-        appium_proc = self._appium_procs.pop(port, None)
-        self._info.pop(port, None)
-        self._launch_specs.pop(port, None)
-        self._appium_restart_attempts.pop(port, None)
-        self._grid_node_restart_attempts.pop(port, None)
-        self._appium_restart_backoff_steps.pop(port, None)
-        self._grid_node_restart_backoff_steps.pop(port, None)
+            # Stop Appium
+            appium_proc = self._appium_procs.pop(port, None)
+            self._info.pop(port, None)
+            self._launch_specs.pop(port, None)
+            self._appium_restart_attempts.pop(port, None)
+            self._grid_node_restart_attempts.pop(port, None)
+            self._appium_restart_backoff_steps.pop(port, None)
+            self._grid_node_restart_backoff_steps.pop(port, None)
 
-        if appium_proc and appium_proc.returncode is None:
-            appium_proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(appium_proc.wait(), timeout=STOP_GRACE_PERIOD)
-            except TimeoutError:
-                appium_proc.kill()
-                await appium_proc.wait()
+            if appium_proc and appium_proc.returncode is None:
+                appium_proc.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(appium_proc.wait(), timeout=STOP_GRACE_PERIOD)
+                except TimeoutError:
+                    appium_proc.kill()
+                    await appium_proc.wait()
 
-        for t in self._log_tasks.pop(port, []):
-            t.cancel()
-        self._intentional_stop_ports.discard(port)
+            for t in self._log_tasks.pop(port, []):
+                t.cancel()
+            self._intentional_stop_ports.discard(port)
 
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)
