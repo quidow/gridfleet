@@ -63,7 +63,7 @@ def make_device(
     os_version: str,
     availability_status: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available,
     verified: bool = True,
-    extra_tags: dict[str, object] | None = None,
+    extra_tags: dict[str, str] | None = None,
     connection_target: str | None = None,
     ip_address: str | None = None,
     device_config: dict[str, object] | None = None,
@@ -78,7 +78,7 @@ def make_device(
     identity_scope: str | None = None,
 ) -> Device:
     """Build an unflushed Device with platform-appropriate identity + tags."""
-    tags: dict[str, object] = dict(extra_tags or {})
+    tags: dict[str, str] = dict(extra_tags or {})
 
     # Derive pack_id, identity_scheme, identity_scope from platform_id if not provided
     default_pack_id, default_scheme, default_scope = _pack_identity_for(platform_id, device_type)
