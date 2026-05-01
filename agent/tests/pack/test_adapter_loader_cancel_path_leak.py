@@ -58,7 +58,7 @@ async def test_cancelled_adapter_call_does_not_leak_import_state(tmp_path: Path)
         task = asyncio.create_task(call_a())
         await asyncio.wait_for(slow_started.wait(), timeout=1)
         assert sys.path[0] == str(pack_a_dir)
-        task.cancel()
+        assert task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 

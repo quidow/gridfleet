@@ -260,18 +260,19 @@ async def load_adapter(
         wheel = _extract_wheel(tarball_path, wheel_dir)
         await _install_wheel(wheel, install_dir)
 
-        # Drop any cached ``adapter`` package tree imported against a different
-        # ``site/`` directory before resolving against the current one.
-        _ = _activate_adapter_site(install_dir)
-        try:
-            module = importlib.import_module("adapter")
-        except ImportError as exc:
-            raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
+        async with _adapter_call_lock:
+            # Drop any cached ``adapter`` package tree imported against a different
+            # ``site/`` directory before resolving against the current one.
+            _ = _activate_adapter_site(install_dir)
+            try:
+                module = importlib.import_module("adapter")
+            except ImportError as exc:
+                raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
 
-        cls = getattr(module, "Adapter", None)
-        if cls is None:
-            raise AdapterLoadError("adapter module does not expose class Adapter")
+            cls = getattr(module, "Adapter", None)
+            if cls is None:
+                raise AdapterLoadError("adapter module does not expose class Adapter")
 
-        instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
+            instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
         _cache[key] = instance
         return instance
