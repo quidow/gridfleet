@@ -29,7 +29,11 @@ async def enter_maintenance(
         try:
             manager = get_node_manager(device)
             await manager.stop_node(db, device)
-            # stop_node transitions device status to offline; restore maintenance.
+            # stop_node commits via mark_node_stopped, releasing our row lock.
+            # Re-acquire the Device row before restoring maintenance.
+            from app.services import device_locking
+
+            device = await device_locking.lock_device(db, device.id)
             device.availability_status = DeviceAvailabilityStatus.maintenance
         except NodeManagerError as exc:
             logger.warning("Failed to stop node for %s during maintenance: %s", device.id, exc)
