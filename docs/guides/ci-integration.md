@@ -7,16 +7,6 @@ This guide shows how to integrate GridFleet's device reservation system with you
 3. **Run tests** against the reserved devices through Selenium Grid
 4. **Release** devices automatically when done (or on failure/timeout)
 
-## Supported End-to-End Consumer Example
-
-This repository now includes a standalone client project under `e2e-examples/`.
-
-- It depends on the local `testkit` exactly like an external consumer would.
-- `python -m e2e_examples.run_android_ci` reserves Android devices, starts run heartbeats, downloads and installs `ApiDemos-debug.apk` with `adb`, runs pytest through Grid, and always releases the run.
-- The Android flow can run from any Android-capable host that can reach the GridFleet API and Selenium Grid.
-
-Use that project when you want a complete reference implementation instead of assembling the lower-level snippets below by hand.
-
 ## Authentication
 
 When the manager runs with `GRIDFLEET_AUTH_ENABLED=true` (the recommended production setting), every `/api/*` call requires HTTP Basic auth using the manager's machine credentials.

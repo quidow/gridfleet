@@ -39,7 +39,6 @@ gridfleet/
 ├── frontend/      React + TypeScript operator console
 ├── driver-packs/  Curated manifests, templates, and adapter source
 ├── testkit/       Supported Python pytest/Appium helper package
-├── e2e-examples/  Standalone consumer project for external-style examples
 ├── docker/        Development and production compose files
 ├── docs/          Guides, references, and runbooks
 └── scripts/       Demo, backup/restore, and driver-pack helpers

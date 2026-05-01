@@ -1,6 +1,6 @@
 # Release Policy
 
-GridFleet uses coordinated repository releases. A release tag covers the backend, agent, frontend, testkit, e2e examples, Docker Compose files, curated driver-pack manifests, and documentation in this repository.
+GridFleet uses coordinated repository releases. A release tag covers the backend, agent, frontend, testkit, Docker Compose files, curated driver-pack manifests, and documentation in this repository.
 
 ## Version Scheme
 

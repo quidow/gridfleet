@@ -32,7 +32,6 @@ Install component dependencies:
 cd backend && uv sync --extra dev
 cd ../agent && uv sync --extra dev
 cd ../testkit && uv sync --extra dev --extra appium
-cd ../e2e-examples && uv sync --extra dev --extra appium
 cd ../frontend && npm ci
 ```
 
@@ -60,11 +59,10 @@ uv run mypy agent_app/
 uv run pytest -q
 ```
 
-Testkit and examples:
+Testkit:
 
 ```bash
 cd testkit && uv run --extra dev --extra appium pytest -q
-cd ../e2e-examples && uv run --extra dev --extra appium pytest -q
 ```
 
 Frontend:

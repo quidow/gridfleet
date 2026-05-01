@@ -10,7 +10,6 @@ GridFleet is a control plane for Appium + Selenium Grid device labs. It is a mul
 - `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes and Selenium Grid relay nodes. Python 3.12, managed by `uv`.
 - `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
 - `testkit/` — supported Python pytest/Appium helper package (`gridfleet_testkit`). Python 3.12, managed by `uv`.
-- `e2e-examples/` — standalone consumer project simulating an external CI client.
 - `driver-packs/` — curated manifests + adapter source. Tarballs are NOT checked in; build with `scripts/build_driver_tarballs.py`.
 - `docker/` — `docker-compose.yml` (dev), `docker-compose.prod.yml` (prod), `docker-compose.demo.yml` (frozen demo).
 
@@ -56,10 +55,9 @@ npm run test:e2e:live                     # Playwright against live backend+fron
 ```
 Live e2e requires backend, Postgres, and the frontend dev server running.
 
-### Testkit / examples
+### Testkit
 ```bash
 cd testkit && uv run --extra dev --extra appium pytest -q
-cd e2e-examples && uv run --extra dev --extra appium pytest -q
 ```
 
 ### Stack
