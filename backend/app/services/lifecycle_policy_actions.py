@@ -155,9 +155,17 @@ async def stop_node_and_mark_offline(
             manager = manager_resolver(device)
             await manager.stop_node(db, device)
         except Exception:
+            # stop_node may commit before raising, releasing both row locks.
+            # Re-acquire in the documented Device -> AppiumNode order before
+            # writing offline/error state.
+            from app.services import appium_node_locking, device_locking
+
+            device = await device_locking.lock_device(db, device.id, load_sessions=True)
+            locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
             device.availability_status = DeviceAvailabilityStatus.offline
-            node.state = NodeState.error
-            node.pid = None
+            if locked_node is not None:
+                locked_node.state = NodeState.error
+                locked_node.pid = None
             await db.commit()
     else:
         device.availability_status = DeviceAvailabilityStatus.offline

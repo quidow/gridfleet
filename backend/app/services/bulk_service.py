@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
 from app.models.device import Device
+from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.event_bus import event_bus
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
@@ -178,24 +179,26 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str
 
 async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID], drain: bool = False) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
+    ordered_ids = [device.id for device in devices]
     errors: dict[str, str] = {}
-    for device in devices:
+    for device_id in ordered_ids:
         try:
+            device = await device_locking.lock_device(db, device_id)
             await enter_maintenance(db, device, drain=drain, commit=False)
         except Exception as e:
-            errors[str(device.id)] = str(e)
+            errors[str(device_id)] = str(e)
     await db.commit()
-    succeeded = len(devices) - len(errors)
+    succeeded = len(ordered_ids) - len(errors)
     await event_bus.publish(
         "bulk.operation_completed",
         {
             "operation": "enter_maintenance",
-            "total": len(devices),
+            "total": len(ordered_ids),
             "succeeded": succeeded,
             "failed": len(errors),
         },
     )
-    return _result(len(devices), succeeded, errors)
+    return _result(len(ordered_ids), succeeded, errors)
 
 
 async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
