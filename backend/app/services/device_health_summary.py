@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import NoResultFound
+
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services import control_plane_state_store
 
@@ -87,6 +89,18 @@ async def device_allows_allocation(db: AsyncSession, device: Device) -> bool:
     return health_snapshot_allows_allocation(await get_health_snapshot(db, str(device.id)))
 
 
+async def _lock_device_for_health_transition(db: AsyncSession, device: Device | str) -> Device | None:
+    if not isinstance(device, Device):
+        return None
+
+    from app.services import device_locking
+
+    try:
+        return await device_locking.lock_device(db, device.id)
+    except NoResultFound:
+        return None
+
+
 async def _mark_offline_for_failed_health_signal(
     db: AsyncSession,
     device: Device | str,
@@ -94,15 +108,18 @@ async def _mark_offline_for_failed_health_signal(
     failed: bool,
     reason: str,
 ) -> None:
-    if not failed or not isinstance(device, Device):
+    if not failed:
         return
-    if device.availability_status != DeviceAvailabilityStatus.available:
+    locked = await _lock_device_for_health_transition(db, device)
+    if locked is None:
+        return
+    if locked.availability_status != DeviceAvailabilityStatus.available:
         return
 
     from app.services.device_availability import set_device_availability_status
 
     await set_device_availability_status(
-        device,
+        locked,
         DeviceAvailabilityStatus.offline,
         reason=reason,
     )
@@ -113,11 +130,12 @@ async def _restore_available_for_healthy_signal(
     device: Device | str,
     snapshot: dict[str, Any],
 ) -> None:
-    if not isinstance(device, Device):
+    locked = await _lock_device_for_health_transition(db, device)
+    if locked is None:
         return
-    if device.availability_status != DeviceAvailabilityStatus.offline:
+    if locked.availability_status != DeviceAvailabilityStatus.offline:
         return
-    if not device.auto_manage:
+    if not locked.auto_manage:
         return
     if snapshot.get("node_running") is not True:
         return
@@ -128,14 +146,14 @@ async def _restore_available_for_healthy_signal(
     from app.services.device_availability import set_device_availability_status
     from app.services.device_readiness import is_ready_for_use_async
 
-    node = device.__dict__.get("appium_node")
+    node = locked.__dict__.get("appium_node")
     if node is None or node.state != NodeState.running:
         return
-    if not await is_ready_for_use_async(db, device):
+    if not await is_ready_for_use_async(db, locked):
         return
 
     await set_device_availability_status(
-        device,
+        locked,
         DeviceAvailabilityStatus.available,
         reason="Health checks recovered",
     )
