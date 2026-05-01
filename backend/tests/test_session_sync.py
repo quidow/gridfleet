@@ -485,7 +485,8 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     assert run.reserved_devices[0]["excluded"] is True
 
 
-async def test_sync_tracks_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
+async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
+    """Probe sessions are filtered out and never persisted as real Session rows."""
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -523,17 +524,10 @@ async def test_sync_tracks_probe_sessions(db_session: AsyncSession, db_host: Hos
 
     result = await db_session.execute(select(Session))
     sessions = result.scalars().all()
-    assert len(sessions) == 1
-    assert sessions[0].session_id == "probe-sess-1"
-    assert sessions[0].test_name == "__gridfleet_probe__"
-    assert sessions[0].requested_capabilities == {
-        "platformName": "android",
-        "appium:udid": "dev-probe",
-        "gridfleet:probeSession": True,
-        "gridfleet:testName": "__gridfleet_probe__",
-    }
+    assert sessions == []
+
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.availability_status == DeviceAvailabilityStatus.available
 
 
 async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSession, db_host: Host) -> None:

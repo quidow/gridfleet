@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from sqlalchemy import select
@@ -283,9 +283,12 @@ async def run_session_viability_probe(
                 await db.commit()
             return state
 
-        previous_status = device.availability_status
+        from app.services import device_locking
+
+        locked = await device_locking.lock_device(db, device.id)
+        previous_status = locked.availability_status
         await set_device_availability_status(
-            device,
+            locked,
             DeviceAvailabilityStatus.busy,
             reason="Session viability probe running",
             publish_event=True,
@@ -303,18 +306,24 @@ async def run_session_viability_probe(
             error=error,
             checked_by=checked_by,
         )
-        await db.refresh(device)
-        current_status = cast("Any", device.availability_status)
-        if current_status == DeviceAvailabilityStatus.busy:
+
+        relocked = await device_locking.lock_device(db, device.id)
+        if relocked.availability_status == DeviceAvailabilityStatus.busy:
             await restore_post_busy_availability_status(
                 db,
-                device,
+                relocked,
                 reason="Session viability probe finished",
                 publish_event=True,
             )
             await db.commit()
-        elif config_changed:
-            await db.commit()
+        else:
+            logger.info(
+                "Device %s availability changed during probe (now %s); skipping restore",
+                device.id,
+                relocked.availability_status.value,
+            )
+            if config_changed:
+                await db.commit()
         if not ok and checked_by != "recovery":
             await lifecycle_policy.handle_health_failure(
                 db,
@@ -325,13 +334,16 @@ async def run_session_viability_probe(
         return state
     except Exception:
         if previous_status in {DeviceAvailabilityStatus.available, DeviceAvailabilityStatus.offline}:
-            await db.refresh(device)
-            current_status = cast("Any", device.availability_status)
-            if current_status == DeviceAvailabilityStatus.busy:
+            from app.services import device_locking
+
+            relocked = await device_locking.lock_device(db, device.id)
+            if relocked.availability_status == DeviceAvailabilityStatus.busy:
                 if previous_status == DeviceAvailabilityStatus.offline:
-                    await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
+                    await set_device_availability_status(
+                        relocked, DeviceAvailabilityStatus.offline, publish_event=False
+                    )
                 else:
-                    await restore_post_busy_availability_status(db, device, publish_event=False)
+                    await restore_post_busy_availability_status(db, relocked, publish_event=False)
                 await db.commit()
         raise
     finally:

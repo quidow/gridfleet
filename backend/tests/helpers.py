@@ -24,6 +24,25 @@ async def create_host(client: AsyncClient, **overrides: object) -> dict[str, Any
     return dict(response.json())
 
 
+async def create_device(
+    db_session: AsyncSession,
+    *,
+    host_id: str | uuid.UUID,
+    name: str,
+    identity_value: str | None = None,
+    **overrides: object,
+) -> Device:
+    """Convenience wrapper around ``create_device_record`` for tests that don't care about identity_value."""
+    resolved_identity = identity_value if identity_value is not None else f"auto-{uuid.uuid4().hex[:12]}"
+    return await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value=resolved_identity,
+        name=name,
+        **overrides,
+    )
+
+
 async def create_device_record(
     db_session: AsyncSession,
     *,

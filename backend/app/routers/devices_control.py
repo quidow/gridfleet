@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.errors import AgentCallError
-from app.routers.device_route_helpers import get_device_or_404
+from app.routers.device_route_helpers import (
+    get_device_for_update_or_404,
+    get_device_or_404,
+)
 from app.schemas.device import DeviceRead
 from app.schemas.maintenance import DeviceMaintenanceUpdate
 from app.services import (
@@ -45,14 +48,17 @@ async def enter_device_maintenance(
     body: DeviceMaintenanceUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
-    device = await maintenance_service.enter_maintenance(db, device, drain=body.drain)
+    device = await get_device_for_update_or_404(device_id, db)
+    try:
+        device = await maintenance_service.enter_maintenance(db, device, drain=body.drain)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return await device_presenter.serialize_device(db, device)
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
 async def exit_device_maintenance(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.exit_maintenance(db, device)
     except ValueError as e:
@@ -81,7 +87,7 @@ async def replace_device_config(
     body: dict[str, Any],
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     return await config_service.replace_device_config(db, device, body)
 
 
@@ -91,7 +97,7 @@ async def merge_device_config(
     body: dict[str, Any],
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     return await config_service.merge_device_config(db, device, body)
 
 
@@ -179,7 +185,7 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 @router.post("/{device_id}/session-test")
 async def device_session_test(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     try:
         return await session_viability.run_session_viability_probe(db, device, checked_by="manual")
     except ValueError as exc:
@@ -247,7 +253,7 @@ async def device_lifecycle_action(
     body: dict[str, Any] | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     try:
         resolved = await resolve_pack_platform(
             db,

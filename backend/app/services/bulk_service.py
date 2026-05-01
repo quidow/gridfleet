@@ -4,9 +4,7 @@ import uuid
 from typing import Any
 
 import httpx
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.errors import AgentCallError
 from app.models.device import Device
@@ -24,13 +22,9 @@ MAX_CONCURRENCY = 5
 
 
 async def _load_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
-    stmt = (
-        select(Device)
-        .where(Device.id.in_(device_ids))
-        .options(selectinload(Device.appium_node), selectinload(Device.host))
-    )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    from app.services import device_locking
+
+    return await device_locking.lock_devices(db, device_ids)
 
 
 def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any]:

@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -15,7 +16,13 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts
-from app.services import device_health_summary, lifecycle_incident_service, maintenance_service, platform_label_service
+from app.services import (
+    device_health_summary,
+    device_locking,
+    lifecycle_incident_service,
+    maintenance_service,
+    platform_label_service,
+)
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
@@ -110,6 +117,10 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
     )
 
 
+async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
+    return await is_ready_for_use_async(db, device) and await device_health_summary.device_allows_allocation(db, device)
+
+
 async def _find_matching_devices(
     db: AsyncSession,
     requirement: DeviceRequirement,
@@ -121,7 +132,7 @@ async def _find_matching_devices(
             DeviceReservation.released_at.is_(None),
         )
     )
-    stmt = (
+    candidate_stmt = (
         select(Device)
         .options(selectinload(Device.host))
         .where(Device.availability_status == DeviceAvailabilityStatus.available)
@@ -129,31 +140,42 @@ async def _find_matching_devices(
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
-        .with_for_update(skip_locked=True)
     )
     if requirement.os_version:
-        stmt = stmt.where(Device.os_version == requirement.os_version)
+        candidate_stmt = candidate_stmt.where(Device.os_version == requirement.os_version)
     if excluded_device_ids:
-        stmt = stmt.where(Device.id.not_in(excluded_device_ids))
+        candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
 
-    result = await db.execute(stmt)
-    raw_devices = result.scalars().all()
-    devices: list[Device] = []
-    for device in raw_devices:
-        ready = await is_ready_for_use_async(db, device)
-        health_allows_allocation = await device_health_summary.device_allows_allocation(db, device)
-        if ready and health_allows_allocation:
-            devices.append(device)
+    candidates = list((await db.execute(candidate_stmt)).scalars().all())
+
+    ready_candidates: list[Device] = []
+    for device in candidates:
+        if await _readiness_for_match(db, device):
+            ready_candidates.append(device)
 
     if requirement.tags:
-        filtered: list[Device] = []
-        for device in devices:
-            device_tags = device.tags or {}
-            if all(device_tags.get(key) == value for key, value in requirement.tags.items()):
-                filtered.append(device)
-        devices = filtered
+        ready_candidates = [
+            device
+            for device in ready_candidates
+            if all((device.tags or {}).get(key) == value for key, value in requirement.tags.items())
+        ]
 
-    return devices
+    if not ready_candidates:
+        return []
+
+    candidate_ids = [device.id for device in ready_candidates]
+    locked_stmt = (
+        select(Device)
+        .options(selectinload(Device.host))
+        .where(Device.id.in_(candidate_ids))
+        .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .where(~active_reservation_exists)
+        .order_by(Device.created_at, Device.id)
+        .with_for_update(skip_locked=True)
+    )
+    locked_rows = list((await db.execute(locked_stmt)).scalars().all())
+    locked_by_id = {device.id: device for device in locked_rows}
+    return [locked_by_id[device.id] for device in ready_candidates if device.id in locked_by_id]
 
 
 def _build_device_info(device: Device, *, platform_label: str | None) -> ReservedDeviceInfo:
@@ -592,11 +614,10 @@ async def report_preparation_failure(
     if not reason:
         raise ValueError("Preparation failure message is required")
 
-    stmt = select(Device).options(selectinload(Device.appium_node)).where(Device.id == device_id)
-    result = await db.execute(stmt)
-    device = result.scalar_one_or_none()
-    if device is None:
-        raise ValueError("Device not found")
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=False)
+    except NoResultFound:
+        raise ValueError("Device not found") from None
 
     run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
     assert run is not None
@@ -612,7 +633,7 @@ async def report_preparation_failure(
     set_action(current_state, "ci_preparation_failed")
     write_state(device, current_state)
 
-    await maintenance_service.enter_maintenance(db, device, drain=False, commit=False)
+    await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
     await device_health_summary.update_device_checks(db, device, healthy=False, summary=reason)
     if device.appium_node is not None:
         await device_health_summary.update_node_state(
@@ -896,33 +917,45 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
         await db.commit()
         return
 
+    device_ids = sorted({reservation.device_id for reservation in active_reservations})
+    locked_devices = {device.id: device for device in await device_locking.lock_devices(db, device_ids)}
+
     for reservation in active_reservations:
         reservation.released_at = released_at
         reservation.claimed_by = None
         reservation.claimed_at = None
-        stmt = select(Device).where(Device.id == reservation.device_id)
-        result = await db.execute(stmt)
-        device = result.scalar_one_or_none()
-        if device and device.availability_status in {DeviceAvailabilityStatus.reserved, DeviceAvailabilityStatus.busy}:
-            old_availability_status = device.availability_status
-            if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
-                db, device.id
-            ):
-                continue
-            if await is_ready_for_use_async(db, device):
-                device.availability_status = DeviceAvailabilityStatus.available
-            else:
-                device.availability_status = DeviceAvailabilityStatus.offline
-            await event_bus.publish(
-                "device.availability_changed",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "old_availability_status": old_availability_status.value,
-                    "new_availability_status": device.availability_status.value,
-                    "reason": f"Run '{run.name}' ended ({run.state.value})",
-                },
+        device = locked_devices.get(reservation.device_id)
+        if device is None:
+            logger.warning(
+                "Reservation %s references missing device %s; skipping availability restore",
+                reservation.id,
+                reservation.device_id,
             )
+            continue
+        if device.availability_status not in {
+            DeviceAvailabilityStatus.reserved,
+            DeviceAvailabilityStatus.busy,
+        }:
+            continue
+        old_availability_status = device.availability_status
+        if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
+            db, device.id
+        ):
+            continue
+        if await is_ready_for_use_async(db, device):
+            device.availability_status = DeviceAvailabilityStatus.available
+        else:
+            device.availability_status = DeviceAvailabilityStatus.offline
+        await event_bus.publish(
+            "device.availability_changed",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_availability_status": old_availability_status.value,
+                "new_availability_status": device.availability_status.value,
+                "reason": f"Run '{run.name}' ended ({run.state.value})",
+            },
+        )
     await db.commit()
 
 

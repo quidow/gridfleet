@@ -4,9 +4,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
@@ -60,7 +57,8 @@ def _set_backoff(state: dict[str, Any]) -> str:
     return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 
-def record_control_action(
+async def record_control_action(
+    db: AsyncSession,
     device: Device,
     *,
     action: str,
@@ -68,6 +66,7 @@ def record_control_action(
     failure_reason: str | None = None,
     recovery_suppressed_reason: str | None = None,
 ) -> None:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     if failure_source is not None:
         current_state["last_failure_source"] = failure_source
@@ -79,14 +78,9 @@ def record_control_action(
 
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
-    stmt = (
-        select(Device)
-        .where(Device.id == device.id)
-        .options(selectinload(Device.appium_node), selectinload(Device.sessions), selectinload(Device.host))
-        .execution_options(populate_existing=True)
-    )
-    refreshed = await db.scalar(stmt)
-    return refreshed or device
+    from app.services import device_locking
+
+    return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
 async def handle_health_failure(
@@ -96,10 +90,16 @@ async def handle_health_failure(
     source: str,
     reason: str,
 ) -> str:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     current_state["last_failure_source"] = source
     current_state["last_failure_reason"] = reason
     current_state["recovery_suppressed_reason"] = None
+    # Persist this writer's intent into the session's identity map immediately
+    # so the next intermediate commit lands these fields in the DB. Otherwise
+    # downstream helpers that re-lock + refresh would lose this writer's intent
+    # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
+    write_state(device, current_state)
 
     if device.availability_status == DeviceAvailabilityStatus.maintenance:
         await record_recovery_suppressed(
@@ -144,6 +144,7 @@ async def handle_health_failure(
 
 
 async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     if not current_state.get("stop_pending"):
         return False
@@ -172,12 +173,15 @@ async def note_connectivity_loss(
     *,
     reason: str,
 ) -> None:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     current_state["last_failure_source"] = "connectivity"
     current_state["last_failure_reason"] = reason
     current_state["stop_pending"] = False
     current_state["stop_pending_reason"] = None
     current_state["stop_pending_since"] = None
+    # Persist intent before any await/commit (see handle_health_failure).
+    write_state(device, current_state)
 
     run, _entry = await exclude_run_if_needed(db, device, reason=reason, source="connectivity")
     await record_auto_stopped_incident(
@@ -329,6 +333,7 @@ async def attempt_auto_recovery(
         current_state["last_failure_reason"] = failure_reason
         current_state["recovery_suppressed_reason"] = "Recovery probe failed"
         backoff_until_iso = _set_backoff(current_state)
+        write_state(device, current_state)  # eager-write before potential intermediate commit in complete_auto_stop
         await complete_auto_stop(
             db,
             device,
@@ -338,16 +343,30 @@ async def attempt_auto_recovery(
             detail="Manager stopped the device after a failed recovery viability probe",
             manager_resolver=get_node_manager,
         )
+
+        # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
+        # the row lock via intermediate commits in stop_node_and_mark_offline.
+        # Without this re-lock, the trailing write_state below would clobber any
+        # concurrent writer (e.g., note_connectivity_loss) on the same device.
+        from app.services import device_locking
+
+        device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
-        set_action(current_state, "recovery_failed")
-        write_state(device, current_state)
+        fresh_state = policy_state(device)
+        fresh_state["last_failure_source"] = "session_viability"
+        fresh_state["last_failure_reason"] = failure_reason
+        fresh_state["recovery_suppressed_reason"] = "Recovery probe failed"
+        fresh_state["backoff_until"] = backoff_until_iso
+        fresh_state["recovery_backoff_attempts"] = current_state["recovery_backoff_attempts"]
+        set_action(fresh_state, "recovery_failed")
+        write_state(device, fresh_state)
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,
             DeviceEventType.lifecycle_recovery_failed,
             summary_state=DeviceLifecyclePolicySummaryState.backoff,
             reason=failure_reason,
-            detail=current_state["recovery_suppressed_reason"],
+            detail=fresh_state["recovery_suppressed_reason"],
             source="session_viability",
             run_id=run.id if run is not None else None,
             run_name=run.name if run is not None else None,
@@ -367,6 +386,21 @@ async def attempt_auto_recovery(
         )
         await db.commit()
         return False
+
+    # Re-lock and rebuild state from fresh DB row: run_session_viability_probe
+    # commits multiple times during execution, releasing the row lock that
+    # _reload_device acquired at the top of this function. Without this re-lock,
+    # the trailing writes below would clobber any concurrent writer on the same device.
+    from app.services import device_locking
+
+    device = await device_locking.lock_device(db, device.id, load_sessions=True)
+    fresh_state = policy_state(device)
+    # Carry forward this writer's intent in current_state into fresh_state, but
+    # only the fields this branch will touch downstream:
+    fresh_state["recovery_backoff_attempts"] = current_state.get("recovery_backoff_attempts", 0)
+    current_state = fresh_state
+    # Re-resolve the reservation under lock as well:
+    run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
 
     clear_backoff(current_state)
     current_state["recovery_suppressed_reason"] = None
@@ -414,6 +448,14 @@ async def attempt_auto_recovery(
     )
     await db.commit()
 
+    # Re-lock for the trailing lifecycle write: the per-branch commits above
+    # released the FOR UPDATE acquired earlier in this function.
+    device = await device_locking.lock_device(db, device.id, load_sessions=True)
+    fresh_state = policy_state(device)
+    fresh_state["recovery_backoff_attempts"] = 0  # cleared in clear_backoff above
+    fresh_state["recovery_suppressed_reason"] = None
+    fresh_state["backoff_until"] = None
+    current_state = fresh_state
     set_action(current_state, "auto_recovered")
     write_state(device, current_state)
     await lifecycle_incident_service.record_lifecycle_incident(
