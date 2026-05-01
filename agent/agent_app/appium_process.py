@@ -749,7 +749,8 @@ class AppiumProcessManager:
                 asyncio.get_running_loop().time()
             )
             try:
-                restarted = await self._restart_grid_node_from_launch_spec(port)
+                async with self._start_lock:
+                    restarted = await self._restart_grid_node_from_launch_spec(port)
             except Exception:
                 self._advance_restart_backoff(self._grid_node_restart_backoff_steps, port)
                 logger.exception("Grid relay auto-restart failed for port %d on attempt %d", port, attempt_number)
