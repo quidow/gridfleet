@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -140,7 +141,224 @@ async def set_node_health_failure_count(db: AsyncSession, node_key: str, count: 
     await db.commit()
 
 
+async def _process_node_health(
+    db: AsyncSession,
+    node: AppiumNode,
+    device: Device,
+    *,
+    healthy: bool,
+    grid_device_ids: set[str] | None,
+) -> None:
+    node_key = str(node.id)
+    if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
+        if _grid_registration_grace_active(node):
+            logger.info(
+                "Node health check for device %s (port %d) is waiting for Selenium Grid registration",
+                device.name,
+                node.port,
+            )
+            await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+            return
+        healthy = False
+        logger.warning(
+            "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",
+            device.name,
+            node.port,
+        )
+
+    if healthy:
+        if await control_plane_state_store.get_value(db, NODE_HEALTH_NAMESPACE, node_key) is not None:
+            logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
+            await lifecycle_policy.record_control_action(
+                db,
+                device,
+                action="node_monitor_recovered",
+                failure_source="node_health",
+                failure_reason="Node health checks recovered",
+            )
+            await event_bus.publish(
+                "node.state_changed",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "old_state": "error",
+                    "new_state": "running",
+                    "port": node.port,
+                },
+            )
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_restart,
+                {"recovered_from": "health_check_failure", "port": node.port},
+            )
+            await record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_recovered,
+                summary_state=DeviceLifecyclePolicySummaryState.idle,
+                reason="Node health checks recovered",
+                detail="The node resumed healthy operation after transient failures",
+                source="node_health",
+            )
+        await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
+        await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+        return
+
+    count = await control_plane_state_store.increment_counter(db, NODE_HEALTH_NAMESPACE, node_key)
+    max_failures = settings_service.get("general.node_max_failures")
+    await device_health_summary.update_node_state(
+        db,
+        device,
+        running=False,
+        state="error",
+        mark_offline_on_failure=count >= max_failures,
+    )
+    logger.warning(
+        "Node health check failed for device %s (port %d): %d/%d",
+        device.name,
+        node.port,
+        count,
+        max_failures,
+    )
+    await record_event(
+        db,
+        device.id,
+        DeviceEventType.health_check_fail,
+        {"consecutive_failures": count, "port": node.port},
+    )
+
+    if count >= max_failures:
+        await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
+
+        if not device.auto_manage:
+            logger.info(
+                "Node for device %s reached max failures but auto_manage is off — marking error without restart",
+                device.name,
+            )
+            await appium_resource_allocator.release_owner(
+                db,
+                appium_resource_allocator.managed_owner_key(device.id),
+            )
+            await lifecycle_policy.record_control_action(
+                db,
+                device,
+                action="recovery_suppressed",
+                failure_source="node_health",
+                failure_reason="Max node health failures reached",
+                recovery_suppressed_reason="Auto-manage is disabled",
+            )
+            await event_bus.publish(
+                "node.crash",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "error": "Max health check failures",
+                    "will_restart": False,
+                },
+            )
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_crash,
+                {"error": "Max health check failures", "will_restart": False},
+            )
+            await record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_recovery_suppressed,
+                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
+                reason="Auto-manage is disabled",
+                detail="Node restart was suppressed after repeated health check failures",
+                source="node_health",
+            )
+            node.state = NodeState.error
+            await device_health_summary.update_node_state(db, device, running=False, state="error")
+            await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
+            return
+
+        logger.error("Node for device %s reached max failures, attempting restart", device.name)
+
+        restarted = await _restart_node_via_agent(db, device, node)
+        if restarted:
+            await lifecycle_policy.record_control_action(
+                db,
+                device,
+                action="auto_recovered",
+                failure_source="node_health",
+                failure_reason="Node restarted after health failures",
+            )
+            await event_bus.publish(
+                "node.state_changed",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "old_state": "error",
+                    "new_state": "running",
+                    "port": node.port,
+                },
+            )
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_restart,
+                {"recovered_from": "auto_restart", "port": node.port},
+            )
+            await record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_recovered,
+                summary_state=DeviceLifecyclePolicySummaryState.idle,
+                reason="Node restarted after health failures",
+                detail="Automatic node restart succeeded after repeated health check failures",
+                source="node_health",
+            )
+        else:
+            logger.error("Restart failed for device %s — marking offline", device.name)
+            await appium_resource_allocator.release_owner(
+                db,
+                appium_resource_allocator.managed_owner_key(device.id),
+            )
+            await lifecycle_policy.record_control_action(
+                db,
+                device,
+                action="recovery_failed",
+                failure_source="node_health",
+                failure_reason="Node restart failed",
+                recovery_suppressed_reason="Node restart failed",
+            )
+            await event_bus.publish(
+                "node.crash",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "error": "Restart failed",
+                    "will_restart": False,
+                },
+            )
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_crash,
+                {"error": "Restart failed", "will_restart": False},
+            )
+            await record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_recovery_failed,
+                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
+                reason="Node restart failed",
+                detail="Automatic node restart failed after repeated health check failures",
+                source="node_health",
+            )
+            node.state = NodeState.error
+            await device_health_summary.update_node_state(db, device, running=False, state="error")
+            await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
+
+
 async def _check_nodes(db: AsyncSession) -> None:
+    from app.services import device_locking
+
     stmt = (
         select(AppiumNode)
         .where(AppiumNode.state == NodeState.running)
@@ -174,215 +392,24 @@ async def _check_nodes(db: AsyncSession) -> None:
     grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status())
 
     for request, healthy in zip(requests, health_results, strict=True):
-        node = request.node
-        device = request.device
-        node_key = str(node.id)
-        if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
-            if _grid_registration_grace_active(node):
-                logger.info(
-                    "Node health check for device %s (port %d) is waiting for Selenium Grid registration",
-                    device.name,
-                    node.port,
-                )
-                await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
-                continue
-            healthy = False
+        try:
+            locked_device = await device_locking.lock_device(db, request.device.id, load_sessions=True)
+        except NoResultFound:
             logger.warning(
-                "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",
-                device.name,
-                node.port,
+                "Node health check skipped: device %s no longer exists",
+                request.device.id,
             )
-
-        if healthy:
-            if await control_plane_state_store.get_value(db, NODE_HEALTH_NAMESPACE, node_key) is not None:
-                logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
-                await lifecycle_policy.record_control_action(
-                    db,
-                    device,
-                    action="node_monitor_recovered",
-                    failure_source="node_health",
-                    failure_reason="Node health checks recovered",
-                )
-                await event_bus.publish(
-                    "node.state_changed",
-                    {
-                        "device_id": str(device.id),
-                        "device_name": device.name,
-                        "old_state": "error",
-                        "new_state": "running",
-                        "port": node.port,
-                    },
-                )
-                await record_event(
-                    db,
-                    device.id,
-                    DeviceEventType.node_restart,
-                    {"recovered_from": "health_check_failure", "port": node.port},
-                )
-                await record_lifecycle_incident(
-                    db,
-                    device,
-                    DeviceEventType.lifecycle_recovered,
-                    summary_state=DeviceLifecyclePolicySummaryState.idle,
-                    reason="Node health checks recovered",
-                    detail="The node resumed healthy operation after transient failures",
-                    source="node_health",
-                )
-            await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
-            await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+            await db.commit()
             continue
 
-        count = await control_plane_state_store.increment_counter(db, NODE_HEALTH_NAMESPACE, node_key)
-        max_failures = settings_service.get("general.node_max_failures")
-        await device_health_summary.update_node_state(
+        await _process_node_health(
             db,
-            device,
-            running=False,
-            state="error",
-            mark_offline_on_failure=count >= max_failures,
+            request.node,
+            locked_device,
+            healthy=healthy,
+            grid_device_ids=grid_device_ids,
         )
-        logger.warning(
-            "Node health check failed for device %s (port %d): %d/%d",
-            device.name,
-            node.port,
-            count,
-            max_failures,
-        )
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.health_check_fail,
-            {"consecutive_failures": count, "port": node.port},
-        )
-
-        if count >= max_failures:
-            await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
-
-            if not device.auto_manage:
-                logger.info(
-                    "Node for device %s reached max failures but auto_manage is off — marking error without restart",
-                    device.name,
-                )
-                await appium_resource_allocator.release_owner(
-                    db,
-                    appium_resource_allocator.managed_owner_key(device.id),
-                )
-                await lifecycle_policy.record_control_action(
-                    db,
-                    device,
-                    action="recovery_suppressed",
-                    failure_source="node_health",
-                    failure_reason="Max node health failures reached",
-                    recovery_suppressed_reason="Auto-manage is disabled",
-                )
-                await event_bus.publish(
-                    "node.crash",
-                    {
-                        "device_id": str(device.id),
-                        "device_name": device.name,
-                        "error": "Max health check failures",
-                        "will_restart": False,
-                    },
-                )
-                await record_event(
-                    db,
-                    device.id,
-                    DeviceEventType.node_crash,
-                    {"error": "Max health check failures", "will_restart": False},
-                )
-                await record_lifecycle_incident(
-                    db,
-                    device,
-                    DeviceEventType.lifecycle_recovery_suppressed,
-                    summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-                    reason="Auto-manage is disabled",
-                    detail="Node restart was suppressed after repeated health check failures",
-                    source="node_health",
-                )
-                node.state = NodeState.error
-                await device_health_summary.update_node_state(db, device, running=False, state="error")
-                await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
-                continue
-
-            logger.error("Node for device %s reached max failures, attempting restart", device.name)
-
-            restarted = await _restart_node_via_agent(db, device, node)
-            if restarted:
-                await lifecycle_policy.record_control_action(
-                    db,
-                    device,
-                    action="auto_recovered",
-                    failure_source="node_health",
-                    failure_reason="Node restarted after health failures",
-                )
-                await event_bus.publish(
-                    "node.state_changed",
-                    {
-                        "device_id": str(device.id),
-                        "device_name": device.name,
-                        "old_state": "error",
-                        "new_state": "running",
-                        "port": node.port,
-                    },
-                )
-                await record_event(
-                    db,
-                    device.id,
-                    DeviceEventType.node_restart,
-                    {"recovered_from": "auto_restart", "port": node.port},
-                )
-                await record_lifecycle_incident(
-                    db,
-                    device,
-                    DeviceEventType.lifecycle_recovered,
-                    summary_state=DeviceLifecyclePolicySummaryState.idle,
-                    reason="Node restarted after health failures",
-                    detail="Automatic node restart succeeded after repeated health check failures",
-                    source="node_health",
-                )
-            else:
-                logger.error("Restart failed for device %s — marking offline", device.name)
-                await appium_resource_allocator.release_owner(
-                    db,
-                    appium_resource_allocator.managed_owner_key(device.id),
-                )
-                await lifecycle_policy.record_control_action(
-                    db,
-                    device,
-                    action="recovery_failed",
-                    failure_source="node_health",
-                    failure_reason="Node restart failed",
-                    recovery_suppressed_reason="Node restart failed",
-                )
-                await event_bus.publish(
-                    "node.crash",
-                    {
-                        "device_id": str(device.id),
-                        "device_name": device.name,
-                        "error": "Restart failed",
-                        "will_restart": False,
-                    },
-                )
-                await record_event(
-                    db,
-                    device.id,
-                    DeviceEventType.node_crash,
-                    {"error": "Restart failed", "will_restart": False},
-                )
-                await record_lifecycle_incident(
-                    db,
-                    device,
-                    DeviceEventType.lifecycle_recovery_failed,
-                    summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-                    reason="Node restart failed",
-                    detail="Automatic node restart failed after repeated health check failures",
-                    source="node_health",
-                )
-                node.state = NodeState.error
-                await device_health_summary.update_node_state(db, device, running=False, state="error")
-                await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
-
-    await db.commit()
+        await db.commit()
 
 
 async def node_health_loop() -> None:
