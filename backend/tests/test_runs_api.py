@@ -823,3 +823,50 @@ async def test_create_run_rejects_removed_platform(
     resp = await client.post("/api/runs", json=payload)
     assert resp.status_code == 422
     assert resp.json()["error"]["details"]["code"] == "platform_removed"
+
+
+@pytest.mark.asyncio
+async def test_create_run_drops_devices_that_lost_availability_between_passes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import run_service
+    from tests.helpers import create_device
+
+    devices = [
+        await create_device(
+            db_session,
+            host_id=db_host.id,
+            name=f"d{i}",
+            availability_status=DeviceAvailabilityStatus.available,
+            verified=True,
+        )
+        for i in range(3)
+    ]
+    await db_session.commit()
+
+    original_readiness = run_service._readiness_for_match
+
+    async def flaky(db: AsyncSession, device: Device) -> bool:
+        if device.id == devices[0].id:
+            return False
+        return await original_readiness(db, device)
+
+    monkeypatch.setattr(run_service, "_readiness_for_match", flaky)
+
+    resp = await client.post(
+        "/api/runs",
+        json={
+            "name": "two-pass-test",
+            "requirements": [
+                {"pack_id": devices[0].pack_id, "platform_id": devices[0].platform_id, "count": 2},
+            ],
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    reserved_ids = {dev["device_id"] for dev in body["devices"]}
+    assert str(devices[0].id) not in reserved_ids

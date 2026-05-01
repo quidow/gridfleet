@@ -116,6 +116,10 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
     )
 
 
+async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
+    return await is_ready_for_use_async(db, device) and await device_health_summary.device_allows_allocation(db, device)
+
+
 async def _find_matching_devices(
     db: AsyncSession,
     requirement: DeviceRequirement,
@@ -127,7 +131,7 @@ async def _find_matching_devices(
             DeviceReservation.released_at.is_(None),
         )
     )
-    stmt = (
+    candidate_stmt = (
         select(Device)
         .options(selectinload(Device.host))
         .where(Device.availability_status == DeviceAvailabilityStatus.available)
@@ -135,31 +139,41 @@ async def _find_matching_devices(
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
-        .with_for_update(skip_locked=True)
     )
     if requirement.os_version:
-        stmt = stmt.where(Device.os_version == requirement.os_version)
+        candidate_stmt = candidate_stmt.where(Device.os_version == requirement.os_version)
     if excluded_device_ids:
-        stmt = stmt.where(Device.id.not_in(excluded_device_ids))
+        candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
 
-    result = await db.execute(stmt)
-    raw_devices = result.scalars().all()
-    devices: list[Device] = []
-    for device in raw_devices:
-        ready = await is_ready_for_use_async(db, device)
-        health_allows_allocation = await device_health_summary.device_allows_allocation(db, device)
-        if ready and health_allows_allocation:
-            devices.append(device)
+    candidates = list((await db.execute(candidate_stmt)).scalars().all())
+
+    ready_candidates: list[Device] = []
+    for device in candidates:
+        if await _readiness_for_match(db, device):
+            ready_candidates.append(device)
 
     if requirement.tags:
-        filtered: list[Device] = []
-        for device in devices:
-            device_tags = device.tags or {}
-            if all(device_tags.get(key) == value for key, value in requirement.tags.items()):
-                filtered.append(device)
-        devices = filtered
+        ready_candidates = [
+            device
+            for device in ready_candidates
+            if all((device.tags or {}).get(key) == value for key, value in requirement.tags.items())
+        ]
 
-    return devices
+    if not ready_candidates:
+        return []
+
+    candidate_ids = [device.id for device in ready_candidates]
+    locked_stmt = (
+        select(Device)
+        .options(selectinload(Device.host))
+        .where(Device.id.in_(candidate_ids))
+        .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .order_by(Device.created_at, Device.id)
+        .with_for_update(skip_locked=True)
+    )
+    locked_rows = list((await db.execute(locked_stmt)).scalars().all())
+    locked_by_id = {device.id: device for device in locked_rows}
+    return [locked_by_id[device.id] for device in ready_candidates if device.id in locked_by_id]
 
 
 def _build_device_info(device: Device, *, platform_label: str | None) -> ReservedDeviceInfo:
