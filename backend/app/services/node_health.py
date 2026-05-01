@@ -148,6 +148,7 @@ async def _check_nodes(db: AsyncSession) -> None:
             selectinload(AppiumNode.device).selectinload(Device.host),
             selectinload(AppiumNode.device).selectinload(Device.appium_node),
         )
+        .order_by(AppiumNode.device_id)
     )
     result = await db.execute(stmt)
     nodes = result.scalars().all()

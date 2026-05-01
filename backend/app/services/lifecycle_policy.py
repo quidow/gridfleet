@@ -333,6 +333,7 @@ async def attempt_auto_recovery(
         current_state["last_failure_reason"] = failure_reason
         current_state["recovery_suppressed_reason"] = "Recovery probe failed"
         backoff_until_iso = _set_backoff(current_state)
+        write_state(device, current_state)  # eager-write before potential intermediate commit in complete_auto_stop
         await complete_auto_stop(
             db,
             device,

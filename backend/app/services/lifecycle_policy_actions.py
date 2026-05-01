@@ -179,9 +179,12 @@ async def record_recovery_suppressed(
     device = await _lock_for_state_write(db, device)
     # Re-derive the working state from the freshly-locked device so that
     # fields written by concurrent committers (between our caller's read and
-    # our write) are not clobbered.  The caller is expected to have persisted
-    # its intent for ``last_failure_*`` etc. via an eager ``write_state``
-    # call; see ``handle_health_failure`` / ``attempt_auto_recovery``.
+    # our write) are not clobbered.  The caller is expected to either persist
+    # its intent eagerly (when an intermediate commit may release the row lock,
+    # e.g. handle_health_failure → complete_auto_stop) or hold the lock
+    # continuously through to this call (e.g. attempt_auto_recovery).
+    # Either way, by the time we re-lock here the row reflects the caller's
+    # intent plus any concurrent committers' updates.
     fresh = policy_state(device)
     fresh["recovery_suppressed_reason"] = suppression_reason
     set_action(fresh, "recovery_suppressed")
