@@ -14,33 +14,45 @@ async def test_advertise_ip_refresh_holds_start_lock_during_restart() -> None:
     concurrent ``start()`` proceeds in parallel; with the fix, it blocks.
     """
     mgr = AppiumProcessManager()
-    spec = type("Spec", (), {"manage_grid_node": True})()  # type: ignore[assignment]
-    mgr._launch_specs[5555] = spec
+    mgr._launch_specs[5555] = type("Spec", (), {"manage_grid_node": True})()  # type: ignore[assignment]
     mgr._appium_procs[5555] = type("P", (), {"returncode": None})()  # type: ignore[assignment]
     mgr._grid_advertise_ip = "10.0.0.1"
 
     inside_restart = asyncio.Event()
     proceed_restart = asyncio.Event()
-    lock_was_held_during_restart = False
+    starter_acquired = asyncio.Event()
 
-    async def fake_restart(*args: object, **kwargs: object) -> None:
-        nonlocal lock_was_held_during_restart
+    async def fake_restart(*_args: object, **_kwargs: object) -> None:
         inside_restart.set()
-        # Check if lock is currently locked. If _start_lock._locked is True, it's held.
-        if hasattr(mgr._start_lock, "_locked"):
-            lock_was_held_during_restart = mgr._start_lock._locked
         await proceed_restart.wait()
 
-    with patch.object(
-        mgr,
-        "_restart_grid_node_from_launch_spec",
-        new=AsyncMock(side_effect=fake_restart),
-    ):
-        refresher_task = asyncio.create_task(mgr.refresh_grid_relay_advertise_ip("10.0.0.2"))
+    async def refresher() -> None:
+        with patch.object(
+            AppiumProcessManager,
+            "_restart_grid_node_from_launch_spec",
+            new=AsyncMock(side_effect=fake_restart),
+        ):
+            await mgr.refresh_grid_relay_advertise_ip("10.0.0.2")
 
+    async def starter() -> None:
         await inside_restart.wait()
-        await asyncio.sleep(0.01)
-        proceed_restart.set()
-        await refresher_task
+        try:
+            await asyncio.wait_for(mgr._start_lock.acquire(), timeout=0.05)
+            starter_acquired.set()
+            mgr._start_lock.release()
+        except TimeoutError:
+            pass
 
-    assert lock_was_held_during_restart, "the refresh path is not holding _start_lock around the restart call"
+    starter_task = asyncio.create_task(starter())
+    refresher_task = asyncio.create_task(refresher())
+    await inside_restart.wait()
+    await asyncio.sleep(0.1)
+    proceed_restart.set()
+    await starter_task
+    await refresher_task
+
+    assert not starter_acquired.is_set(), (
+        "starter acquired _start_lock while refresher was inside "
+        "_restart_grid_node_from_launch_spec — the refresh path is not "
+        "holding _start_lock around the restart call"
+    )
