@@ -448,6 +448,14 @@ async def attempt_auto_recovery(
     )
     await db.commit()
 
+    # Re-lock for the trailing lifecycle write: the per-branch commits above
+    # released the FOR UPDATE acquired earlier in this function.
+    device = await device_locking.lock_device(db, device.id, load_sessions=True)
+    fresh_state = policy_state(device)
+    fresh_state["recovery_backoff_attempts"] = 0  # cleared in clear_backoff above
+    fresh_state["recovery_suppressed_reason"] = None
+    fresh_state["backoff_until"] = None
+    current_state = fresh_state
     set_action(current_state, "auto_recovered")
     write_state(device, current_state)
     await lifecycle_incident_service.record_lifecycle_incident(
