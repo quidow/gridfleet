@@ -106,6 +106,9 @@ If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, 
 
 Sessions go **directly to the Grid hub** (`:4444`); the manager does not proxy WebDriver traffic. The manager owns reservations, run lifecycle, and capability matching; the hub owns request routing.
 
+### Device row locking
+Any code that writes `Device.availability_status` or `Device.lifecycle_policy_state` MUST acquire the row lock first via `app.services.device_locking.lock_device` (or `lock_devices` for batch) inside the same transaction. Routers should use `get_device_for_update_or_404` for state-mutating endpoints. Background loops (`device_connectivity`, `node_health`, `session_sync`, `session_viability`) commit per device after the locked write window. The leader advisory lock alone is NOT sufficient — API mutators run on every worker and bypass it.
+
 ### Frontend conventions
 - `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror `app/schemas/`.
 - `src/hooks/` wraps `react-query` with explicit polling intervals (5–15s) — operator screens are real-time dashboards, not request/response.
