@@ -13,7 +13,7 @@ from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, 
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import control_plane_state_store, device_health_summary, lifecycle_policy
+from app.services import control_plane_state_store, device_health_summary, device_locking, lifecycle_policy
 from app.services.agent_operations import (
     get_pack_devices,
     pack_device_lifecycle_action,
@@ -32,6 +32,11 @@ from app.services.settings_service import settings_service
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 LOOP_NAME = "device_connectivity"
+ACTIVE_STATES = {
+    DeviceAvailabilityStatus.busy,
+    DeviceAvailabilityStatus.reserved,
+    DeviceAvailabilityStatus.maintenance,
+}
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -361,27 +366,48 @@ async def _check_connectivity(db: AsyncSession) -> None:
                             True,
                         )
                     continue
-                if device.availability_status != DeviceAvailabilityStatus.maintenance:
+                if device.availability_status in ACTIVE_STATES:
                     logger.warning(
-                        "Device %s (%s) disconnected from host %s",
+                        "Device %s (%s) appears disconnected on host %s but is %s — leaving status unchanged",
                         device.name,
                         device.identity_value,
                         host.hostname,
+                        device.availability_status.value,
                     )
                     await record_event(
                         db,
                         device.id,
                         DeviceEventType.connectivity_lost,
-                        {"reason": "Device disconnected"},
+                        {"reason": "Device disconnected (kept active state)"},
                     )
                     await device_health_summary.update_device_checks(db, device, healthy=False, summary="Disconnected")
+                    await lifecycle_policy.note_connectivity_loss(db, device, reason="Device disconnected")
+                    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+                    continue
+                logger.warning(
+                    "Device %s (%s) disconnected from host %s",
+                    device.name,
+                    device.identity_value,
+                    host.hostname,
+                )
+                await record_event(
+                    db,
+                    device.id,
+                    DeviceEventType.connectivity_lost,
+                    {"reason": "Device disconnected"},
+                )
+                await device_health_summary.update_device_checks(db, device, healthy=False, summary="Disconnected")
+                locked_device = await device_locking.lock_device(db, device.id)
+                if locked_device.availability_status not in ACTIVE_STATES:
                     await set_device_availability_status(
-                        device,
+                        locked_device,
                         DeviceAvailabilityStatus.offline,
                         reason="Device disconnected",
                     )
-                    await lifecycle_policy.note_connectivity_loss(db, device, reason="Device disconnected")
-                    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+                await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+                await control_plane_state_store.set_value(
+                    db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
+                )
 
     await db.commit()
 

@@ -428,6 +428,64 @@ async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
     assert device.availability_status == DeviceAvailabilityStatus.maintenance  # unchanged
 
 
+async def test_connectivity_does_not_overwrite_busy_with_offline(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import device_connectivity
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="busy-on-blip",
+        availability_status=DeviceAvailabilityStatus.busy,
+        auto_manage=True,
+        verified=True,
+    )
+    await db_session.commit()
+
+    async def fake_get_agent_devices(_host: Host) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+
+    await device_connectivity._check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.availability_status == DeviceAvailabilityStatus.busy
+
+
+async def test_connectivity_does_not_overwrite_reserved_with_offline(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import device_connectivity
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reserved-on-blip",
+        availability_status=DeviceAvailabilityStatus.reserved,
+        auto_manage=True,
+        verified=True,
+    )
+    await db_session.commit()
+
+    async def fake_get_agent_devices(_host: Host) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+
+    await device_connectivity._check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.availability_status == DeviceAvailabilityStatus.reserved
+
+
 async def test_unhealthy_connected_device_triggers_policy_stop(db_session: AsyncSession) -> None:
     _host, device, _ = await _setup_host_and_device(
         db_session, device_availability_status=DeviceAvailabilityStatus.available
