@@ -297,20 +297,40 @@ async def update_device(
         raise
 
 
+async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
+    try:
+        return await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        return None
+
+
+async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device_id: uuid.UUID) -> Device | None:
+    from app.services.node_manager import get_node_manager
+
+    manager = get_node_manager(device)
+    while device.appium_node and device.appium_node.state == NodeState.running:
+        try:
+            await manager.stop_node(db, device)
+        except Exception as e:
+            logger.warning("Failed to stop node for device %s before delete: %s", device_id, e)
+            return await _lock_device_for_delete(db, device_id)
+        relocked = await _lock_device_for_delete(db, device_id)
+        if relocked is None:
+            return None
+        device = relocked
+    return device
+
+
 async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    device = await get_device(db, device_id)
+    device = await _lock_device_for_delete(db, device_id)
     if device is None:
         return False
 
     # Stop the running Appium node on the agent before deleting
     if device.appium_node and device.appium_node.state == NodeState.running:
-        try:
-            from app.services.node_manager import get_node_manager
-
-            manager = get_node_manager(device)
-            await manager.stop_node(db, device)
-        except Exception as e:
-            logger.warning("Failed to stop node for device %s before delete: %s", device_id, e)
+        device = await _stop_running_node_for_delete(db, device, device_id)
+        if device is None:
+            return True
 
     await db.delete(device)
     await db.commit()
