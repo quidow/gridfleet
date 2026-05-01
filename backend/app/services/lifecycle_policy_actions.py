@@ -13,6 +13,7 @@ from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import lifecycle_incident_service, maintenance_service, run_service
 from app.services.device_event_service import record_event
 from app.services.lifecycle_policy_state import set_action, write_state
+from app.services.lifecycle_policy_state import state as policy_state
 
 if TYPE_CHECKING:
     import uuid
@@ -22,6 +23,12 @@ if TYPE_CHECKING:
     from app.models.device_reservation import DeviceReservation
     from app.models.test_run import TestRun
     from app.type_defs import NodeManagerResolver
+
+
+async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
+    from app.services import device_locking
+
+    return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
 async def has_running_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
@@ -126,6 +133,7 @@ async def stop_node_and_mark_offline(
     reason: str,
     manager_resolver: NodeManagerResolver,
 ) -> None:
+    device = await _lock_for_state_write(db, device)
     await record_event(
         db,
         device.id,
@@ -168,9 +176,16 @@ async def record_recovery_suppressed(
     suppression_reason: str,
     run: TestRun | None,
 ) -> bool:
-    next_state["recovery_suppressed_reason"] = suppression_reason
-    set_action(next_state, "recovery_suppressed")
-    write_state(device, next_state)
+    device = await _lock_for_state_write(db, device)
+    # Re-derive the working state from the freshly-locked device so that
+    # fields written by concurrent committers (between our caller's read and
+    # our write) are not clobbered.  The caller is expected to have persisted
+    # its intent for ``last_failure_*`` etc. via an eager ``write_state``
+    # call; see ``handle_health_failure`` / ``attempt_auto_recovery``.
+    fresh = policy_state(device)
+    fresh["recovery_suppressed_reason"] = suppression_reason
+    set_action(fresh, "recovery_suppressed")
+    write_state(device, fresh)
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
         device,
@@ -196,8 +211,17 @@ async def record_auto_stopped_incident(
     source: str,
     detail: str,
 ) -> None:
-    set_action(next_state, "auto_stopped")
-    write_state(device, next_state)
+    device = await _lock_for_state_write(db, device)
+    # Preserve any state mutations committed by concurrent writers between
+    # our caller's read and our write.  ``stop_pending*`` is the only field
+    # this call site explicitly resets, so we carry that forward from
+    # ``next_state`` (the caller already set it to ``False``).
+    fresh = policy_state(device)
+    fresh["stop_pending"] = next_state.get("stop_pending", False)
+    fresh["stop_pending_reason"] = next_state.get("stop_pending_reason")
+    fresh["stop_pending_since"] = next_state.get("stop_pending_since")
+    set_action(fresh, "auto_stopped")
+    write_state(device, fresh)
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
         device,
@@ -221,6 +245,7 @@ async def complete_auto_stop(
     detail: str,
     manager_resolver: NodeManagerResolver,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
+    device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
     await stop_node_and_mark_offline(
         db,

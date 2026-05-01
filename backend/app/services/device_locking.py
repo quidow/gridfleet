@@ -7,11 +7,16 @@ within the same transaction as the write.
 DEADLOCK AVOIDANCE: Multi-row callers must use ``lock_devices``, which orders
 ids ascending. Mixing single-row and batch callers stays deadlock-free as long
 as the batch order matches.
+
+EAGER LOADS: ``lock_device`` always eager-loads ``appium_node`` and ``host``.
+Pass ``load_sessions=True`` to additionally eager-load ``Device.sessions`` —
+required by lifecycle_policy callers that read session-related state inside
+the locked transaction.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -24,11 +29,19 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def lock_device(db: AsyncSession, device_id: uuid.UUID) -> Device:
+async def lock_device(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    load_sessions: bool = False,
+) -> Device:
+    options: list[Any] = [selectinload(Device.appium_node), selectinload(Device.host)]
+    if load_sessions:
+        options.append(selectinload(Device.sessions))
     stmt = (
         select(Device)
         .where(Device.id == device_id)
-        .options(selectinload(Device.appium_node), selectinload(Device.host))
+        .options(*options)
         .with_for_update()
         .execution_options(populate_existing=True)
     )

@@ -4,9 +4,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
@@ -60,7 +57,8 @@ def _set_backoff(state: dict[str, Any]) -> str:
     return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 
-def record_control_action(
+async def record_control_action(
+    db: AsyncSession,
     device: Device,
     *,
     action: str,
@@ -68,6 +66,7 @@ def record_control_action(
     failure_reason: str | None = None,
     recovery_suppressed_reason: str | None = None,
 ) -> None:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     if failure_source is not None:
         current_state["last_failure_source"] = failure_source
@@ -79,14 +78,9 @@ def record_control_action(
 
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
-    stmt = (
-        select(Device)
-        .where(Device.id == device.id)
-        .options(selectinload(Device.appium_node), selectinload(Device.sessions), selectinload(Device.host))
-        .execution_options(populate_existing=True)
-    )
-    refreshed = await db.scalar(stmt)
-    return refreshed or device
+    from app.services import device_locking
+
+    return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
 async def handle_health_failure(
@@ -96,10 +90,16 @@ async def handle_health_failure(
     source: str,
     reason: str,
 ) -> str:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     current_state["last_failure_source"] = source
     current_state["last_failure_reason"] = reason
     current_state["recovery_suppressed_reason"] = None
+    # Persist this writer's intent into the session's identity map immediately
+    # so the next intermediate commit lands these fields in the DB. Otherwise
+    # downstream helpers that re-lock + refresh would lose this writer's intent
+    # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
+    write_state(device, current_state)
 
     if device.availability_status == DeviceAvailabilityStatus.maintenance:
         await record_recovery_suppressed(
@@ -144,6 +144,7 @@ async def handle_health_failure(
 
 
 async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     if not current_state.get("stop_pending"):
         return False
@@ -172,12 +173,15 @@ async def note_connectivity_loss(
     *,
     reason: str,
 ) -> None:
+    device = await _reload_device(db, device)
     current_state = policy_state(device)
     current_state["last_failure_source"] = "connectivity"
     current_state["last_failure_reason"] = reason
     current_state["stop_pending"] = False
     current_state["stop_pending_reason"] = None
     current_state["stop_pending_since"] = None
+    # Persist intent before any await/commit (see handle_health_failure).
+    write_state(device, current_state)
 
     run, _entry = await exclude_run_if_needed(db, device, reason=reason, source="connectivity")
     await record_auto_stopped_incident(

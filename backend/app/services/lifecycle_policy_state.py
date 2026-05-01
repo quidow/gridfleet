@@ -1,3 +1,11 @@
+"""In-memory helpers for the Device.lifecycle_policy_state JSON column.
+
+INVARIANT: ``state`` reads and ``write_state`` writes do NOT lock. Callers
+must hold a row-level lock on the Device row (use
+``app.services.device_locking.lock_device``) for the entire read-modify-write
+window. See app/services/lifecycle_policy.py for canonical usage.
+"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

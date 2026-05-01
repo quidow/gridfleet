@@ -195,7 +195,8 @@ async def _check_nodes(db: AsyncSession) -> None:
         if healthy:
             if await control_plane_state_store.get_value(db, NODE_HEALTH_NAMESPACE, node_key) is not None:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
-                lifecycle_policy.record_control_action(
+                await lifecycle_policy.record_control_action(
+                    db,
                     device,
                     action="node_monitor_recovered",
                     failure_source="node_health",
@@ -265,7 +266,8 @@ async def _check_nodes(db: AsyncSession) -> None:
                     db,
                     appium_resource_allocator.managed_owner_key(device.id),
                 )
-                lifecycle_policy.record_control_action(
+                await lifecycle_policy.record_control_action(
+                    db,
                     device,
                     action="recovery_suppressed",
                     failure_source="node_health",
@@ -305,7 +307,8 @@ async def _check_nodes(db: AsyncSession) -> None:
 
             restarted = await _restart_node_via_agent(db, device, node)
             if restarted:
-                lifecycle_policy.record_control_action(
+                await lifecycle_policy.record_control_action(
+                    db,
                     device,
                     action="auto_recovered",
                     failure_source="node_health",
@@ -342,7 +345,8 @@ async def _check_nodes(db: AsyncSession) -> None:
                     db,
                     appium_resource_allocator.managed_owner_key(device.id),
                 )
-                lifecycle_policy.record_control_action(
+                await lifecycle_policy.record_control_action(
+                    db,
                     device,
                     action="recovery_failed",
                     failure_source="node_health",
