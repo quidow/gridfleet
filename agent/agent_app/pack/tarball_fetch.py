@@ -23,18 +23,32 @@ class _FetchKey:
     target_path: str
 
 
+@dataclass
+class _FetchLockEntry:
+    lock: asyncio.Lock
+    users: int = 0
+
+
 _UNSAFE_FILENAME_SEGMENT_RE = re.compile(r"[^a-zA-Z0-9._-]")
-_fetch_locks: dict[_FetchKey, asyncio.Lock] = {}
+_fetch_locks: dict[_FetchKey, _FetchLockEntry] = {}
 _fetch_lock_factory_lock = asyncio.Lock()
 
 
-async def _get_or_create_fetch_lock(key: _FetchKey) -> asyncio.Lock:
+async def _get_or_create_fetch_lock(key: _FetchKey) -> _FetchLockEntry:
     async with _fetch_lock_factory_lock:
-        lock = _fetch_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _fetch_locks[key] = lock
-        return lock
+        entry = _fetch_locks.get(key)
+        if entry is None:
+            entry = _FetchLockEntry(lock=asyncio.Lock())
+            _fetch_locks[key] = entry
+        entry.users += 1
+        return entry
+
+
+async def _release_fetch_lock(key: _FetchKey, entry: _FetchLockEntry) -> None:
+    async with _fetch_lock_factory_lock:
+        entry.users -= 1
+        if entry.users == 0 and _fetch_locks.get(key) is entry:
+            _fetch_locks.pop(key, None)
 
 
 def _safe_filename_segment(value: str) -> str:
@@ -66,26 +80,29 @@ async def download_and_verify(
     target = _tarball_target(dest_dir, pack_id, release)
 
     key = _FetchKey(target_path=str(target.resolve()))
-    fetch_lock = await _get_or_create_fetch_lock(key)
-    async with fetch_lock:
-        # Re-check after acquiring the lock: a prior holder may have already
-        # fetched and verified this target while this caller waited.
-        if _existing_target_matches(target, expected_sha256):
-            return target
+    fetch_entry = await _get_or_create_fetch_lock(key)
+    try:
+        async with fetch_entry.lock:
+            # Re-check after acquiring the lock: a prior holder may have already
+            # fetched and verified this target while this caller waited.
+            if _existing_target_matches(target, expected_sha256):
+                return target
 
-        response = await client.get(f"/api/driver-packs/{pack_id}/releases/{release}/tarball")
-        response.raise_for_status()
-        body = response.content
-        actual = hashlib.sha256(body).hexdigest()
-        if actual != expected_sha256:
-            raise TarballSha256MismatchError(
-                f"tarball for {pack_id}@{release} sha mismatch: got {actual} expected {expected_sha256}"
-            )
-        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            tmp.write_bytes(body)
-            os.replace(tmp, target)
-        finally:
-            if tmp.exists():
-                tmp.unlink()
-        return target
+            response = await client.get(f"/api/driver-packs/{pack_id}/releases/{release}/tarball")
+            response.raise_for_status()
+            body = response.content
+            actual = hashlib.sha256(body).hexdigest()
+            if actual != expected_sha256:
+                raise TarballSha256MismatchError(
+                    f"tarball for {pack_id}@{release} sha mismatch: got {actual} expected {expected_sha256}"
+                )
+            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_bytes(body)
+                os.replace(tmp, target)
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
+            return target
+    finally:
+        await _release_fetch_lock(key, fetch_entry)

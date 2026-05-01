@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agent_app.pack import tarball_fetch
 from agent_app.pack.tarball_fetch import download_and_verify
 
 if TYPE_CHECKING:
@@ -130,3 +131,25 @@ async def test_same_release_for_different_pack_ids_uses_distinct_target_files(
     assert path_b.name.startswith("pack-b-1.0.0-")
     assert path_a.read_bytes() == bodies["pack-a"]
     assert path_b.read_bytes() == bodies["pack-b"]
+
+
+async def test_fetch_lock_entry_is_removed_after_download_finishes(tmp_path: Path) -> None:
+    body = b"test tarball body"
+    expected_sha = hashlib.sha256(body).hexdigest()
+
+    response = MagicMock()
+    response.content = body
+    response.raise_for_status = MagicMock(return_value=None)
+
+    client = MagicMock()
+    client.get = AsyncMock(return_value=response)
+
+    await download_and_verify(
+        client=client,
+        pack_id="appium-uiautomator2",
+        release="1.0.0",
+        expected_sha256=expected_sha,
+        dest_dir=tmp_path,
+    )
+
+    assert tarball_fetch._fetch_locks == {}
