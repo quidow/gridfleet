@@ -16,16 +16,18 @@ The race:
 
 Test strategy (deterministic):
   Writer A is paused inside handle_health_failure after reading current_state but
-  before calling write_state.  The pause is achieved by patching ``complete_auto_stop``
-  (the async function called by handle_health_failure on line 134) so that writer A
-  waits for writer B to commit before proceeding.  This ensures the ordering:
+  before calling write_state.  The pause is achieved by patching
+  ``lifecycle_policy_actions.record_auto_stopped_incident`` (the async function
+  called at the end of complete_auto_stop, right before the final write_state
+  commit) so that writer A waits for writer B to commit before proceeding.
+  This ensures the ordering:
     1. Writer A reads current_state (source="src-a", reason="reason-a")
-    2. Writer A awaits the patched complete_auto_stop (yields)
+    2. Writer A awaits the patched record_auto_stopped_incident (yields)
     3. Writer B reads current_state (sees initial empty state or writer A's partial
        in-memory change — both are fine for the test)
     4. Writer B calls complete_auto_stop normally, writes and commits src-b/reason-b
-    5. Writer A resumes, calls the original complete_auto_stop with its stale
-       current_state dict (still src-a/reason-a), writes and commits
+    5. Writer A resumes, calls the original record_auto_stopped_incident with its
+       stale current_state dict (still src-a/reason-a), writes and commits
 
   Expected result WITHOUT row lock: writer A's commit overwrites writer B's src-b/
   reason-b with src-a/reason-a.  The final DB row contains src-a/reason-a even
@@ -61,6 +63,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.models.host import Host
+    from app.models.test_run import TestRun
 
 pytestmark = pytest.mark.asyncio
 
@@ -115,6 +118,7 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     state = device_row.lifecycle_policy_state
+    assert state is not None, "lifecycle_policy_state is None after concurrent writes"
     assert state["last_failure_source"] in {s for s, _ in inputs}
     assert state["last_failure_reason"] in {r for _, r in inputs}
 
@@ -140,10 +144,10 @@ async def test_concurrent_health_failure_stale_overwrite(
     window inside handle_health_failure spans from the initial
     ``policy_state(device)`` read to the final ``write_state`` commit.
 
-    This test widens that window deterministically by patching the internal
-    ``_write_lifecycle_state`` helper so that writer A sleeps until writer B
-    has fully committed.  Writer A then commits its stale dict — overwriting
-    writer B's more recent values.
+    This test widens that window deterministically by patching
+    ``lifecycle_policy_actions.record_auto_stopped_incident`` so that writer A
+    sleeps until writer B has fully committed.  Writer A then commits its stale
+    dict — overwriting writer B's more recent values.
 
     Expected outcome WITHOUT row lock (today):
       Writer A's commit clobbers writer B's committed src-b/reason-b with
@@ -156,11 +160,11 @@ async def test_concurrent_health_failure_stale_overwrite(
       both source/reason pairs reflect a single writer's intent.
 
     Implementation note:
-      We patch ``app.services.lifecycle_policy_state.write_state`` via a
+      We patch ``lifecycle_policy_actions.record_auto_stopped_incident`` via a
       wrapper that — for the FIRST call only — signals the barrier and awaits
       writer B.  Since asyncio is single-threaded, the await inside the wrapper
-      genuinely yields control to writer B.  We make write_state async for this
-      test only by replacing it at the callsite in lifecycle_policy_actions.
+      genuinely yields control to writer B.  The patch is applied at the
+      callsite in writer A's context.
     """
     device = await create_device(
         db_session,
@@ -196,7 +200,7 @@ async def test_concurrent_health_failure_stale_overwrite(
         device_arg: Device,
         next_state: dict[str, Any],
         *,
-        run: object,
+        run: TestRun | None,
         reason: str,
         source: str,
         detail: str,
@@ -252,6 +256,7 @@ async def test_concurrent_health_failure_stale_overwrite(
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     state = device_row.lifecycle_policy_state
+    assert state is not None, "lifecycle_policy_state is None after concurrent writes"
 
     # Writer B committed src-b/reason-b while A was sleeping.
     # Without a row lock, writer A then commits src-a/reason-a on top of B's
