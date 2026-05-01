@@ -9,10 +9,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import appium_resource_allocator, capability_service, device_service, session_viability
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
+from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_verification_job_state import enum_value, set_stage
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_client import AgentClientFactory
+    from app.models.device import Device
     from app.services.device_verification_preparation import PreparedVerificationContext
     from app.type_defs import ProbeSessionFn
 
@@ -224,9 +225,13 @@ async def retain_verified_node(
             handle.port = refreshed_node.port
             handle.pid = refreshed_node.pid
             handle.active_connection_target = refreshed_node.active_connection_target
+            # mark_node_started inside restart_node already applied
+            # ready_device_availability_status; nothing left to do here.
+        else:
+            next_status = await ready_device_availability_status(db, device)
+            await set_device_availability_status(device, next_status)
+            await db.commit()
 
-        device.availability_status = DeviceAvailabilityStatus.available
-        await db.commit()
         await db.refresh(device)
     except Exception as exc:
         detail = f"Failed to retain verified node: {exc}"
