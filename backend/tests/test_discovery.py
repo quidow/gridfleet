@@ -173,6 +173,105 @@ async def test_discover_detects_removed(client: AsyncClient, db_session: AsyncSe
     assert "OLD-DEVICE" in data["removed_identity_values"]
 
 
+async def test_discover_treats_same_value_different_scheme_as_new(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    host = (await client.post("/api/hosts", json=HOST_PAYLOAD)).json()
+
+    await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="SHARED-IDENTITY",
+        connection_target="SHARED-IDENTITY",
+        name="Existing custom device",
+        pack_id="custom-pack-a",
+        platform_id="custom-platform-a",
+        identity_scheme="custom_scheme_a",
+        identity_scope="host",
+        os_version="1.0",
+    )
+
+    same_value_different_scheme_response: dict[str, Any] = {
+        "candidates": [
+            {
+                "pack_id": "custom-pack-b",
+                "platform_id": "custom-platform-b",
+                "identity_scheme": "custom_scheme_b",
+                "identity_scope": "host",
+                "identity_value": "SHARED-IDENTITY",
+                "suggested_name": "New custom device",
+                "detected_properties": {
+                    "connection_target": "SHARED-IDENTITY",
+                    "os_version": "2.0",
+                },
+                "runnable": True,
+            }
+        ],
+    }
+
+    with _patch_pack_devices(same_value_different_scheme_response):
+        resp = await client.post(f"/api/hosts/{host['id']}/discover")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [d["identity_scheme"] for d in data["new_devices"]] == ["custom_scheme_b"]
+    assert data["updated_devices"] == []
+
+
+async def test_confirm_discovery_replaces_same_value_different_scheme(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    host = (await client.post("/api/hosts", json=HOST_PAYLOAD)).json()
+
+    await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="SHARED-IDENTITY",
+        connection_target="SHARED-IDENTITY",
+        name="Existing custom device",
+        pack_id="custom-pack-a",
+        platform_id="custom-platform-a",
+        identity_scheme="custom_scheme_a",
+        identity_scope="host",
+        os_version="1.0",
+    )
+
+    same_value_different_scheme_response: dict[str, Any] = {
+        "candidates": [
+            {
+                "pack_id": "custom-pack-b",
+                "platform_id": "custom-platform-b",
+                "identity_scheme": "custom_scheme_b",
+                "identity_scope": "host",
+                "identity_value": "SHARED-IDENTITY",
+                "suggested_name": "New custom device",
+                "detected_properties": {
+                    "connection_target": "SHARED-IDENTITY",
+                    "os_version": "2.0",
+                    "device_type": "real_device",
+                    "connection_type": "usb",
+                },
+                "runnable": True,
+            }
+        ],
+    }
+
+    with _patch_pack_devices(same_value_different_scheme_response):
+        resp = await client.post(
+            f"/api/hosts/{host['id']}/discover/confirm",
+            json={"add_identity_values": ["SHARED-IDENTITY"], "remove_identity_values": ["SHARED-IDENTITY"]},
+        )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["added"] == ["SHARED-IDENTITY"]
+    assert payload["removed"] == ["SHARED-IDENTITY"]
+
+    devices = (await client.get("/api/devices")).json()
+    matching = [d for d in devices if d["identity_value"] == "SHARED-IDENTITY"]
+    assert [d["identity_scheme"] for d in matching] == ["custom_scheme_b"]
+
+
 async def test_confirm_discovery_adds_devices(client: AsyncClient) -> None:
     host = (await client.post("/api/hosts", json=HOST_PAYLOAD)).json()
 
