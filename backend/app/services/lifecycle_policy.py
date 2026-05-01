@@ -343,16 +343,30 @@ async def attempt_auto_recovery(
             detail="Manager stopped the device after a failed recovery viability probe",
             manager_resolver=get_node_manager,
         )
+
+        # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
+        # the row lock via intermediate commits in stop_node_and_mark_offline.
+        # Without this re-lock, the trailing write_state below would clobber any
+        # concurrent writer (e.g., note_connectivity_loss) on the same device.
+        from app.services import device_locking
+
+        device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
-        set_action(current_state, "recovery_failed")
-        write_state(device, current_state)
+        fresh_state = policy_state(device)
+        fresh_state["last_failure_source"] = "session_viability"
+        fresh_state["last_failure_reason"] = failure_reason
+        fresh_state["recovery_suppressed_reason"] = "Recovery probe failed"
+        fresh_state["backoff_until"] = backoff_until_iso
+        fresh_state["recovery_backoff_attempts"] = current_state["recovery_backoff_attempts"]
+        set_action(fresh_state, "recovery_failed")
+        write_state(device, fresh_state)
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,
             DeviceEventType.lifecycle_recovery_failed,
             summary_state=DeviceLifecyclePolicySummaryState.backoff,
             reason=failure_reason,
-            detail=current_state["recovery_suppressed_reason"],
+            detail=fresh_state["recovery_suppressed_reason"],
             source="session_viability",
             run_id=run.id if run is not None else None,
             run_name=run.name if run is not None else None,
