@@ -168,6 +168,7 @@ async def _find_matching_devices(
         .options(selectinload(Device.host))
         .where(Device.id.in_(candidate_ids))
         .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
         .with_for_update(skip_locked=True)
     )
@@ -925,6 +926,11 @@ async def _release_devices(db: AsyncSession, run: TestRun) -> None:
         reservation.claimed_at = None
         device = locked_devices.get(reservation.device_id)
         if device is None:
+            logger.warning(
+                "Reservation %s references missing device %s; skipping availability restore",
+                reservation.id,
+                reservation.device_id,
+            )
             continue
         if device.availability_status not in {
             DeviceAvailabilityStatus.reserved,

@@ -272,6 +272,8 @@ async def _process_node_health(
                 detail="Node restart was suppressed after repeated health check failures",
                 source="node_health",
             )
+            # node refers to the same identity-mapped AppiumNode object as locked_device.appium_node;
+            # the FOR UPDATE on Device does NOT lock AppiumNode, so this write is best-effort.
             node.state = NodeState.error
             await device_health_summary.update_node_state(db, device, running=False, state="error")
             await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
@@ -351,6 +353,8 @@ async def _process_node_health(
                 detail="Automatic node restart failed after repeated health check failures",
                 source="node_health",
             )
+            # node refers to the same identity-mapped AppiumNode object as locked_device.appium_node;
+            # the FOR UPDATE on Device does NOT lock AppiumNode, so this write is best-effort.
             node.state = NodeState.error
             await device_health_summary.update_node_state(db, device, running=False, state="error")
             await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
