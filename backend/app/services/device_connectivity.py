@@ -354,6 +354,11 @@ async def _check_connectivity(db: AsyncSession) -> None:
                             )
                         continue
                 # Device disconnected
+                # Maintenance devices are placed there by operators; transient
+                # disconnects are not actionable — skip silently to match pre-PR
+                # behavior (no connectivity_lost event, no lifecycle write).
+                if device.availability_status == DeviceAvailabilityStatus.maintenance:
+                    continue
                 if not device.auto_manage:
                     continue
                 stopped_node = await _stop_disconnected_node(db, device)

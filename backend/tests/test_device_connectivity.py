@@ -508,3 +508,55 @@ async def test_unhealthy_connected_device_triggers_policy_stop(db_session: Async
     mock_handle.assert_called_once()
     await db_session.refresh(device)
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)
+
+
+async def test_connectivity_does_not_record_event_for_maintenance_blip(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disconnected maintenance device must not produce connectivity_lost or
+    lifecycle_auto_stopped events; pre-PR behavior was silent and must be preserved."""
+    from sqlalchemy import select
+
+    from app.models.device_event import DeviceEvent, DeviceEventType
+    from app.services import device_connectivity
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-blip",
+        availability_status=DeviceAvailabilityStatus.maintenance,
+        auto_manage=True,
+        verified=True,
+    )
+    await db_session.commit()
+
+    async def fake_get_agent_devices(_host: Host) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+
+    await device_connectivity._check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.availability_status == DeviceAvailabilityStatus.maintenance
+
+    # No connectivity_lost event recorded
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.connectivity_lost,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert events == [], f"Maintenance device produced {len(events)} connectivity_lost event(s) — should be silent"
+
+    # lifecycle_policy_state untouched (still default state)
+    assert (device.lifecycle_policy_state or {}).get("last_failure_source") is None
