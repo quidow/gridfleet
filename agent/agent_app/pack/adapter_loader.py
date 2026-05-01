@@ -46,6 +46,8 @@ class _CacheKey:
 
 
 _cache: dict[_CacheKey, Any] = {}
+_cache_install_locks: dict[_CacheKey, asyncio.Lock] = {}
+_cache_lock_factory_lock = asyncio.Lock()
 _adapter_call_lock = asyncio.Lock()
 
 
@@ -102,6 +104,7 @@ def _adapter_cache_clear() -> None:
     """
 
     _cache.clear()
+    _cache_install_locks.clear()
     sys.path[:] = [entry for entry in sys.path if not entry or Path(entry).exists()]
     # Also forget any previously-imported ``adapter`` package tree so the next
     # load resolves all hooks against the current wheel, including submodules
@@ -195,6 +198,15 @@ async def _install_wheel(wheel: Path, target_dir: Path) -> None:
     await asyncio.to_thread(_install_wheel_sync, wheel, target_dir)
 
 
+async def _get_or_create_install_lock(key: _CacheKey) -> asyncio.Lock:
+    async with _cache_lock_factory_lock:
+        lock = _cache_install_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _cache_install_locks[key] = lock
+        return lock
+
+
 async def load_adapter(
     *,
     pack_id: str,
@@ -220,24 +232,32 @@ async def load_adapter(
     if cached is not None:
         return cached
 
-    wheel_dir = runtime_dir / "wheels"
-    install_dir = (runtime_dir / "site").resolve()
+    install_lock = await _get_or_create_install_lock(key)
+    async with install_lock:
+        # Re-check the cache after acquiring the lock — the prior holder may
+        # have finished the install while we waited.
+        cached = _cache.get(key)
+        if cached is not None:
+            return cached
 
-    wheel = _extract_wheel(tarball_path, wheel_dir)
-    await _install_wheel(wheel, install_dir)
+        wheel_dir = runtime_dir / "wheels"
+        install_dir = (runtime_dir / "site").resolve()
 
-    # Drop any cached ``adapter`` package tree imported against a different
-    # ``site/`` directory before resolving against the current one.
-    _activate_adapter_site(install_dir)
-    try:
-        module = importlib.import_module("adapter")
-    except ImportError as exc:
-        raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
+        wheel = _extract_wheel(tarball_path, wheel_dir)
+        await _install_wheel(wheel, install_dir)
 
-    cls = getattr(module, "Adapter", None)
-    if cls is None:
-        raise AdapterLoadError("adapter module does not expose class Adapter")
+        # Drop any cached ``adapter`` package tree imported against a different
+        # ``site/`` directory before resolving against the current one.
+        _activate_adapter_site(install_dir)
+        try:
+            module = importlib.import_module("adapter")
+        except ImportError as exc:
+            raise AdapterLoadError(f"failed to import adapter module: {exc}") from exc
 
-    instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
-    _cache[key] = instance
-    return instance
+        cls = getattr(module, "Adapter", None)
+        if cls is None:
+            raise AdapterLoadError("adapter module does not expose class Adapter")
+
+        instance = _IsolatedAdapter(cls(), install_dir, pack_id=pack_id, release=release)
+        _cache[key] = instance
+        return instance
