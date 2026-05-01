@@ -982,7 +982,8 @@ class AppiumProcessManager:
             if proc is None or proc.returncode is not None:
                 continue
             with contextlib.suppress(Exception):
-                await self._restart_grid_node_from_launch_spec(port, force=True)
+                async with self._start_lock:
+                    await self._restart_grid_node_from_launch_spec(port, force=True)
 
     async def start(
         self,
