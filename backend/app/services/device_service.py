@@ -298,8 +298,9 @@ async def update_device(
 
 
 async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    device = await get_device(db, device_id)
-    if device is None:
+    try:
+        device = await device_locking.lock_device(db, device_id)
+    except NoResultFound:
         return False
 
     # Stop the running Appium node on the agent before deleting
@@ -309,8 +310,16 @@ async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
 
             manager = get_node_manager(device)
             await manager.stop_node(db, device)
+            try:
+                device = await device_locking.lock_device(db, device_id)
+            except NoResultFound:
+                return True
         except Exception as e:
             logger.warning("Failed to stop node for device %s before delete: %s", device_id, e)
+            try:
+                device = await device_locking.lock_device(db, device_id)
+            except NoResultFound:
+                return True
 
     await db.delete(device)
     await db.commit()
