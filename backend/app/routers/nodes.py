@@ -1,26 +1,19 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceAvailabilityStatus
+from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
-from app.services import device_health_summary, device_locking, run_service
+from app.services import device_health_summary, run_service
 from app.services.device_readiness import assess_device_async
 from app.services.node_manager import get_node_manager
 from app.services.node_manager_types import NodeManagerError
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
-
-
-async def _lock_device_or_404(device_id: uuid.UUID, db: AsyncSession) -> Device:
-    try:
-        return await device_locking.lock_device(db, device_id, load_sessions=True)
-    except NoResultFound:
-        raise HTTPException(status_code=404, detail="Device not found") from None
 
 
 async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
@@ -49,7 +42,7 @@ async def _assert_device_verified(db: AsyncSession, device: Device, *, action: s
 
 @router.post("/{device_id}/node/start", response_model=AppiumNodeRead)
 async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
-    device = await _lock_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
     await _assert_device_verified(db, device, action="start a node")
@@ -65,7 +58,7 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 
 @router.post("/{device_id}/node/stop", response_model=AppiumNodeRead)
 async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
-    device = await _lock_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     manager = get_node_manager(device)
     try:
@@ -79,7 +72,7 @@ async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
 async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
-    device = await _lock_device_or_404(device_id, db)
+    device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
     await _assert_device_verified(db, device, action="restart a node")
