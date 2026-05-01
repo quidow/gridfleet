@@ -6,13 +6,15 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
-from app.models.device import ConnectionType, Device, DeviceType
+from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import bulk_service
 from app.services.node_manager_types import NodeManagerError
 from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
+from tests.helpers import create_device
 
 
 def _device(
@@ -48,25 +50,42 @@ def _device(
     )
 
 
-async def test_bulk_start_stop_and_restart_nodes_collect_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    devices = [_device(), _device()]
-    db = AsyncMock()
+async def test_bulk_start_stop_and_restart_nodes_collect_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    devices = [
+        await create_device(
+            db_session,
+            host_id=db_host.id,
+            name="bulk-manager-ok",
+            availability_status=DeviceAvailabilityStatus.available,
+            verified=True,
+        ),
+        await create_device(
+            db_session,
+            host_id=db_host.id,
+            name="bulk-manager-fail",
+            availability_status=DeviceAvailabilityStatus.available,
+            verified=True,
+        ),
+    ]
     manager_ok = AsyncMock()
     manager_fail = AsyncMock()
     manager_fail.start_node.side_effect = NodeManagerError("cannot start")
     manager_fail.stop_node.side_effect = RuntimeError("cannot stop")
     manager_fail.restart_node.side_effect = NodeManagerError("cannot restart")
 
-    monkeypatch.setattr("app.services.bulk_service._load_devices", AsyncMock(return_value=devices))
     monkeypatch.setattr(
         "app.services.bulk_service.get_node_manager",
         lambda device: manager_fail if device.id == devices[1].id else manager_ok,
     )
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
 
-    started = await bulk_service.bulk_start_nodes(db, [device.id for device in devices])
-    stopped = await bulk_service.bulk_stop_nodes(db, [device.id for device in devices])
-    restarted = await bulk_service.bulk_restart_nodes(db, [device.id for device in devices])
+    started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])
+    stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices])
+    restarted = await bulk_service.bulk_restart_nodes(db_session, [device.id for device in devices])
 
     assert started["succeeded"] == 1
     assert stopped["failed"] == 1

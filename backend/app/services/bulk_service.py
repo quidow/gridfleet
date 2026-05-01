@@ -1,10 +1,14 @@
 import asyncio
+import contextlib
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.errors import AgentCallError
 from app.models.device import Device
@@ -12,8 +16,7 @@ from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.event_bus import event_bus
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
-from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_manager import NodeManager, get_node_manager
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 
@@ -28,89 +31,92 @@ async def _load_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[D
     return await device_locking.lock_devices(db, device_ids)
 
 
+async def _load_existing_device_ids(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    if not device_ids:
+        return []
+    ordered_ids = sorted(set(device_ids))
+    result = await db.execute(select(Device.id).where(Device.id.in_(ordered_ids)).order_by(Device.id))
+    return list(result.scalars().all())
+
+
+def _session_factory_from_db(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
+    if db.bind is None:
+        raise RuntimeError("Bulk node action session is not bound")
+    return async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+
+
 def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any]:
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-async def bulk_start_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
+ManagerCall = Callable[[NodeManager, AsyncSession, Device], Awaitable[object]]
+
+
+async def _run_per_device_node_action(
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    operation: str,
+    manager_call: ManagerCall,
+) -> dict[str, Any]:
+    existing_device_ids = await _load_existing_device_ids(db, device_ids)
+    session_factory = _session_factory_from_db(db)
     errors: dict[str, str] = {}
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
-    async def _start_one(device: Device) -> None:
-        async with sem:
+    async def _one(device_id: uuid.UUID) -> None:
+        async with sem, session_factory() as session:
             try:
+                device = await device_locking.lock_device(session, device_id)
                 manager = get_node_manager(device)
-                await manager.start_node(db, device)
-            except (NodeManagerError, Exception) as e:
-                errors[str(device.id)] = str(e)
+                await manager_call(manager, session, device)
+                await session.commit()
+            except NoResultFound:
+                errors[str(device_id)] = "Device not found"
+            except Exception as e:
+                errors[str(device_id)] = str(e)
+                with contextlib.suppress(Exception):
+                    await session.rollback()
 
-    await asyncio.gather(*[_start_one(d) for d in devices])
-    succeeded = len(devices) - len(errors)
+    await asyncio.gather(*[_one(did) for did in existing_device_ids])
+    succeeded = len(existing_device_ids) - len(errors)
     await event_bus.publish(
         "bulk.operation_completed",
         {
-            "operation": "start_nodes",
-            "total": len(devices),
+            "operation": operation,
+            "total": len(existing_device_ids),
             "succeeded": succeeded,
             "failed": len(errors),
         },
     )
-    return _result(len(devices), succeeded, errors)
+    return _result(len(existing_device_ids), succeeded, errors)
+
+
+async def bulk_start_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+    return await _run_per_device_node_action(
+        db,
+        device_ids,
+        operation="start_nodes",
+        manager_call=lambda mgr, sess, dev: mgr.start_node(sess, dev),
+    )
 
 
 async def bulk_stop_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    errors: dict[str, str] = {}
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-
-    async def _stop_one(device: Device) -> None:
-        async with sem:
-            try:
-                manager = get_node_manager(device)
-                await manager.stop_node(db, device)
-            except (NodeManagerError, Exception) as e:
-                errors[str(device.id)] = str(e)
-
-    await asyncio.gather(*[_stop_one(d) for d in devices])
-    succeeded = len(devices) - len(errors)
-    await event_bus.publish(
-        "bulk.operation_completed",
-        {
-            "operation": "stop_nodes",
-            "total": len(devices),
-            "succeeded": succeeded,
-            "failed": len(errors),
-        },
+    return await _run_per_device_node_action(
+        db,
+        device_ids,
+        operation="stop_nodes",
+        manager_call=lambda mgr, sess, dev: mgr.stop_node(sess, dev),
     )
-    return _result(len(devices), succeeded, errors)
 
 
 async def bulk_restart_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    errors: dict[str, str] = {}
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-
-    async def _restart_one(device: Device) -> None:
-        async with sem:
-            try:
-                manager = get_node_manager(device)
-                await manager.restart_node(db, device)
-            except (NodeManagerError, Exception) as e:
-                errors[str(device.id)] = str(e)
-
-    await asyncio.gather(*[_restart_one(d) for d in devices])
-    succeeded = len(devices) - len(errors)
-    await event_bus.publish(
-        "bulk.operation_completed",
-        {
-            "operation": "restart_nodes",
-            "total": len(devices),
-            "succeeded": succeeded,
-            "failed": len(errors),
-        },
+    return await _run_per_device_node_action(
+        db,
+        device_ids,
+        operation="restart_nodes",
+        manager_call=lambda mgr, sess, dev: mgr.restart_node(sess, dev),
     )
-    return _result(len(devices), succeeded, errors)
 
 
 async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], auto_manage: bool) -> dict[str, Any]:
