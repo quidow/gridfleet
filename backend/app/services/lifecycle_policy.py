@@ -387,6 +387,21 @@ async def attempt_auto_recovery(
         await db.commit()
         return False
 
+    # Re-lock and rebuild state from fresh DB row: run_session_viability_probe
+    # commits multiple times during execution, releasing the row lock that
+    # _reload_device acquired at the top of this function. Without this re-lock,
+    # the trailing writes below would clobber any concurrent writer on the same device.
+    from app.services import device_locking
+
+    device = await device_locking.lock_device(db, device.id, load_sessions=True)
+    fresh_state = policy_state(device)
+    # Carry forward this writer's intent in current_state into fresh_state, but
+    # only the fields this branch will touch downstream:
+    fresh_state["recovery_backoff_attempts"] = current_state.get("recovery_backoff_attempts", 0)
+    current_state = fresh_state
+    # Re-resolve the reservation under lock as well:
+    run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
+
     clear_backoff(current_state)
     current_state["recovery_suppressed_reason"] = None
 
