@@ -47,6 +47,37 @@ class AgentClient(Protocol):
     async def get_pack_devices(self, host: str, port: int) -> dict[str, Any]: ...
 
 
+IdentityKey = tuple[str, str, str]
+
+
+def _identity_key(*, identity_scope: str | None, identity_scheme: str, identity_value: str) -> IdentityKey:
+    return (identity_scope or "host", identity_scheme, identity_value)
+
+
+def _candidate_identity_key(candidate: dict[str, Any]) -> IdentityKey:
+    return _identity_key(
+        identity_scope=candidate.get("identity_scope"),
+        identity_scheme=candidate["identity_scheme"],
+        identity_value=candidate["identity_value"],
+    )
+
+
+def _discovered_identity_key(discovered: DiscoveredDevice) -> IdentityKey:
+    return _identity_key(
+        identity_scope=discovered.identity_scope,
+        identity_scheme=discovered.identity_scheme,
+        identity_value=discovered.identity_value,
+    )
+
+
+def _device_identity_key(device: Device) -> IdentityKey:
+    return _identity_key(
+        identity_scope=device.identity_scope,
+        identity_scheme=device.identity_scheme,
+        identity_value=device.identity_value,
+    )
+
+
 async def discover_pack_candidates(agent: AgentClient, *, host: str, port: int) -> PackDiscoveryResult:
     raw = await agent.get_pack_devices(host, port)
     candidates = [
@@ -120,6 +151,7 @@ async def list_intake_candidates(
 
         stmt = select(Device).where(
             Device.host_id == host.id,
+            Device.identity_scheme == c["identity_scheme"],
             Device.identity_value == identity_value,
             scope_clause,
         )
@@ -166,26 +198,26 @@ async def discover_devices(
 
     stmt = select(Device).where(Device.host_id == host.id)
     existing_devices = list((await session.execute(stmt)).scalars().all())
-    existing_by_identity = {d.identity_value: d for d in existing_devices}
-    seen_identity_values: set[str] = set()
+    existing_by_identity = {_device_identity_key(d): d for d in existing_devices}
+    seen_identity_keys: set[IdentityKey] = set()
 
     new_devices: list[DiscoveredDevice] = []
     updated_devices: list[DiscoveredDevice] = []
 
     for c in candidates_raw:
-        identity_value: str = c["identity_value"]
-        seen_identity_values.add(identity_value)
+        identity_key = _candidate_identity_key(c)
+        seen_identity_keys.add(identity_key)
         discovered = _candidate_to_discovered(
             c,
             platform_label=label_map.get((c["pack_id"], c["platform_id"])),
         )
-        if identity_value in existing_by_identity:
+        if identity_key in existing_by_identity:
             updated_devices.append(discovered)
         else:
             new_devices.append(discovered)
 
     removed_identity_values = [
-        d.identity_value for d in existing_devices if d.identity_value not in seen_identity_values
+        d.identity_value for d in existing_devices if _device_identity_key(d) not in seen_identity_keys
     ]
 
     return DiscoveryResult(
@@ -278,40 +310,52 @@ async def confirm_discovery(
     updated = []
     added_devices: list[Device] = []
 
-    # Build a map of discovered devices by stable identity for lookup.
-    discovered_map = {d.identity_value: d for d in discovery_result.new_devices}
-    updated_map = {d.identity_value: d for d in discovery_result.updated_devices}
+    # The public confirm payload still identifies rows by identity_value. Internally,
+    # matching must use the full identity tuple so different schemes do not collide.
+    discovered_by_value: dict[str, list[DiscoveredDevice]] = {}
+    for discovered in discovery_result.new_devices:
+        discovered_by_value.setdefault(discovered.identity_value, []).append(discovered)
+    discovered_keys = {
+        _discovered_identity_key(discovered)
+        for discovered in [*discovery_result.new_devices, *discovery_result.updated_devices]
+    }
 
     for identity_value in add_identity_values:
-        discovered = discovered_map.get(identity_value)
-        if not discovered:
-            continue
-        create_request = _build_discovery_create_request(discovered, host)
-        payload = device_write.prepare_device_create_payload(create_request)
-        await ensure_device_payload_identity_available(db, payload)
-        payload["verified_at"] = None
-        device = device_write.stage_device_record(db, payload)
-        added_devices.append(device)
-        added.append(identity_value)
+        for discovered in discovered_by_value.get(identity_value, []):
+            create_request = _build_discovery_create_request(discovered, host)
+            payload = device_write.prepare_device_create_payload(create_request)
+            await ensure_device_payload_identity_available(db, payload)
+            payload["verified_at"] = None
+            device = device_write.stage_device_record(db, payload)
+            added_devices.append(device)
+            added.append(identity_value)
 
     # Auto-apply os_version + tags updates for existing devices
     # name, platform, model, manufacturer, and device_type are immutable — only changeable manually
-    for identity_value, discovered in updated_map.items():
-        stmt = select(Device).where(Device.identity_value == identity_value, Device.host_id == host.id)
+    for discovered in discovery_result.updated_devices:
+        stmt = select(Device).where(
+            Device.host_id == host.id,
+            Device.identity_scope == discovered.identity_scope,
+            Device.identity_scheme == discovered.identity_scheme,
+            Device.identity_value == discovered.identity_value,
+        )
         result = await db.execute(stmt)
         existing_device = result.scalar_one_or_none()
         if existing_device:
             update_request = _build_discovery_update_request(existing_device, discovered)
             payload = device_write.prepare_device_update_payload(existing_device, update_request)
             device_write.apply_device_payload(existing_device, payload)
-            updated.append(identity_value)
+            updated.append(discovered.identity_value)
 
     for identity_value in remove_identity_values:
         stmt = select(Device).where(Device.identity_value == identity_value, Device.host_id == host.id)
         result = await db.execute(stmt)
-        device_to_remove = result.scalar_one_or_none()
-        if device_to_remove:
+        devices_to_remove = [
+            device for device in result.scalars().all() if _device_identity_key(device) not in discovered_keys
+        ]
+        for device_to_remove in devices_to_remove:
             await db.delete(device_to_remove)
+        if devices_to_remove:
             removed.append(identity_value)
 
     await db.commit()
