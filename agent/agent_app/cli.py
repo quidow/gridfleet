@@ -11,6 +11,7 @@ from agent_app.config import agent_settings
 from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
 from agent_app.installer.status import collect_status, format_status
+from agent_app.installer.uninstall import uninstall
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,6 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--terminal-token", default=None)
 
     subparsers.add_parser("status", help="Show local GridFleet agent installation and health status.")
+
+    uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall the GridFleet agent host service.")
+    uninstall_parser.add_argument("--yes", action="store_true", help="Confirm removal of service and agent files.")
+    uninstall_parser.add_argument("--keep-config", action="store_true", help="Leave /etc/gridfleet-agent in place.")
+    uninstall_parser.add_argument("--keep-agent-dir", action="store_true", help="Leave /opt/gridfleet-agent in place.")
 
     return parser
 
@@ -108,6 +114,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "status":
         print(format_status(collect_status(InstallConfig())))
+        return 0
+
+    if args.command == "uninstall":
+        if not args.yes:
+            print("ERROR: uninstall requires --yes.", file=sys.stderr)
+            return 2
+        try:
+            uninstall(
+                InstallConfig(),
+                remove_agent_dir=not args.keep_agent_dir,
+                remove_config_dir=not args.keep_config,
+            )
+        except (RuntimeError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print("GridFleet agent uninstalled.")
         return 0
 
     parser.print_help()

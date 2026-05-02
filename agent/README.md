@@ -41,3 +41,11 @@ gridfleet-agent status
 ```
 
 The status command reads `config.env`, checks the local service manager when available, polls local health, and redacts stored secrets.
+
+Uninstall requires explicit confirmation:
+
+```bash
+gridfleet-agent uninstall --yes
+```
+
+Use `--keep-config` or `--keep-agent-dir` when you want to preserve local configuration or downloaded runtime state.
