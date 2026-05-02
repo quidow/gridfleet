@@ -110,8 +110,12 @@ async def _node_started_availability_status(db: AsyncSession, device: Device) ->
 
 
 def _node_stopped_availability_status(device: Device) -> DeviceAvailabilityStatus:
-    if device.availability_status == DeviceAvailabilityStatus.maintenance:
-        return DeviceAvailabilityStatus.maintenance
+    if device.availability_status in {
+        DeviceAvailabilityStatus.busy,
+        DeviceAvailabilityStatus.reserved,
+        DeviceAvailabilityStatus.maintenance,
+    }:
+        return device.availability_status
     return DeviceAvailabilityStatus.offline
 
 
