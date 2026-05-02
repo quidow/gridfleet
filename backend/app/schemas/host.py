@@ -47,6 +47,8 @@ class HostRead(BaseModel):
     status: HostStatus
     agent_version: str | None = None
     required_agent_version: str | None = None
+    recommended_agent_version: str | None = None
+    agent_update_available: bool = False
     agent_version_status: AgentVersionStatus = AgentVersionStatus.disabled
     capabilities: dict[str, Any] | None = None
     missing_prerequisites: list[str] = []

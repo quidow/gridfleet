@@ -5,6 +5,8 @@ type AgentVersionProps = {
   version: string | null;
   status: 'disabled' | 'ok' | 'outdated' | 'unknown';
   requiredVersion: string | null;
+  recommendedVersion?: string | null;
+  updateAvailable?: boolean;
 };
 
 type HostActionButtonsProps = {
@@ -18,7 +20,7 @@ type HostActionButtonsProps = {
   variant?: 'table' | 'detail';
 };
 
-export function HostAgentVersionIndicator({ version, status, requiredVersion }: AgentVersionProps) {
+export function HostAgentVersionIndicator({ version, status, requiredVersion, recommendedVersion, updateAvailable }: AgentVersionProps) {
   if (status === 'outdated') {
     return (
       <div className="flex items-center gap-2">
@@ -46,10 +48,25 @@ export function HostAgentVersionIndicator({ version, status, requiredVersion }: 
     );
   }
 
+  if (updateAvailable) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-text-3">{version ?? '-'}</span>
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-xs font-medium text-neutral-foreground"
+          title={`Recommended version is ${recommendedVersion}`}
+        >
+          <AlertTriangle size={12} />
+          Update available
+        </span>
+      </div>
+    );
+  }
+
   return <span className="font-mono text-text-3">{version ?? '-'}</span>;
 }
 
-export function HostAgentVersionNotice({ version, status, requiredVersion }: AgentVersionProps) {
+export function HostAgentVersionNotice({ version, status, requiredVersion, recommendedVersion, updateAvailable }: AgentVersionProps) {
   if (status === 'outdated') {
     return (
       <div className="mt-4 rounded-md border border-warning-strong/30 bg-warning-soft p-3 text-sm text-warning-foreground">
@@ -73,6 +90,20 @@ export function HostAgentVersionNotice({ version, status, requiredVersion }: Age
         </div>
         <p className="mt-1 text-neutral-foreground">
           The manager requires at least {requiredVersion ?? '-'}, but this host did not report a parseable version string.
+        </p>
+      </div>
+    );
+  }
+
+  if (updateAvailable) {
+    return (
+      <div className="mt-4 rounded-md border border-border bg-neutral-soft p-3 text-sm text-neutral-foreground">
+        <div className="flex items-center gap-2 font-medium">
+          <AlertTriangle size={16} />
+          Agent update available
+        </div>
+        <p className="mt-1 text-neutral-foreground">
+          This host is running {version ?? 'an unknown version'}, below the recommended version of {recommendedVersion ?? '-'}.
         </p>
       </div>
     );

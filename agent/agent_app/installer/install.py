@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 class HealthCheckResult:
     ok: bool
     message: str
+    details: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -217,7 +218,13 @@ def poll_agent_health(
             response = get(url, timeout=2.0)
             status_code = getattr(response, "status_code", None)
             if status_code == 200:
-                return HealthCheckResult(ok=True, message="agent health check passed")
+                json_body = getattr(response, "json", None)
+                details = json_body() if callable(json_body) else {}
+                return HealthCheckResult(
+                    ok=True,
+                    message="agent health check passed",
+                    details=details if isinstance(details, dict) else {},
+                )
             last_error = f"unexpected status {status_code}"
         except Exception as exc:
             last_error = str(exc)

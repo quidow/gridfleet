@@ -43,6 +43,7 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |
 | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `appium.port_range_end` | `4823` | Managed Appium port range end |
 | `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |
+| `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | `agent.recommended_version` | empty | Seeds initial `agent.recommended_version` setting default (empty = disabled). |
 | `GRIDFLEET_HOST_AUTO_ACCEPT` | `agent.auto_accept_hosts` | `true` | Auto-approve self-registering hosts. Production compose sets this to `false` so operators approve new hosts explicitly. |
 | `GRIDFLEET_RUN_REAPER_INTERVAL_SEC` | `reservations.reaper_interval_sec` | `15` | Stale-run reaper cadence |
 

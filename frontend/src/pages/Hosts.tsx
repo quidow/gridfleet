@@ -161,6 +161,8 @@ export default function Hosts() {
           version={host.agent_version}
           status={host.agent_version_status}
           requiredVersion={host.required_agent_version}
+          recommendedVersion={host.recommended_agent_version}
+          updateAvailable={host.agent_update_available}
         />
       ),
     },

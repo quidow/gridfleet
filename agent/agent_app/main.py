@@ -43,6 +43,7 @@ from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugin_manager import get_installed_plugins, sync_plugins
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import ensure_tools, get_tool_status
+from agent_app.version_guidance import get_version_guidance
 
 configure_logging()
 
@@ -344,6 +345,7 @@ async def health() -> dict[str, Any]:
         "missing_prerequisites": capabilities.get("missing_prerequisites", []),
     }
     payload["appium_processes"] = appium_mgr.process_snapshot()
+    payload["version_guidance"] = get_version_guidance().to_payload()
     return payload
 
 

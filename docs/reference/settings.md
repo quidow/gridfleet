@@ -43,6 +43,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `notifications.toast_severity_threshold` | `notifications` | `string` | `warning` | none | `info`, `warning`, `error` | Minimum toast severity shown in the UI |
 | `devices.default_auto_manage` | `devices` | `bool` | `true` | none | boolean | Default `auto_manage` value for newly imported or verified devices |
 | `agent.min_version` | `agent` | `string` | `0.1.0` | `GRIDFLEET_MIN_AGENT_VERSION` | none | Minimum accepted agent version; empty disables the version check |
+| `agent.recommended_version` | `agent` | `string` | `""` | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | none | Recommended `gridfleet-agent` version surfaced to agents and operators; empty disables recommendation messaging |
 | `agent.auto_accept_hosts` | `agent` | `bool` | `true` | `GRIDFLEET_HOST_AUTO_ACCEPT` | boolean | Whether self-registering hosts are automatically approved |
 | `agent.default_port` | `agent` | `int` | `5100` | none | `1024..65535` | Default agent port for new hosts |
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |

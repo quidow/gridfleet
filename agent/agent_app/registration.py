@@ -13,6 +13,7 @@ import httpx
 from agent_app import __version__
 from agent_app.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.config import agent_settings
+from agent_app.version_guidance import update_version_guidance
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -46,6 +47,14 @@ def _map_os_type() -> str:
     return "linux"
 
 
+def _handle_version_guidance(data: dict[str, Any]) -> None:
+    changed = update_version_guidance(data)
+    update_available = data.get("agent_update_available")
+    recommended = data.get("recommended_agent_version")
+    if changed and update_available is True and isinstance(recommended, str) and recommended:
+        logger.info("Agent update available: recommended version is %s", recommended)
+
+
 def _manager_auth() -> httpx.BasicAuth | None:
     username = agent_settings.manager_auth_username
     password = agent_settings.manager_auth_password
@@ -73,6 +82,7 @@ async def register_with_manager(manager_url: str, agent_port: int) -> dict[str, 
         resp = await client.post(f"{manager_url}/api/hosts/register", **request_kwargs)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
+        _handle_version_guidance(data)
         return data
 
 

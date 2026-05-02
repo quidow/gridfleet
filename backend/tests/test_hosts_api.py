@@ -504,11 +504,58 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     data = resp.json()
     assert data["required_agent_version"] == "0.1.0"
     assert data["agent_version_status"] == "outdated"
+    assert data["recommended_agent_version"] == "0.3.0"
+    assert data["agent_update_available"] is True
     host_id = UUID(data["id"])
     assert scheduled == [
         (_auto_discover, (host_id,)),
         (_auto_prepare_host_diagnostics, (host_id,)),
     ]
+
+
+async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
+    with patch("app.routers.hosts._fire_and_forget"):
+        create_resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "recommended-version-host",
+                "ip": "192.168.1.120",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.2.0",
+            },
+        )
+
+    assert create_resp.status_code == 201
+    host_id = create_resp.json()["id"]
+
+    list_resp = await client.get("/api/hosts")
+    assert list_resp.status_code == 200
+    listed = next(host for host in list_resp.json() if host["id"] == host_id)
+    assert listed["recommended_agent_version"] == "0.3.0"
+    assert listed["agent_update_available"] is True
+
+    detail_resp = await client.get(f"/api/hosts/{host_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["recommended_agent_version"] == "0.3.0"
+    assert detail_resp.json()["agent_update_available"] is True
+
+
+async def test_agent_update_available_false_when_current(client: AsyncClient) -> None:
+    with patch("app.routers.hosts._fire_and_forget"):
+        create_resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "current-version-host",
+                "ip": "192.168.1.121",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.3.0",
+            },
+        )
+
+    assert create_resp.status_code == 201
+    assert create_resp.json()["agent_update_available"] is False
 
 
 async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) -> None:

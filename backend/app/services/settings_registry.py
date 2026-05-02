@@ -340,6 +340,14 @@ _DEFINITIONS: list[SettingDefinition] = [
         env_var="GRIDFLEET_MIN_AGENT_VERSION",
     ),
     SettingDefinition(
+        key="agent.recommended_version",
+        category="agent",
+        setting_type="string",
+        default="",
+        description="Recommended agent version shown to operators and agents (empty = no recommendation)",
+        env_var="GRIDFLEET_AGENT_RECOMMENDED_VERSION",
+    ),
+    SettingDefinition(
         key="agent.auto_accept_hosts",
         category="agent",
         setting_type="bool",

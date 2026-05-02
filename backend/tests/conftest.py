@@ -146,6 +146,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[As
         default_value = resolve_default(definition)
         settings_service._defaults[key] = default_value
         settings_service._cache[key] = default_value
+    settings_service._cache["agent.recommended_version"] = "0.3.0"
     return session_factory
 
 

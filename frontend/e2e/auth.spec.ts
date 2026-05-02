@@ -33,6 +33,8 @@ const HOSTS = [
     status: 'online',
     agent_version: '1.0.0',
     required_agent_version: '1.0.0',
+    recommended_agent_version: '1.0.0',
+    agent_update_available: false,
     agent_version_status: 'ok',
     capabilities: null,
     last_heartbeat: '2026-04-16T10:00:00Z',

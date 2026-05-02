@@ -131,6 +131,26 @@ def _format_env(env: Mapping[str, str]) -> list[str]:
     return lines or ["  none"]
 
 
+def _format_version_guidance(details: Mapping[str, object]) -> list[str]:
+    raw = details.get("version_guidance")
+    if not isinstance(raw, dict):
+        return ["Agent version guidance: unavailable"]
+    status = raw.get("agent_version_status")
+    recommended = raw.get("recommended_agent_version")
+    required = raw.get("required_agent_version")
+    guidance_line = (
+        f"Agent version guidance: installed version is {status}"
+        if isinstance(status, str)
+        else "Agent version guidance: unavailable"
+    )
+    lines = [guidance_line]
+    if isinstance(recommended, str) and recommended:
+        lines.append(f"Recommended agent version: {recommended}")
+    if isinstance(required, str) and required:
+        lines.append(f"Minimum supported agent version: {required}")
+    return lines
+
+
 def format_status(status: AgentStatus) -> str:
     health_state = "ok" if status.health.ok else "failed"
     if status.config_error:
@@ -148,6 +168,7 @@ def format_status(status: AgentStatus) -> str:
         f"Service active: {status.service_active}",
         f"Service enabled: {status.service_enabled}",
         f"Local health: {health_state} - {status.health.message}",
+        *_format_version_guidance(status.health.details),
         "",
         "Configured environment:",
         *_format_env(status.env),

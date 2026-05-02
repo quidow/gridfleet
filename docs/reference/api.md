@@ -99,6 +99,13 @@ Current auth behavior:
 | `GET` | `/api/hosts/{host_id}/intake-candidates` | Read discovery-like intake candidates without import | path `host_id` | `IntakeCandidateRead[]` |
 | `POST` | `/api/hosts/{host_id}/discover/confirm` | Import/remove discovered devices | `DiscoveryConfirm` | `DiscoveryConfirmResult` |
 
+`HostRead` includes the following version-awareness fields:
+
+- `required_agent_version`: minimum supported agent version, or `null` when the version check is disabled.
+- `recommended_agent_version`: manager-recommended agent version, or `null` when no recommendation is configured.
+- `agent_version_status`: manager-computed compliance status (`disabled`, `ok`, `outdated`, `unknown`) based on the minimum version policy.
+- `agent_update_available`: `true` when the installed agent version is below the recommended version (independent of minimum compliance). Backend-computed using version ordering; clients should not re-implement version comparison.
+
 `GET /api/hosts/{host_id}/resource-telemetry` returns:
 
 - `samples`: bucketed time-series rows with `timestamp`, `cpu_percent`, `memory_used_mb`, `memory_total_mb`, `disk_used_gb`, `disk_total_gb`, and `disk_percent`
@@ -110,6 +117,15 @@ Current validation rules:
 - `since` must be earlier than `until`
 - `bucket_minutes` must stay within `1..1440`
 - the requested window cannot exceed `retention.host_resource_telemetry_hours`
+
+## Agent Local API
+
+The agent exposes a local `/agent/health` endpoint. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
+
+- `version_guidance.required_agent_version`: minimum supported agent version from the last successful manager registration.
+- `version_guidance.recommended_agent_version`: recommended agent version from the last successful manager registration.
+- `version_guidance.agent_version_status`: manager-computed status for the installed agent version (compared against minimum, not recommended).
+- `version_guidance.agent_update_available`: `true` when the installed version trails the recommended version.
 
 ## Agent Driver-Pack State
 

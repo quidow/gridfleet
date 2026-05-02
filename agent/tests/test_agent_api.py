@@ -521,3 +521,28 @@ async def test_agent_tools_ensure_serializes_and_returns_result(client: AsyncCli
     assert resp.status_code == 200
     assert resp.json()["appium"]["success"] is True
     ensure.assert_awaited_once_with("3.3.0", None)
+
+
+async def test_health_includes_version_guidance(client: AsyncClient) -> None:
+    from agent_app.version_guidance import clear_version_guidance, update_version_guidance
+
+    clear_version_guidance()
+    update_version_guidance(
+        {
+            "required_agent_version": "0.2.0",
+            "recommended_agent_version": "0.3.0",
+            "agent_version_status": "outdated",
+            "agent_update_available": True,
+        }
+    )
+    with patch("agent_app.main.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
+        resp = await client.get("/agent/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["version_guidance"] == {
+        "required_agent_version": "0.2.0",
+        "recommended_agent_version": "0.3.0",
+        "agent_version_status": "outdated",
+        "agent_update_available": True,
+    }
+    clear_version_guidance()

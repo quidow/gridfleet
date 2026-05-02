@@ -60,6 +60,18 @@ class Host(Base):
         return get_agent_version_status(self)
 
     @property
+    def recommended_agent_version(self) -> str | None:
+        from app.services.host_versioning import get_recommended_agent_version
+
+        return get_recommended_agent_version()
+
+    @property
+    def agent_update_available(self) -> bool:
+        from app.services.host_versioning import is_agent_update_available
+
+        return is_agent_update_available(self.agent_version)
+
+    @property
     def missing_prerequisites(self) -> list[str]:
         capabilities = self.capabilities if isinstance(self.capabilities, dict) else {}
         missing = capabilities.get("missing_prerequisites")

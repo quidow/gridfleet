@@ -18,6 +18,8 @@ function makeHost(overrides: Partial<HostRead> = {}): HostRead {
     status: 'online',
     agent_version: '1.0.0',
     required_agent_version: '1.0.0',
+    recommended_agent_version: '1.0.0',
+    agent_update_available: false,
     agent_version_status: 'ok',
     capabilities: null,
     missing_prerequisites: [],

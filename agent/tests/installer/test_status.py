@@ -146,7 +146,18 @@ def test_format_status_redacts_secrets() -> None:
             "AGENT_AGENT_PORT": "5200",
         },
         run_command=lambda _command: "active\n",
-        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        health_check=lambda _url: HealthCheckResult(
+            ok=True,
+            message="healthy",
+            details={
+                "version_guidance": {
+                    "required_agent_version": "0.2.0",
+                    "recommended_agent_version": "0.3.0",
+                    "agent_version_status": "outdated",
+                    "agent_update_available": True,
+                }
+            },
+        ),
     )
 
     output = format_status(status)
@@ -158,6 +169,9 @@ def test_format_status_redacts_secrets() -> None:
     assert "AGENT_MANAGER_AUTH_PASSWORD=<redacted>" in output
     assert "AGENT_TERMINAL_TOKEN=<redacted>" in output
     assert "Local health: ok - healthy" in output
+    assert "Agent version guidance: installed version is outdated" in output
+    assert "Recommended agent version: 0.3.0" in output
+    assert "Minimum supported agent version: 0.2.0" in output
 
 
 def test_format_status_reports_missing_config_as_not_read(tmp_path: Path) -> None:
