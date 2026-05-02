@@ -36,7 +36,7 @@ fi
 
 # 2. Install gridfleet-agent with Python 3.12 via uv
 echo "Installing $PACKAGE_SPEC with Python 3.12..."
-uv tool install --python 3.12 "$PACKAGE_SPEC"
+uv tool install --upgrade --python 3.12 "$PACKAGE_SPEC"
 
 # Ensure gridfleet-agent is on PATH
 if ! command -v gridfleet-agent >/dev/null 2>&1; then
