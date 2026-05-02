@@ -129,8 +129,10 @@ async def _restore_available_for_healthy_signal(
     db: AsyncSession,
     device: Device | str,
     snapshot: dict[str, Any],
+    *,
+    locked_device: Device | None = None,
 ) -> None:
-    locked = await _lock_device_for_health_transition(db, device)
+    locked = locked_device or await _lock_device_for_health_transition(db, device)
     if locked is None:
         return
     if locked.availability_status != DeviceAvailabilityStatus.offline:
@@ -161,10 +163,11 @@ async def _restore_available_for_healthy_signal(
 
 async def patch_health_snapshot(db: AsyncSession, device: Device | str, updates: dict[str, Any]) -> dict[str, Any]:
     device_key = str(device.id) if isinstance(device, Device) else str(device)
+    locked = await _lock_device_for_health_transition(db, device)
     patch = {**updates, "last_checked_at": updates.get("last_checked_at", _now_iso())}
     await control_plane_state_store.patch_value(db, HEALTH_SUMMARY_NAMESPACE, device_key, patch)
     next_snapshot = await get_health_snapshot(db, device_key) or patch
-    await _restore_available_for_healthy_signal(db, device, next_snapshot)
+    await _restore_available_for_healthy_signal(db, device, next_snapshot, locked_device=locked)
     return next_snapshot
 
 

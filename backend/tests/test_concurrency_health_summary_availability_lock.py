@@ -154,3 +154,63 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
     assert final == DeviceAvailabilityStatus.maintenance, (
         f"Health recovery clobbered concurrent maintenance; final availability_status={final.value}"
     )
+
+
+async def test_health_recovery_locks_device_before_summary_patch(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="health-recovery-lock-order",
+        availability_status=DeviceAvailabilityStatus.offline,
+        verified=True,
+        auto_manage=True,
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            state=NodeState.running,
+        )
+    )
+    await control_plane_state_store.set_value(
+        db_session,
+        device_health_summary.HEALTH_SUMMARY_NAMESPACE,
+        str(device.id),
+        {
+            "device_checks_healthy": True,
+            "session_viability_status": "passed",
+            "last_checked_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    await db_session.commit()
+    await db_session.refresh(device, ["appium_node"])
+
+    order: list[str] = []
+    original_lock_device = device_health_summary._lock_device_for_health_transition
+    original_patch_value = device_health_summary.control_plane_state_store.patch_value
+
+    async def record_lock(db: AsyncSession, locked_device: Device | str) -> Device | None:
+        order.append("device_lock")
+        return await original_lock_device(db, locked_device)
+
+    async def record_patch(
+        db: AsyncSession,
+        namespace: str,
+        key: str,
+        value: dict[str, object],
+    ) -> None:
+        if key == str(device.id) and "node_running" in value:
+            order.append("summary_patch")
+        await original_patch_value(db, namespace, key, value)
+
+    with (
+        patch.object(device_health_summary, "_lock_device_for_health_transition", record_lock),
+        patch.object(device_health_summary.control_plane_state_store, "patch_value", record_patch),
+    ):
+        await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+
+    assert order[:2] == ["device_lock", "summary_patch"]
