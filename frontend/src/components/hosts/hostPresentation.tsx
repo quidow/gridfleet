@@ -103,7 +103,7 @@ export function HostAgentVersionNotice({ version, status, requiredVersion, recom
           Agent update available
         </div>
         <p className="mt-1 text-neutral-foreground">
-          This host is running {version}, below the recommended version of {recommendedVersion}.
+          This host is running {version ?? 'an unknown version'}, below the recommended version of {recommendedVersion ?? '-'}.
         </p>
       </div>
     );
