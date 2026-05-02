@@ -107,6 +107,22 @@ jobs:
         working-directory: agent
         run: uv run --locked --extra dev pytest -q
 
+      - name: Build package
+        working-directory: agent
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: agent
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          gridfleet-agent --version
+
+      - name: Smoke test source distribution
+        working-directory: agent
+        run: >
+          uv run --isolated --no-project --with dist/*.tar.gz --
+          gridfleet-agent --version
+
   testkit:
     name: Testkit
     runs-on: ubuntu-latest

@@ -1,10 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.29.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "gridfleet-agent"
 version = "0.1.0"
 description = "GridFleet agent — runs on each host"
+readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
 requires-python = ">=3.12"
+keywords = ["appium", "gridfleet", "selenium", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
 dependencies = [
     "fastapi==0.136.1",
     "uvicorn[standard]==0.46.0",
@@ -65,3 +80,9 @@ dev = [
     "respx>=0.23.1",
     "vulture>=2.16",
 ]
+
+[project.scripts]
+gridfleet-agent = "agent_app.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_app"]
