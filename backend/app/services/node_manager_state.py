@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
@@ -16,21 +17,20 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> None:
-    """Acquire ``SELECT ... FOR UPDATE`` on the device row.
+async def _lock_device_for_node_state_write(db: AsyncSession, device_id: uuid.UUID) -> Device:
+    """Acquire and refresh the Device row used for node-state writes."""
+    from app.services import device_locking
 
-    Holds the PG row lock until the next commit without touching the ORM
-    identity map, so callers that already locked the device see no
-    populate_existing surprises and unlocked callers become compliant
-    with the device_locking invariant. Raises ``NodeManagerError`` if the
-    row no longer exists, so callers stop before mutating in-memory state
-    or publishing events for a stale device.
-    """
-    locked_id = await db.scalar(select(Device.id).where(Device.id == device_id).with_for_update())
-    if locked_id is None:
+    try:
+        return await device_locking.lock_device(db, device_id)
+    except NoResultFound:
         from app.services.node_manager_types import NodeManagerError
 
-        raise NodeManagerError(f"Device {device_id} no longer exists")
+        raise NodeManagerError(f"Device {device_id} no longer exists") from None
+
+
+async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
+    return await _lock_device_for_node_state_write(db, device_id)
 
 
 async def allocate_port(db: AsyncSession) -> int:
@@ -99,6 +99,22 @@ def upsert_node(
     return node
 
 
+async def _node_started_availability_status(db: AsyncSession, device: Device) -> DeviceAvailabilityStatus:
+    if device.availability_status in {
+        DeviceAvailabilityStatus.busy,
+        DeviceAvailabilityStatus.reserved,
+        DeviceAvailabilityStatus.maintenance,
+    }:
+        return device.availability_status
+    return await ready_device_availability_status(db, device)
+
+
+def _node_stopped_availability_status(device: Device) -> DeviceAvailabilityStatus:
+    if device.availability_status == DeviceAvailabilityStatus.maintenance:
+        return DeviceAvailabilityStatus.maintenance
+    return DeviceAvailabilityStatus.offline
+
+
 async def mark_node_started(
     db: AsyncSession,
     device: Device,
@@ -107,12 +123,12 @@ async def mark_node_started(
     pid: int | None,
     active_connection_target: str | None = None,
 ) -> AppiumNode:
-    await _hold_device_row_lock(db, device.id)
+    device = await _hold_device_row_lock(db, device.id)
     from app.services import appium_node_locking
 
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = upsert_node(db, device, port, pid, active_connection_target)
-    next_status = await ready_device_availability_status(db, device)
+    next_status = await _node_started_availability_status(db, device)
     await set_device_availability_status(device, next_status)
     await event_bus.publish(
         "node.state_changed",
@@ -130,7 +146,7 @@ async def mark_node_started(
 
 
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
-    await _hold_device_row_lock(db, device.id)
+    device = await _hold_device_row_lock(db, device.id)
     from app.services import appium_node_locking
 
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -139,7 +155,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     node.state = NodeState.stopped
     node.pid = None
     node.active_connection_target = None
-    await set_device_availability_status(device, DeviceAvailabilityStatus.offline)
+    await set_device_availability_status(device, _node_stopped_availability_status(device))
     await event_bus.publish(
         "node.state_changed",
         {
