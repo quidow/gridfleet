@@ -27,6 +27,12 @@ The supported contract is the installable package and documented import pattern.
 
 ## Install
 
+From PyPI:
+
+```bash
+pip install "gridfleet-testkit[appium]"
+```
+
 From a local checkout:
 
 ```bash
@@ -44,6 +50,8 @@ From a Git checkout or VCS URL that contains this package:
 ```bash
 uv pip install "git+https://github.com/<org>/<repo>.git#subdirectory=testkit"
 ```
+
+The package supports Python 3.10 and newer.
 
 ## Environment
 

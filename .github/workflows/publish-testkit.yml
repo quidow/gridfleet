@@ -1,0 +1,90 @@
+name: Publish Testkit
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Package index to publish to
+        required: true
+        type: choice
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish gridfleet-testkit
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.repository }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: publish-testkit
+          python-version: "3.12"
+          cache-dependency-glob: |
+            testkit/pyproject.toml
+            testkit/uv.lock
+
+      - name: Install dependencies
+        working-directory: testkit
+        run: uv sync --extra dev --extra appium --locked
+
+      - name: Check formatting
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff format --check gridfleet_testkit/ tests/ examples/
+
+      - name: Lint
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff check gridfleet_testkit/ tests/ examples/
+
+      - name: Type check
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium mypy gridfleet_testkit/ tests/ examples/
+
+      - name: Test
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium pytest -q
+
+      - name: Build package
+        working-directory: testkit
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: testkit
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
+
+      - name: Smoke test source distribution
+        working-directory: testkit
+        run: >
+          uv run --isolated --no-project --with dist/*.tar.gz --
+          python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
+
+      - name: Publish to TestPyPI
+        if: inputs.repository == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: testkit/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.repository == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: testkit/dist

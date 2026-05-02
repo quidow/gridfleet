@@ -17,6 +17,12 @@ The example screenshot scripts are examples, not CI-backed conformance tests. Th
 
 ## Install
 
+From PyPI:
+
+```bash
+pip install "gridfleet-testkit[appium]"
+```
+
 From a local checkout:
 
 ```bash
@@ -30,6 +36,7 @@ uv pip install "git+https://github.com/<org>/<repo>.git#subdirectory=testkit"
 ```
 
 `Appium-Python-Client` is included via the `appium` extra because the pytest fixture creates real Appium sessions.
+The package supports Python 3.10 and newer.
 
 ## Public Imports
 
