@@ -100,7 +100,7 @@ async def transition_pack_state(
     if target == PackState.disabled and current == PackState.enabled:
         pack.state = PackState.draining
         await session.flush()
-        pack = await try_complete_drain(session, pack_id)
+        await try_complete_drain(session, pack_id)
         await session.commit()
         result = (
             await session.execute(

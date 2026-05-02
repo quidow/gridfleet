@@ -60,7 +60,7 @@ export default function DevicesSummaryPills({ stats, searchParams, isLoading }: 
         <SummaryLink
           label="Reserved"
           value={displayValue(isLoading, stats.reserved)}
-          tone={isLoading ? 'neutral' : 'neutral'}
+          tone="neutral"
           to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'reserved' })}
         />
       ) : null}
@@ -74,7 +74,7 @@ export default function DevicesSummaryPills({ stats, searchParams, isLoading }: 
         <SummaryLink
           label="Maintenance"
           value={displayValue(isLoading, stats.maintenance)}
-          tone={isLoading ? 'neutral' : 'neutral'}
+          tone="neutral"
           to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'maintenance' })}
         />
       ) : null}

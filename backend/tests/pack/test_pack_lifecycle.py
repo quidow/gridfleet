@@ -35,6 +35,16 @@ async def test_enable_to_disabled_no_active_work(db_session: AsyncSession) -> No
 
 
 @pytest.mark.asyncio
+async def test_enable_to_disabled_no_active_work_returns_refreshed_disabled_pack(db_session: AsyncSession) -> None:
+    await _seed_pack(db_session, state=PackState.enabled)
+
+    pack = await transition_pack_state(db_session, "test-pack", PackState.disabled)
+
+    assert pack.id == "test-pack"
+    assert pack.state == PackState.disabled
+
+
+@pytest.mark.asyncio
 async def test_draining_to_enabled(db_session: AsyncSession) -> None:
     await _seed_pack(db_session, state=PackState.draining)
     pack = await transition_pack_state(db_session, "test-pack", PackState.enabled)
