@@ -128,6 +128,8 @@ Off by default for local dev. When `GRIDFLEET_AUTH_ENABLED=true`:
 - **Ruff lint set:** `E,F,W,I,N,UP,B,A,SIM,TCH,RUF,ANN`. SQLAlchemy `Mapped[]` columns under `app/models/` are exempt from `TCH003` because runtime types are required.
 - **Tests:** pytest-asyncio in `auto` mode. Backend uses `pytest-xdist` (`-n auto`); the `db` marker means "needs the real test database". Frontend unit = Vitest, frontend e2e = Playwright with mocked + live configs.
 - **Pre-commit** (`.pre-commit-config.yaml`) runs ruff format + lint + mypy on the affected component. Install hooks once with `pre-commit install`.
+- **Conventional Commits:** all commits must use the format `type(scope): description`. Scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`. Use `!` for breaking changes: `feat(backend)!: description`. Enforced by commitlint in CI.
+- **Versioning:** each component versions independently via release-please. Per-component CHANGELOGs live at `<component>/CHANGELOG.md`. Root `CHANGELOG.md` is a project highlights file. See `docs/reference/release-policy.md`.
 - **No real lab data in commits:** no real device IDs, hostnames, credentials, screenshots from private labs, or DB dumps (`CONTRIBUTING.md`).
 
 ## Documentation Map

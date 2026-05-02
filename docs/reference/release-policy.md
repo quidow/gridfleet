@@ -1,24 +1,63 @@
 # Release Policy
 
-GridFleet uses coordinated repository releases. A release tag covers the backend, agent, frontend, testkit, Docker Compose files, curated driver-pack manifests, and documentation in this repository.
+GridFleet uses independent component releases. Each component — backend, agent, frontend, and testkit — has its own version, changelog, and release cadence. Releases are automated via [release-please](https://github.com/googleapis/release-please) using Conventional Commits.
 
 ## Version Scheme
 
-Repository releases use SemVer-shaped tags:
+Each component uses SemVer tags with a component prefix:
 
 ```text
-vMAJOR.MINOR.PATCH
+backend-v0.2.0
+agent-v0.1.1
+frontend-v0.3.0
+testkit-v0.2.0
 ```
 
-Until `v1.0.0`, the project is in public preview:
+Until a component reaches `v1.0.0`, it is in public preview:
 
-- Patch releases, such as `v0.1.1`, are reserved for backwards-compatible bug fixes, security fixes, documentation corrections, and low-risk dependency updates.
-- Minor releases, such as `v0.2.0`, may include breaking changes to API routes, database migrations, deployment settings, agent/backend compatibility, driver-pack behavior, and testkit interfaces.
+- Patch releases are reserved for backwards-compatible bug fixes, security fixes, documentation corrections, and low-risk dependency updates.
+- Minor releases may include breaking changes to that component's public surfaces.
 - Major releases are reserved for post-`v1.0.0` compatibility breaks.
+
+## Commit Convention
+
+All commits to `main` must follow [Conventional Commits](https://www.conventionalcommits.org/) with a component scope:
+
+```text
+feat(agent): add pack drain endpoint
+fix(testkit): handle missing device_id
+feat(backend)!: remove v1 sessions API
+refactor(frontend): update device filters
+```
+
+Allowed scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`.
+
+Breaking changes use `!` after the scope: `feat(backend)!: description`.
+
+release-please reads these commits to decide which components need a version bump and what type (patch, minor, major).
+
+## Automated Release Flow
+
+1. Developers merge PRs with Conventional Commit messages.
+2. release-please opens a Release PR per component with pending changes.
+3. The Release PR updates the component's `CHANGELOG.md`, version in `pyproject.toml` or `package.json`, and the `.release-please-manifest.json`.
+4. Merging the Release PR creates a GitHub release and a component-prefixed git tag.
+5. Tag-triggered CI publishes PyPI packages for `agent` and `testkit`.
+
+## Changelogs
+
+Each component maintains its own changelog:
+
+- `backend/CHANGELOG.md`
+- `agent/CHANGELOG.md`
+- `frontend/CHANGELOG.md`
+- `testkit/CHANGELOG.md`
+
+The root `CHANGELOG.md` is a hand-curated project highlights file updated at significant milestones.
 
 ## Compatibility Contract
 
-The following surfaces should be called out explicitly in every release note when they change:
+The following surfaces should be called out explicitly in component release notes when they change:
 
 - backend API routes, request/response schemas, and auth behavior
 - database migrations and rollback constraints
@@ -30,19 +69,20 @@ The following surfaces should be called out explicitly in every release note whe
 - driver-pack manifest schema, adapter hook contracts, and curated pack IDs
 - frontend workflows that change operator behavior
 
-Backend and agent versions are released together. If `GRIDFLEET_MIN_AGENT_VERSION` changes, the changelog must explain the required agent upgrade path.
+When a backend change requires a minimum agent version (`GRIDFLEET_MIN_AGENT_VERSION`), document the required upgrade path in both the backend and agent changelogs.
 
-## Release Checklist
+## Cross-Component Breaking Changes
 
-Before tagging a public release:
+When a change in one component breaks compatibility with another (e.g., backend protocol change that requires an agent update):
 
-1. Update `CHANGELOG.md`.
-2. Ensure package metadata versions match the intended repository version where applicable.
-3. Run the normal CI suite.
-4. Verify production compose defaults and documented environment variables.
-5. Create an annotated Git tag named `vMAJOR.MINOR.PATCH`.
-6. Publish release notes from the matching changelog entry.
+1. Document the breaking change in the originating component's changelog.
+2. Document the required upgrade in the affected component's changelog.
+3. Use `!` in the commit scope for the originating component.
+
+## Manual Publish (Fallback)
+
+The `publish-agent.yml` and `publish-testkit.yml` workflows retain `workflow_dispatch` triggers for manual publishes to TestPyPI or PyPI when needed outside the automated flow.
 
 ## Driver-Pack Releases
 
-Driver-pack manifest `release` values are independent from repository tags. They describe pack content compatibility and ordering inside the manager catalog. When a repository release changes curated driver-pack manifests, the repository changelog should summarize the pack IDs and manifest releases that changed.
+Driver-pack manifest `release` values are independent from component tags. They describe pack content compatibility and ordering inside the manager catalog. When a repository release changes curated driver-pack manifests, document the pack IDs and manifest releases that changed in the backend changelog.

@@ -1,0 +1,156 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    outputs:
+      backend--release_created: ${{ steps.release.outputs.backend--release_created }}
+      backend--tag_name: ${{ steps.release.outputs.backend--tag_name }}
+      agent--release_created: ${{ steps.release.outputs.agent--release_created }}
+      agent--tag_name: ${{ steps.release.outputs.agent--tag_name }}
+      frontend--release_created: ${{ steps.release.outputs.frontend--release_created }}
+      frontend--tag_name: ${{ steps.release.outputs.frontend--tag_name }}
+      testkit--release_created: ${{ steps.release.outputs.testkit--release_created }}
+      testkit--tag_name: ${{ steps.release.outputs.testkit--tag_name }}
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          manifest-file: .release-please-manifest.json
+          config-file: .release-please-config.json
+
+  publish-agent:
+    name: Publish gridfleet-agent to PyPI
+    needs: release-please
+    if: needs.release-please.outputs.agent--release_created == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.agent--tag_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: publish-agent
+          python-version: "3.12"
+          cache-dependency-glob: |
+            agent/pyproject.toml
+            agent/uv.lock
+
+      - name: Install dependencies
+        working-directory: agent
+        run: uv sync --extra dev --locked
+
+      - name: Check formatting
+        working-directory: agent
+        run: uv run --locked --extra dev ruff format --check agent_app/ tests/
+
+      - name: Lint
+        working-directory: agent
+        run: uv run --locked --extra dev ruff check agent_app/ tests/
+
+      - name: Type check
+        working-directory: agent
+        run: uv run --locked --extra dev mypy agent_app/
+
+      - name: Test
+        working-directory: agent
+        run: uv run --locked --extra dev pytest -q
+
+      - name: Build package
+        working-directory: agent
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: agent
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          gridfleet-agent --version
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist
+
+  publish-testkit:
+    name: Publish gridfleet-testkit to PyPI
+    needs: release-please
+    if: needs.release-please.outputs.testkit--release_created == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.testkit--tag_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: publish-testkit
+          python-version: "3.12"
+          cache-dependency-glob: |
+            testkit/pyproject.toml
+            testkit/uv.lock
+
+      - name: Install dependencies
+        working-directory: testkit
+        run: uv sync --extra dev --extra appium --locked
+
+      - name: Check formatting
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff format --check gridfleet_testkit/ tests/ examples/
+
+      - name: Lint
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium ruff check gridfleet_testkit/ tests/ examples/
+
+      - name: Type check
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium mypy gridfleet_testkit/ tests/ examples/
+
+      - name: Test
+        working-directory: testkit
+        run: uv run --locked --extra dev --extra appium pytest -q
+
+      - name: Build package
+        working-directory: testkit
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: testkit
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: testkit/dist

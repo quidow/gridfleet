@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "packages": {
+    "backend": {
+      "release-type": "python",
+      "package-name": "gridfleet-backend",
+      "include-component-in-tag": true,
+      "extra-files": [
+        "backend/pyproject.toml"
+      ]
+    },
+    "agent": {
+      "release-type": "python",
+      "package-name": "gridfleet-agent",
+      "include-component-in-tag": true,
+      "extra-files": [
+        "agent/pyproject.toml",
+        {
+          "type": "generic",
+          "path": "agent/agent_app/__init__.py"
+        }
+      ]
+    },
+    "frontend": {
+      "release-type": "node",
+      "package-name": "gridfleet-frontend",
+      "include-component-in-tag": true
+    },
+    "testkit": {
+      "release-type": "python",
+      "package-name": "gridfleet-testkit",
+      "include-component-in-tag": true,
+      "extra-files": [
+        "testkit/pyproject.toml"
+      ]
+    }
+  }
+}
