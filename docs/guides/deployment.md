@@ -98,14 +98,13 @@ Before running the installer on a device host, confirm the machine already satis
 From the repo root on the device host:
 
 ```bash
-sudo \
-  AGENT_MANAGER_URL=http://MANAGER_IP:8000 \
-  AGENT_MANAGER_AUTH_USERNAME=gridfleet-machine \
-  AGENT_MANAGER_AUTH_PASSWORD=change-me \
-  GRID_HUB_URL=http://MANAGER_IP:4444 \
-  GRID_PUBLISH_URL=tcp://MANAGER_IP:4442 \
-  GRID_SUBSCRIBE_URL=tcp://MANAGER_IP:4443 \
-  bash agent/install.sh
+VERSION=0.3.0 sudo -E bash scripts/install-agent.sh \
+  --manager-url http://MANAGER_IP:8000 \
+  --manager-auth-username gridfleet-machine \
+  --manager-auth-password change-me \
+  --grid-hub-url http://MANAGER_IP:4444 \
+  --grid-publish-url tcp://MANAGER_IP:4442 \
+  --grid-subscribe-url tcp://MANAGER_IP:4443
 ```
 
 Verify:
@@ -115,7 +114,7 @@ curl -s http://localhost:5100/agent/health | python -m json.tool
 sudo systemctl status gridfleet-agent
 ```
 
-The installer writes process environment to `/etc/gridfleet-agent/config.env`. When you provide `AGENT_MANAGER_AUTH_USERNAME` and `AGENT_MANAGER_AUTH_PASSWORD`, it persists them there as optional manager API credentials.
+The installer writes process environment to `/etc/gridfleet-agent/config.env`. When you provide `--manager-auth-username` and `--manager-auth-password`, it persists them there as optional manager API credentials.
 
 With the recommended production default `GRIDFLEET_HOST_AUTO_ACCEPT=false`, newly registered agents appear as pending hosts in the manager and must be approved by an operator before they can manage devices.
 
@@ -124,14 +123,13 @@ With the recommended production default `GRIDFLEET_HOST_AUTO_ACCEPT=false`, newl
 From the repo root on the device host:
 
 ```bash
-sudo \
-  AGENT_MANAGER_URL=http://MANAGER_IP:8000 \
-  AGENT_MANAGER_AUTH_USERNAME=gridfleet-machine \
-  AGENT_MANAGER_AUTH_PASSWORD=change-me \
-  GRID_HUB_URL=http://MANAGER_IP:4444 \
-  GRID_PUBLISH_URL=tcp://MANAGER_IP:4442 \
-  GRID_SUBSCRIBE_URL=tcp://MANAGER_IP:4443 \
-  bash agent/install.sh
+VERSION=0.3.0 sudo -E bash scripts/install-agent.sh \
+  --manager-url http://MANAGER_IP:8000 \
+  --manager-auth-username gridfleet-machine \
+  --manager-auth-password change-me \
+  --grid-hub-url http://MANAGER_IP:4444 \
+  --grid-publish-url tcp://MANAGER_IP:4442 \
+  --grid-subscribe-url tcp://MANAGER_IP:4443
 ```
 
 Verify:

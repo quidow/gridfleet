@@ -36,3 +36,18 @@ def test_bootstrap_wrapper_defaults_to_start_mode_but_preserves_explicit_install
     assert 'INSTALL_ARGS=(--start "$@")' in script
     assert "--dry-run|--no-start|--start" in script
     assert 'INSTALL_ARGS=("$@")' in script
+
+
+def test_operator_docs_point_to_bootstrap_wrapper_not_legacy_install_script() -> None:
+    root = Path(__file__).resolve().parents[2]
+    docs = {
+        "README.md": (root / "README.md").read_text(),
+        "docs/guides/deployment.md": (root / "docs/guides/deployment.md").read_text(),
+        "docs/reference/environment.md": (root / "docs/reference/environment.md").read_text(),
+    }
+
+    for text in docs.values():
+        assert "scripts/install-agent.sh" in text
+        assert "bash agent/install.sh" not in text
+        assert "./agent/install.sh" not in text
+        assert "./agent/update.sh" not in text
