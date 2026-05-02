@@ -17,6 +17,8 @@ export interface HostRead {
   status: HostStatus;
   agent_version: string | null;
   required_agent_version: string | null;
+  recommended_agent_version: string | null;
+  agent_update_available: boolean;
   agent_version_status: AgentVersionStatus;
   capabilities: Record<string, unknown> | null;
   missing_prerequisites: string[];
