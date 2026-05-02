@@ -279,7 +279,8 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
     assert result.registration is None
 
 
-def test_install_with_start_runs_launchctl_bootstrap_on_macos(tmp_path: Path) -> None:
+def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
@@ -299,7 +300,10 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(tmp_path: Path) ->
 
     assert result.started is True
     assert result.health == HealthCheckResult(ok=False, message="health check timed out")
-    assert commands == [["launchctl", "bootstrap", "gui/0", str(result.service_file)]]
+    assert commands == [
+        ["launchctl", "bootout", "gui/0/com.gridfleet.agent"],
+        ["launchctl", "bootstrap", "gui/0", str(result.service_file)],
+    ]
 
 
 def test_poll_manager_registration_returns_success_when_hostname_is_listed() -> None:

@@ -14,11 +14,16 @@ fi
 
 # Default to --start unless caller already passed an install mode.
 INSTALL_ARGS=(--start "$@")
+STOP_EXISTING_SERVICE=1
 for arg in "$@"; do
     case "$arg" in
-        --dry-run|--no-start|--start)
+        --dry-run|--no-start)
             INSTALL_ARGS=("$@")
+            STOP_EXISTING_SERVICE=0
             break
+            ;;
+        --start)
+            INSTALL_ARGS=("$@")
             ;;
     esac
 done
@@ -43,6 +48,20 @@ if ! command -v gridfleet-agent >/dev/null 2>&1; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# 3. Delegate to gridfleet-agent install
+# 3. Stop existing service only when the install will start it again.
+if [ "$STOP_EXISTING_SERVICE" -eq 1 ]; then
+    if [ "$(uname)" = "Darwin" ]; then
+        launchctl bootout "gui/$(id -u)/com.gridfleet.agent" 2>/dev/null || true
+    else
+        systemctl stop gridfleet-agent 2>/dev/null || true
+    fi
+fi
+
+# 4. Delegate to gridfleet-agent install (needs root for /opt and /etc paths)
+AGENT_BIN="$(command -v gridfleet-agent)"
 echo ""
-gridfleet-agent install "${INSTALL_ARGS[@]}"
+if [ "$(id -u)" -ne 0 ]; then
+    sudo "$AGENT_BIN" install "${INSTALL_ARGS[@]}"
+else
+    gridfleet-agent install "${INSTALL_ARGS[@]}"
+fi
