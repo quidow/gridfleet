@@ -39,6 +39,12 @@ def test_install_without_dry_run_is_not_implemented(capsys: pytest.CaptureFixtur
     assert "--no-start" in capsys.readouterr().err
 
 
+def test_install_rejects_conflicting_modes(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["install", "--start", "--no-start"]) == 2
+
+    assert "choose only one" in capsys.readouterr().err
+
+
 def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 

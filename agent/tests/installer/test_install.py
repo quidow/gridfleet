@@ -11,6 +11,7 @@ from agent_app.installer.install import (
     InstallResult,
     RegistrationCheckResult,
     _download_selenium,
+    _service_file_path,
     install_no_start,
     install_with_start,
     poll_agent_health,
@@ -46,6 +47,18 @@ def test_validate_dedicated_venv_rejects_wrong_console_script_path(tmp_path: Pat
 
     with pytest.raises(RuntimeError, match="/venv/bin/gridfleet-agent"):
         validate_dedicated_venv(config, executable=executable)
+
+
+def test_default_linux_service_path_is_etc_systemd() -> None:
+    assert _service_file_path(InstallConfig(), "Linux") == Path("/etc/systemd/system/gridfleet-agent.service")
+
+
+def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home/agent")
+
+    assert _service_file_path(InstallConfig(), "Darwin") == (
+        tmp_path / "home/agent/Library/LaunchAgents/com.gridfleet.agent.plist"
+    )
 
 
 def test_install_no_start_writes_config_runtime_dir_service_and_downloads_selenium(tmp_path: Path) -> None:
@@ -109,7 +122,8 @@ def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     assert selenium_jar.read_text() == "already present"
 
 
-def test_install_no_start_uses_launchd_path_on_macos(tmp_path: Path) -> None:
+def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
@@ -126,7 +140,7 @@ def test_install_no_start_uses_launchd_path_on_macos(tmp_path: Path) -> None:
     assert result.service_file == tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
     assert "<string>com.gridfleet.agent</string>" in result.service_file.read_text()
     assert stat.S_IMODE(os.stat(config.config_env_path).st_mode) == 0o600
-    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o644
+    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o600
 
 
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:

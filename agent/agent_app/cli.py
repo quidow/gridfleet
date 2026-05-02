@@ -78,7 +78,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "install":
-        if not args.dry_run and not args.no_start and not args.start:
+        selected_modes = [args.dry_run, args.no_start, args.start]
+        if sum(bool(mode) for mode in selected_modes) > 1:
+            print("ERROR: choose only one of --dry-run, --no-start, or --start.", file=sys.stderr)
+            return 2
+        if not any(bool(mode) for mode in selected_modes):
             print(
                 "ERROR: pass --dry-run to preview, --no-start to write files, or --start to start the service.",
                 file=sys.stderr,

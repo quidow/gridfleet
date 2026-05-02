@@ -87,14 +87,12 @@ def _download_selenium(url: str, dest: Path) -> None:
 
 def _service_file_path(config: InstallConfig, os_name: str) -> Path:
     if os_name == "Linux":
-        if config.config_dir.startswith("/etc/"):
-            root = Path(config.config_dir).parents[1]
-            return root / "systemd/system/gridfleet-agent.service"
-        return Path(config.config_dir).parent / "systemd/system/gridfleet-agent.service"
+        config_dir = Path(config.config_dir)
+        if str(config_dir).startswith("/etc/"):
+            return Path("/etc/systemd/system/gridfleet-agent.service")
+        return config_dir.parent / "systemd/system/gridfleet-agent.service"
     if os_name == "Darwin":
-        agent_path = Path(config.agent_dir)
-        root = agent_path.parents[1] if len(agent_path.parents) > 1 else Path.home()
-        return root / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        return Path.home() / "Library/LaunchAgents/com.gridfleet.agent.plist"
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
@@ -134,7 +132,7 @@ def install_no_start(
         service_file.write_text(render_launchd_plist(config, discovery))
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
-    os.chmod(service_file, 0o644)
+    os.chmod(service_file, 0o644 if resolved_os == "Linux" else 0o600)
 
     return InstallResult(
         config_env=Path(config.config_env_path),

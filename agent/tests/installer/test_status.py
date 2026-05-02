@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
 from agent_app.installer.status import collect_status, format_status, parse_config_env
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _make_config(tmp_path: Path) -> InstallConfig:
@@ -77,7 +81,8 @@ def test_collect_status_handles_missing_config_without_health_check(tmp_path: Pa
     assert status.health == HealthCheckResult(ok=False, message="config.env missing; health check skipped")
 
 
-def test_collect_status_uses_launchctl_on_macos(tmp_path: Path) -> None:
+def test_collect_status_uses_launchctl_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     Path(config.config_dir).mkdir(parents=True)
     Path(config.config_env_path).write_text("AGENT_AGENT_PORT=5200\n")
