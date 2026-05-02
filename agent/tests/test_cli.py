@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 def test_serve_runs_uvicorn_with_default_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, Any] = {}
+    monkeypatch.setattr(cli.agent_settings, "agent_port", 5301)
 
     def fake_run(app: str, *, host: str, port: int) -> None:
         recorded.update({"app": app, "host": host, "port": port})
@@ -17,7 +18,7 @@ def test_serve_runs_uvicorn_with_default_settings(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
 
     assert cli.main(["serve"]) == 0
-    assert recorded == {"app": "agent_app.main:app", "host": "0.0.0.0", "port": 5100}
+    assert recorded == {"app": "agent_app.main:app", "host": "0.0.0.0", "port": cli.agent_settings.agent_port}
 
 
 def test_serve_allows_host_and_port_override(monkeypatch: pytest.MonkeyPatch) -> None:
