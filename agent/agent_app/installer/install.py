@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -31,12 +32,19 @@ class HealthCheckResult:
 
 
 @dataclass(frozen=True)
+class RegistrationCheckResult:
+    ok: bool
+    message: str
+
+
+@dataclass(frozen=True)
 class InstallResult:
     config_env: Path
     service_file: Path
     selenium_jar: Path
     started: bool
     health: HealthCheckResult | None = None
+    registration: RegistrationCheckResult | None = None
 
 
 def validate_dedicated_venv(
@@ -159,6 +167,54 @@ def poll_agent_health(
     return HealthCheckResult(ok=False, message=f"agent health check timed out: {last_error}")
 
 
+def _manager_hosts_url(config: InstallConfig) -> str:
+    return f"{config.manager_url.rstrip('/')}/api/hosts"
+
+
+def _host_list_contains(hosts: object, hostname: str) -> bool:
+    if not isinstance(hosts, list):
+        return False
+    return any(isinstance(host, dict) and host.get("hostname") == hostname for host in hosts)
+
+
+def poll_manager_registration(
+    config: InstallConfig,
+    *,
+    hostname: str | None = None,
+    timeout_sec: float = 30.0,
+    interval_sec: float = 1.0,
+    get: Callable[..., object] = httpx.get,
+) -> RegistrationCheckResult:
+    resolved_hostname = hostname or socket.gethostname()
+    url = _manager_hosts_url(config)
+    auth = (
+        (config.manager_auth_username, config.manager_auth_password)
+        if config.manager_auth_username and config.manager_auth_password
+        else None
+    )
+    deadline = time.monotonic() + timeout_sec
+    last_error = f"{resolved_hostname} was not listed"
+    while time.monotonic() <= deadline:
+        try:
+            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
+            status_code = getattr(response, "status_code", None)
+            if status_code == 200:
+                json_body = getattr(response, "json", None)
+                hosts = json_body() if callable(json_body) else None
+                if _host_list_contains(hosts, resolved_hostname):
+                    return RegistrationCheckResult(
+                        ok=True,
+                        message=f"agent registered with manager as {resolved_hostname}",
+                    )
+                last_error = f"{resolved_hostname} was not listed"
+            else:
+                last_error = f"unexpected status {status_code}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(interval_sec)
+    return RegistrationCheckResult(ok=False, message=f"agent registration pending: {last_error}")
+
+
 def install_with_start(
     config: InstallConfig,
     discovery: ToolDiscovery,
@@ -168,6 +224,7 @@ def install_with_start(
     download: Callable[[str, Path], None] = _download_selenium,
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
+    registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
 ) -> InstallResult:
     resolved_os = os_name or platform.system()
     result = install_no_start(
@@ -179,10 +236,12 @@ def install_with_start(
     )
     _start_service(resolved_os, result.service_file, run_command=run_command)
     health = health_check(f"http://localhost:{config.port}/agent/health")
+    registration = registration_check(config) if health.ok else None
     return InstallResult(
         config_env=result.config_env,
         service_file=result.service_file,
         selenium_jar=result.selenium_jar,
         started=True,
         health=health,
+        registration=registration,
     )

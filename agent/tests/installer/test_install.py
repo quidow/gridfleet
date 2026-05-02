@@ -7,9 +7,11 @@ import pytest
 from agent_app.installer.install import (
     HealthCheckResult,
     InstallResult,
+    RegistrationCheckResult,
     install_no_start,
     install_with_start,
     poll_agent_health,
+    poll_manager_registration,
     validate_dedicated_venv,
 )
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
@@ -143,6 +145,7 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=fake_run,
         health_check=fake_health,
+        registration_check=lambda _config: RegistrationCheckResult(ok=True, message="registered"),
     )
 
     assert result.started is True
@@ -153,6 +156,53 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
         ["systemctl", "start", "gridfleet-agent"],
     ]
     assert health_urls == ["http://localhost:5200/agent/health"]
+
+
+def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    registration_checks: list[InstallConfig] = []
+
+    result = install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        executable=executable,
+        download=lambda _url, dest: dest.write_text("selenium"),
+        run_command=lambda _command: None,
+        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        registration_check=lambda checked_config: (
+            registration_checks.append(checked_config) or RegistrationCheckResult(ok=True, message="registered")
+        ),
+    )
+
+    assert result.registration == RegistrationCheckResult(ok=True, message="registered")
+    assert registration_checks == [config]
+
+
+def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+
+    def fail_registration(_config: InstallConfig) -> RegistrationCheckResult:
+        raise AssertionError("registration check should not run when local health fails")
+
+    result = install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        executable=executable,
+        download=lambda _url, dest: dest.write_text("selenium"),
+        run_command=lambda _command: None,
+        health_check=lambda _url: HealthCheckResult(ok=False, message="health failed"),
+        registration_check=fail_registration,
+    )
+
+    assert result.registration is None
 
 
 def test_install_with_start_runs_launchctl_load_on_macos(tmp_path: Path) -> None:
@@ -175,6 +225,51 @@ def test_install_with_start_runs_launchctl_load_on_macos(tmp_path: Path) -> None
     assert result.started is True
     assert result.health == HealthCheckResult(ok=False, message="health check timed out")
     assert commands == [["launchctl", "load", str(result.service_file)]]
+
+
+def test_poll_manager_registration_returns_success_when_hostname_is_listed() -> None:
+    calls: list[tuple[str, object]] = []
+    config = InstallConfig(
+        manager_url="https://manager.example.com/",
+        manager_auth_username="machine",
+        manager_auth_password="secret",
+    )
+
+    def fake_get(url: str, timeout: float = 2.0, auth: tuple[str, str] | None = None) -> object:
+        calls.append((url, auth))
+
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json() -> list[dict[str, str]]:
+                return [{"hostname": "agent-host", "status": "online"}]
+
+        return Response()
+
+    result = poll_manager_registration(config, hostname="agent-host", timeout_sec=0.1, interval_sec=0.01, get=fake_get)
+
+    assert result == RegistrationCheckResult(ok=True, message="agent registered with manager as agent-host")
+    assert calls == [("https://manager.example.com/api/hosts", ("machine", "secret"))]
+
+
+def test_poll_manager_registration_times_out_when_hostname_is_missing() -> None:
+    config = InstallConfig(manager_url="https://manager.example.com")
+
+    def fake_get(_url: str, timeout: float = 2.0) -> object:
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json() -> list[dict[str, str]]:
+                return [{"hostname": "other-host"}]
+
+        return Response()
+
+    result = poll_manager_registration(config, hostname="agent-host", timeout_sec=0.01, interval_sec=0.01, get=fake_get)
+
+    assert result.ok is False
+    assert "agent-host was not listed" in result.message
 
 
 def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:

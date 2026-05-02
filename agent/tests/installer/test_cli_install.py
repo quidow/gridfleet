@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_app import cli
-from agent_app.installer.install import HealthCheckResult, InstallResult
+from agent_app.installer.install import HealthCheckResult, InstallResult, RegistrationCheckResult
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
 if TYPE_CHECKING:
@@ -96,6 +96,30 @@ def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatc
 
     assert isinstance(captured["config"], InstallConfig)
     assert captured["config"].manager_url == "https://manager.example.com"
+
+
+def test_install_start_warns_when_manager_registration_is_pending(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_discover_tools() -> ToolDiscovery:
+        return ToolDiscovery()
+
+    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery) -> InstallResult:
+        return InstallResult(
+            config_env=Path("config.env"),
+            service_file=Path("service"),
+            selenium_jar=Path("jar"),
+            started=True,
+            health=HealthCheckResult(ok=True, message="healthy"),
+            registration=RegistrationCheckResult(ok=False, message="agent registration pending"),
+        )
+
+    monkeypatch.setattr(cli, "discover_tools", fake_discover_tools)
+    monkeypatch.setattr(cli, "install_with_start", fake_install_with_start)
+
+    assert cli.main(["install", "--start"]) == 0
+
+    assert "agent registration pending" in capsys.readouterr().err
 
 
 def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> None:

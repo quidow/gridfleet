@@ -32,7 +32,7 @@ To also enable/start the service and poll local health:
 /opt/gridfleet-agent/venv/bin/gridfleet-agent install --start --manager-url http://manager.example.com:8000
 ```
 
-Manager registration verification is not part of the Python installer yet; check the dashboard after local health passes.
+After local health passes, `--start` also checks whether the host appears in the manager host list. Pending registration is reported as a warning because host approval may still require operator action.
 
 Inspect local installation state without changing anything:
 

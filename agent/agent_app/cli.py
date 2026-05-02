@@ -115,6 +115,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("GridFleet agent service started.")
             if result.health is not None and not result.health.ok:
                 print(f"WARNING: {result.health.message}", file=sys.stderr)
+            if result.registration is not None:
+                stream = sys.stdout if result.registration.ok else sys.stderr
+                prefix = "Registration" if result.registration.ok else "WARNING"
+                print(f"{prefix}: {result.registration.message}", file=stream)
         else:
             print("GridFleet agent files installed. Service was not started.")
         return 0
