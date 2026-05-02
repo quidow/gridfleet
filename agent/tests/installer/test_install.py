@@ -89,7 +89,7 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     assert (Path(config.agent_dir) / "runtimes").is_dir()
     assert Path(config.config_env_path).read_text().startswith("AGENT_MANAGER_URL=https://manager.example.com\n")
     assert stat.S_IMODE(os.stat(config.config_env_path).st_mode) == 0o600
-    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o644
+    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o600
     assert "ExecStart=" + str(executable) in result.service_file.read_text()
     assert downloads == [
         (

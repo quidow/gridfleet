@@ -132,7 +132,7 @@ def install_no_start(
         service_file.write_text(render_launchd_plist(config, discovery))
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
-    os.chmod(service_file, 0o644 if resolved_os == "Linux" else 0o600)
+    os.chmod(service_file, 0o600)
 
     return InstallResult(
         config_env=Path(config.config_env_path),
