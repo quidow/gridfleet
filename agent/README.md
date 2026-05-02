@@ -33,3 +33,11 @@ To also enable/start the service and poll local health:
 ```
 
 Manager registration verification is not part of the Python installer yet; check the dashboard after local health passes.
+
+Inspect local installation state without changing anything:
+
+```bash
+gridfleet-agent status
+```
+
+The status command reads `config.env`, checks the local service manager when available, polls local health, and redacts stored secrets.

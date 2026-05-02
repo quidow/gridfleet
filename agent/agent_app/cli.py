@@ -10,6 +10,7 @@ from agent_app import __version__
 from agent_app.config import agent_settings
 from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
+from agent_app.installer.status import collect_status, format_status
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,6 +46,8 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--selenium-version", default="4.41.0")
     install.add_argument("--enable-web-terminal", action="store_true")
     install.add_argument("--terminal-token", default=None)
+
+    subparsers.add_parser("status", help="Show local GridFleet agent installation and health status.")
 
     return parser
 
@@ -101,6 +104,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"WARNING: {result.health.message}", file=sys.stderr)
         else:
             print("GridFleet agent files installed. Service was not started.")
+        return 0
+
+    if args.command == "status":
+        print(format_status(collect_status(InstallConfig())))
         return 0
 
     parser.print_help()

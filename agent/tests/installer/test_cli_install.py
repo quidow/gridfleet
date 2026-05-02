@@ -146,3 +146,18 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.grid_publish_url == "tcp://grid:4442"
     assert config.grid_subscribe_url == "tcp://grid:4443"
     assert config.grid_node_port_start == 6000
+
+
+def test_status_prints_collected_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    sentinel = object()
+
+    def fake_collect_status(config: InstallConfig) -> object:
+        assert isinstance(config, InstallConfig)
+        return sentinel
+
+    monkeypatch.setattr(cli, "collect_status", fake_collect_status)
+    monkeypatch.setattr(cli, "format_status", lambda status: "status text" if status is sentinel else "wrong")
+
+    assert cli.main(["status"]) == 0
+
+    assert capsys.readouterr().out == "status text\n"
