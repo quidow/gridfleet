@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_DIR="${AGENT_DIR:-/opt/gridfleet-agent}"
+AGENT_DIR="/opt/gridfleet-agent"
 VENV_DIR="$AGENT_DIR/venv"
 VERSION="${VERSION:-latest}"
 PACKAGE_SPEC="gridfleet-agent"

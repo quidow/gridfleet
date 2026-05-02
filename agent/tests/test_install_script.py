@@ -24,7 +24,8 @@ def test_bootstrap_wrapper_installs_agent_into_dedicated_venv() -> None:
     script = script_path.read_text()
 
     assert script_path.stat().st_mode & S_IXUSR
-    assert 'AGENT_DIR="${AGENT_DIR:-/opt/gridfleet-agent}"' in script
+    assert 'AGENT_DIR="/opt/gridfleet-agent"' in script
+    assert 'AGENT_DIR="${AGENT_DIR:-/opt/gridfleet-agent}"' not in script
     assert 'python3 -m venv "$VENV_DIR"' in script
     assert '"$VENV_DIR/bin/python" -m pip install --upgrade "$PACKAGE_SPEC"' in script
     assert '"$VENV_DIR/bin/gridfleet-agent" install "${INSTALL_ARGS[@]}"' in script
