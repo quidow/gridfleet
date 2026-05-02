@@ -370,11 +370,29 @@ def test_poll_agent_health_returns_success_on_http_200() -> None:
         class Response:
             status_code = 200
 
+            @staticmethod
+            def json() -> dict[str, object]:
+                return {
+                    "version_guidance": {
+                        "required_agent_version": "0.2.0",
+                        "recommended_agent_version": "0.3.0",
+                        "agent_version_status": "outdated",
+                        "agent_update_available": True,
+                    }
+                }
+
         return Response()
 
     result = poll_agent_health("http://localhost:5200/agent/health", timeout_sec=0.1, interval_sec=0.01, get=fake_get)
 
-    assert result == HealthCheckResult(ok=True, message="agent health check passed")
+    assert result.ok is True
+    assert result.message == "agent health check passed"
+    assert result.details["version_guidance"] == {
+        "required_agent_version": "0.2.0",
+        "recommended_agent_version": "0.3.0",
+        "agent_version_status": "outdated",
+        "agent_update_available": True,
+    }
     assert attempts == ["http://localhost:5200/agent/health"]
 
 
