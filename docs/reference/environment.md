@@ -62,7 +62,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_GRID_PUBLISH_URL` | `tcp://localhost:4442` | agent process | Grid event-bus publish URL |
 | `AGENT_GRID_SUBSCRIBE_URL` | `tcp://localhost:4443` | agent process | Grid event-bus subscribe URL |
 | `AGENT_SELENIUM_SERVER_JAR` | `/opt/gridfleet-agent/selenium-server.jar` | agent process | Path to the relay-node Selenium server JAR |
-| `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). Must be writable by the agent user; `agent/install.sh` creates and chowns it. |
+| `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). Must be writable by the agent user; the Python installer creates it during `gridfleet-agent install`. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
 | `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First relay-node port assigned on the host |
@@ -74,21 +74,21 @@ These are read directly by `agent/agent_app/config.py`.
 
 ## Agent Installer Helper Variables
 
-These are consumed by `agent/install.sh` while creating the host service definition. They are not the same thing as the agent settingss above.
+These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` while creating the host service definition. They are not the same thing as the agent settings above.
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `AGENT_USER` | current shell user | installer | Service account / file owner |
-| `AGENT_DIR` | `/opt/gridfleet-agent` | installer scripts | Install location for process files and venv |
-| `AGENT_PORT` | `5100` | installer | Convenience input that becomes process `AGENT_AGENT_PORT` |
-| `AGENT_MANAGER_URL` | `http://localhost:8000` | installer + process | Written into the generated service env/config |
-| `AGENT_MANAGER_AUTH_USERNAME` | unset | installer + process | Optional machine-auth username written into the generated service env/config |
-| `AGENT_MANAGER_AUTH_PASSWORD` | unset | installer + process | Optional machine-auth password written into the generated service env/config |
-| `GRID_HUB_URL` | `http://localhost:4444` | installer | Convenience input that becomes process `AGENT_GRID_HUB_URL` |
-| `GRID_PUBLISH_URL` | `tcp://localhost:4442` | installer | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
-| `GRID_SUBSCRIBE_URL` | `tcp://localhost:4443` | installer | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
-| `GRID_NODE_PORT_START` | `5555` | installer | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
-| `SELENIUM_VERSION` | `4.41.0` | installer | Controls which Selenium server JAR the installer downloads |
+| `VERSION` | `latest` | bootstrap wrapper | Optional PyPI version installed by `scripts/install-agent.sh` |
+| `--user` | current shell user | installer CLI | Service account / file owner |
+| `--port` | `5100` | installer CLI | Convenience input that becomes process `AGENT_AGENT_PORT` |
+| `--manager-url` | `http://localhost:8000` | installer CLI | Written into the generated service env/config |
+| `--manager-auth-username` | unset | installer CLI | Optional machine-auth username written into the generated service env/config |
+| `--manager-auth-password` | unset | installer CLI | Optional machine-auth password written into the generated service env/config |
+| `--grid-hub-url` | `http://localhost:4444` | installer CLI | Convenience input that becomes process `AGENT_GRID_HUB_URL` |
+| `--grid-publish-url` | `tcp://localhost:4442` | installer CLI | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
+| `--grid-subscribe-url` | `tcp://localhost:4443` | installer CLI | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
+| `--grid-node-port-start` | `5555` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
+| `--selenium-version` | `4.41.0` | installer CLI | Controls which Selenium server JAR the installer downloads |
 
 ## External Client Variables
 
@@ -111,7 +111,7 @@ These are not GridFleet settings-registry keys. They are host-level environment 
 
 Notes:
 
-- `agent/install.sh` detects a usable Android SDK root and writes `ANDROID_HOME` and `ANDROID_SDK_ROOT` into the generated service environment when it finds one.
+- `gridfleet-agent install` detects a usable Android SDK root and writes `ANDROID_HOME` and `ANDROID_SDK_ROOT` into the generated service environment when it finds one. The same flow is available through `scripts/install-agent.sh`.
 - The agent process also forwards the detected Android SDK root into Appium subprocesses so drivers can find the SDK.
 - Java does not have a dedicated `AGENT_*` settings. The agent resolves `java` from `PATH`, `JAVA_HOME`, sdkman, and common system locations.
 - When `GRIDFLEET_AUTH_ENABLED=true`, the backend fails fast at startup unless all operator, machine-auth, and session-secret variables are present.

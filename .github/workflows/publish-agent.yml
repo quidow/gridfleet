@@ -1,0 +1,90 @@
+name: Publish Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Package index to publish to
+        required: true
+        type: choice
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish gridfleet-agent
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.repository }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: publish-agent
+          python-version: "3.12"
+          cache-dependency-glob: |
+            agent/pyproject.toml
+            agent/uv.lock
+
+      - name: Install dependencies
+        working-directory: agent
+        run: uv sync --extra dev --locked
+
+      - name: Check formatting
+        working-directory: agent
+        run: uv run --locked --extra dev ruff format --check agent_app/ tests/
+
+      - name: Lint
+        working-directory: agent
+        run: uv run --locked --extra dev ruff check agent_app/ tests/
+
+      - name: Type check
+        working-directory: agent
+        run: uv run --locked --extra dev mypy agent_app/
+
+      - name: Test
+        working-directory: agent
+        run: uv run --locked --extra dev pytest -q
+
+      - name: Build package
+        working-directory: agent
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: agent
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          gridfleet-agent --version
+
+      - name: Smoke test source distribution
+        working-directory: agent
+        run: >
+          uv run --isolated --no-project --with dist/*.tar.gz --
+          gridfleet-agent --version
+
+      - name: Publish to TestPyPI
+        if: inputs.repository == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.repository == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist

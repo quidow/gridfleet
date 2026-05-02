@@ -179,11 +179,10 @@ npm ci
 npm run dev
 ```
 
-Native agent installation scripts are available for host machines:
+Host agents can be bootstrapped from the published Python package:
 
 ```bash
-./agent/install.sh
-./agent/update.sh
+VERSION=0.3.0 sudo -E bash scripts/install-agent.sh --manager-url http://MANAGER_IP:8000
 ```
 
 ## Validation
