@@ -19,11 +19,13 @@ def _configure_terminal(
     origins: str = "",
     token: str | None = None,
     auth_enabled: bool = False,
+    agent_scheme: str = "ws",
 ) -> None:
     """Seed runtime settings + process env state for a terminal test."""
     monkeypatch.setitem(settings_service._cache, "agent.enable_web_terminal", enabled)
     monkeypatch.setitem(settings_service._cache, "agent.web_terminal_allowed_origins", origins)
     monkeypatch.setattr(process_settings, "agent_terminal_token", token)
+    monkeypatch.setattr(process_settings, "agent_terminal_scheme", agent_scheme)
     monkeypatch.setattr(process_settings, "auth_enabled", auth_enabled)
 
 
@@ -143,3 +145,45 @@ def test_terminal_route_proxies_online_host_and_audits_session(
         close_reason="client_disconnect",
     )
     assert mock_db is not None
+
+
+def test_terminal_route_uses_configured_agent_websocket_scheme(
+    monkeypatch: pytest.MonkeyPatch, setup_database: AsyncEngine
+) -> None:
+    _configure_terminal(
+        monkeypatch,
+        enabled=True,
+        origins="http://testserver",
+        token="tkn",
+        agent_scheme="wss",
+    )
+    online_host = Host(
+        hostname="online-host",
+        ip="10.0.0.6",
+        agent_port=5101,
+        os_type=OSType.linux,
+        status=HostStatus.online,
+    )
+    online_host.id = uuid.uuid4()
+    open_session = AsyncMock(return_value=uuid.uuid4())
+    close_session = AsyncMock()
+    proxy_terminal = AsyncMock(return_value="client_disconnect")
+
+    with (
+        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
+        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=open_session),
+        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
+    ):
+        client = TestClient(app)
+        with (
+            client.websocket_connect(
+                f"/api/hosts/{online_host.id}/terminal",
+                headers={"origin": "http://testserver"},
+            ) as ws,
+            pytest.raises(WebSocketDisconnect),
+        ):
+            ws.receive_text()
+
+    proxy_terminal.assert_awaited_once()
+    assert proxy_terminal.await_args.kwargs["agent_url"] == "wss://10.0.0.6:5101/agent/terminal"

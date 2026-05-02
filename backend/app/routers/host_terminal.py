@@ -31,6 +31,10 @@ def _resolve_browser_username(ws: WebSocket) -> str | None:
     return session_state.username
 
 
+def _agent_terminal_url(host_ip: str, agent_port: int) -> str:
+    return f"{settings.agent_terminal_scheme}://{host_ip}:{agent_port}/agent/terminal"
+
+
 @router.websocket("/{host_id}/terminal")
 async def host_terminal(ws: WebSocket, host_id: uuid.UUID) -> None:
     if not settings_service.get("agent.enable_web_terminal"):
@@ -59,7 +63,7 @@ async def host_terminal(ws: WebSocket, host_id: uuid.UUID) -> None:
         session_row_id = await host_terminal_audit.open_session(
             db, host_id=host.id, opened_by=username, client_ip=client_ip, shell=None
         )
-        agent_url = f"ws://{host.ip}:{host.agent_port}/agent/terminal"
+        agent_url = _agent_terminal_url(host.ip, host.agent_port)
 
     close_reason = "unknown"
     try:
