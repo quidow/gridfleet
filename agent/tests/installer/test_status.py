@@ -99,12 +99,13 @@ def test_collect_status_reports_unreadable_config_env(monkeypatch: pytest.Monkey
         config,
         os_name="Linux",
         run_command=lambda _command: "inactive\n",
-        health_check=lambda _url: HealthCheckResult(ok=False, message="down"),
+        health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
     )
 
     assert status.config_exists is True
     assert status.config_error is not None
     assert "permission denied" in status.config_error
+    assert status.health == HealthCheckResult(ok=False, message="config.env unreadable; health check skipped")
     assert "Config read: failed" in format_status(status)
 
 
@@ -157,3 +158,18 @@ def test_format_status_redacts_secrets() -> None:
     assert "AGENT_MANAGER_AUTH_PASSWORD=<redacted>" in output
     assert "AGENT_TERMINAL_TOKEN=<redacted>" in output
     assert "Local health: ok - healthy" in output
+
+
+def test_format_status_reports_missing_config_as_not_read(tmp_path: Path) -> None:
+    status = collect_status(
+        _make_config(tmp_path),
+        os_name="Linux",
+        run_command=lambda _command: "inactive\n",
+        health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
+    )
+
+    output = format_status(status)
+
+    assert "Config file:" in output
+    assert "(missing)" in output
+    assert "Config read: skipped - config.env missing" in output

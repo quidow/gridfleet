@@ -94,7 +94,9 @@ def collect_status(
     service_file = _service_file_path(config, resolved_os)
     service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
 
-    if config_env.exists() or env is not None:
+    if config_error:
+        health = HealthCheckResult(ok=False, message="config.env unreadable; health check skipped")
+    elif config_env.exists() or env is not None:
         raw_port = parsed_env.get("AGENT_AGENT_PORT", str(config.port))
         try:
             port = int(raw_port)
@@ -127,11 +129,17 @@ def _format_env(env: Mapping[str, str]) -> list[str]:
 
 def format_status(status: AgentStatus) -> str:
     health_state = "ok" if status.health.ok else "failed"
+    if status.config_error:
+        config_read = f"failed - {status.config_error}"
+    elif status.config_exists:
+        config_read = "ok"
+    else:
+        config_read = "skipped - config.env missing"
     lines = [
         "GridFleet Agent status",
         "",
         f"Config file: {status.config_env} ({'present' if status.config_exists else 'missing'})",
-        f"Config read: {'failed - ' + status.config_error if status.config_error else 'ok'}",
+        f"Config read: {config_read}",
         f"Service file: {status.service_file} ({'present' if status.service_exists else 'missing'})",
         f"Service active: {status.service_active}",
         f"Service enabled: {status.service_enabled}",
