@@ -305,7 +305,7 @@ def test_poll_manager_registration_returns_success_when_hostname_is_listed() -> 
 def test_poll_manager_registration_times_out_when_hostname_is_missing() -> None:
     config = InstallConfig(manager_url="https://manager.example.com")
 
-    def fake_get(_url: str, timeout: float = 2.0) -> object:
+    def fake_get(_url: str, timeout: float = 2.0, auth: tuple[str, str] | None = None) -> object:
         class Response:
             status_code = 200
 

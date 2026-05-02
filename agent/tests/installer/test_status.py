@@ -152,7 +152,7 @@ def test_format_status_redacts_secrets() -> None:
     output = format_status(status)
 
     assert "GridFleet Agent status" in output
-    assert "https://manager.example.com" in output
+    assert "  AGENT_MANAGER_URL=https://manager.example.com" in output.splitlines()
     assert "secret" not in output
     assert "terminal-token" not in output
     assert "AGENT_MANAGER_AUTH_PASSWORD=<redacted>" in output
