@@ -48,7 +48,7 @@ Upgrade the dedicated agent venv package and restart the host service:
 /opt/gridfleet-agent/venv/bin/gridfleet-agent update --to 0.3.0
 ```
 
-Use `gridfleet-agent update --dry-run --to 0.3.0` to preview the exact pip upgrade, service restart, and local health-check steps.
+The update command waits for local Appium nodes reported by `/agent/health` to drain before upgrading the package or restarting the service. Use `gridfleet-agent update --dry-run --to 0.3.0` to preview the drain, pip upgrade, service restart, and local health-check steps.
 
 Uninstall requires explicit confirmation:
 

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from agent_app import cli
 from agent_app.installer.install import HealthCheckResult, InstallResult, RegistrationCheckResult
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
+from agent_app.installer.update import DrainResult, UpdateResult
 
 if TYPE_CHECKING:
     import pytest
@@ -236,10 +237,15 @@ def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pyt
 def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, object] = {}
 
-    def fake_update_agent(config: InstallConfig, *, to_version: str | None = None) -> object:
+    def fake_update_agent(config: InstallConfig, *, to_version: str | None = None) -> UpdateResult:
         captured["config"] = config
         captured["to_version"] = to_version
-        return object()
+        return UpdateResult(
+            to_version=to_version,
+            restarted=True,
+            drain=DrainResult(ok=True, message="no active local nodes"),
+            health=HealthCheckResult(ok=True, message="healthy"),
+        )
 
     monkeypatch.setattr(cli, "update_agent", fake_update_agent)
 
@@ -247,4 +253,6 @@ def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
 
     assert isinstance(captured["config"], InstallConfig)
     assert captured["to_version"] == "0.3.0"
-    assert "GridFleet agent updated" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Drain: no active local nodes" in output
+    assert "GridFleet agent updated" in output

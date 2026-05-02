@@ -153,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (RuntimeError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
+        print(f"Drain: {update_result.drain.message}")
         print("GridFleet agent updated.")
         health = getattr(update_result, "health", None)
         if health is not None and not health.ok:
