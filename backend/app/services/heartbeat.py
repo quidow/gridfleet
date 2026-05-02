@@ -106,6 +106,24 @@ def _restart_error_message(kind: str, process: str, exit_code: int | None) -> st
     return f"Agent detected {process_label} exit{exit_detail}"
 
 
+def _restart_event_observation_changed(
+    locked: AppiumNode,
+    *,
+    observed_id: uuid.UUID,
+    observed_port: int,
+    observed_state: NodeState,
+    observed_pid: int | None,
+    observed_active_connection_target: str | None,
+) -> bool:
+    return (
+        locked.id != observed_id
+        or locked.port != observed_port
+        or locked.state != observed_state
+        or locked.pid != observed_pid
+        or locked.active_connection_target != observed_active_connection_target
+    )
+
+
 def _normalize_running_nodes(health_data: dict[str, Any]) -> list[dict[str, Any]]:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
@@ -199,6 +217,11 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
         node = nodes_by_port.get(port)
         if node is None:
             continue
+        observed_id = node.id
+        observed_port = node.port
+        observed_state = node.state
+        observed_pid = node.pid
+        observed_active_connection_target = node.active_connection_target
         # Acquire Device → AppiumNode locks before mutating node state.
         from app.services import appium_node_locking, device_locking
 
@@ -206,6 +229,20 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
         locked_device = await device_locking.lock_device(db, device_id)
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device_id)
         if locked_node is None:
+            continue
+        if _restart_event_observation_changed(
+            locked_node,
+            observed_id=observed_id,
+            observed_port=observed_port,
+            observed_state=observed_state,
+            observed_pid=observed_pid,
+            observed_active_connection_target=observed_active_connection_target,
+        ):
+            logger.info(
+                "Skipping stale local restart event for host %s port %s after node changed",
+                host.hostname,
+                port,
+            )
             continue
         device = locked_device
         kind = str(event["kind"])
