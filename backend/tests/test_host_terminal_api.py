@@ -187,3 +187,43 @@ def test_terminal_route_uses_configured_agent_websocket_scheme(
 
     proxy_terminal.assert_awaited_once()
     assert proxy_terminal.await_args.kwargs["agent_url"] == "wss://10.0.0.6:5101/agent/terminal"
+
+
+def test_terminal_route_brackets_ipv6_host(monkeypatch: pytest.MonkeyPatch, setup_database: AsyncEngine) -> None:
+    _configure_terminal(
+        monkeypatch,
+        enabled=True,
+        origins="http://testserver",
+        token="tkn",
+        agent_scheme="ws",
+    )
+    ipv6_host = Host(
+        hostname="ipv6-host",
+        ip="::1",
+        agent_port=5101,
+        os_type=OSType.linux,
+        status=HostStatus.online,
+    )
+    ipv6_host.id = uuid.uuid4()
+    open_session = AsyncMock(return_value=uuid.uuid4())
+    close_session = AsyncMock()
+    proxy_terminal = AsyncMock(return_value="client_disconnect")
+
+    with (
+        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=ipv6_host)),
+        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=open_session),
+        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
+    ):
+        client = TestClient(app)
+        with (
+            client.websocket_connect(
+                f"/api/hosts/{ipv6_host.id}/terminal",
+                headers={"origin": "http://testserver"},
+            ) as ws,
+            pytest.raises(WebSocketDisconnect),
+        ):
+            ws.receive_text()
+
+    proxy_terminal.assert_awaited_once()
+    assert proxy_terminal.await_args.kwargs["agent_url"] == "ws://[::1]:5101/agent/terminal"

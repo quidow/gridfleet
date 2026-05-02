@@ -32,7 +32,8 @@ def _resolve_browser_username(ws: WebSocket) -> str | None:
 
 
 def _agent_terminal_url(host_ip: str, agent_port: int) -> str:
-    return f"{settings.agent_terminal_scheme}://{host_ip}:{agent_port}/agent/terminal"
+    host = f"[{host_ip}]" if ":" in host_ip else host_ip
+    return f"{settings.agent_terminal_scheme}://{host}:{agent_port}/agent/terminal"
 
 
 @router.websocket("/{host_id}/terminal")
