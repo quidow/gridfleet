@@ -39,14 +39,16 @@ class InstallResult:
     health: HealthCheckResult | None = None
 
 
-def validate_dedicated_venv(config: InstallConfig, *, executable: Path | None = None) -> None:
+def validate_dedicated_venv(
+    config: InstallConfig, *, executable: Path | None = None, command_name: str = "install"
+) -> None:
     expected = Path(config.venv_bin_dir) / "gridfleet-agent"
     actual = (executable or Path(sys.argv[0])).resolve()
     if actual != expected.resolve():
         raise RuntimeError(
-            f"gridfleet-agent install must run from {expected}. "
+            f"gridfleet-agent {command_name} must run from {expected}. "
             "Create /opt/gridfleet-agent/venv first, install gridfleet-agent there, "
-            "then run /opt/gridfleet-agent/venv/bin/gridfleet-agent install."
+            f"then run /opt/gridfleet-agent/venv/bin/gridfleet-agent {command_name}."
         )
 
 

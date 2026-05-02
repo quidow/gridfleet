@@ -12,6 +12,7 @@ from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
 from agent_app.installer.status import collect_status, format_status
 from agent_app.installer.uninstall import uninstall
+from agent_app.installer.update import format_update_dry_run, update_agent
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,6 +55,12 @@ def _build_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument("--yes", action="store_true", help="Confirm removal of service and agent files.")
     uninstall_parser.add_argument("--keep-config", action="store_true", help="Leave /etc/gridfleet-agent in place.")
     uninstall_parser.add_argument("--keep-agent-dir", action="store_true", help="Leave /opt/gridfleet-agent in place.")
+
+    update_parser = subparsers.add_parser("update", help="Upgrade the installed GridFleet agent package and restart.")
+    update_parser.add_argument("--to", default=None, help="Upgrade to an exact gridfleet-agent version.")
+    update_parser.add_argument(
+        "--dry-run", action="store_true", help="Render the update plan without changing anything."
+    )
 
     return parser
 
@@ -130,6 +137,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         print("GridFleet agent uninstalled.")
+        return 0
+
+    if args.command == "update":
+        config = InstallConfig()
+        if args.dry_run:
+            print(format_update_dry_run(config, to_version=args.to))
+            return 0
+        try:
+            update_result = update_agent(config, to_version=args.to)
+        except (RuntimeError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print("GridFleet agent updated.")
+        health = getattr(update_result, "health", None)
+        if health is not None and not health.ok:
+            print(f"WARNING: {health.message}", file=sys.stderr)
         return 0
 
     parser.print_help()

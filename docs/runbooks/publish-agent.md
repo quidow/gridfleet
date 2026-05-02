@@ -1,6 +1,6 @@
 # Publish GridFleet Agent
 
-This runbook covers publishing only the `gridfleet-agent` Python package. The package currently provides the runnable `gridfleet-agent serve` entry point, a safe `gridfleet-agent install --dry-run` preview, `gridfleet-agent install --no-start` for writing config/service files from a dedicated `/opt/gridfleet-agent/venv`, `gridfleet-agent install --start` for service enable/start plus local health polling, read-only `gridfleet-agent status`, and confirmed `gridfleet-agent uninstall --yes`.
+This runbook covers publishing only the `gridfleet-agent` Python package. The package currently provides the runnable `gridfleet-agent serve` entry point, a safe `gridfleet-agent install --dry-run` preview, `gridfleet-agent install --no-start` for writing config/service files from a dedicated `/opt/gridfleet-agent/venv`, `gridfleet-agent install --start` for service enable/start plus local health polling, read-only `gridfleet-agent status`, `gridfleet-agent update` for in-place pip upgrades plus service restart, and confirmed `gridfleet-agent uninstall --yes`.
 
 ## One-time PyPI setup
 

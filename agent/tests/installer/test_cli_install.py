@@ -191,3 +191,36 @@ def test_uninstall_invokes_uninstaller(monkeypatch: pytest.MonkeyPatch, capsys: 
     assert captured["remove_agent_dir"] is False
     assert captured["remove_config_dir"] is False
     assert "GridFleet agent uninstalled" in capsys.readouterr().out
+
+
+def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_format_update_dry_run(config: InstallConfig, *, to_version: str | None = None) -> str:
+        captured["config"] = config
+        captured["to_version"] = to_version
+        return "update plan"
+
+    monkeypatch.setattr(cli, "format_update_dry_run", fake_format_update_dry_run)
+
+    assert cli.main(["update", "--dry-run", "--to", "0.3.0"]) == 0
+
+    assert captured["to_version"] == "0.3.0"
+    assert capsys.readouterr().out == "update plan\n"
+
+
+def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_update_agent(config: InstallConfig, *, to_version: str | None = None) -> object:
+        captured["config"] = config
+        captured["to_version"] = to_version
+        return object()
+
+    monkeypatch.setattr(cli, "update_agent", fake_update_agent)
+
+    assert cli.main(["update", "--to", "0.3.0"]) == 0
+
+    assert isinstance(captured["config"], InstallConfig)
+    assert captured["to_version"] == "0.3.0"
+    assert "GridFleet agent updated" in capsys.readouterr().out

@@ -42,6 +42,14 @@ gridfleet-agent status
 
 The status command reads `config.env`, checks the local service manager when available, polls local health, and redacts stored secrets.
 
+Upgrade the dedicated agent venv package and restart the host service:
+
+```bash
+/opt/gridfleet-agent/venv/bin/gridfleet-agent update --to 0.3.0
+```
+
+Use `gridfleet-agent update --dry-run --to 0.3.0` to preview the exact pip upgrade, service restart, and local health-check steps.
+
 Uninstall requires explicit confirmation:
 
 ```bash
