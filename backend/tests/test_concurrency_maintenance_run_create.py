@@ -16,11 +16,11 @@ from tests.helpers import create_device
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_run_create_and_maintenance_cannot_overlap(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
-    seeded_driver_packs: None,
 ) -> None:
     device = await create_device(
         db_session,

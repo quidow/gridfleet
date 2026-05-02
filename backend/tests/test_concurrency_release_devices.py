@@ -101,11 +101,11 @@ async def test_release_devices_does_not_stomp_offline_writer(
     }
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_release_devices_serializes_with_concurrent_writer(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
-    seeded_driver_packs: None,
 ) -> None:
     """Substantive deterministic race test.
 

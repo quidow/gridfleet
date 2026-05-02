@@ -149,7 +149,6 @@ async def test_load_adapter_extracts_and_imports(tmp_path: Path) -> None:
         release="0.1.0",
         tarball_path=tarball,
         runtime_dir=runtime_dir,
-        venv_python=sys.executable,
     )
 
     assert adapter is not None
@@ -176,7 +175,6 @@ async def test_load_adapter_stamps_pack_identity_from_load_context(tmp_path: Pat
         release="0.1.0",
         tarball_path=tarball,
         runtime_dir=tmp_path / "runtime",
-        venv_python=sys.executable,
     )
 
     assert adapter.pack_id == "vendor-foo"
@@ -194,14 +192,12 @@ async def test_load_adapter_uses_cache(tmp_path: Path) -> None:
         release="0.1.0",
         tarball_path=tarball,
         runtime_dir=runtime_dir,
-        venv_python=sys.executable,
     )
     second = await load_adapter(
         pack_id="vendor-foo",
         release="0.1.0",
         tarball_path=tarball,
         runtime_dir=runtime_dir,
-        venv_python=sys.executable,
     )
     assert first is second
 
@@ -236,7 +232,6 @@ class Adapter:
         release="1.0.0",
         tarball_path=first_tarball,
         runtime_dir=tmp_path / "runtime-roku",
-        venv_python=sys.executable,
     )
     assert await first.normalize_device(None) == "roku"
 
@@ -245,7 +240,6 @@ class Adapter:
         release="1.0.0",
         tarball_path=second_tarball,
         runtime_dir=tmp_path / "runtime-android",
-        venv_python=sys.executable,
     )
 
     assert await second.normalize_device(None) == "android"
@@ -312,7 +306,6 @@ PACK_LABEL = "pack_b"
                 release="0.0.1",
                 tarball_path=pack_b_tarball,
                 runtime_dir=tmp_path / "runtime-b",
-                venv_python=sys.executable,
             )
         )
         await asyncio.wait_for(installed.wait(), timeout=1)
@@ -345,7 +338,6 @@ async def test_missing_adapter_wheel_raises(tmp_path: Path) -> None:
             release="0.1.0",
             tarball_path=bare,
             runtime_dir=tmp_path / "runtime",
-            venv_python=sys.executable,
         )
 
 
@@ -365,7 +357,6 @@ async def test_multiple_wheels_raise(tmp_path: Path) -> None:
             release="0.1.0",
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
-            venv_python=sys.executable,
         )
 
 
@@ -384,7 +375,6 @@ async def test_adapter_module_without_class_raises(tmp_path: Path) -> None:
             release="0.1.0",
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
-            venv_python=sys.executable,
         )
 
 
@@ -398,7 +388,6 @@ async def test_cache_clear_drops_stale_sys_path_entries(tmp_path: Path) -> None:
         release="0.1.0",
         tarball_path=tarball,
         runtime_dir=runtime_dir,
-        venv_python=sys.executable,
     )
     site_dir = (runtime_dir / "site").resolve()
     assert str(site_dir) in sys.path
@@ -443,7 +432,6 @@ async def test_adapter_loader_rejects_traversing_tar_member(tmp_path: Path) -> N
             release="1.0.0",
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
-            venv_python="python",
         )
 
 
@@ -458,7 +446,6 @@ async def test_adapter_loader_rejects_tar_symlink_member(tmp_path: Path) -> None
             release="1.0.0",
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
-            venv_python="python",
         )
 
 
@@ -474,7 +461,6 @@ async def test_adapter_loader_rejects_traversing_wheel_entry(tmp_path: Path) -> 
             release="1.0.0",
             tarball_path=tarball,
             runtime_dir=tmp_path / "runtime",
-            venv_python="python",
         )
 
     assert not (tmp_path / "outside.py").exists()

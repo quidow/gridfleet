@@ -866,11 +866,11 @@ async def test_create_run_rejects_removed_platform(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_create_run_drops_devices_that_lost_availability_between_passes(
     client: AsyncClient,
     db_session: AsyncSession,
     db_host: Host,
-    seeded_driver_packs: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.services import run_service

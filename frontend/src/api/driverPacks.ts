@@ -1,5 +1,5 @@
 import api from './client';
-import type { DriverPack, HostDriverPacksStatus, RuntimePolicy } from '../types/driverPacks';
+import type { DriverPack, HostDriverPacksStatus } from '../types/driverPacks';
 
 export async function fetchDriverPackCatalog(): Promise<DriverPack[]> {
   const { data } = await api.get<{ packs: DriverPack[] }>('/driver-packs/catalog');
@@ -11,13 +11,6 @@ export async function setDriverPackState(
   state: 'enabled' | 'disabled',
 ): Promise<DriverPack> {
   const { data } = await api.patch<DriverPack>(`/driver-packs/${packId}`, { state });
-  return data;
-}
-
-export async function setDriverPackPolicy(packId: string, runtimePolicy: RuntimePolicy): Promise<DriverPack> {
-  const { data } = await api.patch<DriverPack>(`/driver-packs/${packId}/policy`, {
-    runtime_policy: runtimePolicy,
-  });
   return data;
 }
 

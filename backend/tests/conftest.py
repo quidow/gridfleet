@@ -94,6 +94,7 @@ async def ensure_test_database() -> None:
 
 @pytest_asyncio.fixture
 async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngine]:
+    _ = ensure_test_database
     schema_name = f"test_{uuid.uuid4().hex}"
     engine = create_async_engine(
         TEST_DATABASE_URL,

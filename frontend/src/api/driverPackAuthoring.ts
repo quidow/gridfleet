@@ -22,15 +22,6 @@ export async function forkDriverPack(
   return data;
 }
 
-export interface ProbeFamiliesResponse {
-  probe_families: string[];
-}
-
-export async function fetchProbeFamilies(): Promise<string[]> {
-  const { data } = await api.get<ProbeFamiliesResponse>('/driver-packs/probe-families');
-  return data.probe_families;
-}
-
 export async function exportPack(packId: string, release: string): Promise<void> {
   const res = await api.post(
     `/driver-packs/${encodeURIComponent(packId)}/releases/${encodeURIComponent(release)}/export`,

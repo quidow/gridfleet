@@ -8,7 +8,7 @@ type AuthSession = {
   expires_at: string | null;
 };
 
-export const AUTH_DISABLED_SESSION: AuthSession = {
+const AUTH_DISABLED_SESSION: AuthSession = {
   enabled: false,
   authenticated: false,
   username: null,
@@ -220,16 +220,6 @@ export async function fulfillJson(route: Route, body: unknown, status = 200) {
   });
 }
 
-export async function mockAuthSession(page: Page, session: AuthSession = AUTH_DISABLED_SESSION) {
-  await page.route((url) => new URL(url).pathname === '/api/auth/session', async (route) => {
-    if (route.request().method() !== 'GET') {
-      await route.fallback();
-      return;
-    }
-    await fulfillJson(route, session);
-  });
-}
-
 function paginatedEmptyResponse(requestUrl: URL) {
   return {
     items: [],
@@ -374,7 +364,7 @@ export async function mockDefaultApiFallbacks(page: Page) {
   });
 }
 
-export async function fulfillEventStream(route: Route, body = '') {
+async function fulfillEventStream(route: Route, body = '') {
   await route.fulfill({
     status: 200,
     contentType: 'text/event-stream',
@@ -402,7 +392,7 @@ export async function mockEmptySettingsApi(page: Page) {
   });
 }
 
-export async function mockEmptyHostsApi(page: Page) {
+async function mockEmptyHostsApi(page: Page) {
   await page.route('**/api/hosts', async (route) => {
     if (route.request().method() !== 'GET') {
       await route.fallback();
@@ -412,7 +402,7 @@ export async function mockEmptyHostsApi(page: Page) {
   });
 }
 
-export async function mockEmptyWebhooksApi(page: Page) {
+async function mockEmptyWebhooksApi(page: Page) {
   await page.route('**/api/webhooks', async (route) => {
     if (route.request().method() !== 'GET') {
       await route.fallback();

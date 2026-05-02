@@ -21,11 +21,11 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_session_viability_restore_handles_external_reservation(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
-    seeded_driver_packs: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """While a session-viability probe is running (device marked busy), an external

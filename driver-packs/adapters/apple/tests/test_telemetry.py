@@ -29,7 +29,7 @@ class _Ctx:
 }
 """,
 )
-async def test_telemetry_uses_go_ios_battery_registry(mock_cmd: AsyncMock, mock_find: object) -> None:
+async def test_telemetry_uses_go_ios_battery_registry(mock_cmd: AsyncMock, _mock_find: object) -> None:
     result = await Adapter().telemetry(_Ctx())
 
     assert result.supported is True
@@ -58,7 +58,7 @@ async def test_telemetry_uses_go_ios_battery_registry(mock_cmd: AsyncMock, mock_
 """,
     ],
 )
-async def test_telemetry_falls_back_to_go_ios_batterycheck(mock_cmd: AsyncMock, mock_find: object) -> None:
+async def test_telemetry_falls_back_to_go_ios_batterycheck(mock_cmd: AsyncMock, _mock_find: object) -> None:
     result = await Adapter().telemetry(_Ctx())
 
     assert result.supported is True
@@ -69,7 +69,7 @@ async def test_telemetry_falls_back_to_go_ios_batterycheck(mock_cmd: AsyncMock, 
 
 @pytest.mark.asyncio
 @patch("adapter.telemetry.find_go_ios", return_value="")
-async def test_telemetry_is_unsupported_without_go_ios(mock_find: object) -> None:
+async def test_telemetry_is_unsupported_without_go_ios(_mock_find: object) -> None:
     result = await Adapter().telemetry(_Ctx())
 
     assert result.supported is False

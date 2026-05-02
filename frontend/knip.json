@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip/schema.json",
+  "entry": [
+    "playwright.live.config.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "e2e/**/*.{ts,tsx}",
+    "*.config.ts",
+    "scripts/**/*.{js,mjs}"
+  ],
+  "ignoreDependencies": [
+    "@fontsource-variable/ibm-plex-sans",
+    "tailwindcss"
+  ],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "ignoreIssues": {
+    "src/types/**": ["types"]
+  }
+}

@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deleteDriverPack,
-  deleteDriverPackRelease,
   fetchDriverPack,
   fetchDriverPackHosts,
   fetchDriverPackReleases,
@@ -32,19 +31,6 @@ export function useDriverPackHosts(packId: string) {
     queryFn: () => fetchDriverPackHosts(packId),
     enabled: packId.length > 0,
     refetchInterval: 15_000,
-  });
-}
-
-export function useDeleteDriverPackRelease() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ packId, release }: { packId: string; release: string }) =>
-      deleteDriverPackRelease(packId, release),
-    onSuccess: (_data, variables) => {
-      void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
-      void qc.invalidateQueries({ queryKey: ['driver-pack-releases', variables.packId] });
-      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
-    },
   });
 }
 

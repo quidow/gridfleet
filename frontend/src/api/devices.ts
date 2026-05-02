@@ -122,11 +122,6 @@ export async function restartNode(id: string): Promise<AppiumNodeRead> {
   return data;
 }
 
-export async function refreshDeviceProperties(id: string): Promise<DeviceRead> {
-  const { data } = await api.post(`/devices/${id}/refresh`);
-  return data;
-}
-
 export async function fetchDeviceConfig(id: string, reveal = false): Promise<Record<string, unknown>> {
   const { data } = await api.get(`/devices/${id}/config`, { params: { reveal } });
   return data;

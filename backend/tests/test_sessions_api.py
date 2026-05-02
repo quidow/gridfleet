@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -51,11 +52,11 @@ async def test_list_sessions_empty(client: AsyncClient) -> None:
     }
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_list_sessions_with_data(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
-    seeded_driver_packs: None,
 ) -> None:
     from app.models.session import Session, SessionStatus
 
@@ -288,11 +289,11 @@ async def test_list_sessions_cursor_rejects_invalid_cursor(client: AsyncClient) 
     assert response.status_code == 422
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_get_session(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
-    seeded_driver_packs: None,
 ) -> None:
     from app.models.session import Session, SessionStatus
 

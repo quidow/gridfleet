@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   deleteDriverPack,
-  deleteDriverPackRelease,
   fetchDriverPackHosts,
   fetchDriverPackReleases,
   setDriverPackCurrentRelease,
@@ -45,14 +44,6 @@ describe('driver pack detail api', () => {
       release: '2026.04.0',
     });
     expect(result.current_release).toBe('2026.04.0');
-  });
-
-  it('deletes a specific release', async () => {
-    (api.delete as ReturnType<typeof vi.fn>).mockResolvedValue({ data: undefined });
-
-    await deleteDriverPackRelease('appium-roku-dlenroc', '2026.04.0');
-
-    expect(api.delete).toHaveBeenCalledWith('/driver-packs/appium-roku-dlenroc/releases/2026.04.0');
   });
 
   it('deletes a driver pack', async () => {
