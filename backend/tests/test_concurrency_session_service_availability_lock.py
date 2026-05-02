@@ -31,7 +31,8 @@ async def _enter_maintenance_after_gate(
     maintenance_task = asyncio.create_task(do_maintenance())
     await asyncio.sleep(0.05)
     release.set()
-    await maintenance_task
+    result = await maintenance_task
+    assert result is None
 
 
 async def test_register_session_does_not_overwrite_concurrent_maintenance(

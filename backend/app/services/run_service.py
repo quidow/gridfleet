@@ -154,15 +154,12 @@ async def _find_matching_devices(
         candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
 
     candidates = list((await db.execute(candidate_stmt)).scalars().all())
+    candidates = [device for device in candidates if _device_matches_requirement_tags(device, requirement.tags)]
 
     ready_candidates: list[Device] = []
     for device in candidates:
         if await _readiness_for_match(db, device):
             ready_candidates.append(device)
-
-    ready_candidates = [
-        device for device in ready_candidates if _device_matches_requirement_tags(device, requirement.tags)
-    ]
 
     if not ready_candidates:
         return []

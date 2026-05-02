@@ -402,6 +402,19 @@ async def test_register_session_without_device_creates_device_less_error_session
     assert data["test_name"] == "test_broken_setup"
 
 
+async def test_register_running_session_with_unknown_connection_target_returns_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/sessions",
+        json={
+            "session_id": "missing-target-session",
+            "test_name": "test_missing_target",
+            "connection_target": "missing-target",
+        },
+    )
+
+    assert resp.status_code == 404
+
+
 async def test_register_terminal_error_session_persists_setup_failure_context(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/sessions",

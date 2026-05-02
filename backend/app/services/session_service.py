@@ -333,6 +333,8 @@ async def register_session(
             device_id=device_id,
             connection_target=connection_target,
         )
+        if device is None and (device_id is not None or connection_target is not None):
+            raise ValueError("No matching device found for running session target")
     else:
         device = await _resolve_device_for_session(
             db,
