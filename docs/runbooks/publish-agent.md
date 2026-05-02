@@ -25,3 +25,13 @@ Use GitHub environments named `testpypi` and `pypi`; require manual approval on 
 7. Trigger the `Publish Agent` workflow with `repository=pypi`.
 
 The workflow rebuilds the package, runs formatting, lint, type checking, tests, and smoke-installs both the wheel and source distribution before publishing.
+
+## Host bootstrap
+
+After publishing, operators can install or upgrade a host with the thin bootstrap wrapper:
+
+```bash
+VERSION=0.3.0 sudo -E bash scripts/install-agent.sh --manager-url http://manager.example.com:8000
+```
+
+The wrapper creates or updates `/opt/gridfleet-agent/venv`, installs `gridfleet-agent` from PyPI, and invokes `gridfleet-agent install --start` unless the caller explicitly passes `--dry-run`, `--no-start`, or `--start`.

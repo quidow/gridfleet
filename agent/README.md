@@ -34,6 +34,12 @@ To also enable/start the service and poll local health:
 
 After local health passes, `--start` also checks whether the host appears in the manager host list. Pending registration is reported as a warning because host approval may still require operator action.
 
+For a one-command bootstrap from a release checkout or raw GitHub URL:
+
+```bash
+VERSION=0.3.0 sudo -E bash scripts/install-agent.sh --manager-url http://manager.example.com:8000
+```
+
 Inspect local installation state without changing anything:
 
 ```bash
