@@ -110,6 +110,10 @@ jobs:
   testkit:
     name: Testkit
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     env:
       UV_LINK_MODE: copy
     steps:
@@ -120,8 +124,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-suffix: testkit
-          python-version: "3.12"
+          cache-suffix: testkit-${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
           cache-dependency-glob: |
             testkit/pyproject.toml
             testkit/uv.lock
@@ -145,6 +149,22 @@ jobs:
       - name: Test
         working-directory: testkit
         run: uv run --locked --extra dev --extra appium pytest -q
+
+      - name: Build package
+        working-directory: testkit
+        run: uv build --no-sources
+
+      - name: Smoke test built wheel
+        working-directory: testkit
+        run: >
+          uv run --isolated --no-project --with dist/*.whl --
+          python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
+
+      - name: Smoke test source distribution
+        working-directory: testkit
+        run: >
+          uv run --isolated --no-project --with dist/*.tar.gz --
+          python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
 
   frontend:
     name: Frontend
