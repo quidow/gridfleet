@@ -21,6 +21,7 @@ SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_TERMINAL_TOKEN"}
 class AgentStatus:
     config_env: Path
     config_exists: bool
+    config_error: str | None
     service_file: Path
     service_exists: bool
     service_active: str
@@ -29,21 +30,35 @@ class AgentStatus:
     env: dict[str, str] = field(default_factory=dict)
 
 
-def parse_config_env(path: Path) -> dict[str, str]:
+def _parse_config_env_with_error(path: Path) -> tuple[dict[str, str], str | None]:
     if not path.exists():
-        return {}
+        return {}, None
     values: dict[str, str] = {}
-    for raw_line in path.read_text().splitlines():
+    try:
+        raw_lines = path.read_text().splitlines()
+    except OSError as exc:
+        return {}, str(exc)
+    for raw_line in raw_lines:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         values[key] = value
+    return values, None
+
+
+def parse_config_env(path: Path) -> dict[str, str]:
+    values, _error = _parse_config_env_with_error(path)
     return values
 
 
 def _run_status_command(command: list[str]) -> str:
-    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=10)
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=10)
+    except FileNotFoundError as exc:
+        return f"{command[0]} unavailable: {exc}"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"{command[0]} failed: {exc}"
     if result.returncode != 0:
         return result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
     return result.stdout.strip()
@@ -71,7 +86,11 @@ def collect_status(
 ) -> AgentStatus:
     resolved_os = os_name or platform.system()
     config_env = Path(config.config_env_path)
-    parsed_env = dict(env) if env is not None else parse_config_env(config_env)
+    config_error = None
+    if env is not None:
+        parsed_env = dict(env)
+    else:
+        parsed_env, config_error = _parse_config_env_with_error(config_env)
     service_file = _service_file_path(config, resolved_os)
     service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
 
@@ -88,6 +107,7 @@ def collect_status(
     return AgentStatus(
         config_env=config_env,
         config_exists=config_env.exists() or env is not None,
+        config_error=config_error,
         service_file=service_file,
         service_exists=service_file.exists(),
         service_active=service_active,
@@ -111,6 +131,7 @@ def format_status(status: AgentStatus) -> str:
         "GridFleet Agent status",
         "",
         f"Config file: {status.config_env} ({'present' if status.config_exists else 'missing'})",
+        f"Config read: {'failed - ' + status.config_error if status.config_error else 'ok'}",
         f"Service file: {status.service_file} ({'present' if status.service_exists else 'missing'})",
         f"Service active: {status.service_active}",
         f"Service enabled: {status.service_enabled}",

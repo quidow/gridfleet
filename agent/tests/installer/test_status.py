@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
-from agent_app.installer.status import collect_status, format_status, parse_config_env
+from agent_app.installer.status import _run_status_command, collect_status, format_status, parse_config_env
 
 if TYPE_CHECKING:
     import pytest
@@ -79,6 +79,42 @@ def test_collect_status_handles_missing_config_without_health_check(tmp_path: Pa
 
     assert status.config_exists is False
     assert status.health == HealthCheckResult(ok=False, message="config.env missing; health check skipped")
+
+
+def test_collect_status_reports_unreadable_config_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    config_env = Path(config.config_env_path)
+    config_env.parent.mkdir(parents=True)
+    config_env.write_text("AGENT_AGENT_PORT=5200\n")
+    original_read_text = Path.read_text
+
+    def fake_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        if path == config_env:
+            raise PermissionError("permission denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    status = collect_status(
+        config,
+        os_name="Linux",
+        run_command=lambda _command: "inactive\n",
+        health_check=lambda _url: HealthCheckResult(ok=False, message="down"),
+    )
+
+    assert status.config_exists is True
+    assert status.config_error is not None
+    assert "permission denied" in status.config_error
+    assert "Config read: failed" in format_status(status)
+
+
+def test_run_status_command_reports_missing_service_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("systemctl")
+
+    monkeypatch.setattr("agent_app.installer.status.subprocess.run", fake_run)
+
+    assert _run_status_command(["systemctl", "is-active", "gridfleet-agent"]) == "systemctl unavailable: systemctl"
 
 
 def test_collect_status_uses_launchctl_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
