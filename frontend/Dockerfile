@@ -10,7 +10,7 @@ RUN npm run build
 
 FROM ${NGINX_IMAGE}
 RUN mkdir -p /var/cache/nginx /var/run /var/log/nginx /etc/nginx/conf.d \
-    && chown -R nginx:nginx /var/cache/nginx /var/run /var/log/nginx /etc/nginx/conf.d /usr/share/nginx/html
+    && chown -R nginx:nginx /run /var/cache/nginx /var/run /var/log/nginx /etc/nginx/conf.d /usr/share/nginx/html
 COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 COPY --chown=nginx:nginx nginx.conf /etc/nginx/templates/default.conf.template
