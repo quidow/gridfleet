@@ -87,6 +87,8 @@ services:
       GRIDFLEET_HOST_AUTO_ACCEPT: ${GRIDFLEET_HOST_AUTO_ACCEPT:-false}
       GRIDFLEET_ENABLE_WEB_TERMINAL: ${GRIDFLEET_ENABLE_WEB_TERMINAL:-false}
       GRIDFLEET_AGENT_TERMINAL_TOKEN: ${GRIDFLEET_AGENT_TERMINAL_TOKEN:-}
+      # ws is safe for internal manager→agent traffic; set wss when agents terminate TLS directly
+      GRIDFLEET_AGENT_TERMINAL_SCHEME: ${GRIDFLEET_AGENT_TERMINAL_SCHEME:-ws}
       GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS: ${GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS:-}
       GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS: ${GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS:-120}
       GRIDFLEET_RUN_REAPER_INTERVAL_SEC: ${GRIDFLEET_RUN_REAPER_INTERVAL_SEC:-15}
@@ -126,14 +128,14 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:8080"
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - public
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 15s
       timeout: 5s
       retries: 6

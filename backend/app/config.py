@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     machine_auth_username: str | None = None
     machine_auth_password: str | None = None
     agent_terminal_token: str | None = None
+    agent_terminal_scheme: Literal["ws", "wss"] = "ws"
     driver_pack_storage_dir: Path = Path("/var/lib/gridfleet/driver-packs")
 
     model_config = {"env_prefix": "GRIDFLEET_"}

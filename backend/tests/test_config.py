@@ -20,3 +20,21 @@ def test_settings_reads_terminal_token_env(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_TOKEN", "s3cret")
     settings = Settings()
     assert settings.agent_terminal_token == "s3cret"
+
+
+def test_settings_defaults_terminal_agent_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GRIDFLEET_AGENT_TERMINAL_SCHEME", raising=False)
+    settings = Settings()
+    assert settings.agent_terminal_scheme == "ws"
+
+
+def test_settings_reads_terminal_agent_scheme_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_SCHEME", "wss")
+    settings = Settings()
+    assert settings.agent_terminal_scheme == "wss"
+
+
+def test_settings_rejects_invalid_terminal_agent_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_SCHEME", "http")
+    with pytest.raises(ValueError, match="agent_terminal_scheme"):
+        Settings()
