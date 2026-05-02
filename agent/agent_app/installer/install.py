@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import platform
-import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -66,8 +68,21 @@ def _selenium_url(config: InstallConfig) -> str:
 
 
 def _download_selenium(url: str, dest: Path) -> None:
-    with urllib.request.urlopen(url, timeout=60) as response, dest.open("wb") as output:
-        shutil.copyfileobj(response, output)
+    fd, tmp = tempfile.mkstemp(dir=str(dest.parent), suffix=".download")
+    try:
+        sha256 = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=60) as response, os.fdopen(fd, "wb") as output:
+            while True:
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                sha256.update(chunk)
+                output.write(chunk)
+        os.rename(tmp, str(dest))
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    print(f"Downloaded {dest.name} sha256={sha256.hexdigest()}")
 
 
 def _service_file_path(config: InstallConfig, os_name: str) -> Path:
@@ -110,13 +125,16 @@ def install_no_start(
     if not selenium_jar.exists():
         download(_selenium_url(config), selenium_jar)
 
-    Path(config.config_env_path).write_text(render_config_env(config, discovery))
+    config_env = Path(config.config_env_path)
+    config_env.write_text(render_config_env(config, discovery))
+    os.chmod(config_env, 0o600)
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
     elif resolved_os == "Darwin":
         service_file.write_text(render_launchd_plist(config, discovery))
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
+    os.chmod(service_file, 0o644)
 
     return InstallResult(
         config_env=Path(config.config_env_path),

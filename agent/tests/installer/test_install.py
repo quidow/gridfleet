@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ from agent_app.installer.install import (
     HealthCheckResult,
     InstallResult,
     RegistrationCheckResult,
+    _download_selenium,
     install_no_start,
     install_with_start,
     poll_agent_health,
@@ -72,6 +75,8 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     )
     assert (Path(config.agent_dir) / "runtimes").is_dir()
     assert Path(config.config_env_path).read_text().startswith("AGENT_MANAGER_URL=https://manager.example.com\n")
+    assert stat.S_IMODE(os.stat(config.config_env_path).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o644
     assert "ExecStart=" + str(executable) in result.service_file.read_text()
     assert downloads == [
         (
@@ -120,6 +125,8 @@ def test_install_no_start_uses_launchd_path_on_macos(tmp_path: Path) -> None:
 
     assert result.service_file == tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
     assert "<string>com.gridfleet.agent</string>" in result.service_file.read_text()
+    assert stat.S_IMODE(os.stat(config.config_env_path).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o644
 
 
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
@@ -318,3 +325,48 @@ def test_poll_agent_health_times_out_after_failed_attempts() -> None:
 
     assert result.ok is False
     assert "connection refused" in result.message
+
+
+def test_download_selenium_writes_file_atomically_and_prints_hash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import hashlib
+    import http.server
+    import threading
+
+    jar_content = b"fake-selenium-server-jar"
+    expected_hash = hashlib.sha256(jar_content).hexdigest()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(jar_content)))
+            self.end_headers()
+            self.wfile.write(jar_content)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+
+    dest = tmp_path / "selenium-server.jar"
+    _download_selenium(f"http://127.0.0.1:{port}/selenium.jar", dest)
+    thread.join(timeout=5)
+    server.server_close()
+
+    assert dest.read_bytes() == jar_content
+    output = capsys.readouterr().out
+    assert f"sha256={expected_hash}" in output
+
+
+def test_download_selenium_cleans_up_temp_file_on_failure(tmp_path: Path) -> None:
+    dest = tmp_path / "selenium-server.jar"
+
+    with pytest.raises(OSError):
+        _download_selenium("http://127.0.0.1:1/will-fail", dest)
+
+    assert not dest.exists()
+    assert not list(tmp_path.glob("*.download"))
