@@ -7,22 +7,12 @@
     "backend": {
       "release-type": "python",
       "package-name": "gridfleet-backend",
-      "include-component-in-tag": true,
-      "extra-files": [
-        "backend/pyproject.toml"
-      ]
+      "include-component-in-tag": true
     },
     "agent": {
       "release-type": "python",
       "package-name": "gridfleet-agent",
-      "include-component-in-tag": true,
-      "extra-files": [
-        "agent/pyproject.toml",
-        {
-          "type": "generic",
-          "path": "agent/agent_app/__init__.py"
-        }
-      ]
+      "include-component-in-tag": true
     },
     "frontend": {
       "release-type": "node",
@@ -32,10 +22,7 @@
     "testkit": {
       "release-type": "python",
       "package-name": "gridfleet-testkit",
-      "include-component-in-tag": true,
-      "extra-files": [
-        "testkit/pyproject.toml"
-      ]
+      "include-component-in-tag": true
     }
   }
 }

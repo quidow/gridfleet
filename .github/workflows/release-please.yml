@@ -57,6 +57,10 @@ jobs:
             agent/pyproject.toml
             agent/uv.lock
 
+      - name: Sync lock file
+        working-directory: agent
+        run: uv lock
+
       - name: Install dependencies
         working-directory: agent
         run: uv sync --extra dev --locked
@@ -119,6 +123,10 @@ jobs:
           cache-dependency-glob: |
             testkit/pyproject.toml
             testkit/uv.lock
+
+      - name: Sync lock file
+        working-directory: testkit
+        run: uv lock
 
       - name: Install dependencies
         working-directory: testkit
