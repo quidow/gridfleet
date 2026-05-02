@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
@@ -11,6 +12,9 @@ from agent_app.installer.update import (
     update_agent,
     wait_for_update_drain,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _make_config(tmp_path: Path) -> InstallConfig:
@@ -121,6 +125,30 @@ def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
         [f"{config.agent_dir}/venv/bin/python", "-m", "pip", "install", "--upgrade", "gridfleet-agent==0.3.0"],
         ["launchctl", "kickstart", "-k", "gui/0/com.gridfleet.agent"],
     ]
+
+
+def test_update_agent_uses_sudo_uid_for_launchd_restart_on_macos(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SUDO_UID", "501")
+    monkeypatch.setattr("agent_app.installer.update.os.getuid", lambda: 0)
+    config = _make_config(tmp_path)
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    commands: list[list[str]] = []
+
+    update_agent(
+        config,
+        to_version=None,
+        os_name="Darwin",
+        executable=executable,
+        run_command=lambda command: commands.append(command),
+        drain_check=lambda _url: DrainResult(ok=True, message="drained"),
+        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+    )
+
+    assert commands[1] == ["launchctl", "kickstart", "-k", "gui/501/com.gridfleet.agent"]
 
 
 def test_update_agent_rejects_wrong_executable_path(tmp_path: Path) -> None:

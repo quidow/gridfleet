@@ -148,7 +148,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "update":
-        config = load_installed_config()
+        try:
+            config = load_installed_config()
+        except (ValueError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         if args.dry_run:
             print(format_update_dry_run(config, to_version=args.to))
             return 0

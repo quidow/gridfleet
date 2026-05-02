@@ -243,6 +243,16 @@ def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pyt
     assert capsys.readouterr().out == "update plan\n"
 
 
+def test_update_dry_run_reports_installed_config_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "load_installed_config", lambda: (_ for _ in ()).throw(ValueError("bad config")))
+
+    assert cli.main(["update", "--dry-run"]) == 2
+
+    assert "ERROR: bad config" in capsys.readouterr().err
+
+
 def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, object] = {}
     loaded_config = InstallConfig(port=5300)

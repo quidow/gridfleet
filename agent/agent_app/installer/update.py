@@ -50,7 +50,13 @@ def _restart_command(os_name: str, *, uid: int | None = None) -> list[str]:
     if os_name == "Linux":
         return ["systemctl", "restart", "gridfleet-agent"]
     if os_name == "Darwin":
-        resolved_uid = os.getuid() if uid is None else uid
+        sudo_uid = os.environ.get("SUDO_UID")
+        if uid is not None:
+            resolved_uid = uid
+        elif sudo_uid and sudo_uid.isdecimal():
+            resolved_uid = int(sudo_uid)
+        else:
+            resolved_uid = os.getuid()
         return ["launchctl", "kickstart", "-k", f"gui/{resolved_uid}/com.gridfleet.agent"]
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
