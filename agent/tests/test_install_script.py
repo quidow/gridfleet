@@ -2,41 +2,46 @@ from pathlib import Path
 from stat import S_IXUSR
 
 
-def test_macos_launchd_includes_optional_manager_auth_env_vars() -> None:
-    script = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
-
-    assert "<key>AGENT_MANAGER_AUTH_USERNAME</key>" in script
-    assert "<string>$MANAGER_AUTH_USERNAME</string>" in script
-    assert "<key>AGENT_MANAGER_AUTH_PASSWORD</key>" in script
-    assert "<string>$MANAGER_AUTH_PASSWORD</string>" in script
-    assert "$MANAGER_AUTH_PLIST_ENTRIES" in script
-
-
-def test_installer_fails_when_terminal_enabled_without_token() -> None:
-    script = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
-
-    assert "ERROR: AGENT_ENABLE_WEB_TERMINAL=true requires AGENT_TERMINAL_TOKEN." in script
-    assert "terminal accepts unauthenticated connections" not in script
-
-
-def test_bootstrap_wrapper_installs_agent_into_dedicated_venv() -> None:
-    script_path = Path(__file__).resolve().parents[2] / "scripts/install-agent.sh"
-    script = script_path.read_text()
-
-    assert script_path.stat().st_mode & S_IXUSR
-    assert 'AGENT_DIR="/opt/gridfleet-agent"' in script
-    assert 'AGENT_DIR="${AGENT_DIR:-/opt/gridfleet-agent}"' not in script
-    assert 'python3 -m venv "$VENV_DIR"' in script
-    assert '"$VENV_DIR/bin/python" -m pip install --upgrade "$PACKAGE_SPEC"' in script
-    assert '"$VENV_DIR/bin/gridfleet-agent" install "${INSTALL_ARGS[@]}"' in script
-
-
-def test_bootstrap_wrapper_defaults_to_start_mode_but_preserves_explicit_install_mode() -> None:
+def test_bootstrap_wrapper_uses_uv_tool_install() -> None:
     script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert script.startswith("#!/usr/bin/env bash")
+    assert "uv tool install" in script
+    assert "gridfleet-agent" in script
+    assert "--python 3.12" in script
 
-    assert 'INSTALL_ARGS=(--start "$@")' in script
+
+def test_bootstrap_wrapper_installs_uv_if_missing() -> None:
+    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert "astral.sh/uv/install.sh" in script
+    assert "command -v uv" in script
+
+
+def test_bootstrap_wrapper_calls_gridfleet_agent_install() -> None:
+    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert "gridfleet-agent install" in script
+
+
+def test_bootstrap_wrapper_is_executable() -> None:
+    script_path = Path(__file__).resolve().parents[2] / "scripts/install-agent.sh"
+    assert script_path.stat().st_mode & S_IXUSR
+
+
+def test_bootstrap_wrapper_supports_version_pinning() -> None:
+    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert "VERSION" in script
+    assert "gridfleet-agent==" in script
+
+
+def test_bootstrap_wrapper_defaults_to_start_mode() -> None:
+    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert "--start" in script
     assert "--dry-run|--no-start|--start" in script
-    assert 'INSTALL_ARGS=("$@")' in script
+
+
+def test_bootstrap_wrapper_does_not_use_python_venv() -> None:
+    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
+    assert "python3 -m venv" not in script
+    assert "pip install" not in script
 
 
 def test_operator_docs_point_to_bootstrap_wrapper_not_legacy_install_script() -> None:
@@ -46,7 +51,6 @@ def test_operator_docs_point_to_bootstrap_wrapper_not_legacy_install_script() ->
         "docs/guides/deployment.md": (root / "docs/guides/deployment.md").read_text(),
         "docs/reference/environment.md": (root / "docs/reference/environment.md").read_text(),
     }
-
     for text in docs.values():
         assert "scripts/install-agent.sh" in text
         assert "bash agent/install.sh" not in text

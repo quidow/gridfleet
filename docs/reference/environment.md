@@ -80,7 +80,7 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `VERSION` | `latest` | bootstrap wrapper | Optional PyPI version installed by `scripts/install-agent.sh` |
+| `VERSION` | `latest` | bootstrap wrapper | Optional PyPI version pinned via `uv tool install gridfleet-agent==VERSION` by `scripts/install-agent.sh` |
 | `--user` | current shell user | installer CLI | Service account / file owner |
 | `--port` | `5100` | installer CLI | Convenience input that becomes process `AGENT_AGENT_PORT` |
 | `--manager-url` | `http://localhost:8000` | installer CLI | Written into the generated service env/config |

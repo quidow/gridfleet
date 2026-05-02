@@ -21,6 +21,7 @@ DEFAULT_SERVICE_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 class InstallConfig:
     agent_dir: str = "/opt/gridfleet-agent"
     config_dir: str = "/etc/gridfleet-agent"
+    bin_path: str | None = None
     user: str = field(default_factory=getpass.getuser)
     port: int = 5100
     manager_url: str = "http://localhost:8000"
@@ -47,7 +48,14 @@ class InstallConfig:
         return f"{self.agent_dir}/selenium-server.jar"
 
     @property
+    def resolved_bin_path(self) -> str:
+        if self.bin_path:
+            return self.bin_path
+        return f"{self.agent_dir}/venv/bin/gridfleet-agent"
+
+    @property
     def venv_bin_dir(self) -> str:
+        """Deprecated: use resolved_bin_path instead."""
         return f"{self.agent_dir}/venv/bin"
 
     @property
@@ -284,7 +292,7 @@ Type=simple
 User={config.user}
 WorkingDirectory={config.agent_dir}
 EnvironmentFile={config.config_env_path}
-ExecStart={config.venv_bin_dir}/gridfleet-agent serve --host 0.0.0.0 --port {config.port}
+ExecStart={config.resolved_bin_path} serve --host 0.0.0.0 --port {config.port}
 Restart=always
 RestartSec=5
 
@@ -303,7 +311,7 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
     <string>com.gridfleet.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{config.venv_bin_dir}/gridfleet-agent</string>
+        <string>{config.resolved_bin_path}</string>
         <string>serve</string>
         <string>--host</string>
         <string>0.0.0.0</string>
@@ -415,6 +423,7 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
     return InstallConfig(
         agent_dir=config.agent_dir,
         config_dir=config.config_dir,
+        bin_path=config.bin_path,
         user=config.user,
         port=config.port,
         manager_url=config.manager_url,

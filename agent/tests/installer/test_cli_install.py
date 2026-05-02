@@ -73,12 +73,6 @@ def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -
     assert captured["config"].manager_url == "https://manager.example.com"
 
 
-def test_install_start_is_rejected_until_implemented(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["install", "--start"]) == 2
-
-    assert "must run from" in capsys.readouterr().err
-
-
 def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 

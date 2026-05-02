@@ -177,3 +177,32 @@ def test_build_service_path_prepends_discovered_tool_dirs() -> None:
     discovery = ToolDiscovery(java_bin="/usr/lib/jvm/bin/java", node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
 
     assert build_service_path(discovery).startswith("/usr/lib/jvm/bin:/opt/node/bin:/opt/sdk/platform-tools:")
+
+
+def test_config_resolved_bin_path_defaults_to_venv() -> None:
+    config = InstallConfig()
+    assert config.resolved_bin_path == "/opt/gridfleet-agent/venv/bin/gridfleet-agent"
+
+
+def test_config_resolved_bin_path_uses_explicit_override() -> None:
+    config = InstallConfig(bin_path="/home/user/.local/bin/gridfleet-agent")
+    assert config.resolved_bin_path == "/home/user/.local/bin/gridfleet-agent"
+
+
+def test_render_systemd_unit_uses_custom_bin_path() -> None:
+    rendered = render_systemd_unit(
+        InstallConfig(
+            user="gridfleet",
+            port=5200,
+            bin_path="/home/user/.local/bin/gridfleet-agent",
+        )
+    )
+    assert "ExecStart=/home/user/.local/bin/gridfleet-agent serve --host 0.0.0.0 --port 5200" in rendered
+
+
+def test_render_launchd_plist_uses_custom_bin_path() -> None:
+    rendered = render_launchd_plist(
+        InstallConfig(port=5200, bin_path="/home/user/.local/bin/gridfleet-agent"),
+        ToolDiscovery(),
+    )
+    assert "<string>/home/user/.local/bin/gridfleet-agent</string>" in rendered
