@@ -43,6 +43,11 @@ if ! command -v gridfleet-agent >/dev/null 2>&1; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# 3. Delegate to gridfleet-agent install
+# 3. Delegate to gridfleet-agent install (needs root for /opt and /etc paths)
+AGENT_BIN="$(command -v gridfleet-agent)"
 echo ""
-gridfleet-agent install "${INSTALL_ARGS[@]}"
+if [ "$(id -u)" -ne 0 ]; then
+    sudo "$AGENT_BIN" install "${INSTALL_ARGS[@]}"
+else
+    gridfleet-agent install "${INSTALL_ARGS[@]}"
+fi

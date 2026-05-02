@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import getpass
 import hashlib
 import os
@@ -213,7 +214,10 @@ def _start_service(
         return
     if os_name == "Darwin":
         resolved_uid = _resolve_uid(uid)
-        run_command(["launchctl", "bootstrap", f"gui/{resolved_uid}", str(service_file)])
+        domain_target = f"gui/{resolved_uid}"
+        with contextlib.suppress(RuntimeError):
+            run_command(["launchctl", "bootout", f"{domain_target}/com.gridfleet.agent"])
+        run_command(["launchctl", "bootstrap", domain_target, str(service_file)])
         return
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
