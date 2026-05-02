@@ -284,3 +284,45 @@ jobs:
       - name: Test live e2e
         working-directory: frontend
         run: npm run test:e2e:live
+
+  compose-smoke:
+    name: Compose Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and start stack
+        working-directory: docker
+        run: docker compose up --build -d
+
+      - name: Wait for stack to stabilize
+        run: sleep 15
+
+      - name: Check no containers exited
+        working-directory: docker
+        run: |
+          exited=$(docker compose ps --status exited -q)
+          if [ -n "$exited" ]; then
+            echo "Containers exited unexpectedly:"
+            docker compose ps
+            exit 1
+          fi
+
+      - name: Verify frontend responds
+        run: |
+          timeout 30 bash -c 'until curl -sf http://localhost:3000/ > /dev/null; do sleep 2; done'
+
+      - name: Verify backend health
+        run: |
+          timeout 30 bash -c 'until curl -sf http://localhost:8000/health/live > /dev/null; do sleep 2; done'
+
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: docker
+        run: docker compose logs --tail 100
+
+      - name: Tear down
+        if: always()
+        working-directory: docker
+        run: docker compose down -v
