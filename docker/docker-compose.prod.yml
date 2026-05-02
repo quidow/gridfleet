@@ -127,14 +127,14 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:8080"
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - public
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 15s
       timeout: 5s
       retries: 6
