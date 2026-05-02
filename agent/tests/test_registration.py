@@ -6,6 +6,7 @@ import pytest
 
 from agent_app.config import AgentSettings
 from agent_app.registration import _map_os_type, get_local_ip, register_with_manager, registration_loop
+from agent_app.version_guidance import clear_version_guidance, get_version_guidance
 
 
 def test_get_local_ip_prefers_advertised_ip() -> None:
@@ -201,3 +202,65 @@ async def test_registration_loop_notifies_when_advertised_ip_changes() -> None:
         await registration_loop("http://manager:8000", 5100, on_advertised_ip_change=on_ip_change)
 
     assert on_ip_change.await_args_list == [call("192.168.1.10"), call("192.168.88.107")]
+
+
+async def test_register_with_manager_stores_version_guidance() -> None:
+    clear_version_guidance()
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+    response = MagicMock(spec=httpx.Response)
+    response.json.return_value = {
+        "id": "host-1",
+        "status": "online",
+        "required_agent_version": "0.2.0",
+        "recommended_agent_version": "0.3.0",
+        "agent_version_status": "outdated",
+        "agent_update_available": True,
+    }
+    response.raise_for_status = MagicMock()
+    client.post = AsyncMock(return_value=response)
+
+    with (
+        patch("agent_app.registration.get_or_refresh_capabilities_snapshot", new_callable=AsyncMock, return_value={}),
+        patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
+        patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
+        patch("agent_app.registration.httpx.AsyncClient", return_value=client),
+    ):
+        await register_with_manager("http://manager:8000", 5100)
+
+    guidance = get_version_guidance()
+    assert guidance.required_agent_version == "0.2.0"
+    assert guidance.recommended_agent_version == "0.3.0"
+    assert guidance.agent_version_status == "outdated"
+
+
+async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.LogCaptureFixture) -> None:
+    clear_version_guidance()
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+    response = MagicMock(spec=httpx.Response)
+    response.json.return_value = {
+        "id": "host-1",
+        "status": "online",
+        "required_agent_version": "0.2.0",
+        "recommended_agent_version": "0.3.0",
+        "agent_version_status": "outdated",
+        "agent_update_available": True,
+    }
+    response.raise_for_status = MagicMock()
+    client.post = AsyncMock(return_value=response)
+
+    with (
+        patch("agent_app.registration.get_or_refresh_capabilities_snapshot", new_callable=AsyncMock, return_value={}),
+        patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
+        patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
+        patch("agent_app.registration.httpx.AsyncClient", return_value=client),
+        caplog.at_level("INFO"),
+    ):
+        await register_with_manager("http://manager:8000", 5100)
+        await register_with_manager("http://manager:8000", 5100)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages.count("Agent update available: recommended version is 0.3.0") == 1
