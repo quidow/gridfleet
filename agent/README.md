@@ -2,64 +2,59 @@
 
 `gridfleet-agent` is the host-side service package for GridFleet device hosts.
 
-This package currently provides the runnable agent service entry point:
+## Quick Install
 
 ```bash
-gridfleet-agent serve
+curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/install-agent.sh | sh -s -- \
+  --manager-url http://manager.example.com:8000
 ```
 
-It also provides a safe installer preview:
+This installs [uv](https://docs.astral.sh/uv/) if missing, fetches Python 3.12 automatically, and sets up the agent as a system service. No pre-installed Python version required.
+
+## Commands
+
+Preview what the installer will do without writing files:
 
 ```bash
 gridfleet-agent install --dry-run --manager-url http://manager.example.com:8000
 ```
 
-The dry run performs host-tool discovery and renders the planned `config.env` and service definition without writing files or starting services.
-
-Real installs use a dedicated virtual environment under `/opt/gridfleet-agent/venv`:
+Install without starting the service:
 
 ```bash
-python3 -m venv /opt/gridfleet-agent/venv
-/opt/gridfleet-agent/venv/bin/pip install gridfleet-agent
-/opt/gridfleet-agent/venv/bin/gridfleet-agent install --no-start --manager-url http://manager.example.com:8000
+gridfleet-agent install --no-start --manager-url http://manager.example.com:8000
 ```
 
-`--no-start` writes the config and service files but does not enable or start the host service yet.
-
-To also enable/start the service and poll local health:
+Install and start the service:
 
 ```bash
-/opt/gridfleet-agent/venv/bin/gridfleet-agent install --start --manager-url http://manager.example.com:8000
+gridfleet-agent install --start --manager-url http://manager.example.com:8000
 ```
 
-After local health passes, `--start` also checks whether the host appears in the manager host list. Pending registration is reported as a warning because host approval may still require operator action.
-
-For a one-command bootstrap from a release checkout or raw GitHub URL:
-
-```bash
-VERSION=0.3.0 sudo -E bash scripts/install-agent.sh --manager-url http://manager.example.com:8000
-```
-
-Inspect local installation state without changing anything:
+Check installation status:
 
 ```bash
 gridfleet-agent status
 ```
 
-The status command reads `config.env`, checks the local service manager when available, polls local health, and redacts stored secrets.
-
-Upgrade the dedicated agent venv package and restart the host service:
+Upgrade to a specific version:
 
 ```bash
-sudo -E /opt/gridfleet-agent/venv/bin/gridfleet-agent update --to 0.3.0
+gridfleet-agent update --to 0.3.0
 ```
 
-The update command waits for local Appium nodes reported by `/agent/health` to drain before upgrading the package or restarting the service. Use `gridfleet-agent update --dry-run --to 0.3.0` to preview the drain, pip upgrade, service restart, and local health-check steps.
+Or upgrade via uv directly:
 
-Uninstall requires explicit confirmation:
+```bash
+uv tool upgrade gridfleet-agent
+sudo systemctl restart gridfleet-agent  # Linux
+launchctl kickstart -k gui/$(id -u)/com.gridfleet.agent  # macOS
+```
+
+Uninstall (requires confirmation):
 
 ```bash
 gridfleet-agent uninstall --yes
 ```
 
-Use `--keep-config` or `--keep-agent-dir` when you want to preserve local configuration or downloaded runtime state.
+Use `--keep-config` or `--keep-agent-dir` to preserve local configuration or runtime state.
