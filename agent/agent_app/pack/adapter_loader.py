@@ -227,14 +227,10 @@ async def load_adapter(
     release: str,
     tarball_path: Path,
     runtime_dir: Path,
-    venv_python: str,
 ) -> Any:  # noqa: ANN401 dynamically loaded adapter has no static type
     """Load (or fetch from cache) the adapter shipped inside ``tarball_path``.
 
     Returns the live ``Adapter`` instance ready to be dispatched against.
-    The ``venv_python`` argument is accepted for forward compatibility with
-    a pip-backed install path; the current implementation extracts the
-    wheel zip directly and so does not need it.
     """
 
     key = _CacheKey(

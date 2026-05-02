@@ -28,7 +28,7 @@ def test_adapter_protocol() -> None:
 @pytest.mark.asyncio
 @patch("adapter.tools.host_supports_apple_devicectl", return_value=True)
 @patch("adapter.tools.find_go_ios", return_value="/usr/local/bin/ios")
-async def test_doctor_requires_devicectl_and_go_ios(mock_go_ios: object, mock_devicectl: object) -> None:
+async def test_doctor_requires_devicectl_and_go_ios(_mock_go_ios: object, _mock_devicectl: object) -> None:
     checks = await Adapter().doctor(None)
 
     assert [(check.check_id, check.ok) for check in checks] == [

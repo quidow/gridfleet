@@ -14,7 +14,6 @@ import {
   enterDeviceMaintenance,
   exitDeviceMaintenance,
   reconnectDevice,
-  refreshDeviceProperties,
   runDeviceLifecycleAction,
   runDeviceSessionTest,
   restartNode,
@@ -349,17 +348,6 @@ export function useRestartNode() {
     },
     onSettled: (_data, _error, id) => {
       invalidatePatchedDeviceQueries(qc, id);
-    },
-  });
-}
-
-export function useRefreshDeviceProperties() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => refreshDeviceProperties(id),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device', id] });
     },
   });
 }

@@ -2,10 +2,6 @@ import type { ReactNode } from 'react';
 import { Badge } from '../../components/ui';
 import type { AppiumInstallable, DriverPack, RuntimePolicy } from '../../types/driverPacks';
 
-export function listValue(values: string[] | undefined): string {
-  return values && values.length > 0 ? values.join(', ') : 'None';
-}
-
 export function objectEntries(value: Record<string, unknown> | undefined): Array<[string, unknown]> {
   return Object.entries(value ?? {});
 }

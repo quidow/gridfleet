@@ -258,9 +258,9 @@ def _clear_adapter_cache() -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("override_storage")
 async def test_upload_persists_pack_and_writes_artifact(
     client: AsyncClient,
-    override_storage: Path,
     fixture_artifacts: tuple[bytes, str],
     db_session: AsyncSession,
 ) -> None:
@@ -289,9 +289,9 @@ async def test_upload_persists_pack_and_writes_artifact(
     assert Path(release.artifact_path).read_bytes() == tarball_bytes
 
 
+@pytest.mark.usefixtures("override_storage")
 async def test_vertical_slice_upload_fetch_load_dispatch(
     client: AsyncClient,
-    override_storage: Path,
     fixture_artifacts: tuple[bytes, str],
     tmp_path: Path,
 ) -> None:
@@ -325,7 +325,6 @@ async def test_vertical_slice_upload_fetch_load_dispatch(
         release="0.1.0",
         tarball_path=downloaded,
         runtime_dir=runtime_dir,
-        venv_python=sys.executable,
     )
     assert adapter is not None
     assert adapter.pack_id == "vendor-foo"

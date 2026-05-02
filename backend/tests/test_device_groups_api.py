@@ -48,7 +48,6 @@ async def _create_device(
         "host_id": host_id,
         **overrides,
     }
-    allow_resolution = bool(payload.pop("allow_android_network_identity_resolution", False))
     device = await create_device_record(
         db_session,
         host_id=host_id,
@@ -64,7 +63,6 @@ async def _create_device(
         device_type=payload.get("device_type", "real_device"),
         connection_type=payload.get("connection_type"),
         ip_address=payload.get("ip_address"),
-        allow_android_network_identity_resolution=allow_resolution,
     )
     return {"id": str(device.id)}
 
@@ -404,7 +402,6 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
         device_type="real_device",
         connection_type="network",
         ip_address="192.168.1.20",
-        allow_android_network_identity_resolution=True,
     )
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 

@@ -42,7 +42,7 @@ DEVICECTL_DETAILS = {
 
 @pytest.mark.asyncio
 @patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value="Booted")
-async def test_health_simulator_booted(mock_state: AsyncMock) -> None:
+async def test_health_simulator_booted(_mock_state: AsyncMock) -> None:
     result = await health_check(_Ctx())
     assert result[0].ok is True
 
@@ -50,7 +50,7 @@ async def test_health_simulator_booted(mock_state: AsyncMock) -> None:
 @pytest.mark.asyncio
 @patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
 @patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
-async def test_health_real_device(mock_details: AsyncMock, mock_state: AsyncMock) -> None:
+async def test_health_real_device(_mock_details: AsyncMock, _mock_state: AsyncMock) -> None:
     result = await health_check(_Ctx())
     assert result[0].ok is True
 
@@ -59,8 +59,8 @@ async def test_health_real_device(mock_details: AsyncMock, mock_state: AsyncMock
 @patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
 @patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
 async def test_health_real_device_prefers_devicectl_details(
-    mock_details: AsyncMock,
-    mock_state: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
 ) -> None:
     result = await health_check(_Ctx())
 
@@ -90,8 +90,8 @@ async def test_health_real_device_prefers_devicectl_details(
     },
 )
 async def test_health_real_device_reports_devicectl_tunnel_failure(
-    mock_details: AsyncMock,
-    mock_state: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
 ) -> None:
     result = await health_check(_Ctx())
 
@@ -117,8 +117,8 @@ async def test_health_real_device_reports_devicectl_tunnel_failure(
     },
 )
 async def test_health_tvos_real_device_does_not_require_devicectl_tunnel(
-    mock_details: AsyncMock,
-    mock_state: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
 ) -> None:
     class _TvosCtx(_Ctx):
         platform_id = "tvos"
@@ -162,8 +162,8 @@ async def test_health_tvos_real_device_does_not_require_devicectl_tunnel(
     },
 )
 async def test_health_tvos_real_device_accepts_wireless_preinstalled_wda_shape(
-    mock_details: AsyncMock,
-    mock_state: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
 ) -> None:
     class _TvosCtx(_Ctx):
         device_identity_value = "F1A2B3C4-D5E6-7890-ABCD-EF1234567890"
@@ -235,8 +235,8 @@ async def test_health_devicectl_lookup_matches_coredevice_identifier(mock_cmd: A
 @patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
 @patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=None)
 async def test_health_real_device_reports_missing_devicectl_visibility(
-    mock_details: AsyncMock,
-    mock_state: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
 ) -> None:
     result = await health_check(_Ctx())
 

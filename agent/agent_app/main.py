@@ -2,7 +2,6 @@ import asyncio
 import os
 import platform
 import re
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -137,7 +136,6 @@ def _build_adapter_loader(
             release=pack.release,
             tarball_path=tarball_path,
             runtime_dir=runtime_dir,
-            venv_python=sys.executable,
         )
         adapter_registry.set(pack.id, pack.release, adapter)
 

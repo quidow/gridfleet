@@ -220,7 +220,7 @@ def appium_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> Generator[Any, None, None]:
+def pytest_runtest_makereport(item: pytest.Item) -> Generator[Any, None, None]:
     """Store the test outcome on the item for fixture teardown reporting."""
     outcome: Any = yield
     rep = outcome.get_result()

@@ -51,7 +51,7 @@ async def test_main_async_runs_selected_scenario(
     run_scenario = AsyncMock(return_value=SeedResult("minimal", {"hosts": 1, "devices": 0}, 1.25))
 
     monkeypatch.setattr(cli, "create_async_engine", lambda url, future=True: engine)
-    monkeypatch.setattr(cli, "async_sessionmaker", lambda engine, expire_on_commit=False: "factory")
+    monkeypatch.setattr(cli, "async_sessionmaker", lambda engine, **_kwargs: "factory")
     monkeypatch.setattr(cli, "run_scenario", run_scenario)
 
     result = await cli._main_async(

@@ -19,7 +19,7 @@ class _AvdCtx:
 @pytest.mark.asyncio
 @patch("adapter.lifecycle._adb_shell_echo", new_callable=AsyncMock, return_value=True)
 @patch("adapter.lifecycle.run_cmd", new_callable=AsyncMock, side_effect=["", "connected to 192.168.1.100:5555"])
-async def test_reconnect_success(mock_cmd: AsyncMock, mock_echo: AsyncMock) -> None:
+async def test_reconnect_success(mock_cmd: AsyncMock, _mock_echo: AsyncMock) -> None:
     result = await lifecycle_action("reconnect", {"ip_address": "192.168.1.100"}, _Ctx())
     assert result.ok is True
 

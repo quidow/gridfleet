@@ -633,6 +633,7 @@ async def test_host_discovery_returns_pack_shaped_candidates(
     await db_session.commit()
 
     async def fake_pack_devices(host_ip: str, host_port: int, **kwargs: object) -> dict[str, object]:
+        _ = host_port
         return {
             "candidates": [
                 {

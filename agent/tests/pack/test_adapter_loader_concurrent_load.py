@@ -56,14 +56,12 @@ async def test_concurrent_load_adapter_for_same_key_serializes_install(
                 release="1.0.0",
                 tarball_path=tarball,
                 runtime_dir=runtime_dir,
-                venv_python="/unused/python",
             ),
             adapter_loader.load_adapter(
                 pack_id="appium-uiautomator2",
                 release="1.0.0",
                 tarball_path=tarball,
                 runtime_dir=runtime_dir,
-                venv_python="/unused/python",
             ),
         )
 

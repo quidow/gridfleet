@@ -103,6 +103,6 @@ async def test_health_check_resolves_avd_name_without_adb_devices_listing(monkey
 
 @pytest.mark.asyncio
 @patch("adapter.health._adb_shell_echo", new_callable=AsyncMock, return_value=False)
-async def test_unhealthy(mock_echo: AsyncMock) -> None:
+async def test_unhealthy(_mock_echo: AsyncMock) -> None:
     results = await health_check(_Ctx())
     assert results[0].ok is False

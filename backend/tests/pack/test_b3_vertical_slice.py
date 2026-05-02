@@ -357,9 +357,9 @@ async def _seed_host(session: AsyncSession) -> Host:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("override_storage")
 async def test_b3_upload_creates_pack_and_feature_rows(
     client: AsyncClient,
-    override_storage: Path,
     fixture_artifacts: tuple[bytes, str],
     db_session: AsyncSession,
 ) -> None:
@@ -400,9 +400,9 @@ async def test_b3_upload_creates_pack_and_feature_rows(
     assert FEATURE_ID in feature_ids
 
 
+@pytest.mark.usefixtures("fake_agent")
 async def test_b3_feature_action_degraded_and_recovered(
     client: AsyncClient,
-    fake_agent: _FakeAgentClient,
     db_session: AsyncSession,
 ) -> None:
     """Steps 2-5: feature-action route → status row → webhook events.

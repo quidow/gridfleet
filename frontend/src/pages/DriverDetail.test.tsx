@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, vi } from 'vitest';
 
-const deleteReleaseMutate = vi.fn();
 const deletePackMutate = vi.fn();
 const setCurrentReleaseMutate = vi.fn();
 
@@ -124,11 +123,6 @@ vi.mock('../hooks/useDriverDetail', () => ({
     error: null,
     refetch: vi.fn(),
   }),
-  useDeleteDriverPackRelease: () => ({
-    mutate: deleteReleaseMutate,
-    isPending: false,
-    error: null,
-  }),
   useDeleteDriverPack: () => ({
     mutate: deletePackMutate,
     isPending: false,
@@ -183,7 +177,6 @@ vi.mock('../api/driverPackAuthoring', () => ({
 import DriverDetail from './DriverDetail';
 
 beforeEach(() => {
-  deleteReleaseMutate.mockReset();
   deletePackMutate.mockReset();
   setCurrentReleaseMutate.mockReset();
   mockPack = basePack;

@@ -20,10 +20,6 @@ export async function fetchDriverPackHosts(packId: string): Promise<DriverPackHo
   return data;
 }
 
-export async function deleteDriverPackRelease(packId: string, release: string): Promise<void> {
-  await api.delete(`/driver-packs/${encodeURIComponent(packId)}/releases/${encodeURIComponent(release)}`);
-}
-
 export async function deleteDriverPack(packId: string): Promise<void> {
   await api.delete(`/driver-packs/${encodeURIComponent(packId)}`);
 }

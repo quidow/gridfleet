@@ -3,12 +3,11 @@ import { QueryClient, QueryClientContext, useMutation, useQuery, useQueryClient 
 import {
   fetchDriverPackCatalog,
   fetchHostDriverPacks,
-  setDriverPackPolicy,
   setDriverPackState,
 } from '../api/driverPacks';
-import type { DriverPack, RuntimePolicy } from '../types/driverPacks';
+import type { DriverPack } from '../types/driverPacks';
 
-export function platformKey(packId: string, platformId: string): string {
+function platformKey(packId: string, platformId: string): string {
   return `${packId}:${platformId}`;
 }
 
@@ -52,11 +51,6 @@ export function useDriverPackCatalog() {
   }, contextClient ?? fallbackQueryClient);
 }
 
-export function usePlatformLabelMap(): Map<string, string> {
-  const { data } = useDriverPackCatalog();
-  return data ? buildPlatformLabelMap(data) : new Map<string, string>();
-}
-
 /** Returns a map of platform_id → display_name from the catalog. */
 export function usePlatformIdLabelMap(): Map<string, string> {
   const { data } = useDriverPackCatalog();
@@ -68,18 +62,6 @@ export function useSetDriverPackState() {
   return useMutation({
     mutationFn: ({ packId, state }: { packId: string; state: 'enabled' | 'disabled' }) =>
       setDriverPackState(packId, state),
-    onSuccess: (_data, variables) => {
-      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
-      void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
-    },
-  });
-}
-
-export function useSetDriverPackPolicy() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ packId, runtimePolicy }: { packId: string; runtimePolicy: RuntimePolicy }) =>
-      setDriverPackPolicy(packId, runtimePolicy),
     onSuccess: (_data, variables) => {
       void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
       void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });

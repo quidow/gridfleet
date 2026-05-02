@@ -120,11 +120,6 @@ function configsEqual(left: unknown, right: unknown): boolean {
   return leftKeys.every((key) => key in rightRecord && configsEqual(leftRecord[key], rightRecord[key]));
 }
 
-export function readOnlyValue(value: string | null | undefined): string {
-  if (!value) return '-';
-  return value;
-}
-
 export function getVerificationAction(device: DeviceRead): Pick<VerificationRequest, 'title' | 'handoffMessage'> {
   const action = getWorkflowVerificationAction(device.readiness_state);
   return { title: action.title, handoffMessage: action.handoffMessage };

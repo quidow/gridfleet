@@ -272,7 +272,7 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
             return None
 
         async def feature_action(
-            self, fid: str, aid: str, args: dict[str, object], ctx: object
+            self, _feature_id: str, _action_id: str, args: dict[str, object], ctx: object
         ) -> object:  # pragma: no cover
             return None
 

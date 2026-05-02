@@ -59,7 +59,6 @@ async def create_device_record(
     device_type: str = "real_device",
     connection_type: str | None = None,
     verified: bool = True,
-    allow_android_network_identity_resolution: bool = False,
     manufacturer: str | None = None,
     model: str | None = None,
     tags: dict[str, Any] | None = None,

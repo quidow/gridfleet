@@ -16,11 +16,11 @@ from tests.helpers import create_device
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: object,
-    seeded_driver_packs: None,
 ) -> None:
     devices = [
         await create_device(

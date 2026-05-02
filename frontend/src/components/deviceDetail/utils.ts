@@ -32,17 +32,6 @@ export function formatRecoveryState(status: DeviceHealth['lifecycle_policy']['re
   }
 }
 
-export function duration(start: string, end: string | null): string {
-  const endMs = end ? new Date(end).getTime() : Date.now();
-  const diff = endMs - new Date(start).getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ${secs % 60}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
-
 export function managedDeviceConfigKeys(fields: Array<{ id: string }>): Set<string> {
   return new Set(fields.map((field) => field.id));
 }

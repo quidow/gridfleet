@@ -13,7 +13,7 @@ export {
   parsePlatformKey,
 } from '../lib/platformSelection';
 
-export function findFirstPlatformDescriptor(
+function findFirstPlatformDescriptor(
   packs: DriverPack[] | undefined,
   platformId: string | null | undefined,
 ): PlatformDescriptor | null {

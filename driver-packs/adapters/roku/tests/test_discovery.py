@@ -42,7 +42,7 @@ def test_ssdp_search_returns_empty_when_multicast_send_is_denied(monkeypatch: py
         def __enter__(self) -> _DeniedSocket:
             return self
 
-        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        def __exit__(self, _exc_type: object, exc: object, _tb: object) -> None:
             return None
 
         def setsockopt(self, *_args: object) -> None:
