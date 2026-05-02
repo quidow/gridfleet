@@ -99,6 +99,34 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     ]
 
 
+def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: Path) -> None:
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt/gridfleet-agent"),
+        config_dir=str(tmp_path / "etc/gridfleet-agent"),
+        user="gridfleet",
+    )
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    ownership: list[tuple[Path, str]] = []
+
+    install_no_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        executable=executable,
+        download=lambda _url, dest: dest.write_text("selenium"),
+        chown=lambda path, user: ownership.append((path, user)),
+    )
+
+    assert ownership == [
+        (Path(config.agent_dir), "gridfleet"),
+        (Path(config.agent_dir) / "runtimes", "gridfleet"),
+        (Path(config.config_dir), "gridfleet"),
+        (Path(config.config_env_path), "gridfleet"),
+    ]
+
+
 def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"

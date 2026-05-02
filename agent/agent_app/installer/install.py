@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -96,6 +98,13 @@ def _service_file_path(config: InstallConfig, os_name: str) -> Path:
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
+def _chown_to_user(path: Path, user: str) -> None:
+    try:
+        shutil.chown(path, user=user)
+    except OSError as exc:
+        raise RuntimeError(f"failed to set owner of {path} to {user}: {exc}") from exc
+
+
 def install_no_start(
     config: InstallConfig,
     discovery: ToolDiscovery,
@@ -103,6 +112,7 @@ def install_no_start(
     os_name: str | None = None,
     executable: Path | None = None,
     download: Callable[[str, Path], None] = _download_selenium,
+    chown: Callable[[Path, str], None] = _chown_to_user,
     start: bool = False,
 ) -> InstallResult:
     if start:
@@ -126,6 +136,9 @@ def install_no_start(
     config_env = Path(config.config_env_path)
     config_env.write_text(render_config_env(config, discovery))
     os.chmod(config_env, 0o600)
+    if resolved_os == "Linux" and config.user != getpass.getuser():
+        for path in (agent_dir, runtime_dir, config_dir, config_env):
+            chown(path, config.user)
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
     elif resolved_os == "Darwin":
