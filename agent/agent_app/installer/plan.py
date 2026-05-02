@@ -229,6 +229,51 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
     return "\n".join(lines) + "\n"
 
 
+def _parse_config_env_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        raw_lines = path.read_text().splitlines()
+    except OSError:
+        return {}
+    for raw_line in raw_lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def _env_int(values: Mapping[str, str], key: str, default: int) -> int:
+    try:
+        return int(values.get(key, str(default)))
+    except ValueError:
+        return default
+
+
+def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfig:
+    base = defaults or InstallConfig()
+    values = _parse_config_env_values(Path(base.config_env_path))
+    return InstallConfig(
+        agent_dir=base.agent_dir,
+        config_dir=base.config_dir,
+        user=base.user,
+        port=_env_int(values, "AGENT_AGENT_PORT", base.port),
+        manager_url=values.get("AGENT_MANAGER_URL", base.manager_url),
+        manager_auth_username=values.get("AGENT_MANAGER_AUTH_USERNAME", base.manager_auth_username),
+        manager_auth_password=values.get("AGENT_MANAGER_AUTH_PASSWORD", base.manager_auth_password),
+        grid_hub_url=values.get("AGENT_GRID_HUB_URL", base.grid_hub_url),
+        grid_publish_url=values.get("AGENT_GRID_PUBLISH_URL", base.grid_publish_url),
+        grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
+        grid_node_port_start=_env_int(values, "AGENT_GRID_NODE_PORT_START", base.grid_node_port_start),
+        selenium_version=base.selenium_version,
+        enable_web_terminal=values.get("AGENT_ENABLE_WEB_TERMINAL", str(base.enable_web_terminal)).lower() == "true",
+        terminal_token=values.get("AGENT_TERMINAL_TOKEN", base.terminal_token),
+    )
+
+
 def render_systemd_unit(config: InstallConfig) -> str:
     return f"""[Unit]
 Description=GridFleet Agent

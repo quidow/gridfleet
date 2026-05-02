@@ -226,22 +226,26 @@ def test_uninstall_invokes_uninstaller(monkeypatch: pytest.MonkeyPatch, capsys: 
 
 def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, object] = {}
+    loaded_config = InstallConfig(port=5300)
 
     def fake_format_update_dry_run(config: InstallConfig, *, to_version: str | None = None) -> str:
         captured["config"] = config
         captured["to_version"] = to_version
         return "update plan"
 
+    monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
     monkeypatch.setattr(cli, "format_update_dry_run", fake_format_update_dry_run)
 
     assert cli.main(["update", "--dry-run", "--to", "0.3.0"]) == 0
 
+    assert captured["config"] == loaded_config
     assert captured["to_version"] == "0.3.0"
     assert capsys.readouterr().out == "update plan\n"
 
 
 def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, object] = {}
+    loaded_config = InstallConfig(port=5300)
 
     def fake_update_agent(config: InstallConfig, *, to_version: str | None = None) -> UpdateResult:
         captured["config"] = config
@@ -253,11 +257,12 @@ def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
             health=HealthCheckResult(ok=True, message="healthy"),
         )
 
+    monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
     monkeypatch.setattr(cli, "update_agent", fake_update_agent)
 
     assert cli.main(["update", "--to", "0.3.0"]) == 0
 
-    assert isinstance(captured["config"], InstallConfig)
+    assert captured["config"] == loaded_config
     assert captured["to_version"] == "0.3.0"
     output = capsys.readouterr().out
     assert "Drain: no active local nodes" in output

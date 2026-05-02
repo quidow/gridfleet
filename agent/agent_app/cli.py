@@ -9,7 +9,7 @@ import uvicorn
 from agent_app import __version__
 from agent_app.config import agent_settings
 from agent_app.installer.install import install_no_start, install_with_start
-from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
+from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run, load_installed_config
 from agent_app.installer.status import collect_status, format_status
 from agent_app.installer.uninstall import uninstall
 from agent_app.installer.update import format_update_dry_run, update_agent
@@ -148,7 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "update":
-        config = InstallConfig()
+        config = load_installed_config()
         if args.dry_run:
             print(format_update_dry_run(config, to_version=args.to))
             return 0

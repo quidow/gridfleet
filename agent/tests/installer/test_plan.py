@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent_app.installer.plan import (
@@ -7,6 +9,7 @@ from agent_app.installer.plan import (
     ToolDiscovery,
     build_service_path,
     format_dry_run,
+    load_installed_config,
     render_config_env,
     render_launchd_plist,
     render_systemd_unit,
@@ -50,6 +53,42 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     assert "AGENT_ENABLE_WEB_TERMINAL=true" in rendered
     assert "AGENT_TERMINAL_TOKEN=terminal-token" in rendered
     assert "PATH=/usr/bin:/opt/node/bin:" in rendered
+
+
+def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None:
+    defaults = InstallConfig(agent_dir=str(tmp_path / "agent"), config_dir=str(tmp_path / "config"))
+    config_env = Path(defaults.config_env_path)
+    config_env.parent.mkdir(parents=True)
+    config_env.write_text(
+        "\n".join(
+            [
+                "AGENT_MANAGER_URL=https://manager.example.com",
+                "AGENT_AGENT_PORT=5300",
+                "AGENT_GRID_HUB_URL=http://grid:4444",
+                "AGENT_GRID_PUBLISH_URL=tcp://grid:4442",
+                "AGENT_GRID_SUBSCRIBE_URL=tcp://grid:4443",
+                "AGENT_GRID_NODE_PORT_START=6100",
+                "AGENT_MANAGER_AUTH_USERNAME=machine",
+                "AGENT_MANAGER_AUTH_PASSWORD=secret",
+                "AGENT_ENABLE_WEB_TERMINAL=true",
+                "AGENT_TERMINAL_TOKEN=terminal-token",
+                "",
+            ]
+        )
+    )
+
+    config = load_installed_config(defaults)
+
+    assert config.manager_url == "https://manager.example.com"
+    assert config.port == 5300
+    assert config.grid_hub_url == "http://grid:4444"
+    assert config.grid_publish_url == "tcp://grid:4442"
+    assert config.grid_subscribe_url == "tcp://grid:4443"
+    assert config.grid_node_port_start == 6100
+    assert config.manager_auth_username == "machine"
+    assert config.manager_auth_password == "secret"
+    assert config.enable_web_terminal is True
+    assert config.terminal_token == "terminal-token"
 
 
 def test_render_systemd_unit_uses_console_entry_point() -> None:

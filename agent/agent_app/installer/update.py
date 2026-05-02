@@ -68,7 +68,10 @@ def format_update_dry_run(
 ) -> str:
     resolved_os = os_name or platform.system()
     pip_command = " ".join(_pip_upgrade_command(config, to_version))
-    restart_command = " ".join(_restart_command(resolved_os, uid=uid))
+    try:
+        restart_command = " ".join(_restart_command(resolved_os, uid=uid))
+    except RuntimeError as exc:
+        restart_command = str(exc).replace("Unsupported OS", "unsupported OS", 1)
 
     return f"""GridFleet Agent update dry run
 

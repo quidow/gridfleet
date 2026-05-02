@@ -33,6 +33,14 @@ def test_format_update_dry_run_names_pip_and_restart_commands(tmp_path: Path) ->
     assert "http://localhost:5200/agent/health" in output
 
 
+def test_format_update_dry_run_reports_unsupported_os_without_traceback(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+
+    output = format_update_dry_run(config, os_name="Plan9")
+
+    assert "Restart service: unsupported OS: Plan9" in output
+
+
 def test_update_agent_waits_for_drain_then_runs_pip_restart_and_health_check_on_linux(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
