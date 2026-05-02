@@ -11,14 +11,11 @@ import httpx
 from agent_app.installer.install import (
     HealthCheckResult,
     _run_command,
-    _run_pip_command,
     poll_agent_health,
-    validate_dedicated_venv,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from agent_app.installer.plan import InstallConfig
 
@@ -41,15 +38,8 @@ def _agent_package_spec(to_version: str | None) -> str:
     return f"gridfleet-agent=={to_version}" if to_version else "gridfleet-agent"
 
 
-def _pip_upgrade_command(config: InstallConfig, to_version: str | None) -> list[str]:
-    return [
-        f"{config.agent_dir}/venv/bin/python",
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        _agent_package_spec(to_version),
-    ]
+def _uv_upgrade_command(to_version: str | None) -> list[str]:
+    return ["uv", "tool", "upgrade", _agent_package_spec(to_version)]
 
 
 def _restart_command(os_name: str, *, uid: int | None = None) -> list[str]:
@@ -79,7 +69,7 @@ def format_update_dry_run(
     uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
-    pip_command = " ".join(_pip_upgrade_command(config, to_version))
+    uv_command = " ".join(_uv_upgrade_command(to_version))
     try:
         restart_command = " ".join(_restart_command(resolved_os, uid=uid))
     except RuntimeError as exc:
@@ -89,7 +79,7 @@ def format_update_dry_run(
 
 Actions:
   - Wait for active local nodes to drain: {_health_url(config)}
-  - Upgrade package: {pip_command}
+  - Upgrade package: {uv_command}
   - Restart service: {restart_command}
   - Poll local health: {_health_url(config)}
 """
@@ -144,14 +134,11 @@ def update_agent(
     *,
     to_version: str | None = None,
     os_name: str | None = None,
-    executable: Path | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
-    pip_run_command: Callable[[list[str]], None] = _run_pip_command,
     drain_check: Callable[[str], DrainResult] = wait_for_update_drain,
     health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
     uid: int | None = None,
 ) -> UpdateResult:
-    validate_dedicated_venv(config, executable=executable, command_name="update")
     resolved_os = os_name or platform.system()
     health_url = _health_url(config)
 
@@ -159,7 +146,7 @@ def update_agent(
     if not drain.ok:
         raise RuntimeError(drain.message)
 
-    pip_run_command(_pip_upgrade_command(config, to_version))
+    run_command(_uv_upgrade_command(to_version))
     run_command(_restart_command(resolved_os, uid=uid))
     health = health_check(health_url)
 
