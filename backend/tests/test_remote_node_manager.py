@@ -326,6 +326,53 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     assert spy.await_args.args[1] == loaded.id
 
 
+@pytest.mark.parametrize(
+    "availability_status",
+    [DeviceAvailabilityStatus.busy, DeviceAvailabilityStatus.reserved],
+)
+async def test_mark_node_stopped_preserves_claimed_availability(
+    db_session: AsyncSession,
+    availability_status: DeviceAvailabilityStatus,
+) -> None:
+    from app.services import node_manager_state
+
+    host = Host(
+        hostname=f"claim-host-{availability_status.value}",
+        ip="192.168.1.54",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"claim-stop-{availability_status.value}",
+        connection_target=f"claim-stop-{availability_status.value}",
+        name=f"Claim Stop {availability_status.value}",
+        os_version="14",
+        host_id=host.id,
+        availability_status=availability_status,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=NodeState.running)
+    db_session.add(node)
+    device.appium_node = node
+    await db_session.commit()
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+
+    await node_manager_state.mark_node_stopped(db_session, loaded)
+
+    assert loaded.availability_status == availability_status
+
+
 async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None:
     """Legacy hostless devices should not silently fall back to local management."""
     device = Device(

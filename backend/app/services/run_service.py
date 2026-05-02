@@ -121,6 +121,13 @@ async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
     return await is_ready_for_use_async(db, device) and await device_health_summary.device_allows_allocation(db, device)
 
 
+def _device_matches_requirement_tags(device: Device, tags: dict[str, str] | None) -> bool:
+    if not tags:
+        return True
+    device_tags = device.tags or {}
+    return all(device_tags.get(key) == value for key, value in tags.items())
+
+
 async def _find_matching_devices(
     db: AsyncSession,
     requirement: DeviceRequirement,
@@ -147,18 +154,12 @@ async def _find_matching_devices(
         candidate_stmt = candidate_stmt.where(Device.id.not_in(excluded_device_ids))
 
     candidates = list((await db.execute(candidate_stmt)).scalars().all())
+    candidates = [device for device in candidates if _device_matches_requirement_tags(device, requirement.tags)]
 
     ready_candidates: list[Device] = []
     for device in candidates:
         if await _readiness_for_match(db, device):
             ready_candidates.append(device)
-
-    if requirement.tags:
-        ready_candidates = [
-            device
-            for device in ready_candidates
-            if all((device.tags or {}).get(key) == value for key, value in requirement.tags.items())
-        ]
 
     if not ready_candidates:
         return []
@@ -172,10 +173,16 @@ async def _find_matching_devices(
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
         .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     )
     locked_rows = list((await db.execute(locked_stmt)).scalars().all())
-    locked_by_id = {device.id: device for device in locked_rows}
-    return [locked_by_id[device.id] for device in ready_candidates if device.id in locked_by_id]
+    locked_ready_by_id: dict[uuid.UUID, Device] = {}
+    for locked_device in locked_rows:
+        if not _device_matches_requirement_tags(locked_device, requirement.tags):
+            continue
+        if await _readiness_for_match(db, locked_device):
+            locked_ready_by_id[locked_device.id] = locked_device
+    return [locked_ready_by_id[device.id] for device in ready_candidates if device.id in locked_ready_by_id]
 
 
 def _build_device_info(device: Device, *, platform_label: str | None) -> ReservedDeviceInfo:

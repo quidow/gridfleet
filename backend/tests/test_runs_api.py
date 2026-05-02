@@ -14,7 +14,7 @@ from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
-from app.schemas.run import RunCreate, SessionCounts
+from app.schemas.run import DeviceRequirement, RunCreate, SessionCounts
 from app.services import device_health_summary, run_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
@@ -75,6 +75,46 @@ async def test_create_run(client: AsyncClient, db_session: AsyncSession, default
     assert data["devices"][0]["platform_id"] == "android_mobile"
     assert data["devices"][0]["platform_label"] == "Android"
     assert "grid_url" in data
+
+
+async def test_find_matching_devices_filters_tags_before_readiness(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matching = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="tag-match",
+        connection_target="tag-match",
+        name="Tag Match",
+        availability_status="available",
+        tags={"pool": "smoke"},
+    )
+    nonmatching = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="tag-miss",
+        connection_target="tag-miss",
+        name="Tag Miss",
+        availability_status="available",
+        tags={"pool": "full"},
+    )
+    readiness_checked: list[uuid.UUID] = []
+
+    async def fake_readiness(_db: AsyncSession, device: Device) -> bool:
+        readiness_checked.append(device.id)
+        return True
+
+    monkeypatch.setattr(run_service, "_readiness_for_match", fake_readiness)
+
+    devices = await run_service._find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", tags={"pool": "smoke"}),
+    )
+
+    assert [device.id for device in devices] == [matching.id]
+    assert nonmatching.id not in readiness_checked
 
 
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
