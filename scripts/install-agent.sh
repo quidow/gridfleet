@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AGENT_DIR="/opt/gridfleet-agent"
-VENV_DIR="$AGENT_DIR/venv"
+# GridFleet Agent — Bootstrap Installer
+# Installs uv, uses uv to install Python 3.12 + gridfleet-agent,
+# then delegates to 'gridfleet-agent install' for service setup.
+
 VERSION="${VERSION:-latest}"
 PACKAGE_SPEC="gridfleet-agent"
 
@@ -10,6 +12,7 @@ if [ "$VERSION" != "latest" ] && [ -n "$VERSION" ]; then
     PACKAGE_SPEC="gridfleet-agent==$VERSION"
 fi
 
+# Default to --start unless caller already passed an install mode.
 INSTALL_ARGS=(--start "$@")
 for arg in "$@"; do
     case "$arg" in
@@ -20,8 +23,26 @@ for arg in "$@"; do
     esac
 done
 
-mkdir -p "$AGENT_DIR"
-python3 -m venv "$VENV_DIR"
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install --upgrade "$PACKAGE_SPEC"
-"$VENV_DIR/bin/gridfleet-agent" install "${INSTALL_ARGS[@]}"
+echo "=== GridFleet Agent Installer ==="
+echo "Package: $PACKAGE_SPEC"
+echo ""
+
+# 1. Install uv if not present
+if ! command -v uv &>/dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# 2. Install gridfleet-agent with Python 3.12 via uv
+echo "Installing $PACKAGE_SPEC with Python 3.12..."
+uv tool install --python 3.12 "$PACKAGE_SPEC"
+
+# Ensure gridfleet-agent is on PATH
+if ! command -v gridfleet-agent &>/dev/null; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# 3. Delegate to gridfleet-agent install
+echo ""
+gridfleet-agent install "${INSTALL_ARGS[@]}"
