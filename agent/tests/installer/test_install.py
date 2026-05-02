@@ -16,7 +16,7 @@ from agent_app.installer.install import (
     install_with_start,
     poll_agent_health,
     poll_manager_registration,
-    validate_dedicated_venv,
+    resolve_bin_path,
 )
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
@@ -30,23 +30,19 @@ def _make_config(tmp_path: Path) -> InstallConfig:
     )
 
 
-def test_validate_dedicated_venv_accepts_expected_console_script(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+def test_resolve_bin_path_returns_resolved_executable(tmp_path: Path) -> None:
+    executable = tmp_path / "bin/gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
+    result = resolve_bin_path(executable=executable)
+    assert result == str(executable.resolve())
 
-    validate_dedicated_venv(config, executable=executable)
 
-
-def test_validate_dedicated_venv_rejects_wrong_console_script_path(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    executable = tmp_path / "other/bin/gridfleet-agent"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n")
-
-    with pytest.raises(RuntimeError, match="/venv/bin/gridfleet-agent"):
-        validate_dedicated_venv(config, executable=executable)
+def test_resolve_bin_path_defaults_to_sys_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    fake_argv = str(tmp_path / "bin/gridfleet-agent")
+    monkeypatch.setattr("sys.argv", [fake_argv])
+    result = resolve_bin_path()
+    assert result == str(Path(fake_argv).resolve())
 
 
 def test_default_linux_service_path_is_etc_systemd() -> None:

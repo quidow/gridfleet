@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,6 +50,11 @@ class InstallResult:
     started: bool
     health: HealthCheckResult | None = None
     registration: RegistrationCheckResult | None = None
+
+
+def resolve_bin_path(*, executable: Path | None = None) -> str:
+    actual = (executable or Path(sys.argv[0])).resolve()
+    return str(actual)
 
 
 def validate_dedicated_venv(
@@ -138,7 +143,12 @@ def install_no_start(
     if start:
         raise NotImplementedError("service start is not implemented in this installer slice")
 
-    validate_dedicated_venv(config, executable=executable)
+    if not config.bin_path:
+        resolved = resolve_bin_path(executable=executable)
+        config = InstallConfig(
+            **{f.name: getattr(config, f.name) for f in fields(config) if f.name != "bin_path"},
+            bin_path=resolved,
+        )
     resolved_os = os_name or platform.system()
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
