@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import inspect as sa_inspect
+
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.test_run import RunState
 from app.services import run_service
@@ -25,6 +27,12 @@ async def set_device_availability_status(
     reason: str | None = None,
     publish_event: bool = True,
 ) -> bool:
+    device_state = sa_inspect(device, raiseerr=False)
+    assert device_state is not None and device_state.persistent, (
+        "Device must be persistent in a session; callers that write availability "
+        "must load it through lock_device in the same transaction"
+    )
+
     old_availability_status = device.availability_status
     if old_availability_status == new_availability_status:
         return False

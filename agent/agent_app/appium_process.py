@@ -599,6 +599,8 @@ class AppiumProcessManager:
             await asyncio.sleep(delay_sec)
             if port in self._intentional_stop_ports:
                 return
+            if port not in self._launch_specs:
+                return
 
             attempt_number = (
                 len(
@@ -733,6 +735,8 @@ class AppiumProcessManager:
             if port in self._intentional_stop_ports:
                 return
             if self._should_defer_grid_node_restart(port):
+                return
+            if port not in self._launch_specs:
                 return
 
             attempt_number = (
