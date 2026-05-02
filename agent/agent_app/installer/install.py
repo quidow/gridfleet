@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import platform
 import shutil
+import subprocess
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import httpx
 
 from agent_app.installer.plan import (
     InstallConfig,
@@ -21,11 +25,18 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class HealthCheckResult:
+    ok: bool
+    message: str
+
+
+@dataclass(frozen=True)
 class InstallResult:
     config_env: Path
     service_file: Path
     selenium_jar: Path
     started: bool
+    health: HealthCheckResult | None = None
 
 
 def validate_dedicated_venv(config: InstallConfig, *, executable: Path | None = None) -> None:
@@ -102,4 +113,74 @@ def install_no_start(
         service_file=service_file,
         selenium_jar=selenium_jar,
         started=False,
+    )
+
+
+def _run_command(command: list[str]) -> None:
+    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+        raise RuntimeError(f"{' '.join(command)} failed: {detail}")
+
+
+def _start_service(os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None]) -> None:
+    if os_name == "Linux":
+        run_command(["systemctl", "daemon-reload"])
+        run_command(["systemctl", "enable", "gridfleet-agent"])
+        run_command(["systemctl", "start", "gridfleet-agent"])
+        return
+    if os_name == "Darwin":
+        run_command(["launchctl", "load", str(service_file)])
+        return
+    raise RuntimeError(f"Unsupported OS: {os_name}")
+
+
+def poll_agent_health(
+    url: str,
+    *,
+    timeout_sec: float = 30.0,
+    interval_sec: float = 1.0,
+    get: Callable[..., object] = httpx.get,
+) -> HealthCheckResult:
+    deadline = time.monotonic() + timeout_sec
+    last_error = "no response"
+    while time.monotonic() <= deadline:
+        try:
+            response = get(url, timeout=2.0)
+            status_code = getattr(response, "status_code", None)
+            if status_code == 200:
+                return HealthCheckResult(ok=True, message="agent health check passed")
+            last_error = f"unexpected status {status_code}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(interval_sec)
+    return HealthCheckResult(ok=False, message=f"agent health check timed out: {last_error}")
+
+
+def install_with_start(
+    config: InstallConfig,
+    discovery: ToolDiscovery,
+    *,
+    os_name: str | None = None,
+    executable: Path | None = None,
+    download: Callable[[str, Path], None] = _download_selenium,
+    run_command: Callable[[list[str]], None] = _run_command,
+    health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
+) -> InstallResult:
+    resolved_os = os_name or platform.system()
+    result = install_no_start(
+        config,
+        discovery,
+        os_name=resolved_os,
+        executable=executable,
+        download=download,
+    )
+    _start_service(resolved_os, result.service_file, run_command=run_command)
+    health = health_check(f"http://localhost:{config.port}/agent/health")
+    return InstallResult(
+        config_env=result.config_env,
+        service_file=result.service_file,
+        selenium_jar=result.selenium_jar,
+        started=True,
+        health=health,
     )

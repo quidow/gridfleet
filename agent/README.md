@@ -26,4 +26,10 @@ python3 -m venv /opt/gridfleet-agent/venv
 
 `--no-start` writes the config and service files but does not enable or start the host service yet.
 
-Host installation, Selenium JAR setup, and systemd/launchd integration are still handled by the repository shell scripts.
+To also enable/start the service and poll local health:
+
+```bash
+/opt/gridfleet-agent/venv/bin/gridfleet-agent install --start --manager-url http://manager.example.com:8000
+```
+
+Manager registration verification is not part of the Python installer yet; check the dashboard after local health passes.

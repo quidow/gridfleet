@@ -8,7 +8,7 @@ import uvicorn
 
 from agent_app import __version__
 from agent_app.config import agent_settings
-from agent_app.installer.install import install_no_start
+from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
 
 if TYPE_CHECKING:
@@ -62,12 +62,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "install":
-        if args.start:
-            print("ERROR: service start is not implemented in this release.", file=sys.stderr)
-            return 2
-        if not args.dry_run and not args.no_start:
+        if not args.dry_run and not args.no_start and not args.start:
             print(
-                "ERROR: pass --dry-run to preview or --no-start to write files without starting service.",
+                "ERROR: pass --dry-run to preview, --no-start to write files, or --start to start the service.",
                 file=sys.stderr,
             )
             return 2
@@ -94,11 +91,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(format_dry_run(config, discovery))
             return 0
         try:
-            install_no_start(config, discovery, start=False)
+            result = install_with_start(config, discovery) if args.start else install_no_start(config, discovery)
         except (RuntimeError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
-        print("GridFleet agent files installed. Service was not started.")
+        if result.started:
+            print("GridFleet agent service started.")
+            if result.health is not None and not result.health.ok:
+                print(f"WARNING: {result.health.message}", file=sys.stderr)
+        else:
+            print("GridFleet agent files installed. Service was not started.")
         return 0
 
     parser.print_help()

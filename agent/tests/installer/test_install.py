@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_app.installer.install import InstallResult, install_no_start, validate_dedicated_venv
+from agent_app.installer.install import (
+    HealthCheckResult,
+    InstallResult,
+    install_no_start,
+    install_with_start,
+    poll_agent_health,
+    validate_dedicated_venv,
+)
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
 
@@ -113,18 +120,106 @@ def test_install_no_start_uses_launchd_path_on_macos(tmp_path: Path) -> None:
     assert "<string>com.gridfleet.agent</string>" in result.service_file.read_text()
 
 
-def test_install_no_start_rejects_start_request_until_implemented(tmp_path: Path) -> None:
+def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    commands: list[list[str]] = []
+    health_urls: list[str] = []
+
+    def fake_run(command: list[str]) -> None:
+        commands.append(command)
+
+    def fake_health(url: str, timeout_sec: float = 30.0, interval_sec: float = 1.0) -> HealthCheckResult:
+        health_urls.append(url)
+        return HealthCheckResult(ok=True, message="healthy")
+
+    result = install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        executable=executable,
+        download=lambda _url, dest: dest.write_text("selenium"),
+        run_command=fake_run,
+        health_check=fake_health,
+    )
+
+    assert result.started is True
+    assert result.health == HealthCheckResult(ok=True, message="healthy")
+    assert commands == [
+        ["systemctl", "daemon-reload"],
+        ["systemctl", "enable", "gridfleet-agent"],
+        ["systemctl", "start", "gridfleet-agent"],
+    ]
+    assert health_urls == ["http://localhost:5200/agent/health"]
+
+
+def test_install_with_start_runs_launchctl_load_on_macos(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    commands: list[list[str]] = []
+
+    result = install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Darwin",
+        executable=executable,
+        download=lambda _url, dest: dest.write_text("selenium"),
+        run_command=lambda command: commands.append(command),
+        health_check=lambda _url: HealthCheckResult(ok=False, message="health check timed out"),
+    )
+
+    assert result.started is True
+    assert result.health == HealthCheckResult(ok=False, message="health check timed out")
+    assert commands == [["launchctl", "load", str(result.service_file)]]
+
+
+def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
-    with pytest.raises(NotImplementedError, match="service start is not implemented"):
-        install_no_start(
+    def fail_command(_command: list[str]) -> None:
+        raise RuntimeError("systemctl failed")
+
+    with pytest.raises(RuntimeError, match="systemctl failed"):
+        install_with_start(
             config,
             ToolDiscovery(),
             os_name="Linux",
             executable=executable,
             download=lambda _url, dest: dest.write_text("selenium"),
-            start=True,
+            run_command=fail_command,
+            health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
         )
+
+
+def test_poll_agent_health_returns_success_on_http_200() -> None:
+    attempts: list[str] = []
+
+    def fake_get(url: str, timeout: float = 2.0) -> object:
+        attempts.append(url)
+
+        class Response:
+            status_code = 200
+
+        return Response()
+
+    result = poll_agent_health("http://localhost:5200/agent/health", timeout_sec=0.1, interval_sec=0.01, get=fake_get)
+
+    assert result == HealthCheckResult(ok=True, message="agent health check passed")
+    assert attempts == ["http://localhost:5200/agent/health"]
+
+
+def test_poll_agent_health_times_out_after_failed_attempts() -> None:
+    def fail_get(_url: str, timeout: float = 2.0) -> object:
+        raise OSError("connection refused")
+
+    result = poll_agent_health("http://localhost:5200/agent/health", timeout_sec=0.01, interval_sec=0.01, get=fail_get)
+
+    assert result.ok is False
+    assert "connection refused" in result.message
