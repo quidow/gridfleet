@@ -20,12 +20,34 @@ class AgentVersionStatus(StrEnum):
 _VERSION_PARTS_RE = re.compile(r"\d+")
 
 
-def get_required_agent_version() -> str | None:
-    required = settings_service.get("agent.min_version")
-    if not isinstance(required, str):
+def _normalized_setting(key: str) -> str | None:
+    value = settings_service.get(key)
+    if not isinstance(value, str):
         return None
-    normalized = required.strip()
+    normalized = value.strip()
     return normalized or None
+
+
+def get_required_agent_version() -> str | None:
+    return _normalized_setting("agent.min_version")
+
+
+def get_recommended_agent_version() -> str | None:
+    return _normalized_setting("agent.recommended_version")
+
+
+def is_agent_update_available(agent_version: str | None) -> bool:
+    recommended = get_recommended_agent_version()
+    if recommended is None:
+        return False
+    recommended_parts = _parse_version_parts(recommended)
+    agent_parts = _parse_version_parts(agent_version)
+    if recommended_parts is None or agent_parts is None:
+        return False
+    max_len = max(len(recommended_parts), len(agent_parts))
+    left = agent_parts + (0,) * (max_len - len(agent_parts))
+    right = recommended_parts + (0,) * (max_len - len(recommended_parts))
+    return left < right
 
 
 def _parse_version_parts(value: str | None) -> tuple[int, ...] | None:
