@@ -53,8 +53,12 @@ class InstallResult:
 
 
 def resolve_bin_path(*, executable: Path | None = None) -> str:
-    actual = (executable or Path(sys.argv[0])).resolve()
-    return str(actual)
+    raw = executable or Path(sys.argv[0])
+    if not raw.is_absolute():
+        which_result = shutil.which(str(raw))
+        if which_result:
+            raw = Path(which_result)
+    return str(raw.resolve())
 
 
 def validate_dedicated_venv(

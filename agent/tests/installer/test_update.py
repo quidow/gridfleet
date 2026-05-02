@@ -162,6 +162,25 @@ def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path) ->
     assert commands == []
 
 
+def test_update_agent_raises_when_uv_not_installed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    config = _make_config(tmp_path)
+
+    try:
+        update_agent(
+            config,
+            to_version="0.3.0",
+            os_name="Linux",
+            run_command=lambda _command: None,
+            drain_check=lambda _url: DrainResult(ok=True, message="drained"),
+            health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        )
+    except RuntimeError as exc:
+        assert "uv is not installed" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
 def test_wait_for_update_drain_returns_success_when_running_nodes_are_empty() -> None:
     class Response:
         status_code = 200

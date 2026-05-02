@@ -45,6 +45,17 @@ def test_resolve_bin_path_defaults_to_sys_argv(monkeypatch: pytest.MonkeyPatch, 
     assert result == str(Path(fake_argv).resolve())
 
 
+def test_resolve_bin_path_uses_shutil_which_for_bare_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.argv", ["gridfleet-agent"])
+
+    def fake_which(name: str) -> str | None:
+        return "/usr/local/bin/gridfleet-agent" if name == "gridfleet-agent" else None
+
+    monkeypatch.setattr("shutil.which", fake_which)
+    result = resolve_bin_path()
+    assert result == "/usr/local/bin/gridfleet-agent"
+
+
 def test_default_linux_service_path_is_etc_systemd() -> None:
     assert _service_file_path(InstallConfig(), "Linux") == Path("/etc/systemd/system/gridfleet-agent.service")
 

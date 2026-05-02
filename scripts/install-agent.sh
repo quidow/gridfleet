@@ -28,7 +28,7 @@ echo "Package: $PACKAGE_SPEC"
 echo ""
 
 # 1. Install uv if not present
-if ! command -v uv &>/dev/null; then
+if ! command -v uv >/dev/null 2>&1; then
     echo "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"
@@ -39,7 +39,7 @@ echo "Installing $PACKAGE_SPEC with Python 3.12..."
 uv tool install --python 3.12 "$PACKAGE_SPEC"
 
 # Ensure gridfleet-agent is on PATH
-if ! command -v gridfleet-agent &>/dev/null; then
+if ! command -v gridfleet-agent >/dev/null 2>&1; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 

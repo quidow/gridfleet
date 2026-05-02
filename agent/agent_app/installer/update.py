@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -141,6 +142,9 @@ def update_agent(
 ) -> UpdateResult:
     resolved_os = os_name or platform.system()
     health_url = _health_url(config)
+
+    if not shutil.which("uv"):
+        raise RuntimeError("uv is not installed. Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh")
 
     drain = drain_check(health_url)
     if not drain.ok:
