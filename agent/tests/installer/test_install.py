@@ -124,6 +124,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: 
         (Path(config.agent_dir) / "runtimes", "gridfleet"),
         (Path(config.config_dir), "gridfleet"),
         (Path(config.config_env_path), "gridfleet"),
+        (Path(config.selenium_jar), "gridfleet"),
     ]
 
 
@@ -148,6 +149,23 @@ def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     )
 
     assert selenium_jar.read_text() == "already present"
+
+
+def test_macos_service_path_resolves_sudo_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SUDO_USER", "operator")
+    operator_home = tmp_path / "Users/operator"
+    original_expanduser = Path.expanduser
+
+    def mock_expanduser(self: Path) -> Path:
+        if str(self) == "~operator":
+            return operator_home
+        return original_expanduser(self)
+
+    monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+
+    assert _service_file_path(InstallConfig(), "Darwin") == (
+        operator_home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+    )
 
 
 def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -254,7 +272,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
     assert result.registration is None
 
 
-def test_install_with_start_runs_launchctl_load_on_macos(tmp_path: Path) -> None:
+def test_install_with_start_runs_launchctl_bootstrap_on_macos(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
@@ -269,11 +287,12 @@ def test_install_with_start_runs_launchctl_load_on_macos(tmp_path: Path) -> None
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda command: commands.append(command),
         health_check=lambda _url: HealthCheckResult(ok=False, message="health check timed out"),
+        uid=0,
     )
 
     assert result.started is True
     assert result.health == HealthCheckResult(ok=False, message="health check timed out")
-    assert commands == [["launchctl", "load", str(result.service_file)]]
+    assert commands == [["launchctl", "bootstrap", "gui/0", str(result.service_file)]]
 
 
 def test_poll_manager_registration_returns_success_when_hostname_is_listed() -> None:

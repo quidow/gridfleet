@@ -87,6 +87,25 @@ def _download_selenium(url: str, dest: Path) -> None:
     print(f"Downloaded {dest.name} sha256={sha256.hexdigest()}")
 
 
+def _operator_home_darwin() -> Path:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return Path(f"~{sudo_user}").expanduser()
+        except (KeyError, RuntimeError):
+            pass
+    return Path.home()
+
+
+def _resolve_uid(uid: int | None = None) -> int:
+    if uid is not None:
+        return uid
+    sudo_uid = os.environ.get("SUDO_UID")
+    if sudo_uid and sudo_uid.isdecimal():
+        return int(sudo_uid)
+    return os.getuid()
+
+
 def _service_file_path(config: InstallConfig, os_name: str) -> Path:
     if os_name == "Linux":
         config_dir = Path(config.config_dir)
@@ -94,7 +113,7 @@ def _service_file_path(config: InstallConfig, os_name: str) -> Path:
             return Path("/etc/systemd/system/gridfleet-agent.service")
         return config_dir.parent / "systemd/system/gridfleet-agent.service"
     if os_name == "Darwin":
-        return Path.home() / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        return _operator_home_darwin() / "Library/LaunchAgents/com.gridfleet.agent.plist"
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
@@ -137,7 +156,7 @@ def install_no_start(
     config_env.write_text(render_config_env(config, discovery))
     os.chmod(config_env, 0o600)
     if resolved_os == "Linux" and config.user != getpass.getuser():
-        for path in (agent_dir, runtime_dir, config_dir, config_env):
+        for path in (agent_dir, runtime_dir, config_dir, config_env, selenium_jar):
             chown(path, config.user)
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
@@ -155,21 +174,31 @@ def install_no_start(
     )
 
 
-def _run_command(command: list[str]) -> None:
-    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{' '.join(command)} timed out after {timeout}s") from exc
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
-def _start_service(os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None]) -> None:
+def _run_pip_command(command: list[str]) -> None:
+    _run_command(command, timeout=300)
+
+
+def _start_service(
+    os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None], uid: int | None = None
+) -> None:
     if os_name == "Linux":
         run_command(["systemctl", "daemon-reload"])
         run_command(["systemctl", "enable", "gridfleet-agent"])
         run_command(["systemctl", "start", "gridfleet-agent"])
         return
     if os_name == "Darwin":
-        run_command(["launchctl", "load", str(service_file)])
+        resolved_uid = _resolve_uid(uid)
+        run_command(["launchctl", "bootstrap", f"gui/{resolved_uid}", str(service_file)])
         return
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
@@ -254,6 +283,7 @@ def install_with_start(
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
+    uid: int | None = None,
 ) -> InstallResult:
     resolved_os = os_name or platform.system()
     result = install_no_start(
@@ -263,7 +293,7 @@ def install_with_start(
         executable=executable,
         download=download,
     )
-    _start_service(resolved_os, result.service_file, run_command=run_command)
+    _start_service(resolved_os, result.service_file, run_command=run_command, uid=uid)
     health = health_check(f"http://localhost:{config.port}/agent/health")
     registration = registration_check(config) if health.ok else None
     return InstallResult(

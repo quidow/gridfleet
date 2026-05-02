@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_app.installer.install import _service_file_path
+from agent_app.installer.install import _resolve_uid, _service_file_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,13 +30,16 @@ def _run_command(command: list[str], *, check: bool = True) -> None:
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
-def _stop_service(os_name: str, service_file: Path, *, run_command: Callable[..., None]) -> None:
+def _stop_service(
+    os_name: str, service_file: Path, *, run_command: Callable[..., None], uid: int | None = None
+) -> None:
     if os_name == "Linux":
         run_command(["systemctl", "stop", "gridfleet-agent"], check=False)
         run_command(["systemctl", "disable", "gridfleet-agent"], check=False)
         return
     if os_name == "Darwin":
-        run_command(["launchctl", "unload", str(service_file)], check=False)
+        resolved_uid = _resolve_uid(uid)
+        run_command(["launchctl", "bootout", f"gui/{resolved_uid}", str(service_file)], check=False)
         return
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
@@ -48,13 +51,14 @@ def uninstall(
     run_command: Callable[..., None] = _run_command,
     remove_agent_dir: bool = True,
     remove_config_dir: bool = True,
+    uid: int | None = None,
 ) -> UninstallResult:
     resolved_os = os_name or platform.system()
     service_file = _service_file_path(config, resolved_os)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
 
-    _stop_service(resolved_os, service_file, run_command=run_command)
+    _stop_service(resolved_os, service_file, run_command=run_command, uid=uid)
 
     removed_service_file = False
     if service_file.exists():

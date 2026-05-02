@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from agent_app.installer.install import HealthCheckResult, _run_command, poll_agent_health, validate_dedicated_venv
+from agent_app.installer.install import (
+    HealthCheckResult,
+    _run_command,
+    _run_pip_command,
+    poll_agent_health,
+    validate_dedicated_venv,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -140,6 +146,7 @@ def update_agent(
     os_name: str | None = None,
     executable: Path | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
+    pip_run_command: Callable[[list[str]], None] = _run_pip_command,
     drain_check: Callable[[str], DrainResult] = wait_for_update_drain,
     health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
     uid: int | None = None,
@@ -152,7 +159,7 @@ def update_agent(
     if not drain.ok:
         raise RuntimeError(drain.message)
 
-    run_command(_pip_upgrade_command(config, to_version))
+    pip_run_command(_pip_upgrade_command(config, to_version))
     run_command(_restart_command(resolved_os, uid=uid))
     health = health_check(health_url)
 

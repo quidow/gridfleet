@@ -53,12 +53,16 @@ def test_update_agent_waits_for_drain_then_runs_pip_restart_and_health_check_on_
     commands: list[list[str]] = []
     drains: list[str] = []
 
+    def record(command: list[str]) -> None:
+        commands.append(command)
+
     result = update_agent(
         config,
         to_version="0.3.0",
         os_name="Linux",
         executable=executable,
-        run_command=lambda command: commands.append(command),
+        run_command=record,
+        pip_run_command=record,
         drain_check=lambda url: drains.append(url) or DrainResult(ok=True, message="drained"),
         health_check=lambda url: HealthCheckResult(ok=True, message=f"healthy at {url}"),
     )
@@ -83,12 +87,16 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
     executable.write_text("#!/bin/sh\n")
     commands: list[list[str]] = []
 
+    def record(command: list[str]) -> None:
+        commands.append(command)
+
     update_agent(
         config,
         to_version=None,
         os_name="Linux",
         executable=executable,
-        run_command=lambda command: commands.append(command),
+        run_command=record,
+        pip_run_command=record,
         drain_check=lambda _url: DrainResult(ok=True, message="drained"),
         health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
     )
@@ -110,12 +118,16 @@ def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
     executable.write_text("#!/bin/sh\n")
     commands: list[list[str]] = []
 
+    def record(command: list[str]) -> None:
+        commands.append(command)
+
     update_agent(
         config,
         to_version="0.3.0",
         os_name="Darwin",
         executable=executable,
-        run_command=lambda command: commands.append(command),
+        run_command=record,
+        pip_run_command=record,
         drain_check=lambda _url: DrainResult(ok=True, message="drained"),
         health_check=lambda _url: HealthCheckResult(ok=False, message="health failed"),
         uid=0,
@@ -138,12 +150,16 @@ def test_update_agent_uses_sudo_uid_for_launchd_restart_on_macos(
     executable.write_text("#!/bin/sh\n")
     commands: list[list[str]] = []
 
+    def record(command: list[str]) -> None:
+        commands.append(command)
+
     update_agent(
         config,
         to_version=None,
         os_name="Darwin",
         executable=executable,
-        run_command=lambda command: commands.append(command),
+        run_command=record,
+        pip_run_command=record,
         drain_check=lambda _url: DrainResult(ok=True, message="drained"),
         health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
     )

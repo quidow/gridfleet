@@ -51,7 +51,7 @@ The status command reads `config.env`, checks the local service manager when ava
 Upgrade the dedicated agent venv package and restart the host service:
 
 ```bash
-/opt/gridfleet-agent/venv/bin/gridfleet-agent update --to 0.3.0
+sudo -E /opt/gridfleet-agent/venv/bin/gridfleet-agent update --to 0.3.0
 ```
 
 The update command waits for local Appium nodes reported by `/agent/health` to drain before upgrading the package or restarting the service. Use `gridfleet-agent update --dry-run --to 0.3.0` to preview the drain, pip upgrade, service restart, and local health-check steps.

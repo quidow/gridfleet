@@ -76,13 +76,17 @@ def _service_state(os_name: str, *, run_command: Callable[[list[str]], str]) -> 
     return (f"unsupported OS: {os_name}", "unknown")
 
 
+def _status_health_check(url: str) -> HealthCheckResult:
+    return poll_agent_health(url, timeout_sec=2.0, interval_sec=2.0)
+
+
 def collect_status(
     config: InstallConfig,
     *,
     os_name: str | None = None,
     env: Mapping[str, str] | None = None,
     run_command: Callable[[list[str]], str] = _run_status_command,
-    health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
+    health_check: Callable[[str], HealthCheckResult] = _status_health_check,
 ) -> AgentStatus:
     resolved_os = os_name or platform.system()
     config_env = Path(config.config_env_path)

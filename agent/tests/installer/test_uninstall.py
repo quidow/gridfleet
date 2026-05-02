@@ -50,7 +50,9 @@ def test_uninstall_linux_stops_disables_removes_files_and_reloads(tmp_path: Path
     assert not service_file.exists()
 
 
-def test_uninstall_macos_unloads_launchd_and_removes_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
@@ -66,11 +68,12 @@ def test_uninstall_macos_unloads_launchd_and_removes_files(monkeypatch: pytest.M
         config,
         os_name="Darwin",
         run_command=lambda command, *, check=True: commands.append((command, check)),
+        uid=501,
     )
 
     assert result.removed_service_file is True
     assert result.service_file == service_file
-    assert commands == [(["launchctl", "unload", str(service_file)], False)]
+    assert commands == [(["launchctl", "bootout", "gui/501", str(service_file)], False)]
     assert not agent_dir.exists()
     assert not config_dir.exists()
     assert not service_file.exists()

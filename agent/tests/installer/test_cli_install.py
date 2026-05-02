@@ -129,6 +129,29 @@ def test_install_start_warns_when_manager_registration_is_pending(
     assert "agent registration pending" in capsys.readouterr().err
 
 
+def test_install_start_returns_nonzero_when_health_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_discover_tools() -> ToolDiscovery:
+        return ToolDiscovery()
+
+    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery) -> InstallResult:
+        return InstallResult(
+            config_env=Path("config.env"),
+            service_file=Path("service"),
+            selenium_jar=Path("jar"),
+            started=True,
+            health=HealthCheckResult(ok=False, message="agent health check timed out: connection refused"),
+        )
+
+    monkeypatch.setattr(cli, "discover_tools", fake_discover_tools)
+    monkeypatch.setattr(cli, "install_with_start", fake_install_with_start)
+
+    assert cli.main(["install", "--start"]) == 1
+
+    assert "agent health check timed out" in capsys.readouterr().err
+
+
 def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, InstallConfig] = {}
 
