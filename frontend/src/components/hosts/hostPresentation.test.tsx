@@ -34,6 +34,20 @@ describe('HostAgentVersionIndicator', () => {
     expect(screen.queryByText('Update available')).not.toBeInTheDocument();
   });
 
+  it('shows update badge when minimum-version check is disabled', () => {
+    render(
+      <HostAgentVersionIndicator
+        version="0.2.0"
+        status="disabled"
+        requiredVersion={null}
+        recommendedVersion="0.3.0"
+        updateAvailable={true}
+      />,
+    );
+
+    expect(screen.getByText('Update available')).toBeInTheDocument();
+  });
+
   it('does not show update badge when updateAvailable is false', () => {
     render(
       <HostAgentVersionIndicator

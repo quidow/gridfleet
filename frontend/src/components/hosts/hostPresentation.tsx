@@ -48,7 +48,7 @@ export function HostAgentVersionIndicator({ version, status, requiredVersion, re
     );
   }
 
-  if (status === 'ok' && updateAvailable) {
+  if (updateAvailable) {
     return (
       <div className="flex items-center gap-2">
         <span className="font-mono text-text-3">{version ?? '-'}</span>
@@ -95,7 +95,7 @@ export function HostAgentVersionNotice({ version, status, requiredVersion, recom
     );
   }
 
-  if (status === 'ok' && updateAvailable) {
+  if (updateAvailable) {
     return (
       <div className="mt-4 rounded-md border border-border bg-neutral-soft p-3 text-sm text-neutral-foreground">
         <div className="flex items-center gap-2 font-medium">
