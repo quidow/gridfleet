@@ -274,6 +274,39 @@ async def _resolve_device_for_session(
     return result.scalar_one_or_none()
 
 
+def _device_matches_session_connection(device: Device, connection_target: str | None) -> bool:
+    if not connection_target:
+        return True
+    if device.connection_target == connection_target:
+        return True
+    node = device.__dict__.get("appium_node")
+    return node is not None and node.active_connection_target == connection_target
+
+
+async def _lock_resolved_device_for_session(
+    db: AsyncSession,
+    *,
+    device_id: uuid.UUID | None,
+    connection_target: str | None,
+) -> Device | None:
+    device = await _resolve_device_for_session(
+        db,
+        device_id=device_id,
+        connection_target=connection_target,
+    )
+    if device is None:
+        return None
+
+    from app.services import device_locking
+
+    locked = await device_locking.lock_device(db, device.id)
+    if device_id is not None and locked.id == device_id:
+        return locked
+    if _device_matches_session_connection(locked, connection_target):
+        return locked
+    return None
+
+
 async def register_session(
     db: AsyncSession,
     *,
@@ -294,11 +327,18 @@ async def register_session(
     if existing is not None:
         return existing
 
-    device = await _resolve_device_for_session(
-        db,
-        device_id=device_id,
-        connection_target=connection_target,
-    )
+    if status == SessionStatus.running:
+        device = await _lock_resolved_device_for_session(
+            db,
+            device_id=device_id,
+            connection_target=connection_target,
+        )
+    else:
+        device = await _resolve_device_for_session(
+            db,
+            device_id=device_id,
+            connection_target=connection_target,
+        )
 
     reservation_run_id: uuid.UUID | None = None
     if device is not None:
@@ -378,33 +418,34 @@ async def update_session_status(
     session = await get_session(db, session_id)
     if session is None:
         return None
-    device = session.device
-    if device is None:
-        device = await db.get(Device, session.device_id)
 
+    event_device = session.device
     should_publish_ended = (
         session.status == SessionStatus.running and session.ended_at is None and status != SessionStatus.running
     )
     session.status = status
     if status != SessionStatus.running and session.ended_at is None:
         session.ended_at = datetime.now(UTC)
-    if (
-        status != SessionStatus.running
-        and device is not None
-        and device.availability_status == DeviceAvailabilityStatus.busy
-    ):
-        running_stmt = select(Session).where(
-            Session.device_id == session.device_id,
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
-            Session.session_id != session_id,
-        )
-        running_result = await db.execute(running_stmt)
-        still_running = running_result.scalars().first() is not None
-        if not still_running:
-            await restore_post_busy_availability_status(db, device)
+
+    if status != SessionStatus.running and session.device_id is not None:
+        from app.services import device_locking
+
+        locked_device = await device_locking.lock_device(db, session.device_id)
+        event_device = locked_device
+        if locked_device.availability_status == DeviceAvailabilityStatus.busy:
+            running_stmt = select(Session).where(
+                Session.device_id == session.device_id,
+                Session.status == SessionStatus.running,
+                Session.ended_at.is_(None),
+                Session.session_id != session_id,
+            )
+            running_result = await db.execute(running_stmt)
+            still_running = running_result.scalars().first() is not None
+            if not still_running:
+                await restore_post_busy_availability_status(db, locked_device)
+
     await db.commit()
     await db.refresh(session)
     if should_publish_ended:
-        await publish_session_ended_event(session, device=device)
+        await publish_session_ended_event(session, device=event_device)
     return session
