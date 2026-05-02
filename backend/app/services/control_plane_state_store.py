@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import cast, delete, func, select
+from sqlalchemy.dialects.postgresql import JSON, JSONB, insert
 
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
 
@@ -42,6 +42,17 @@ async def set_value(db: AsyncSession, namespace: str, key: str, value: ControlPl
     stmt = stmt.on_conflict_do_update(
         constraint="uq_control_plane_state_entries_namespace_key",
         set_={"value": stmt.excluded.value},
+    )
+    await db.execute(stmt)
+
+
+async def patch_value(db: AsyncSession, namespace: str, key: str, patch: dict[str, ControlPlaneValue]) -> None:
+    """Atomically merge a top-level JSON object into a control-plane value."""
+    insert_stmt = insert(ControlPlaneStateEntry).values(namespace=namespace, key=key, value=dict(patch))
+    merged_value = cast(ControlPlaneStateEntry.value, JSONB).op("||")(cast(insert_stmt.excluded.value, JSONB))
+    stmt = insert_stmt.on_conflict_do_update(
+        constraint="uq_control_plane_state_entries_namespace_key",
+        set_={"value": cast(merged_value, JSON), "updated_at": func.now()},
     )
     await db.execute(stmt)
 
