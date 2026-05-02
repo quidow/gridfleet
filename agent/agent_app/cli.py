@@ -8,6 +8,7 @@ import uvicorn
 
 from agent_app import __version__
 from agent_app.config import agent_settings
+from agent_app.installer.install import install_no_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run
 
 if TYPE_CHECKING:
@@ -30,6 +31,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install = subparsers.add_parser("install", help="Install the GridFleet agent host service.")
     install.add_argument("--dry-run", action="store_true", help="Render the install plan without writing files.")
+    install.add_argument("--no-start", action="store_true", help="Write files but do not enable or start the service.")
+    install.add_argument("--start", action="store_true", help="Enable and start the service after writing files.")
     install.add_argument("--manager-url", default="http://localhost:8000")
     install.add_argument("--port", type=int, default=agent_settings.agent_port)
     install.add_argument("--user", default=None)
@@ -59,8 +62,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "install":
-        if not args.dry_run:
-            print("ERROR: only install --dry-run is implemented in this release.", file=sys.stderr)
+        if args.start:
+            print("ERROR: service start is not implemented in this release.", file=sys.stderr)
+            return 2
+        if not args.dry_run and not args.no_start:
+            print(
+                "ERROR: pass --dry-run to preview or --no-start to write files without starting service.",
+                file=sys.stderr,
+            )
             return 2
         try:
             config = InstallConfig(
@@ -80,7 +89,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
-        print(format_dry_run(config, discover_tools()))
+        discovery = discover_tools()
+        if args.dry_run:
+            print(format_dry_run(config, discovery))
+            return 0
+        try:
+            install_no_start(config, discovery, start=False)
+        except (RuntimeError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print("GridFleet agent files installed. Service was not started.")
         return 0
 
     parser.print_help()

@@ -33,7 +33,40 @@ def test_install_dry_run_validates_terminal_token(capsys: pytest.CaptureFixture[
 def test_install_without_dry_run_is_not_implemented(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["install"]) == 2
 
-    assert "only install --dry-run is implemented" in capsys.readouterr().err
+    assert "--no-start" in capsys.readouterr().err
+
+
+def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_discover_tools() -> ToolDiscovery:
+        return ToolDiscovery()
+
+    def fake_install_no_start(
+        config: InstallConfig,
+        discovery: ToolDiscovery,
+        *,
+        start: bool = False,
+    ) -> object:
+        captured["config"] = config
+        captured["discovery"] = discovery
+        captured["start"] = start
+        return object()
+
+    monkeypatch.setattr(cli, "discover_tools", fake_discover_tools)
+    monkeypatch.setattr(cli, "install_no_start", fake_install_no_start)
+
+    assert cli.main(["install", "--no-start", "--manager-url", "https://manager.example.com"]) == 0
+
+    assert captured["start"] is False
+    assert isinstance(captured["config"], InstallConfig)
+    assert captured["config"].manager_url == "https://manager.example.com"
+
+
+def test_install_start_is_rejected_until_implemented(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["install", "--start"]) == 2
+
+    assert "service start is not implemented" in capsys.readouterr().err
 
 
 def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> None:

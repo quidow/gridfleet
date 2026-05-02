@@ -1,6 +1,6 @@
 # Publish GridFleet Agent
 
-This runbook covers publishing only the `gridfleet-agent` Python package. The package currently provides the runnable `gridfleet-agent serve` entry point and a safe `gridfleet-agent install --dry-run` preview. Host installation, Selenium JAR setup, and systemd/launchd integration still use the repository shell scripts until the non-dry-run installer is implemented.
+This runbook covers publishing only the `gridfleet-agent` Python package. The package currently provides the runnable `gridfleet-agent serve` entry point, a safe `gridfleet-agent install --dry-run` preview, and `gridfleet-agent install --no-start` for writing config/service files from a dedicated `/opt/gridfleet-agent/venv`. Service enable/start remains a later installer slice.
 
 ## One-time PyPI setup
 
