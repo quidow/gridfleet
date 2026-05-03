@@ -221,10 +221,10 @@ def discover_tools(
 
 def build_service_path(discovery: ToolDiscovery) -> str:
     prefixes: list[str] = []
-    if discovery.java_bin:
-        prefixes.append(str(Path(discovery.java_bin).parent))
     if discovery.node_bin_dir:
         prefixes.append(discovery.node_bin_dir)
+    if discovery.java_bin:
+        prefixes.append(str(Path(discovery.java_bin).parent))
     if discovery.android_home:
         prefixes.append(f"{discovery.android_home}/platform-tools")
     return ":".join([*prefixes, DEFAULT_SERVICE_PATH])

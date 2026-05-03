@@ -54,7 +54,7 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     assert "AGENT_MANAGER_AUTH_PASSWORD=secret" in rendered
     assert "AGENT_ENABLE_WEB_TERMINAL=true" in rendered
     assert "AGENT_TERMINAL_TOKEN=terminal-token" in rendered
-    assert "PATH=/usr/bin:/opt/node/bin:" in rendered
+    assert "PATH=/opt/node/bin:/usr/bin:" in rendered
 
 
 def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None:
@@ -175,10 +175,10 @@ def test_dry_run_output_names_generated_artifacts_and_warnings() -> None:
     assert "ExecStart=/opt/gridfleet-agent/venv/bin/gridfleet-agent serve" in output
 
 
-def test_build_service_path_prepends_discovered_tool_dirs() -> None:
+def test_build_service_path_prioritizes_node_before_system_dirs() -> None:
     discovery = ToolDiscovery(java_bin="/usr/lib/jvm/bin/java", node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
 
-    assert build_service_path(discovery).startswith("/usr/lib/jvm/bin:/opt/node/bin:/opt/sdk/platform-tools:")
+    assert build_service_path(discovery).startswith("/opt/node/bin:/usr/lib/jvm/bin:/opt/sdk/platform-tools:")
 
 
 def test_find_node_bin_dir_prefers_home_nvm_over_system_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
