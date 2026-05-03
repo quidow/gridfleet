@@ -15,7 +15,6 @@ from app.services.node_manager_common import (
     build_grid_stereotype_caps,
     get_default_plugins,
 )
-from app.services.node_manager_state import candidate_ports
 from app.services.node_manager_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
 from app.services.pack_capability_service import (
     render_default_capabilities,
@@ -336,6 +335,7 @@ async def restart_node_via_agent(
     http_client_factory: AgentClientFactory,
 ) -> bool:
     from app.services import appium_node_locking, device_locking
+    from app.services.node_manager_state import candidate_ports
 
     try:
         host = require_management_host(device, action="restart Appium nodes")

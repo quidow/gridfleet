@@ -1052,6 +1052,12 @@ async def _mark_running_sessions_released(
     *,
     terminate_grid_sessions: bool,
 ) -> None:
+    if not terminate_grid_sessions:
+        # complete_run path: session lifecycle is owned by the testkit/operator.
+        # Leaving running rows untouched keeps _device_has_running_session honest
+        # so devices with live Grid sessions are not freed under the run.
+        return
+
     stmt = select(Session).where(
         Session.run_id == run.id,
         Session.status == SessionStatus.running,
@@ -1064,7 +1070,7 @@ async def _mark_running_sessions_released(
 
     error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
     for session in sessions:
-        if terminate_grid_sessions and not await grid_service.terminate_grid_session(session.session_id):
+        if not await grid_service.terminate_grid_session(session.session_id):
             logger.warning(
                 "Leaving session %s running because Grid deletion failed during run %s release",
                 session.session_id,
