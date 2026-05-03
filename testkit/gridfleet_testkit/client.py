@@ -52,17 +52,18 @@ def _raise_for_status(resp: Any) -> None:
         except Exception:
             payload = None
         error = payload.get("error") if isinstance(payload, dict) else None
-        details = error.get("details") if isinstance(error, dict) else None
-        if isinstance(details, dict) and details.get("error") == "no_claimable_devices":
-            retry_after = details.get("retry_after_sec")
-            if not isinstance(retry_after, int):
-                retry_after = 5
-            next_available_at = details.get("next_available_at")
-            raise NoClaimableDevicesError(
-                str(error.get("message") or "No unclaimed devices available in this run"),
-                retry_after_sec=retry_after,
-                next_available_at=next_available_at if isinstance(next_available_at, str) else None,
-            )
+        if isinstance(error, dict):
+            details = error.get("details")
+            if isinstance(details, dict) and details.get("error") == "no_claimable_devices":
+                retry_after = details.get("retry_after_sec")
+                if not isinstance(retry_after, int):
+                    retry_after = 5
+                next_available_at = details.get("next_available_at")
+                raise NoClaimableDevicesError(
+                    str(error.get("message") or "No unclaimed devices available in this run"),
+                    retry_after_sec=retry_after,
+                    next_available_at=next_available_at if isinstance(next_available_at, str) else None,
+                )
     resp.raise_for_status()
 
 

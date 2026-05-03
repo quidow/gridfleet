@@ -489,6 +489,7 @@ async def exclude_device_from_run(
     entry.excluded = True
     entry.exclusion_reason = reason
     entry.excluded_at = datetime.now(UTC)
+    entry.excluded_until = None
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -504,12 +505,15 @@ async def restore_device_to_run(
     run, entry = await get_device_reservation_with_entry(db, device_id)
     if run is None or entry is None:
         return None
+    if entry.excluded_until is not None and entry.excluded_until > now_utc():
+        return run
     if not _reserved_entry_is_excluded(entry):
         return run
 
     entry.excluded = False
     entry.exclusion_reason = None
     entry.excluded_at = None
+    entry.excluded_until = None
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -932,14 +936,7 @@ async def release_claimed_device_with_cooldown(
             expires_at=excluded_until,
         )
 
-    logger.info(
-        "device.cooldown.set device_id=%s run_id=%s ttl=%s reason=%s worker_id=%s",
-        device_id,
-        run_id,
-        ttl_seconds,
-        clean_reason,
-        worker_id,
-    )
+    logger.info("device.cooldown.set")
     return _reservation_to_claim_response(entry), next_status, excluded_until
 
 

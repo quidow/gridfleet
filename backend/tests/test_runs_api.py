@@ -1034,6 +1034,38 @@ async def test_release_with_cooldown_clears_worker_claim_and_keeps_active_reserv
     assert reservation.excluded_until is not None
 
 
+async def test_restore_device_to_run_does_not_clear_active_cooldown(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-restore", "Cooldown Restore")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+    cooldown = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "driver retry", "ttl_seconds": 60},
+    )
+    assert cooldown.status_code == 200
+
+    restored = await run_service.restore_device_to_run(db_session, uuid.UUID(device["id"]))
+    assert restored is not None
+
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run["id"]),
+                DeviceReservation.device_id == uuid.UUID(device["id"]),
+            )
+        )
+    ).scalar_one()
+    assert reservation.excluded is True
+    assert reservation.exclusion_reason == "driver retry"
+    assert reservation.excluded_until is not None
+    assert reservation.excluded_until > datetime.now(UTC)
+
+
 async def test_release_with_cooldown_records_lifecycle_event(
     client: AsyncClient,
     db_session: AsyncSession,
