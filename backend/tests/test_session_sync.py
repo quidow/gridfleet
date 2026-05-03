@@ -605,3 +605,59 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
     assert result.scalar_one_or_none() is None
     await db_session.refresh(device)
     assert device.availability_status == DeviceAvailabilityStatus.reserved
+
+
+async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import grid_service, session_sync
+    from app.services.lifecycle_policy import handle_health_failure
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-sweep",
+        connection_target="policy-stuck-stop-sweep",
+        name="Stuck Deferred Stop Sweep Device",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-stuck-stop-sweep",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    assert result == "deferred"
+
+    # Simulate the historical bug: a session ended directly in the DB without the helper.
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state["stop_pending"] is True
+
+    async def _fake_grid_status() -> dict:
+        return {"value": {"ready": True, "nodes": []}}
+
+    monkeypatch.setattr(grid_service, "get_grid_status", _fake_grid_status)
+
+    await session_sync._sync_sessions(db_session)
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
