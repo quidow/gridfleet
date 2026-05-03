@@ -17,6 +17,7 @@ from app.services.lifecycle_policy import (
     attempt_auto_recovery,
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
+    clear_pending_auto_stop_on_recovery,
     handle_health_failure,
     handle_session_finished,
 )
@@ -697,3 +698,101 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     summary = build_lifecycle_policy_summary(policy)
     assert summary["state"] == "excluded"
     assert summary["detail"] == "Excluded from Summary Run"
+
+
+async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_incident(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-clear-pending-1",
+        connection_target="lifecycle-clear-pending-1",
+        name="Clear Pending Device",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Probe failed",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    cleared = await clear_pending_auto_stop_on_recovery(
+        db_session,
+        device,
+        source="node_health",
+        reason="Node health checks recovered",
+    )
+    await db_session.commit()
+    assert cleared is True
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.lifecycle_policy_state["stop_pending_reason"] is None
+    assert reloaded.lifecycle_policy_state["stop_pending_since"] is None
+
+    incident_stmt = select(DeviceEvent).where(
+        DeviceEvent.device_id == device.id,
+        DeviceEvent.event_type == DeviceEventType.lifecycle_recovered,
+    )
+    incidents = list((await db_session.execute(incident_stmt)).scalars().all())
+    assert len(incidents) == 1
+    details = incidents[0].details or {}
+    detail = details.get("detail", "")
+    assert "ADB not responsive" in detail
+    assert "deferred stop" in detail.lower()
+
+
+async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-clear-pending-2",
+        connection_target="lifecycle-clear-pending-2",
+        name="No Pending Device",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "last_action": "node_monitor_recovered",
+        },
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    cleared = await clear_pending_auto_stop_on_recovery(
+        db_session,
+        device,
+        source="node_health",
+        reason="Node health checks recovered",
+    )
+    assert cleared is False
+
+    incident_stmt = select(DeviceEvent).where(DeviceEvent.device_id == device.id)
+    incidents = list((await db_session.execute(incident_stmt)).scalars().all())
+    assert incidents == []

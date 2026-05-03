@@ -77,6 +77,51 @@ async def record_control_action(
     write_state(device, current_state)
 
 
+async def clear_pending_auto_stop_on_recovery(
+    db: AsyncSession,
+    device: Device,
+    *,
+    source: str,
+    reason: str,
+) -> bool:
+    """Drop a previously-queued deferred auto-stop because health recovered.
+
+    Returns True when an intent was actually cleared (and a
+    ``lifecycle_recovered`` incident logged), False when nothing was pending.
+    Caller is responsible for committing.
+    """
+    device = await _reload_device(db, device)
+    current_state = policy_state(device)
+    if not current_state.get("stop_pending"):
+        return False
+
+    pending_since = current_state.get("stop_pending_since")
+    pending_reason = current_state.get("stop_pending_reason")
+    current_state["stop_pending"] = False
+    current_state["stop_pending_reason"] = None
+    current_state["stop_pending_since"] = None
+    write_state(device, current_state)
+
+    detail = (
+        f"Recovery cleared deferred stop queued at {pending_since}"
+        if pending_since
+        else "Recovery cleared deferred stop"
+    )
+    if pending_reason:
+        detail = f"{detail} (was: {pending_reason})"
+
+    await lifecycle_incident_service.record_lifecycle_incident(
+        db,
+        device,
+        DeviceEventType.lifecycle_recovered,
+        summary_state=DeviceLifecyclePolicySummaryState.idle,
+        reason=reason,
+        detail=detail,
+        source=source,
+    )
+    return True
+
+
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
     from app.services import device_locking
 
