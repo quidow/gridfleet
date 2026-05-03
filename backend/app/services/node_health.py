@@ -255,6 +255,12 @@ async def _process_node_health(
                 failure_source="node_health",
                 failure_reason="Node health checks recovered",
             )
+            await lifecycle_policy.clear_pending_auto_stop_on_recovery(
+                db,
+                device,
+                source="node_health",
+                reason="Node health checks recovered",
+            )
             await event_bus.publish(
                 "node.state_changed",
                 {
