@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.2.2](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.1...gridfleet-testkit-v0.2.2) (2026-05-03)
+
+
+### Bug Fixes
+
+* **agent:** trigger release for port conflict cleanup ([6a561ca](https://github.com/quidow/gridfleet/commit/6a561ca480c62b9abb2d5141fa98fc4e1a7696b6))
+
 ## [0.2.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.0...gridfleet-testkit-v0.2.1) (2026-05-03)
 
 
