@@ -1,4 +1,5 @@
 import asyncio
+import uuid  # noqa: TC003 — runtime use in defaultdict type annotation below
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -445,7 +446,7 @@ async def _check_nodes(db: AsyncSession) -> None:
         )
         for node in nodes
     ]
-    host_semaphores: defaultdict[Any, asyncio.Semaphore] = defaultdict(
+    host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
         lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
     )
     health_results = await asyncio.gather(
