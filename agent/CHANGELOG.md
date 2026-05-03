@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.2.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.2...gridfleet-agent-v0.2.3) (2026-05-03)
+
+
+### Bug Fixes
+
+* **agent:** prioritize node in service path ([c1d2b72](https://github.com/quidow/gridfleet/commit/c1d2b728d5d01a4a0b76f53ca48be8740de17918))
+
 ## [0.2.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.1...gridfleet-agent-v0.2.2) (2026-05-03)
 
 
