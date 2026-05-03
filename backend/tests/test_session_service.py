@@ -4,9 +4,16 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import (
+    ConnectionType,
+    Device,
+    DeviceAvailabilityStatus,
+    DeviceType,
+)
+from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.services import session_service
+from app.services.lifecycle_policy import handle_health_failure
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -103,3 +110,49 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved-sess"))
     stored = result.scalar_one()
     assert stored.ended_at is not None
+
+
+async def test_update_session_status_clears_stop_pending(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-1",
+        connection_target="policy-stuck-stop-1",
+        name="Stuck Deferred Stop Device",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-stuck-stop-1",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    assert result == "deferred"
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state["stop_pending"] is True
+
+    updated = await session_service.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
+    assert updated is not None
+    assert updated.ended_at is not None
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
+        "update_session_status must clear stop_pending after the last session ends"
+    )
