@@ -141,4 +141,27 @@ describe('DevicesTable', () => {
     });
     expect(screen.getByText('Offline')).toBeInTheDocument();
   });
+
+  it('opens state details for a device with active cooldown', () => {
+    renderTable({
+      devices: [
+        makeDevice({
+          reservation: {
+            run_id: 'run-1',
+            run_name: 'Cooldown Run',
+            run_state: 'active',
+            excluded: true,
+            exclusion_reason: 'appium launch timeout',
+            excluded_until: '2026-05-03T20:00:00Z',
+            cooldown_remaining_sec: 42,
+          },
+        }),
+      ],
+    });
+
+    const trigger = screen.getByRole('button', { name: 'State details for Pixel-7' });
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  });
 });

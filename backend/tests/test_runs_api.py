@@ -16,6 +16,7 @@ from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.schemas.run import DeviceRequirement, RunCreate, SessionCounts
 from app.services import device_health_summary, run_service
+from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -910,3 +911,223 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     body = resp.json()
     reserved_ids = {dev["device_id"] for dev in body["devices"]}
     assert str(devices[0].id) not in reserved_ids
+
+
+async def test_claim_skips_active_cooldown_and_reclaims_after_expiry(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device_a = await _create_available_device(db_session, default_host_id, "run-cooldown-a", "Cooldown A")
+    device_b = await _create_available_device(db_session, default_host_id, "run-cooldown-b", "Cooldown B")
+    run = await _create_run(
+        client,
+        requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 2}],
+    )
+    run_id = uuid.UUID(run["id"])
+    now = datetime.now(UTC)
+
+    reservation_a = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == run_id,
+                DeviceReservation.device_id == uuid.UUID(device_a["id"]),
+            )
+        )
+    ).scalar_one()
+    reservation_a.excluded = True
+    reservation_a.exclusion_reason = "appium launch timeout"
+    reservation_a.excluded_at = now
+    reservation_a.excluded_until = now + timedelta(seconds=60)
+    await db_session.commit()
+
+    first_claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert first_claim.status_code == 200
+    assert first_claim.json()["device_id"] == device_b["id"]
+
+    reservation_a.excluded_until = now - timedelta(seconds=1)
+    await db_session.commit()
+
+    second_claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw1"})
+    assert second_claim.status_code == 200
+    assert second_claim.json()["device_id"] == device_a["id"]
+
+    await db_session.refresh(reservation_a)
+    assert reservation_a.excluded is False
+    assert reservation_a.exclusion_reason is None
+    assert reservation_a.excluded_at is None
+    assert reservation_a.excluded_until is None
+
+
+async def test_claim_409_includes_retry_after_and_next_available_at_for_cooldown(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-wait", "Cooldown Wait")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+    expires_at = datetime.now(UTC) + timedelta(seconds=45)
+    settings_service._cache["general.claim_default_retry_after_sec"] = 7
+
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == run_id,
+                DeviceReservation.device_id == uuid.UUID(device["id"]),
+            )
+        )
+    ).scalar_one()
+    reservation.excluded = True
+    reservation.exclusion_reason = "transient appium failure"
+    reservation.excluded_at = datetime.now(UTC)
+    reservation.excluded_until = expires_at
+    await db_session.commit()
+
+    resp = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+
+    assert resp.status_code == 409
+    assert resp.headers["Retry-After"] == "7"
+    body = resp.json()
+    assert body["error"]["code"] == "CONFLICT"
+    assert body["error"]["details"]["error"] == "no_claimable_devices"
+    assert body["error"]["details"]["retry_after_sec"] == 7
+    assert body["error"]["details"]["next_available_at"] is not None
+
+
+async def test_release_with_cooldown_clears_worker_claim_and_keeps_active_reservation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-release", "Cooldown Release")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "appium launch timeout", "ttl_seconds": 60},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "cooldown_set"
+    assert body["reservation"]["device_id"] == device["id"]
+    assert body["reservation"]["excluded"] is True
+    assert body["reservation"]["exclusion_reason"] == "appium launch timeout"
+    assert body["reservation"]["excluded_until"] is not None
+    assert 0 <= body["reservation"]["cooldown_remaining_sec"] <= 60
+
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run["id"]),
+                DeviceReservation.device_id == uuid.UUID(device["id"]),
+            )
+        )
+    ).scalar_one()
+    assert reservation.claimed_by is None
+    assert reservation.claimed_at is None
+    assert reservation.released_at is None
+    assert reservation.excluded is True
+    assert reservation.excluded_until is not None
+
+
+async def test_restore_device_to_run_does_not_clear_active_cooldown(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-restore", "Cooldown Restore")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+    cooldown = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "driver retry", "ttl_seconds": 60},
+    )
+    assert cooldown.status_code == 200
+
+    restored = await run_service.restore_device_to_run(db_session, uuid.UUID(device["id"]))
+    assert restored is not None
+
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run["id"]),
+                DeviceReservation.device_id == uuid.UUID(device["id"]),
+            )
+        )
+    ).scalar_one()
+    assert reservation.excluded is True
+    assert reservation.exclusion_reason == "driver retry"
+    assert reservation.excluded_until is not None
+    assert reservation.excluded_until > datetime.now(UTC)
+
+
+async def test_release_with_cooldown_records_lifecycle_event(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from app.models.device_event import DeviceEvent, DeviceEventType
+
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-event", "Cooldown Event")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "driver bootstrap timeout", "ttl_seconds": 30},
+    )
+    assert resp.status_code == 200
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == uuid.UUID(device["id"]),
+                    DeviceEvent.event_type == DeviceEventType.lifecycle_run_cooldown_set,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(events) == 1
+    assert events[0].details is not None
+    assert events[0].details["reason"] == "driver bootstrap timeout"
+    assert events[0].details["ttl_seconds"] == 30
+    assert events[0].details["worker_id"] == "gw0"
+    assert events[0].details["run_id"] == run["id"]
+
+
+async def test_completed_run_does_not_globally_block_cooled_down_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-cooldown-global", "Cooldown Global")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+    cooldown = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "short quarantine", "ttl_seconds": 60},
+    )
+    assert cooldown.status_code == 200
+
+    complete = await client.post(f"/api/runs/{run['id']}/complete")
+    assert complete.status_code == 200
+
+    new_run = await client.post(
+        "/api/runs",
+        json={
+            "name": "New Run After Cooldown Owner Completes",
+            "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+        },
+    )
+    assert new_run.status_code == 201
+    assert new_run.json()["devices"][0]["device_id"] == device["id"]

@@ -30,6 +30,7 @@ class DeviceEventType(enum.StrEnum):
     lifecycle_recovered = "lifecycle_recovered"
     lifecycle_run_excluded = "lifecycle_run_excluded"
     lifecycle_run_restored = "lifecycle_run_restored"
+    lifecycle_run_cooldown_set = "lifecycle_run_cooldown_set"
 
 
 class DeviceEvent(Base):

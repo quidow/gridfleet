@@ -179,6 +179,8 @@ class DeviceReservationRead(BaseModel):
     run_state: str
     excluded: bool = False
     exclusion_reason: str | None = None
+    excluded_until: datetime | None = None
+    cooldown_remaining_sec: int | None = None
 
 
 class DeviceLifecyclePolicySummaryRead(BaseModel):

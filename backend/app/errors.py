@@ -113,10 +113,12 @@ def error_response(
     message: str,
     request_id: str | None,
     details: object | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content=build_error_body(code=code, message=message, request_id=request_id, details=details),
+        headers=headers,
     )
 
 
@@ -189,6 +191,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             message=message,
             request_id=request_id_from_request(request),
             details=details,
+            headers=exc.headers,
         )
 
     @app.exception_handler(Exception)

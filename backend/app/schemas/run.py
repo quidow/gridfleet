@@ -61,6 +61,8 @@ class ReservedDeviceInfo(BaseModel):
     excluded: bool = False
     exclusion_reason: str | None = None
     excluded_at: str | None = None
+    excluded_until: str | None = None
+    cooldown_remaining_sec: int | None = None
     claimed_by: str | None = None
     claimed_at: str | None = None
 
@@ -152,6 +154,28 @@ class ReleaseRequest(BaseModel):
 
     device_id: str
     worker_id: str = Field(min_length=1)
+
+
+class ReleaseWithCooldownRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=200)
+    ttl_seconds: int = Field(ge=1)
+
+
+class ReleaseWithCooldownResponse(BaseModel):
+    status: Literal["cooldown_set"]
+    reservation: ReservedDeviceInfo
+    device_availability_status: str
+    retry_after_sec: int
+    excluded_until: datetime
+
+
+class NoClaimableDevicesDetail(BaseModel):
+    error: Literal["no_claimable_devices"] = "no_claimable_devices"
+    retry_after_sec: int
+    next_available_at: datetime | None = None
 
 
 class HeartbeatResponse(BaseModel):

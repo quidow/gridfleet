@@ -24,6 +24,7 @@ LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_recovered: "Recovered",
     DeviceEventType.lifecycle_run_excluded: "Run Excluded",
     DeviceEventType.lifecycle_run_restored: "Run Restored",
+    DeviceEventType.lifecycle_run_cooldown_set: "Run Cooldown",
 }
 
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)
@@ -41,6 +42,9 @@ async def record_lifecycle_incident(
     run_id: uuid.UUID | str | None = None,
     run_name: str | None = None,
     backoff_until: str | datetime | None = None,
+    ttl_seconds: int | None = None,
+    worker_id: str | None = None,
+    expires_at: str | datetime | None = None,
 ) -> DeviceEvent:
     details: dict[str, Any] = {"summary_state": summary_state.value}
     if reason is not None:
@@ -57,6 +61,14 @@ async def record_lifecycle_incident(
         details["backoff_until"] = backoff_until.isoformat()
     elif backoff_until is not None:
         details["backoff_until"] = backoff_until
+    if ttl_seconds is not None:
+        details["ttl_seconds"] = ttl_seconds
+    if worker_id is not None:
+        details["worker_id"] = worker_id
+    if isinstance(expires_at, datetime):
+        details["expires_at"] = expires_at.isoformat()
+    elif expires_at is not None:
+        details["expires_at"] = expires_at
 
     return await record_event(db, device.id, event_type, details)
 

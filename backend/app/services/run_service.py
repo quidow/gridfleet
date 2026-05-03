@@ -47,8 +47,55 @@ class _UnmetRequirementError(Exception):
         super().__init__(f"{requirement.pack_id}/{requirement.platform_id}")
 
 
+class NoClaimableDevicesError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_sec: int,
+        next_available_at: datetime | None,
+    ) -> None:
+        self.retry_after_sec = retry_after_sec
+        self.next_available_at = next_available_at
+        super().__init__(message)
+
+
+def now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _cooldown_remaining_sec(excluded_until: datetime | None, *, now: datetime | None = None) -> int | None:
+    if excluded_until is None:
+        return None
+    reference = now or now_utc()
+    return max(0, int((excluded_until - reference).total_seconds()))
+
+
 def _reserved_entry_is_excluded(entry: DeviceReservation) -> bool:
-    return bool(entry.excluded)
+    if not entry.excluded:
+        return False
+    if entry.excluded_until is None:
+        return True
+    return entry.excluded_until > now_utc()
+
+
+def _reservation_claimable_expr(now: datetime) -> ColumnElement[bool]:
+    return or_(
+        DeviceReservation.excluded == false(),
+        and_(
+            DeviceReservation.excluded.is_(True),
+            DeviceReservation.excluded_until.is_not(None),
+            DeviceReservation.excluded_until <= now,
+        ),
+    )
+
+
+def _clear_expired_cooldown(entry: DeviceReservation, now: datetime) -> None:
+    if entry.excluded and entry.excluded_until is not None and entry.excluded_until <= now:
+        entry.excluded = False
+        entry.exclusion_reason = None
+        entry.excluded_at = None
+        entry.excluded_until = None
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
@@ -112,6 +159,8 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
         excluded=entry.excluded,
         exclusion_reason=entry.exclusion_reason,
         excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
+        excluded_until=entry.excluded_until.isoformat() if entry.excluded_until is not None else None,
+        cooldown_remaining_sec=_cooldown_remaining_sec(entry.excluded_until),
         claimed_by=entry.claimed_by,
         claimed_at=entry.claimed_at.isoformat() if entry.claimed_at is not None else None,
     )
@@ -440,6 +489,7 @@ async def exclude_device_from_run(
     entry.excluded = True
     entry.exclusion_reason = reason
     entry.excluded_at = datetime.now(UTC)
+    entry.excluded_until = None
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -455,12 +505,15 @@ async def restore_device_to_run(
     run, entry = await get_device_reservation_with_entry(db, device_id)
     if run is None or entry is None:
         return None
+    if entry.excluded_until is not None and entry.excluded_until > now_utc():
+        return run
     if not _reserved_entry_is_excluded(entry):
         return run
 
     entry.excluded = False
     entry.exclusion_reason = None
     entry.excluded_at = None
+    entry.excluded_until = None
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -711,7 +764,7 @@ async def claim_device(
         await db.rollback()
         raise ValueError(f"Cannot claim device from run in terminal state '{state_value}'")
 
-    now = datetime.now(UTC)
+    now = now_utc()
     ttl_seconds = int(settings_service.get("reservations.claim_ttl_seconds"))
     stale_before = now - timedelta(seconds=ttl_seconds)
 
@@ -733,7 +786,7 @@ async def claim_device(
         select(DeviceReservation)
         .where(DeviceReservation.run_id == run_id)
         .where(DeviceReservation.released_at.is_(None))
-        .where(DeviceReservation.excluded == false())
+        .where(_reservation_claimable_expr(now))
         .where(DeviceReservation.claimed_by.is_(None))
         .order_by(DeviceReservation.created_at, DeviceReservation.id)
         .with_for_update(skip_locked=True)
@@ -741,14 +794,32 @@ async def claim_device(
     )
     candidate = candidate_result.scalar_one_or_none()
     if candidate is None:
+        retry_after_sec = int(settings_service.get("general.claim_default_retry_after_sec"))
+        next_available_at = await _next_claimable_cooldown_at(db, run_id, now)
         await db.rollback()
-        raise ValueError("No unclaimed devices available in this run")
+        raise NoClaimableDevicesError(
+            "No unclaimed devices available in this run",
+            retry_after_sec=retry_after_sec,
+            next_available_at=next_available_at,
+        )
 
+    _clear_expired_cooldown(candidate, now)
     candidate.claimed_by = worker_id or _generated_worker_id()
     candidate.claimed_at = now
     info = _reservation_to_claim_response(candidate)
     await db.commit()
     return info
+
+
+async def _next_claimable_cooldown_at(db: AsyncSession, run_id: uuid.UUID, now: datetime) -> datetime | None:
+    result = await db.execute(
+        select(func.min(DeviceReservation.excluded_until))
+        .where(DeviceReservation.run_id == run_id)
+        .where(DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.excluded_until.is_not(None))
+        .where(DeviceReservation.excluded_until > now)
+    )
+    return result.scalar_one_or_none()
 
 
 async def release_claimed_device(
@@ -790,6 +861,83 @@ async def release_claimed_device(
     entry.claimed_by = None
     entry.claimed_at = None
     await db.commit()
+
+
+async def release_claimed_device_with_cooldown(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    device_id: uuid.UUID,
+    worker_id: str,
+    reason: str,
+    ttl_seconds: int,
+) -> tuple[ReservedDeviceInfo, DeviceAvailabilityStatus, datetime]:
+    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
+    if ttl_seconds > max_ttl:
+        raise ValueError(f"ttl_seconds must be <= {max_ttl}")
+    clean_reason = reason.strip()
+    if not clean_reason:
+        raise ValueError("Cooldown reason is required")
+
+    async with db.begin():
+        run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
+        run = run_result.scalar_one_or_none()
+        if run is None:
+            raise ValueError("Run not found")
+        if run.state in TERMINAL_STATES:
+            raise ValueError(f"Cannot release device from terminal run '{run.state.value}'")
+
+        try:
+            device = await device_locking.lock_device(db, device_id, load_sessions=True)
+        except NoResultFound:
+            raise ValueError("Device not found") from None
+
+        result = await db.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.run_id == run_id)
+            .where(DeviceReservation.device_id == device_id)
+            .where(DeviceReservation.released_at.is_(None))
+            .with_for_update()
+            .limit(1)
+        )
+        entry = result.scalar_one_or_none()
+        if entry is None:
+            raise ValueError(f"Device {device_id} is not actively reserved by this run")
+        if entry.claimed_by is None:
+            raise ValueError(f"Device {device_id} is not claimed")
+        if entry.claimed_by != worker_id:
+            raise ValueError(f"Device {device_id} is claimed by another worker")
+
+        excluded_at = now_utc()
+        excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
+        entry.excluded = True
+        entry.exclusion_reason = clean_reason
+        entry.excluded_at = excluded_at
+        entry.excluded_until = excluded_until
+        entry.claimed_by = None
+        entry.claimed_at = None
+
+        from app.services.device_availability import restore_post_busy_availability_status
+
+        next_status = await restore_post_busy_availability_status(db, device, reason=f"cooldown:{clean_reason}")
+
+        await lifecycle_incident_service.record_lifecycle_incident(
+            db,
+            device,
+            event_type=DeviceEventType.lifecycle_run_cooldown_set,
+            summary_state=DeviceLifecyclePolicySummaryState.excluded,
+            reason=clean_reason,
+            detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
+            source="testkit",
+            run_id=run.id,
+            run_name=run.name,
+            ttl_seconds=ttl_seconds,
+            worker_id=worker_id,
+            expires_at=excluded_until,
+        )
+
+    logger.info("device.cooldown.set")
+    return _reservation_to_claim_response(entry), next_status, excluded_until
 
 
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:

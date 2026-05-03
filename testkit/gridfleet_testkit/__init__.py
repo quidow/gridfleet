@@ -8,7 +8,14 @@ from .appium import (
     get_connection_target_from_driver,
     get_device_config_for_driver,
 )
-from .client import GRID_URL, GRIDFLEET_API_URL, GridFleetClient, HeartbeatThread, register_run_cleanup
+from .client import (
+    GRID_URL,
+    GRIDFLEET_API_URL,
+    GridFleetClient,
+    HeartbeatThread,
+    NoClaimableDevicesError,
+    register_run_cleanup,
+)
 
 try:
     __version__ = version("gridfleet-testkit")
@@ -20,6 +27,7 @@ __all__ = [
     "GRID_URL",
     "GridFleetClient",
     "HeartbeatThread",
+    "NoClaimableDevicesError",
     "__version__",
     "build_appium_options",
     "create_appium_driver",

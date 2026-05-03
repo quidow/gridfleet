@@ -48,8 +48,10 @@ function StateCell({ device, pendingAction }: { device: DeviceRead; pendingActio
   const pendingLabel = getPendingDeviceActionLabel(pendingAction);
   const reservation = device.reservation;
   const exclusionReason = reservation?.excluded ? reservation.exclusion_reason : null;
+  const cooldownRemaining = reservation?.cooldown_remaining_sec ?? null;
+  const cooldownActive = cooldownRemaining !== null && cooldownRemaining > 0;
   const missingSetup = device.missing_setup_fields;
-  const hasWarning = !!exclusionReason || missingSetup.length > 0;
+  const hasWarning = !!exclusionReason || cooldownActive || missingSetup.length > 0;
   const hasDetail = !!(pendingLabel || reservation || exclusionReason || missingSetup.length > 0);
 
   const trigger = (
@@ -90,6 +92,15 @@ function StateCell({ device, pendingAction }: { device: DeviceRead; pendingActio
           <div>
             <p className="heading-label mb-0.5">Exclusion reason</p>
             <p className="text-warning-foreground">{exclusionReason}</p>
+          </div>
+        ) : null}
+        {cooldownActive ? (
+          <div>
+            <p className="heading-label mb-0.5">Cooldown</p>
+            <p className="text-warning-foreground">
+              {cooldownRemaining}s left
+              {reservation?.excluded_until ? ` until ${new Date(reservation.excluded_until).toLocaleTimeString()}` : ''}
+            </p>
           </div>
         ) : null}
         {missingSetup.length > 0 ? (

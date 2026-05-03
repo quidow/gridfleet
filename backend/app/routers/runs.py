@@ -12,7 +12,10 @@ from app.schemas.run import (
     ClaimRequest,
     ClaimResponse,
     HeartbeatResponse,
+    NoClaimableDevicesDetail,
     ReleaseRequest,
+    ReleaseWithCooldownRequest,
+    ReleaseWithCooldownResponse,
     ReservedDeviceInfo,
     RunCreate,
     RunCreateResponse,
@@ -222,6 +225,21 @@ async def claim_device(
     payload = data or ClaimRequest()
     try:
         info = await run_service.claim_device(db, run_id, worker_id=payload.worker_id)
+    except run_service.NoClaimableDevicesError as e:
+        details = NoClaimableDevicesDetail(
+            retry_after_sec=e.retry_after_sec,
+            next_available_at=e.next_available_at,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(e),
+                "error": details.error,
+                "retry_after_sec": details.retry_after_sec,
+                "next_available_at": details.next_available_at,
+            },
+            headers={"Retry-After": str(e.retry_after_sec)},
+        ) from e
     except ValueError as e:
         msg = str(e)
         if "not found" in msg.lower():
@@ -268,3 +286,36 @@ async def release_device(
             raise HTTPException(status_code=404, detail=msg) from e
         raise HTTPException(status_code=409, detail=msg) from e
     return {"status": "released"}
+
+
+@router.post("/{run_id}/devices/{device_id}/release-with-cooldown", response_model=ReleaseWithCooldownResponse)
+async def release_device_with_cooldown(
+    run_id: uuid.UUID,
+    device_id: uuid.UUID,
+    data: ReleaseWithCooldownRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReleaseWithCooldownResponse:
+    try:
+        reservation, next_status, excluded_until = await run_service.release_claimed_device_with_cooldown(
+            db,
+            run_id,
+            device_id=device_id,
+            worker_id=data.worker_id,
+            reason=data.reason,
+            ttl_seconds=data.ttl_seconds,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from e
+        if "ttl_seconds must be <=" in msg:
+            raise HTTPException(status_code=422, detail=msg) from e
+        raise HTTPException(status_code=409, detail=msg) from e
+
+    return ReleaseWithCooldownResponse(
+        status="cooldown_set",
+        reservation=reservation,
+        device_availability_status=next_status.value,
+        retry_after_sec=data.ttl_seconds,
+        excluded_until=excluded_until,
+    )
