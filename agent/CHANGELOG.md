@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.2.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.1...gridfleet-agent-v0.2.2) (2026-05-03)
+
+
+### Bug Fixes
+
+* **agent:** prefer nvm node during install ([b0e672b](https://github.com/quidow/gridfleet/commit/b0e672b22e761593c657ae6d54b665f0112a61df))
+* **agent:** support sh installer and auth hint ([81cc1fd](https://github.com/quidow/gridfleet/commit/81cc1fd0fb2d344baa135b31665f216d7d607c75))
+
 ## [0.2.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.0...gridfleet-agent-v0.2.1) (2026-05-02)
 
 
