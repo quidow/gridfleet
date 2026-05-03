@@ -706,6 +706,62 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
     assert result is True
 
 
+async def test_check_node_health_status_path_returns_none_on_http_error(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """``appium_status`` returns ``None`` for non-2xx responses; that must be
+    treated as indeterminate, not "not running"."""
+    device = _build_tristate_device(db_host, "nh-tristate-http-status")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4735, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_status",
+        AsyncMock(return_value=None),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities=None)
+
+    assert result is None
+
+
+async def test_check_node_health_probe_path_returns_none_on_http_error(db_session: AsyncSession, db_host: Host) -> None:
+    """``appium_probe_session`` returns ``(False, "Probe session failed (HTTP <code>)")``
+    on non-2xx responses; that must be treated as indeterminate, not as a
+    confirmed unhealthy probe."""
+    device = _build_tristate_device(db_host, "nh-tristate-http-probe")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4736, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_probe_session",
+        AsyncMock(return_value=(False, "Probe session failed (HTTP 503)")),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
+
+    assert result is None
+
+
+async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """A definitive probe failure (Appium-side) keeps the False result so the
+    node_health loop still records it and eventually escalates."""
+    device = _build_tristate_device(db_host, "nh-tristate-probe-fail")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4737, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_probe_session",
+        AsyncMock(return_value=(False, "Probe session returned an invalid payload")),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
+
+    assert result is False
+
+
 async def test_indeterminate_probe_does_not_flip_snapshot_or_counter(db_session: AsyncSession, db_host: Host) -> None:
     from app.services import device_health_summary
 

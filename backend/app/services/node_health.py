@@ -104,8 +104,10 @@ async def _check_node_health(
 ) -> bool | None:
     """Probe Appium node health.
 
-    Returns True/False when the agent answered, None when reachability prevented
-    a determinate answer (transport error, HTTP error response, or open circuit).
+    Returns True/False when the agent answered with a definitive result, None
+    when reachability or the agent's HTTP layer prevented one (transport error,
+    HTTP error response, or open circuit). Indeterminate results must not flip
+    the snapshot or increment the failure counter — see ``_process_node_health``.
     """
     try:
         host = require_management_host(device, action="monitor Appium node health")
@@ -114,7 +116,7 @@ async def _check_node_health(
 
     try:
         if probe_capabilities is not None:
-            healthy, _error = await fetch_appium_probe_session(
+            healthy, error = await fetch_appium_probe_session(
                 host.ip,
                 host.agent_port,
                 node.port,
@@ -122,6 +124,15 @@ async def _check_node_health(
                 timeout_sec=NODE_HEALTH_PROBE_TIMEOUT_SEC,
                 http_client_factory=httpx.AsyncClient,
             )
+            # ``appium_probe_session`` swallows non-2xx responses into ``(False, err)``.
+            # A definitive negative carries an Appium-side reason ("Probe session
+            # returned an invalid payload" / explicit error from agent body); a
+            # transport-shaped HTTP failure surfaces as the synthetic message
+            # "Probe session failed (HTTP <code>)". Map the HTTP-shaped error to
+            # indeterminate so a single transient agent 5xx does not cascade into
+            # a recovery action.
+            if not healthy and isinstance(error, str) and error.startswith("Probe session failed (HTTP "):
+                return None
             return healthy
         payload = await fetch_appium_status(
             host.ip,
@@ -129,7 +140,12 @@ async def _check_node_health(
             node.port,
             http_client_factory=httpx.AsyncClient,
         )
-        return payload is not None and payload.get("running", False)
+        # ``appium_status`` returns ``None`` for non-2xx responses. Treat that as
+        # indeterminate rather than "not running" so transient HTTP errors do
+        # not flip ``node_running`` to False or trigger a restart.
+        if payload is None:
+            return None
+        return bool(payload.get("running", False))
     except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
         return None
 
