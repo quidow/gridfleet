@@ -705,6 +705,60 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     assert snapshot["recent_restart_events"][0]["will_retry"] is False
 
 
+async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_listener() -> None:
+    manager = AppiumProcessManager()
+    old_appium_proc = FakeProcess(pid=1111, returncode=1)
+    old_grid_proc = FakeProcess(pid=2222)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", old_appium_proc)
+    manager._node_procs[4723] = cast("asyncio.subprocess.Process", old_grid_proc)
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="device-conflict",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=True,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=1111,
+        connection_target="device-conflict",
+        platform_id="android_mobile",
+    )
+
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_delay: float) -> None:
+        await real_sleep(0)
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+        patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await manager._auto_restart_appium(4723, exit_code=1)
+
+    create_proc.assert_not_awaited()
+    assert manager.list_running() == []
+    assert 4723 not in manager._launch_specs
+    assert 4723 not in manager._info
+    assert 4723 not in manager._node_procs
+    assert old_grid_proc.sent_signals
+    snapshot = manager.process_snapshot()
+    assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
+        "crash_detected",
+        "port_conflict",
+    ]
+    assert snapshot["recent_restart_events"][-1]["process"] == "appium"
+
+
 async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
     manager = AppiumProcessManager()
     first_proc = FakeProcess(pid=1001)
