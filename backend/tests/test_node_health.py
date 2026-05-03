@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
@@ -855,3 +856,66 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
         await _check_nodes(db_session)
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
+
+
+async def test_node_health_recovery_clears_pending_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    from app.models.device_event import DeviceEvent, DeviceEventType
+    from app.services import device_health_summary
+    from app.services.node_health import set_node_health_failure_count
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="nh-recovery-clears-pending",
+        connection_target="nh-recovery-clears-pending",
+        name="Recovery Clears Pending",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "Probe failed",
+            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Probe failed",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4780, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    await db_session.commit()
+
+    # Seed prior failure state so recovery branch fires.
+    await set_node_health_failure_count(db_session, str(node.id), 1)
+    await device_health_summary.update_node_state(db_session, device, running=False, state="error")
+    await db_session.commit()
+
+    with patch("app.services.node_health._check_node_health", return_value=True):
+        await _check_nodes(db_session)
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+
+    incidents = list(
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.lifecycle_recovered
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert any("deferred stop" in (incident.details.get("detail") or "").lower() for incident in incidents)
