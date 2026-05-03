@@ -749,3 +749,53 @@ async def test_indeterminate_probe_does_not_flip_snapshot_or_counter(db_session:
     # Device still available
     await db_session.refresh(device)
     assert device.availability_status == DeviceAvailabilityStatus.available
+
+
+async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_host: Host) -> None:
+    devices: list[Device] = []
+    nodes: list[AppiumNode] = []
+    for index in range(6):
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"nh-conc-{index}",
+            connection_target=f"nh-conc-{index}",
+            name=f"Concurrency Phone {index}",
+            os_version="14",
+            host_id=db_host.id,
+            availability_status=DeviceAvailabilityStatus.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+        db_session.add(device)
+        await db_session.flush()
+        node = AppiumNode(
+            device_id=device.id,
+            port=4760 + index,
+            grid_url="http://hub:4444",
+            state=NodeState.running,
+        )
+        db_session.add(node)
+        devices.append(device)
+        nodes.append(node)
+    await db_session.commit()
+
+    in_flight = 0
+    peak = 0
+
+    async def slow_probe(*_args: object, **_kwargs: object) -> bool | None:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        try:
+            await asyncio.sleep(0.05)
+            return True
+        finally:
+            in_flight -= 1
+
+    with patch("app.services.node_health._check_node_health", side_effect=slow_probe):
+        await _check_nodes(db_session)
+
+    assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"

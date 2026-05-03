@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -41,6 +42,18 @@ logger = get_logger(__name__)
 NODE_HEALTH_NAMESPACE = "node_health.failure_count"
 LOOP_NAME = "node_health"
 NODE_HEALTH_PROBE_TIMEOUT_SEC = 15
+PROBE_CONCURRENCY_PER_HOST = 2
+
+
+async def _bounded_check_node_health(
+    semaphore: asyncio.Semaphore,
+    node: AppiumNode,
+    device: Device,
+    *,
+    probe_capabilities: dict[str, Any] | None,
+) -> bool | None:
+    async with semaphore:
+        return await _check_node_health(node, device, probe_capabilities=probe_capabilities)
 
 
 @dataclass(frozen=True)
@@ -432,9 +445,13 @@ async def _check_nodes(db: AsyncSession) -> None:
         )
         for node in nodes
     ]
+    host_semaphores: defaultdict[Any, asyncio.Semaphore] = defaultdict(
+        lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+    )
     health_results = await asyncio.gather(
         *[
-            _check_node_health(
+            _bounded_check_node_health(
+                host_semaphores[request.device.host_id],
                 request.node,
                 request.device,
                 probe_capabilities=request.probe_capabilities,
