@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from app.errors import AgentUnreachableError
+from app.errors import AgentResponseError, AgentUnreachableError
 from app.services import agent_operations
 
 if TYPE_CHECKING:
@@ -105,8 +105,11 @@ def test_response_error_detail_returns_none_for_unstructured_payload() -> None:
 def test_raise_for_status_wraps_http_errors() -> None:
     response = _response("GET", "http://example.test", status_code=503, payload={"detail": "boom"})
 
-    with pytest.raises(AgentUnreachableError, match="HTTP 503"):
+    with pytest.raises(AgentResponseError, match="HTTP 503") as exc_info:
         agent_operations._raise_for_status(response, host="10.0.0.5", action="demo")
+
+    assert exc_info.value.http_status == 503
+    assert exc_info.value.host == "10.0.0.5"
 
 
 def test_as_list_returns_empty_for_non_list_payload() -> None:

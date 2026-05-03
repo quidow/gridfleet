@@ -12,6 +12,7 @@ const EVENT_QUERY_MAP: Record<string, string[][]> = {
   'device.verification.updated': [['devices'], ['device']],
   'node.state_changed': [['devices'], ['device']],
   'node.crash': [['devices'], ['device']],
+  'device.health_changed': [['devices'], ['device'], ['device-health']],
   'host.status_changed': [['hosts'], ['host'], ['devices']],
   'host.heartbeat_lost': [['hosts'], ['host'], ['devices']],
   'host.registered': [['hosts'], ['host']],

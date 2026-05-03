@@ -1,4 +1,6 @@
 import asyncio
+import uuid  # noqa: TC003 — runtime use in defaultdict type annotation below
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -10,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.errors import AgentCallError
+from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.device_event import DeviceEventType
@@ -41,6 +43,18 @@ logger = get_logger(__name__)
 NODE_HEALTH_NAMESPACE = "node_health.failure_count"
 LOOP_NAME = "node_health"
 NODE_HEALTH_PROBE_TIMEOUT_SEC = 15
+PROBE_CONCURRENCY_PER_HOST = 2
+
+
+async def _bounded_check_node_health(
+    semaphore: asyncio.Semaphore,
+    node: AppiumNode,
+    device: Device,
+    *,
+    probe_capabilities: dict[str, Any] | None,
+) -> bool | None:
+    async with semaphore:
+        return await _check_node_health(node, device, probe_capabilities=probe_capabilities)
 
 
 @dataclass(frozen=True)
@@ -87,12 +101,22 @@ async def _check_node_health(
     device: Device,
     *,
     probe_capabilities: dict[str, Any] | None = None,
-) -> bool:
-    """Check node health via probe-session when safe, otherwise via /status."""
+) -> bool | None:
+    """Probe Appium node health.
+
+    Returns True/False when the agent answered with a definitive result, None
+    when reachability or the agent's HTTP layer prevented one (transport error,
+    HTTP error response, or open circuit). Indeterminate results must not flip
+    the snapshot or increment the failure counter — see ``_process_node_health``.
+    """
     try:
         host = require_management_host(device, action="monitor Appium node health")
+    except NodeManagerError:
+        return False
+
+    try:
         if probe_capabilities is not None:
-            healthy, _error = await fetch_appium_probe_session(
+            healthy, error = await fetch_appium_probe_session(
                 host.ip,
                 host.agent_port,
                 node.port,
@@ -100,6 +124,15 @@ async def _check_node_health(
                 timeout_sec=NODE_HEALTH_PROBE_TIMEOUT_SEC,
                 http_client_factory=httpx.AsyncClient,
             )
+            # ``appium_probe_session`` swallows non-2xx responses into ``(False, err)``.
+            # A definitive negative carries an Appium-side reason ("Probe session
+            # returned an invalid payload" / explicit error from agent body); a
+            # transport-shaped HTTP failure surfaces as the synthetic message
+            # "Probe session failed (HTTP <code>)". Map the HTTP-shaped error to
+            # indeterminate so a single transient agent 5xx does not cascade into
+            # a recovery action.
+            if not healthy and isinstance(error, str) and error.startswith("Probe session failed (HTTP "):
+                return None
             return healthy
         payload = await fetch_appium_status(
             host.ip,
@@ -107,9 +140,14 @@ async def _check_node_health(
             node.port,
             http_client_factory=httpx.AsyncClient,
         )
-        return payload is not None and payload.get("running", False)
-    except (AgentCallError, NodeManagerError):
-        return False
+        # ``appium_status`` returns ``None`` for non-2xx responses. Treat that as
+        # indeterminate rather than "not running" so transient HTTP errors do
+        # not flip ``node_running`` to False or trigger a restart.
+        if payload is None:
+            return None
+        return bool(payload.get("running", False))
+    except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
+        return None
 
 
 def _grid_registration_grace_active(node: AppiumNode) -> bool:
@@ -150,7 +188,7 @@ async def _process_node_health(
     node: AppiumNode,
     device: Device,
     *,
-    healthy: bool,
+    healthy: bool | None,
     grid_device_ids: set[str] | None,
     observed_state: NodeState | None = None,
     observed_port: int | None = None,
@@ -186,6 +224,9 @@ async def _process_node_health(
     node = locked_node
 
     if locked_node.state != NodeState.running:
+        return
+
+    if healthy is None:
         return
 
     if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
@@ -421,9 +462,13 @@ async def _check_nodes(db: AsyncSession) -> None:
         )
         for node in nodes
     ]
+    host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
+        lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+    )
     health_results = await asyncio.gather(
         *[
-            _check_node_health(
+            _bounded_check_node_health(
+                host_semaphores[request.device.host_id],
                 request.node,
                 request.device,
                 probe_capabilities=request.probe_capabilities,
