@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
@@ -33,6 +34,18 @@ def _make_device(db_host: Host, identity: str) -> Device:
     )
 
 
+async def _drain_after_commit_tasks() -> None:
+    # `_schedule_health_event_after_commit` schedules the publish via
+    # `loop.call_soon_threadsafe(loop.create_task(...))`. Two yields are enough
+    # to let both the soon-callback and the resulting Task make progress.
+    for _ in range(2):
+        await asyncio.sleep(0)
+
+
+def _health_change_calls(publish: AsyncMock) -> list[dict[str, Any]]:
+    return [c.args[1] for c in publish.await_args_list if c.args and c.args[0] == "device.health_changed"]
+
+
 async def test_publishes_event_on_healthy_to_unhealthy_transition(db_session: AsyncSession, db_host: Host) -> None:
     device = _make_device(db_host, "dhs-1")
     db_session.add(device)
@@ -48,10 +61,14 @@ async def test_publishes_event_on_healthy_to_unhealthy_transition(db_session: As
         await device_health_summary.update_node_state(
             db_session, device, running=False, state="error", mark_offline_on_failure=False
         )
+        # Event must be deferred until commit
+        assert _health_change_calls(publish) == []
+        await db_session.commit()
+        await _drain_after_commit_tasks()
 
-    health_calls = [c for c in publish.await_args_list if c.args and c.args[0] == "device.health_changed"]
+    health_calls = _health_change_calls(publish)
     assert len(health_calls) == 1
-    payload: dict[str, Any] = health_calls[0].args[1]
+    payload = health_calls[0]
     assert payload["device_id"] == str(device.id)
     assert payload["healthy"] is False
     assert isinstance(payload["summary"], str)
@@ -70,9 +87,10 @@ async def test_no_event_when_healthy_unchanged(db_session: AsyncSession, db_host
     with patch("app.services.device_health_summary.event_bus.publish", publish):
         # Same value again — only timestamp changes, healthy stays True
         await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+        await db_session.commit()
+        await _drain_after_commit_tasks()
 
-    health_calls = [c for c in publish.await_args_list if c.args and c.args[0] == "device.health_changed"]
-    assert health_calls == []
+    assert _health_change_calls(publish) == []
 
 
 async def test_publishes_event_on_unhealthy_to_healthy_transition(db_session: AsyncSession, db_host: Host) -> None:
@@ -86,7 +104,72 @@ async def test_publishes_event_on_unhealthy_to_healthy_transition(db_session: As
     publish = AsyncMock()
     with patch("app.services.device_health_summary.event_bus.publish", publish):
         await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+        await db_session.commit()
+        await _drain_after_commit_tasks()
 
-    health_calls = [c for c in publish.await_args_list if c.args and c.args[0] == "device.health_changed"]
+    health_calls = _health_change_calls(publish)
     assert len(health_calls) == 1
-    assert health_calls[0].args[1]["healthy"] is True
+    assert health_calls[0]["healthy"] is True
+
+
+async def test_event_not_published_on_rollback(db_session: AsyncSession, db_host: Host) -> None:
+    device = _make_device(db_host, "dhs-rollback")
+    db_session.add(device)
+    await db_session.commit()
+
+    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await db_session.commit()
+
+    publish = AsyncMock()
+    with patch("app.services.device_health_summary.event_bus.publish", publish):
+        await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Lost")
+        await db_session.rollback()
+        await _drain_after_commit_tasks()
+
+    assert _health_change_calls(publish) == []
+
+
+async def test_str_id_path_locks_device_and_publishes_once(db_session: AsyncSession, db_host: Host) -> None:
+    """Heartbeat path passes ``str(device.id)`` — must still acquire the row lock
+    so two concurrent writers cannot both observe the same prior snapshot and
+    each publish a transition event."""
+    device = _make_device(db_host, "dhs-strid")
+    db_session.add(device)
+    await db_session.commit()
+
+    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await db_session.commit()
+
+    publish = AsyncMock()
+    with patch("app.services.device_health_summary.event_bus.publish", publish):
+        await device_health_summary.update_node_state(
+            db_session,
+            str(device.id),  # heartbeat-style str argument
+            running=False,
+            state="restart_exhausted",
+            mark_offline_on_failure=False,
+        )
+        await db_session.commit()
+        await _drain_after_commit_tasks()
+
+    health_calls = _health_change_calls(publish)
+    assert len(health_calls) == 1
+    assert health_calls[0]["device_id"] == str(device.id)
+    assert health_calls[0]["healthy"] is False
+
+
+async def test_str_id_path_with_unknown_device_does_not_publish(db_session: AsyncSession, db_host: Host) -> None:
+    """Unknown UUID — lock_device raises NoResultFound, snapshot still written
+    by control-plane patch (not device-bound), but no event publishes because
+    healthy stays unchanged (None → None) and lock returns None."""
+    publish = AsyncMock()
+    unknown_id = "00000000-0000-0000-0000-000000000000"
+    with patch("app.services.device_health_summary.event_bus.publish", publish):
+        await device_health_summary.update_device_checks(db_session, unknown_id, healthy=True, summary="Healthy")
+        await db_session.commit()
+        await _drain_after_commit_tasks()
+
+    # Transition None → True still publishes once
+    health_calls = _health_change_calls(publish)
+    assert len(health_calls) == 1
+    assert health_calls[0]["device_id"] == unknown_id

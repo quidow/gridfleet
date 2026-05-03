@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import event as sa_event
 from sqlalchemy.exc import NoResultFound
 
 from app.models.device import Device, DeviceAvailabilityStatus
+from app.observability import get_logger
 from app.services import control_plane_state_store
 from app.services.event_bus import event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = get_logger(__name__)
 
 HEALTH_SUMMARY_NAMESPACE = "device.health_summary"
 
@@ -91,15 +97,81 @@ async def device_allows_allocation(db: AsyncSession, device: Device) -> bool:
 
 
 async def _lock_device_for_health_transition(db: AsyncSession, device: Device | str) -> Device | None:
-    if not isinstance(device, Device):
-        return None
-
     from app.services import device_locking
 
+    if isinstance(device, Device):
+        device_id: uuid.UUID = device.id
+    else:
+        try:
+            device_id = uuid.UUID(str(device))
+        except ValueError:
+            return None
+
     try:
-        return await device_locking.lock_device(db, device.id)
+        return await device_locking.lock_device(db, device_id)
     except NoResultFound:
         return None
+
+
+_PENDING_HEALTH_EVENTS_KEY = "_pending_device_health_events"
+_PENDING_HEALTH_LISTENER_KEY = "_pending_device_health_events_listener"
+
+
+async def _publish_pending_health_events(events: list[dict[str, Any]]) -> None:
+    for item in events:
+        try:
+            await event_bus.publish("device.health_changed", item)
+        except Exception:
+            logger.exception("Failed to publish device.health_changed for %s", item.get("device_id"))
+
+
+def _schedule_health_event_after_commit(
+    db: AsyncSession,
+    *,
+    device_id: str,
+    healthy: bool | None,
+    summary: str | None,
+) -> None:
+    """Defer event_bus.publish until the caller's snapshot transaction commits.
+
+    Stores the pending event payload on the AsyncSession's `info` dict and
+    registers an `after_commit` listener (once per session) on the underlying
+    sync Session. On commit, the listener spawns a publishing Task and
+    registers it on ``event_bus._handler_tasks`` so that ``event_bus.shutdown``
+    drains it together with the handler fan-out (otherwise the Task can outlive
+    the test schema or the connection pool). Rollback drops pending payloads
+    without publishing, preserving the invariant that consumers only see
+    events for transitions that actually became durable.
+    """
+    sync_session = db.sync_session
+    loop = asyncio.get_running_loop()
+    payload: dict[str, Any] = {"device_id": device_id, "healthy": healthy, "summary": summary}
+
+    pending: list[dict[str, Any]] = sync_session.info.setdefault(_PENDING_HEALTH_EVENTS_KEY, [])
+    pending.append(payload)
+
+    if sync_session.info.get(_PENDING_HEALTH_LISTENER_KEY):
+        return
+    sync_session.info[_PENDING_HEALTH_LISTENER_KEY] = True
+
+    def _flush_on_commit(_session: object) -> None:
+        events: list[dict[str, Any]] = sync_session.info.pop(_PENDING_HEALTH_EVENTS_KEY, [])
+        sync_session.info.pop(_PENDING_HEALTH_LISTENER_KEY, None)
+        if not events:
+            return
+        task = loop.create_task(_publish_pending_health_events(events))
+        event_bus._handler_tasks.add(task)
+        task.add_done_callback(event_bus._handler_tasks.discard)
+
+    def _drop_on_rollback(_session: object) -> None:
+        sync_session.info.pop(_PENDING_HEALTH_EVENTS_KEY, None)
+        sync_session.info.pop(_PENDING_HEALTH_LISTENER_KEY, None)
+
+    # `once=True` ensures SQLAlchemy auto-removes the listener after firing,
+    # avoiding "deque mutated during iteration" if we tried to call
+    # ``sa_event.remove`` from within the callback.
+    sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
+    sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
 
 
 async def _mark_offline_for_failed_health_signal(
@@ -173,13 +245,11 @@ async def patch_health_snapshot(db: AsyncSession, device: Device | str, updates:
     next_summary = build_public_health_summary(next_snapshot)
     await _restore_available_for_healthy_signal(db, device, next_snapshot, locked_device=locked)
     if previous_summary.get("healthy") != next_summary.get("healthy"):
-        await event_bus.publish(
-            "device.health_changed",
-            {
-                "device_id": device_key,
-                "healthy": next_summary.get("healthy"),
-                "summary": next_summary.get("summary"),
-            },
+        _schedule_health_event_after_commit(
+            db,
+            device_id=device_key,
+            healthy=next_summary.get("healthy"),
+            summary=next_summary.get("summary"),
         )
     return next_snapshot
 

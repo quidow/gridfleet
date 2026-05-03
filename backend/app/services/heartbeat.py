@@ -324,7 +324,13 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             degraded_state = "relay_restart_exhausted" if kind == "restart_exhausted" else "relay_restarting"
         else:
             degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
-        await device_health_summary.update_node_state(db, str(device.id), running=False, state=degraded_state)
+        await device_health_summary.update_node_state(
+            db,
+            str(device.id),
+            running=False,
+            state=degraded_state,
+            mark_offline_on_failure=False,
+        )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
 
