@@ -21,6 +21,7 @@ from app.services import (
     device_locking,
     grid_service,
     lifecycle_incident_service,
+    lifecycle_policy,
     maintenance_service,
     platform_label_service,
 )
@@ -1140,6 +1141,9 @@ async def _release_devices(
             DeviceAvailabilityStatus.reserved,
             DeviceAvailabilityStatus.busy,
         }:
+            # Belt-and-suspenders: even when we skip the availability restore,
+            # a deferred stop may have been waiting on this run's session.
+            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
             continue
         old_availability_status = device.availability_status
         if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
@@ -1160,6 +1164,7 @@ async def _release_devices(
                 "reason": f"Run '{run.name}' ended ({run.state.value})",
             },
         )
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
     if commit:
         await db.commit()
 
