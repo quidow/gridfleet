@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.2.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.0...gridfleet-testkit-v0.2.1) (2026-05-03)
+
+
+### Bug Fixes
+
+* **testkit:** bound supported python metadata ([c5fff86](https://github.com/quidow/gridfleet/commit/c5fff86cbb2a4897ac571c7c5b989f0361e49743))
+
 ## [0.2.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.1.0...gridfleet-testkit-v0.2.0) (2026-05-03)
 
 
