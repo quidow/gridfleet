@@ -66,6 +66,12 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("device_id", "device_name", "error", "will_restart"),
     ),
     PublicEventDefinition(
+        name="device.health_changed",
+        category="device_and_node_lifecycle",
+        description="Aggregate device health flipped between healthy, unhealthy, or unknown.",
+        typical_data_fields=("device_id", "healthy", "summary"),
+    ),
+    PublicEventDefinition(
         name="config.updated",
         category="device_and_node_lifecycle",
         description="Device config changed.",
