@@ -1,6 +1,6 @@
 {
   "backend": "0.1.0",
-  "agent": "0.2.3",
+  "agent": "0.2.4",
   "frontend": "0.1.0",
   "testkit": "0.2.1"
 }

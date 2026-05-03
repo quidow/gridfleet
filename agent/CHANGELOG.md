@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.2.4](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.3...gridfleet-agent-v0.2.4) (2026-05-03)
+
+
+### Bug Fixes
+
+* **agent:** trigger release for port conflict cleanup ([6a561ca](https://github.com/quidow/gridfleet/commit/6a561ca480c62b9abb2d5141fa98fc4e1a7696b6))
+
 ## [0.2.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.2...gridfleet-agent-v0.2.3) (2026-05-03)
 
 
