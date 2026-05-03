@@ -158,7 +158,7 @@ async def _process_node_health(
     node: AppiumNode,
     device: Device,
     *,
-    healthy: bool,
+    healthy: bool | None,
     grid_device_ids: set[str] | None,
     observed_state: NodeState | None = None,
     observed_port: int | None = None,
@@ -194,6 +194,9 @@ async def _process_node_health(
     node = locked_node
 
     if locked_node.state != NodeState.running:
+        return
+
+    if healthy is None:
         return
 
     if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
@@ -456,7 +459,7 @@ async def _check_nodes(db: AsyncSession) -> None:
             db,
             request.node,
             locked_device,
-            healthy=healthy,  # type: ignore[arg-type]  # Task 4: _process_node_health will accept bool | None
+            healthy=healthy,
             grid_device_ids=grid_device_ids,
             observed_state=request.observed_state,
             observed_port=request.observed_port,

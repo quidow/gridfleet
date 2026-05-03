@@ -704,3 +704,48 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
         result = await _check_node_health(node, device, probe_capabilities=None)
 
     assert result is True
+
+
+async def test_indeterminate_probe_does_not_flip_snapshot_or_counter(db_session: AsyncSession, db_host: Host) -> None:
+    from app.services import device_health_summary
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="nh-indet-1",
+        connection_target="nh-indet-1",
+        name="Indeterminate Phone",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(device_id=device.id, port=4750, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    await db_session.commit()
+
+    # Pre-set snapshot to known-healthy
+    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await db_session.commit()
+
+    with patch("app.services.node_health._check_node_health", return_value=None):
+        await _check_nodes(db_session)
+
+    # Counter unchanged (still absent)
+    assert str(node.id) not in await get_node_health_control_plane_state(db_session)
+
+    # Snapshot still healthy
+    snapshot = await device_health_summary.get_health_snapshot(db_session, str(device.id))
+    assert snapshot is not None
+    assert snapshot.get("node_running") is True
+    assert snapshot.get("node_state") == "running"
+
+    # Device still available
+    await db_session.refresh(device)
+    assert device.availability_status == DeviceAvailabilityStatus.available
