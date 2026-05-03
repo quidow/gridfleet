@@ -20,7 +20,7 @@ from .client import (
 try:
     __version__ = version("gridfleet-testkit")
 except PackageNotFoundError:
-    __version__ = "0.0.0"
+    __version__ = "0.2.0"
 
 __all__ = [
     "GRIDFLEET_API_URL",
