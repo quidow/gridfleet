@@ -14,7 +14,7 @@ from app.agent_client import (
 from app.agent_client import (
     request as agent_request,
 )
-from app.errors import AgentUnreachableError
+from app.errors import AgentResponseError, AgentUnreachableError
 
 
 def agent_base_url(host: str, agent_port: int) -> str:
@@ -51,8 +51,13 @@ def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> No
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code if exc.response is not None else "unknown"
-        raise AgentUnreachableError(host, f"Agent {action} failed on host {host} (HTTP {status_code})") from exc
+        status_code: int | None = exc.response.status_code if exc.response is not None else None
+        status_label = str(status_code) if status_code is not None else "unknown"
+        raise AgentResponseError(
+            host,
+            f"Agent {action} failed on host {host} (HTTP {status_label})",
+            http_status=status_code,
+        ) from exc
 
 
 def _as_dict(payload: object) -> dict[str, Any] | None:

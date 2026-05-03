@@ -359,3 +359,26 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
             )
 
     assert len(client.get_calls) == agent_circuit_breaker.failure_threshold
+
+
+async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
+    from app.errors import AgentResponseError
+
+    client = StrictAgentClient(
+        get_response=_response(
+            "GET",
+            "http://10.0.0.1:5100/agent/pack/devices",
+            status_code=500,
+            payload={"detail": "boom"},
+        )
+    )
+
+    with pytest.raises(AgentResponseError) as exc_info:
+        await agent_operations.get_pack_devices(
+            "10.0.0.1",
+            5100,
+            http_client_factory=_strict_client_factory(client),
+        )
+
+    assert exc_info.value.http_status == 500
+    assert exc_info.value.host == "10.0.0.1"
