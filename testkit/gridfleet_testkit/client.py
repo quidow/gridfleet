@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import threading
+import time
 from typing import Any, cast
 
 import httpx
@@ -27,6 +28,42 @@ def _default_auth() -> httpx.BasicAuth | None:
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
+
+
+class NoClaimableDevicesError(RuntimeError):
+    """Raised when the manager reports that no run devices are claimable yet."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_sec: int,
+        next_available_at: str | None = None,
+    ) -> None:
+        self.retry_after_sec = retry_after_sec
+        self.next_available_at = next_available_at
+        super().__init__(message)
+
+
+def _raise_for_status(resp: Any) -> None:
+    if resp.status_code == 409:
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        details = error.get("details") if isinstance(error, dict) else None
+        if isinstance(details, dict) and details.get("error") == "no_claimable_devices":
+            retry_after = details.get("retry_after_sec")
+            if not isinstance(retry_after, int):
+                retry_after = 5
+            next_available_at = details.get("next_available_at")
+            raise NoClaimableDevicesError(
+                str(error.get("message") or "No unclaimed devices available in this run"),
+                retry_after_sec=retry_after,
+                next_available_at=next_available_at if isinstance(next_available_at, str) else None,
+            )
+    resp.raise_for_status()
 
 
 class HeartbeatThread(threading.Thread):
@@ -173,7 +210,7 @@ class GridFleetClient:
             timeout=10,
             auth=self._auth,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         return cast("dict[str, Any]", resp.json())
 
     def release_device(self, run_id: str, *, device_id: str, worker_id: str) -> None:
@@ -184,6 +221,41 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
+
+    def release_device_with_cooldown(
+        self,
+        run_id: str,
+        *,
+        device_id: str,
+        worker_id: str,
+        reason: str,
+        ttl_seconds: int,
+    ) -> dict[str, Any]:
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/devices/{device_id}/release-with-cooldown",
+            json={"worker_id": worker_id, "reason": reason, "ttl_seconds": ttl_seconds},
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def claim_device_with_retry(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        max_wait_sec: int = 300,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + max_wait_sec
+        while True:
+            try:
+                return self.claim_device(run_id, worker_id=worker_id)
+            except NoClaimableDevicesError as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(exc.retry_after_sec, max(1, int(remaining))))
 
     def report_preparation_failure(
         self,

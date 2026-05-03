@@ -131,6 +131,10 @@ finally:
 | `GridFleetClient.get_device_config(connection_target, reveal=True)` | Look up a device by runtime connection target and fetch its config |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
+| `GridFleetClient.claim_device(run_id, worker_id=...)` | Claim one reserved device for a worker |
+| `GridFleetClient.claim_device_with_retry(run_id, worker_id=..., max_wait_sec=300)` | Claim one reserved device, sleeping according to server `Retry-After` responses |
+| `GridFleetClient.release_device(run_id, device_id=..., worker_id=...)` | Release a worker claim without cooldown |
+| `GridFleetClient.release_device_with_cooldown(run_id, device_id=..., worker_id=..., reason=..., ttl_seconds=...)` | Release a worker claim and keep that run from reclaiming the device until cooldown expires |
 | `GridFleetClient.signal_ready(run_id)` | Move a run to `ready` |
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
@@ -180,6 +184,34 @@ client.signal_active(run_id)
 ```
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
+
+### Worker Claim With Cooldown
+
+```python
+from gridfleet_testkit import GridFleetClient
+
+client = GridFleetClient("http://manager-ip:8000/api")
+
+claim = client.claim_device_with_retry(run_id, worker_id="gw0", max_wait_sec=300)
+device_id = claim["device_id"]
+
+try:
+    # Create the Appium session and run test setup for this worker.
+    ...
+except RuntimeError as exc:
+    client.release_device_with_cooldown(
+        run_id,
+        device_id=device_id,
+        worker_id="gw0",
+        reason=str(exc),
+        ttl_seconds=60,
+    )
+    raise
+else:
+    client.release_device(run_id, device_id=device_id, worker_id="gw0")
+```
+
+Cooldowns are scoped to the active run. They prevent the same run from reclaiming the device until `ttl_seconds` expires, but completing or cancelling the run releases the physical device normally.
 
 ## Examples
 

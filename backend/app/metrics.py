@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sqlalchemy import func, select
 
+from app.models.device_reservation import DeviceReservation
 from app.models.job import Job
 from app.models.session import Session, SessionStatus
 from app.services.event_bus import event_bus
@@ -69,6 +71,10 @@ ACTIVE_SESSIONS = Gauge(
     "active_sessions",
     "Number of active sessions in the backend database.",
 )
+DEVICES_IN_COOLDOWN = Gauge(
+    "gridfleet_devices_in_cooldown",
+    "Number of devices with an active run-scoped reservation cooldown.",
+)
 
 
 def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:
@@ -119,6 +125,14 @@ async def refresh_system_gauges(db: AsyncSession) -> None:
     PENDING_JOBS.set(int(pending_jobs_result.scalar_one()))
     ACTIVE_SESSIONS.set(int(active_sessions_result.scalar_one()))
     ACTIVE_SSE_CONNECTIONS.set(event_bus.subscriber_count)
+    cooldown_result = await db.execute(
+        select(func.count(func.distinct(DeviceReservation.device_id)))
+        .select_from(DeviceReservation)
+        .where(DeviceReservation.released_at.is_(None))
+        .where(DeviceReservation.excluded_until.is_not(None))
+        .where(DeviceReservation.excluded_until > datetime.now(UTC))
+    )
+    DEVICES_IN_COOLDOWN.set(int(cooldown_result.scalar_one() or 0))
 
 
 def render_metrics() -> bytes:
@@ -134,6 +148,7 @@ __all__ = [
     "BACKGROUND_LOOP_ERRORS_TOTAL",
     "BACKGROUND_LOOP_RUNS_TOTAL",
     "CONTENT_TYPE_LATEST",
+    "DEVICES_IN_COOLDOWN",
     "EVENTS_PUBLISHED_TOTAL",
     "HTTP_REQUESTS_TOTAL",
     "HTTP_REQUEST_DURATION_SECONDS",

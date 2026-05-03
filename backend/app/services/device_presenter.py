@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
@@ -25,6 +26,13 @@ if TYPE_CHECKING:
     from app.models.test_run import TestRun
 
 
+def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:
+    if reservation_entry is None or reservation_entry.excluded_until is None:
+        return None
+    remaining = int((reservation_entry.excluded_until - datetime.now(UTC)).total_seconds())
+    return max(0, remaining)
+
+
 def build_reservation_read(
     reservation: TestRun | None,
     reservation_entry: DeviceReservation | None = None,
@@ -37,6 +45,8 @@ def build_reservation_read(
         run_state=reservation.state.value,
         excluded=run_service.reservation_entry_is_excluded(reservation_entry),
         exclusion_reason=reservation_entry.exclusion_reason if reservation_entry else None,
+        excluded_until=reservation_entry.excluded_until if reservation_entry else None,
+        cooldown_remaining_sec=_cooldown_remaining_sec(reservation_entry),
     )
 
 

@@ -9,6 +9,7 @@ import pytest
 from gridfleet_testkit.client import (
     GridFleetClient,
     HeartbeatThread,
+    NoClaimableDevicesError,
     _default_auth,
     register_run_cleanup,
 )
@@ -256,6 +257,84 @@ def test_claim_device_calls_api(monkeypatch):
     }
 
 
+def test_claim_device_raises_no_claimable_devices_with_retry_metadata(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse(
+            {
+                "error": {
+                    "code": "CONFLICT",
+                    "message": "No unclaimed devices available in this run",
+                    "request_id": "req-1",
+                    "details": {
+                        "error": "no_claimable_devices",
+                        "retry_after_sec": 7,
+                        "next_available_at": "2026-05-03T20:00:00Z",
+                    },
+                }
+            },
+            status_code=409,
+        )
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(NoClaimableDevicesError) as exc_info:
+        client.claim_device("run-123", worker_id="gw0")
+
+    assert exc_info.value.retry_after_sec == 7
+    assert exc_info.value.next_available_at == "2026-05-03T20:00:00Z"
+
+
+def test_claim_device_with_retry_sleeps_and_retries(monkeypatch):
+    calls: list[str] = []
+    sleeps: list[int] = []
+    responses = iter(
+        [
+            DummyResponse(
+                {
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "No unclaimed devices available in this run",
+                        "request_id": "req-1",
+                        "details": {"error": "no_claimable_devices", "retry_after_sec": 2, "next_available_at": None},
+                    }
+                },
+                status_code=409,
+            ),
+            DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-03T20:00:00Z"}),
+        ]
+    )
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append(url)
+        return next(responses)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    client = GridFleetClient("http://manager/api")
+    result = client.claim_device_with_retry("run-123", worker_id="gw0", max_wait_sec=5)
+
+    assert result["device_id"] == "dev-1"
+    assert sleeps == [2]
+    assert calls == [
+        "http://manager/api/runs/run-123/claim",
+        "http://manager/api/runs/run-123/claim",
+    ]
+
+
 def test_release_device_calls_api(monkeypatch):
     recorded: dict[str, Any] = {}
 
@@ -279,6 +358,40 @@ def test_release_device_calls_api(monkeypatch):
     assert recorded == {
         "url": "http://manager/api/runs/run-123/release",
         "json": {"device_id": "dev-1", "worker_id": "gw0"},
+        "timeout": 10,
+    }
+
+
+def test_release_device_with_cooldown_calls_api(monkeypatch):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"status": "cooldown_set", "excluded_until": "2026-05-03T20:00:00Z"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    result = client.release_device_with_cooldown(
+        "run-123",
+        device_id="dev-1",
+        worker_id="gw0",
+        reason="appium launch timeout",
+        ttl_seconds=60,
+    )
+
+    assert result["status"] == "cooldown_set"
+    assert recorded == {
+        "url": "http://manager/api/runs/run-123/devices/dev-1/release-with-cooldown",
+        "json": {"worker_id": "gw0", "reason": "appium launch timeout", "ttl_seconds": 60},
         "timeout": 10,
     }
 

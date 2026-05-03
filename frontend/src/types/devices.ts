@@ -20,6 +20,8 @@ export interface DeviceReservation {
   run_state: string;
   excluded: boolean;
   exclusion_reason: string | null;
+  excluded_until: string | null;
+  cooldown_remaining_sec: number | null;
 }
 
 export interface DeviceRead {

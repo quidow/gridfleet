@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func, text
@@ -13,6 +13,12 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.device import Device
     from app.models.test_run import TestRun
+
+
+def _cooldown_remaining_sec(excluded_until: datetime | None) -> int | None:
+    if excluded_until is None:
+        return None
+    return max(0, int((excluded_until - datetime.now(UTC)).total_seconds()))
 
 
 class DeviceReservation(Base):
@@ -43,6 +49,7 @@ class DeviceReservation(Base):
     excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    excluded_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -64,6 +71,8 @@ class DeviceReservation(Base):
             "excluded": self.excluded,
             "exclusion_reason": self.exclusion_reason,
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,
+            "excluded_until": self.excluded_until.isoformat() if self.excluded_until is not None else None,
+            "cooldown_remaining_sec": _cooldown_remaining_sec(self.excluded_until),
             "claimed_by": self.claimed_by,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at is not None else None,
         }

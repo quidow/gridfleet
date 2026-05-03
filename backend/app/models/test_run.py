@@ -83,6 +83,11 @@ class TestRun(Base):
                     if entry.get("excluded_at")
                     else None
                 ),
+                excluded_until=(
+                    datetime.fromisoformat(entry["excluded_until"].replace("Z", "+00:00"))
+                    if entry.get("excluded_until")
+                    else None
+                ),
             )
             for entry in value
         ]

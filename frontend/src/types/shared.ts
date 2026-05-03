@@ -43,7 +43,8 @@ export type DeviceEventType =
   | 'lifecycle_recovery_backoff'
   | 'lifecycle_recovered'
   | 'lifecycle_run_excluded'
-  | 'lifecycle_run_restored';
+  | 'lifecycle_run_restored'
+  | 'lifecycle_run_cooldown_set';
 
 export interface PaginatedResponse<T> {
   items: T[];

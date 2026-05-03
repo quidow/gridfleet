@@ -38,6 +38,8 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Agent heartbeat loop cadence |
 | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `general.max_missed_heartbeats` | `3` | Missed heartbeats before host becomes offline |
 | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `general.session_queue_timeout_sec` | `300` | Grid session queue timeout |
+| `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
+| `GRIDFLEET_CLAIM_DEFAULT_RETRY_AFTER_SEC` | `general.claim_default_retry_after_sec` | `5` | Retry-After value returned when no run devices are claimable |
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
 | `GRIDFLEET_GRID_HUB_URL` | `grid.hub_url` | `http://selenium-hub:4444` | Grid hub URL used by the backend |
 | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |

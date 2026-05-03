@@ -145,6 +145,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `POST` | `/api/runs/{run_id}/active` | Transition run to `active` | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/claim` | Atomically claim one unclaimed active reservation for a CI worker | optional `ClaimRequest` | `ClaimResponse` |
 | `POST` | `/api/runs/{run_id}/release` | Release one claimed reservation back to the run's unclaimed pool | `ReleaseRequest` | `{ status: "released" }` |
+| `POST` | `/api/runs/{run_id}/devices/{device_id}/release-with-cooldown` | Release one worker claim and cool that reservation down inside the same run | `ReleaseWithCooldownRequest` | `ReleaseWithCooldownResponse` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/heartbeat` | Refresh heartbeat and read current state | path `run_id` | `HeartbeatResponse` |
 | `POST` | `/api/runs/{run_id}/complete` | Complete a run and release devices | path `run_id` | `RunRead` |
@@ -177,6 +178,24 @@ If `worker_id` is omitted, the manager generates an anonymous claim owner. The r
 
 The claim operation is database-atomic for concurrent workers. It returns `404` when the run is missing and `409` when the run is terminal or no unclaimed, non-excluded reserved device is available. Stale claims are expired lazily according to `reservations.claim_ttl_seconds`.
 
+When no device is claimable, `409` responses include a `Retry-After` header and structured details for testkit clients:
+
+```json
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "No unclaimed devices available in this run",
+    "details": {
+      "error": "no_claimable_devices",
+      "retry_after_sec": 5,
+      "next_available_at": "2026-05-03T20:00:00Z"
+    }
+  }
+}
+```
+
+`next_available_at` is `null` when the server cannot compute a cooldown expiry.
+
 `POST /api/runs/{run_id}/release` accepts:
 
 ```json
@@ -187,6 +206,18 @@ The claim operation is database-atomic for concurrent workers. It returns `404` 
 ```
 
 Release is owner-checked: `worker_id` must match the active claim owner. Wrong owner, unclaimed device, and device-not-in-run conditions return `409`; malformed `device_id` returns `422`.
+
+`POST /api/runs/{run_id}/devices/{device_id}/release-with-cooldown` accepts:
+
+```json
+{
+  "worker_id": "gw0",
+  "reason": "appium launch timeout",
+  "ttl_seconds": 60
+}
+```
+
+Release with cooldown is also owner-checked. It clears `claimed_by` and `claimed_at`, sets `excluded_until`, and leaves `released_at` null so the same run can reclaim the reservation after the TTL expires. Cooldowns are run-scoped in v1: completing or cancelling the run releases the physical device normally and does not quarantine it across future runs.
 
 ## Sessions
 

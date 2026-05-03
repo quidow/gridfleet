@@ -96,6 +96,20 @@ def test_session_viability_defaults_to_hourly_probe() -> None:
     assert interval.max_value == 604800
 
 
+def test_device_cooldown_settings_are_registered() -> None:
+    max_cooldown = settings_registry.SETTINGS_REGISTRY["general.device_cooldown_max_sec"]
+    retry_after = settings_registry.SETTINGS_REGISTRY["general.claim_default_retry_after_sec"]
+
+    assert max_cooldown.default == 3600
+    assert max_cooldown.env_var == "GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC"
+    assert max_cooldown.min_value == 60
+    assert max_cooldown.max_value == 86400
+    assert retry_after.default == 5
+    assert retry_after.env_var == "GRIDFLEET_CLAIM_DEFAULT_RETRY_AFTER_SEC"
+    assert retry_after.min_value == 1
+    assert retry_after.max_value == 300
+
+
 def test_terminal_settings_are_registered_under_agent_category() -> None:
     toggle = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
     origins = settings_registry.SETTINGS_REGISTRY["agent.web_terminal_allowed_origins"]
