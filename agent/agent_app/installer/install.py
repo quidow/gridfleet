@@ -291,7 +291,14 @@ def poll_manager_registration(
                     )
                 last_error = f"{resolved_hostname} was not listed"
             else:
-                last_error = f"unexpected status {status_code}"
+                if status_code == 401:
+                    last_error = (
+                        "manager requires machine auth; rerun install with "
+                        "--manager-auth-username and --manager-auth-password matching "
+                        "GRIDFLEET_MACHINE_AUTH_USERNAME and GRIDFLEET_MACHINE_AUTH_PASSWORD"
+                    )
+                else:
+                    last_error = f"unexpected status {status_code}"
         except Exception as exc:
             last_error = str(exc)
         time.sleep(interval_sec)

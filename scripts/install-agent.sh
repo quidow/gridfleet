@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # GridFleet Agent — Bootstrap Installer
 # Installs uv, uses uv to install Python 3.12 + gridfleet-agent,
@@ -13,20 +13,24 @@ if [ "$VERSION" != "latest" ] && [ -n "$VERSION" ]; then
 fi
 
 # Default to --start unless caller already passed an install mode.
-INSTALL_ARGS=(--start "$@")
+HAS_INSTALL_MODE=0
 STOP_EXISTING_SERVICE=1
 for arg in "$@"; do
     case "$arg" in
         --dry-run|--no-start)
-            INSTALL_ARGS=("$@")
+            HAS_INSTALL_MODE=1
             STOP_EXISTING_SERVICE=0
             break
             ;;
         --start)
-            INSTALL_ARGS=("$@")
+            HAS_INSTALL_MODE=1
             ;;
     esac
 done
+
+if [ "$HAS_INSTALL_MODE" -eq 0 ]; then
+    set -- --start "$@"
+fi
 
 echo "=== GridFleet Agent Installer ==="
 echo "Package: $PACKAGE_SPEC"
@@ -61,7 +65,7 @@ fi
 AGENT_BIN="$(command -v gridfleet-agent)"
 echo ""
 if [ "$(id -u)" -ne 0 ]; then
-    sudo "$AGENT_BIN" install "${INSTALL_ARGS[@]}"
+    sudo "$AGENT_BIN" install "$@"
 else
-    gridfleet-agent install "${INSTALL_ARGS[@]}"
+    "$AGENT_BIN" install "$@"
 fi

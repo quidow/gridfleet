@@ -351,6 +351,22 @@ def test_poll_manager_registration_times_out_when_hostname_is_missing() -> None:
     assert "agent-host was not listed" in result.message
 
 
+def test_poll_manager_registration_explains_auth_required_on_401() -> None:
+    config = InstallConfig(manager_url="https://manager.example.com")
+
+    def fake_get(_url: str, timeout: float = 2.0, auth: tuple[str, str] | None = None) -> object:
+        class Response:
+            status_code = 401
+
+        return Response()
+
+    result = poll_manager_registration(config, hostname="agent-host", timeout_sec=0.01, interval_sec=0.01, get=fake_get)
+
+    assert result.ok is False
+    assert "--manager-auth-username" in result.message
+    assert "--manager-auth-password" in result.message
+
+
 def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"

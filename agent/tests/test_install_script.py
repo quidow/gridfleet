@@ -13,7 +13,7 @@ def _write_executable(path: Path, content: str) -> None:
 
 def test_bootstrap_wrapper_uses_uv_tool_install() -> None:
     script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
-    assert script.startswith("#!/usr/bin/env bash")
+    assert script.startswith("#!/bin/sh")
     assert "uv tool install" in script
     assert "gridfleet-agent" in script
     assert "--python 3.12" in script
@@ -33,6 +33,38 @@ def test_bootstrap_wrapper_calls_gridfleet_agent_install() -> None:
 def test_bootstrap_wrapper_is_executable() -> None:
     script_path = Path(__file__).resolve().parents[2] / "scripts/install-agent.sh"
     assert script_path.stat().st_mode & S_IXUSR
+
+
+def test_bootstrap_wrapper_runs_under_sh(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "commands.log"
+    env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}", "COMMAND_LOG": str(log)}
+    script_path = Path(__file__).resolve().parents[2] / "scripts/install-agent.sh"
+
+    _write_executable(
+        bin_dir / "uv",
+        '#!/usr/bin/env bash\nprintf \'uv %s\\n\' "$*" >> "$COMMAND_LOG"\n',
+    )
+    _write_executable(
+        bin_dir / "gridfleet-agent",
+        '#!/usr/bin/env bash\nprintf \'gridfleet-agent %s\\n\' "$*" >> "$COMMAND_LOG"\n',
+    )
+    _write_executable(bin_dir / "uname", "#!/usr/bin/env bash\necho Linux\n")
+    _write_executable(bin_dir / "id", '#!/usr/bin/env bash\n[ "$1" = "-u" ] && echo 0\n')
+
+    result = subprocess.run(
+        ["sh", str(script_path), "--dry-run", "--manager-url", "https://manager.example.com"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = log.read_text()
+    assert "uv tool install --upgrade --python 3.12 gridfleet-agent" in commands
+    assert "gridfleet-agent install --dry-run --manager-url https://manager.example.com" in commands
 
 
 def test_bootstrap_wrapper_supports_version_pinning() -> None:
