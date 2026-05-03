@@ -41,8 +41,12 @@ async def test_restart_mutations_visible_after_caller_commit(
     await db_session.commit()
     device_id = device.id
 
-    async def stub_stop(*_a: object, **_kw: object) -> None:
-        return None
+    async def stub_stop(*_a: object, **_kw: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={},
+            request=httpx.Request("POST", "http://example/stop"),
+        )
 
     async def stub_start(*_a: object, **_kw: object) -> httpx.Response:
         return httpx.Response(

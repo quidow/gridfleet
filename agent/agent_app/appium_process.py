@@ -88,6 +88,10 @@ class RuntimeNotInstalledError(RuntimeError):
     """Raised when no runtime is installed for the requested pack."""
 
 
+class AppiumPortOccupiedError(RuntimeError):
+    """Raised when a managed Appium port is now owned by another listener."""
+
+
 def resolve_appium_invocation_for_pack(
     pack_id: str,
     registry: RuntimeRegistry | None,
@@ -617,6 +621,24 @@ class AppiumProcessManager:
             )
             try:
                 restarted = await self._restart_from_launch_spec(port)
+            except AppiumPortOccupiedError:
+                self._record_restart_event(
+                    process="appium",
+                    kind="port_conflict",
+                    port=port,
+                    pid=info.pid if info is not None else None,
+                    attempt=attempt_number,
+                    delay_sec=None,
+                    exit_code=last_exit_code,
+                    will_retry=False,
+                )
+                logger.error(
+                    "Appium auto-restart stopped for connection_target=%s port=%d because the port is occupied",
+                    info.connection_target if info is not None else "unknown",
+                    port,
+                )
+                await self._drop_failed_managed_port(port)
+                return
             except Exception:
                 self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
                 logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
@@ -859,7 +881,7 @@ class AppiumProcessManager:
             appium_cmd.extend(["--allow-insecure", ",".join(spec.insecure_features)])
 
         if await self._can_connect_to_appium(spec.port):
-            raise RuntimeError(
+            raise AppiumPortOccupiedError(
                 f"Port {spec.port} is already in use by another Appium listener; "
                 "stop the existing process before starting a new managed node"
             )
@@ -1127,6 +1149,19 @@ class AppiumProcessManager:
         if toml_path:
             with contextlib.suppress(OSError):
                 os.unlink(toml_path)
+
+    async def _drop_failed_managed_port(self, port: int) -> None:
+        """Forget stale ownership for a crashed Appium process without touching an unmanaged listener."""
+        self._cancel_task(self._appium_restart_tasks, port)
+        self._cancel_task(self._appium_watch_tasks, port)
+        await self._stop_grid_node_process(port)
+        self._appium_procs.pop(port, None)
+        self._info.pop(port, None)
+        self._launch_specs.pop(port, None)
+        self._appium_restart_attempts.pop(port, None)
+        self._grid_node_restart_attempts.pop(port, None)
+        self._appium_restart_backoff_steps.pop(port, None)
+        self._grid_node_restart_backoff_steps.pop(port, None)
 
     async def stop(self, port: int) -> None:
         async with self._start_lock:

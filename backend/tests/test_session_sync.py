@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -165,6 +165,53 @@ async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSessi
     refreshed_device = await db_session.get(Device, device.id)
     assert refreshed_device is not None
     assert refreshed_device.availability_status == DeviceAvailabilityStatus.available
+
+
+async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.helpers import create_device_record, create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="late-ended-cancel",
+        connection_target="late-ended-cancel",
+        name="Late Ended Cancel",
+        availability_status=DeviceAvailabilityStatus.busy,
+    )
+    run = await create_reserved_run(
+        db_session,
+        name="Late Ended Cancel Run",
+        devices=[device],
+        state=RunState.cancelled,
+        mark_released=True,
+    )
+    session = Session(
+        session_id="late-ended-session",
+        device_id=device.id,
+        run_id=run.id,
+        test_name="test_late_ended",
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.services.session_sync.grid_service.get_grid_status",
+        AsyncMock(return_value={"value": {"ready": True, "nodes": []}}),
+    )
+
+    await _sync_sessions(db_session)
+
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.error
+    assert session.error_type == "run_released"
+    assert session.error_message == "Run ended while session was still running (cancelled)"
+    await db_session.refresh(device)
+    assert device.availability_status == DeviceAvailabilityStatus.available
 
 
 async def test_sync_ignores_unknown_connection_target(db_session: AsyncSession) -> None:

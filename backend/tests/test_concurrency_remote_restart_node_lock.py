@@ -32,8 +32,12 @@ async def test_restart_node_via_agent_locks_device_and_node(
 
     stomper_can_go = asyncio.Event()
 
-    async def stub_stop(*_args: object, **_kwargs: object) -> None:
-        return None
+    async def stub_stop(*_args: object, **_kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={},
+            request=httpx.Request("POST", "http://example/stop"),
+        )
 
     async def stub_appium_start(*_args: object, **kwargs: object) -> httpx.Response:
         stomper_can_go.set()

@@ -5,12 +5,12 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState
+from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import grid_service, lifecycle_policy, run_service, session_service
 from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
@@ -153,7 +153,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         sess_stmt = (
             select(Session)
-            .options(selectinload(Session.device))
+            .options(selectinload(Session.device), joinedload(Session.run))
             .where(Session.session_id == sid, Session.status == SessionStatus.running)
         )
         sess_result = await db.execute(sess_stmt)
@@ -162,7 +162,13 @@ async def _sync_sessions(db: AsyncSession) -> None:
         if ended_session:
             ended_device = ended_session.device
             ended_session.ended_at = datetime.now(UTC)
-            ended_session.status = SessionStatus.passed  # default; pytest helper can override
+            attached_run = ended_session.run
+            if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
+                ended_session.status = SessionStatus.error
+                ended_session.error_type = "run_released"
+                ended_session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
+            else:
+                ended_session.status = SessionStatus.passed  # default; pytest helper can override
             await session_service.publish_session_ended_event(ended_session, device=ended_device)
             logger.info("Session %s ended", sid)
 
