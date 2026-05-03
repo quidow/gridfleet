@@ -376,6 +376,8 @@ async def register_session(
         run_id=str(activated_run.id) if activated_run is not None else None,
     )
     if status != SessionStatus.running:
+        if device is not None:
+            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
         await publish_session_ended_event(session, device=device)
     return session
 
