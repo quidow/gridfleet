@@ -41,6 +41,27 @@ class CircuitOpenError(AgentCallError):
         super().__init__(host, f"Host {host} is temporarily unreachable", details=details)
 
 
+class AgentResponseError(AgentCallError):
+    error_code = "AGENT_RESPONSE_ERROR"
+    status_code = 502
+
+    def __init__(
+        self,
+        host: str,
+        message: str,
+        *,
+        http_status: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged: dict[str, Any] = {"host": host}
+        if http_status is not None:
+            merged["http_status"] = http_status
+        if details:
+            merged.update(details)
+        super().__init__(host, message, details=merged)
+        self.http_status = http_status
+
+
 class PackUnavailableError(LookupError):
     code = "pack_unavailable"
 
