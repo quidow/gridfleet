@@ -15,6 +15,7 @@ from app.services.node_manager_common import (
     build_grid_stereotype_caps,
     get_default_plugins,
 )
+from app.services.node_manager_state import candidate_ports
 from app.services.node_manager_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
 from app.services.pack_capability_service import (
     render_default_capabilities,
@@ -336,7 +337,6 @@ async def restart_node_via_agent(
 ) -> bool:
     from app.services import appium_node_locking, device_locking
 
-    await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     try:
         host = require_management_host(device, action="restart Appium nodes")
     except NodeManagerError:
@@ -353,71 +353,44 @@ async def restart_node_via_agent(
         db,
         appium_resource_allocator.managed_owner_key(device.id),
     )
-    # Resolve stereotype once for both consumers.
-    resolved_pack = resolve_pack_for_device(device)
-    if resolved_pack is None:
-        raise NodeManagerError(f"Device {device.id} has no driver pack platform")
-    restart_stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
 
     try:
-        restart_plat = await resolve_pack_platform_fn(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
-        restart_appium_platform_name = restart_plat.appium_platform_name
-        extra_caps = await _build_session_aligned_start_caps(
-            db,
-            device,
-            allocated_caps=allocated_caps,
-            stereotype=restart_stereotype,
-            appium_platform_name=restart_appium_platform_name,
-        )
-        restart_payload = build_agent_start_payload(
-            device,
-            node.port,
-            allocated_caps=allocated_caps,
-            extra_caps=extra_caps,
-        )
-        await _merge_appium_default_pack_caps(db, device, restart_payload)
-        try:
-            restart_pack_overrides = await build_pack_start_payload(db, device=device, stereotype=restart_stereotype)
-        except PackStartPayloadError as exc:
-            raise NodeManagerError(str(exc)) from exc
-        if restart_pack_overrides is not None:
-            restart_payload["pack_id"] = restart_pack_overrides["pack_id"]
-            restart_payload["platform_id"] = restart_pack_overrides["platform_id"]
-            restart_payload["appium_platform_name"] = restart_pack_overrides["appium_platform_name"]
-            restart_payload["stereotype_caps"] = {
-                **(restart_payload.get("stereotype_caps") or {}),
-                **restart_pack_overrides["stereotype_caps"],
-            }
-            if "grid_slots" in restart_pack_overrides:
-                restart_payload["grid_slots"] = restart_pack_overrides["grid_slots"]
-            for key in ("lifecycle_actions", "connection_behavior", "insecure_features", "workaround_env"):
-                if key in restart_pack_overrides:
-                    restart_payload[key] = restart_pack_overrides[key]
-        await appium_stop(
-            agent_base,
-            host=host.ip,
+        await stop_remote_temporary_node(
             port=node.port,
+            agent_base=agent_base,
             http_client_factory=http_client_factory,
         )
-        await asyncio.sleep(2)
-        resp = await appium_start(
-            agent_base,
-            host=host.ip,
-            payload=restart_payload,
-            http_client_factory=http_client_factory,
-            timeout=_agent_start_timeout(device),
-        )
-        resp.raise_for_status()
-        data = response_json_dict(resp)
-        await _wait_for_remote_appium_ready(
-            host,
-            port=node.port,
-            http_client_factory=http_client_factory,
-        )
-        node.pid = data.get("pid")
-        active_connection_target = data.get("connection_target")
-        node.active_connection_target = active_connection_target if isinstance(active_connection_target, str) else None
+
+        last_conflict: NodePortConflictError | None = None
+        started_handle: TemporaryNodeHandle | None = None
+        # The DB row still says the old node is running, so candidate_ports()
+        # intentionally excludes node.port here. That is desirable after an
+        # unmanaged-listener conflict: restart on the next free managed port.
+        for candidate_port in await candidate_ports(db, preferred_port=node.port):
+            try:
+                started_handle = await start_remote_temporary_node(
+                    db,
+                    device,
+                    port=candidate_port,
+                    allocated_caps=allocated_caps,
+                    agent_base=agent_base,
+                    http_client_factory=http_client_factory,
+                )
+                break
+            except NodePortConflictError as exc:
+                last_conflict = exc
+                continue
+
+        if started_handle is None:
+            if last_conflict is not None:
+                raise last_conflict
+            raise NodeManagerError(f"No candidate Appium port could restart device {device.id}")
+
+        node.port = started_handle.port
+        node.pid = started_handle.pid
+        node.active_connection_target = started_handle.active_connection_target
         node.state = NodeState.running
+        await db.flush()
         return True
     except (AgentCallError, httpx.HTTPError):
         return False
