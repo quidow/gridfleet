@@ -7,6 +7,7 @@ from sqlalchemy.exc import NoResultFound
 
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services import control_plane_state_store
+from app.services.event_bus import event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,10 +165,22 @@ async def _restore_available_for_healthy_signal(
 async def patch_health_snapshot(db: AsyncSession, device: Device | str, updates: dict[str, Any]) -> dict[str, Any]:
     device_key = str(device.id) if isinstance(device, Device) else str(device)
     locked = await _lock_device_for_health_transition(db, device)
+    previous_snapshot = await get_health_snapshot(db, device_key)
+    previous_summary = build_public_health_summary(previous_snapshot)
     patch = {**updates, "last_checked_at": updates.get("last_checked_at", _now_iso())}
     await control_plane_state_store.patch_value(db, HEALTH_SUMMARY_NAMESPACE, device_key, patch)
     next_snapshot = await get_health_snapshot(db, device_key) or patch
+    next_summary = build_public_health_summary(next_snapshot)
     await _restore_available_for_healthy_signal(db, device, next_snapshot, locked_device=locked)
+    if previous_summary.get("healthy") != next_summary.get("healthy"):
+        await event_bus.publish(
+            "device.health_changed",
+            {
+                "device_id": device_key,
+                "healthy": next_summary.get("healthy"),
+                "summary": next_summary.get("summary"),
+            },
+        )
     return next_snapshot
 
 
