@@ -125,13 +125,15 @@ def _find_java(env: Mapping[str, str], home: Path, os_name: str) -> tuple[str | 
 
 
 def _find_node_bin_dir(env: Mapping[str, str], home: Path) -> str | None:
-    node = shutil.which("node")
-    if node:
-        return str(Path(node).parent)
+    nvm_bin = env.get("NVM_BIN", "")
+    if nvm_bin:
+        executable = _first_existing_executable([f"{nvm_bin}/node"])
+        if executable:
+            return str(Path(executable).parent)
 
     nvm_root = home / ".nvm/versions/node"
     if nvm_root.is_dir():
-        candidates = sorted(nvm_root.glob("v*/bin/node"), reverse=True)
+        candidates = sorted(nvm_root.glob("v*/bin/node"), key=_node_version_key, reverse=True)
         executable = _first_existing_executable([str(candidate) for candidate in candidates])
         if executable:
             return str(Path(executable).parent)
@@ -145,7 +147,21 @@ def _find_node_bin_dir(env: Mapping[str, str], home: Path) -> str | None:
         if executable:
             return str(Path(executable).parent)
 
+    node = shutil.which("node")
+    if node:
+        return str(Path(node).parent)
+
     return None
+
+
+def _node_version_key(node_path: Path) -> tuple[int, ...]:
+    version = node_path.parent.parent.name.removeprefix("v")
+    parts: list[int] = []
+    for segment in version.split("."):
+        if not segment.isdecimal():
+            break
+        parts.append(int(segment))
+    return tuple(parts)
 
 
 def _find_android_home(env: Mapping[str, str], home: Path) -> str | None:
@@ -162,14 +178,24 @@ def _find_android_home(env: Mapping[str, str], home: Path) -> str | None:
     return None
 
 
+def _operator_home(env: Mapping[str, str]) -> Path:
+    sudo_user = env.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return Path(f"~{sudo_user}").expanduser()
+        except RuntimeError:
+            pass
+    return Path.home()
+
+
 def discover_tools(
     *,
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
     os_name: str | None = None,
 ) -> ToolDiscovery:
-    resolved_env = env or os.environ
-    resolved_home = home or Path.home()
+    resolved_env = os.environ if env is None else env
+    resolved_home = home or _operator_home(resolved_env)
     resolved_os = os_name or platform.system()
     warnings: list[str] = []
 

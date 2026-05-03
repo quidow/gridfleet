@@ -7,7 +7,9 @@ import pytest
 from agent_app.installer.plan import (
     InstallConfig,
     ToolDiscovery,
+    _find_node_bin_dir,
     build_service_path,
+    discover_tools,
     format_dry_run,
     load_installed_config,
     render_config_env,
@@ -177,6 +179,41 @@ def test_build_service_path_prepends_discovered_tool_dirs() -> None:
     discovery = ToolDiscovery(java_bin="/usr/lib/jvm/bin/java", node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
 
     assert build_service_path(discovery).startswith("/usr/lib/jvm/bin:/opt/node/bin:/opt/sdk/platform-tools:")
+
+
+def test_find_node_bin_dir_prefers_home_nvm_over_system_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    nvm_node = tmp_path / ".nvm/versions/node/v24.12.0/bin/node"
+    nvm_node.parent.mkdir(parents=True)
+    nvm_node.write_text("")
+    nvm_node.chmod(0o755)
+    monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: "/usr/bin/node")
+
+    assert _find_node_bin_dir({}, tmp_path) == str(nvm_node.parent)
+
+
+def test_find_node_bin_dir_uses_highest_nvm_version(tmp_path: Path) -> None:
+    old_node = tmp_path / ".nvm/versions/node/v9.9.0/bin/node"
+    new_node = tmp_path / ".nvm/versions/node/v24.12.0/bin/node"
+    for node in (old_node, new_node):
+        node.parent.mkdir(parents=True)
+        node.write_text("")
+        node.chmod(0o755)
+
+    assert _find_node_bin_dir({}, tmp_path) == str(new_node.parent)
+
+
+def test_discover_tools_uses_sudo_user_home_for_nvm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sudo_home = tmp_path / "operator"
+    nvm_node = sudo_home / ".nvm/versions/node/v24.12.0/bin/node"
+    nvm_node.parent.mkdir(parents=True)
+    nvm_node.write_text("")
+    nvm_node.chmod(0o755)
+    monkeypatch.setattr("agent_app.installer.plan.Path.expanduser", lambda path: sudo_home)
+    monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: "/usr/bin/node")
+
+    discovery = discover_tools(env={"SUDO_USER": "operator"}, os_name="Linux")
+
+    assert discovery.node_bin_dir == str(nvm_node.parent)
 
 
 def test_config_resolved_bin_path_defaults_to_venv() -> None:
