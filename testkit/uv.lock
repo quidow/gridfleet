@@ -1,10 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.10"
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version < '3.15'",
-]
+requires-python = ">=3.10, <3.15"
 
 [[package]]
 name = "anyio"
@@ -102,7 +98,7 @@ wheels = [
 
 [[package]]
 name = "gridfleet-testkit"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -121,12 +117,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "appium-python-client", marker = "extra == 'appium'", specifier = ">=4.5" },
+    { name = "appium-python-client", marker = "extra == 'appium'", specifier = ">=4.5,<6" },
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20.2" },
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.12" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20.2,<2" },
+    { name = "pytest", specifier = ">=9.0.3,<10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3,<10" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.12,<1" },
 ]
 provides-extras = ["appium", "dev"]
 
