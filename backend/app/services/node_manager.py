@@ -75,7 +75,7 @@ class NodeManager(abc.ABC):
         handle: TemporaryNodeHandle,
         *,
         release_allocations: bool = True,
-    ) -> None: ...
+    ) -> bool: ...
 
     async def restart_node(self, db: AsyncSession, device: Device) -> AppiumNode:
         """Stop then start with exponential backoff on failure."""
@@ -195,7 +195,15 @@ class RemoteNodeManager(NodeManager):
             agent_base=await self._agent_url(device),
             owner_key=appium_resource_allocator.managed_owner_key(device.id),
         )
-        await self.stop_temporary_node(db, device, handle)
+        # If the agent doesn't acknowledge the stop, refuse to mark the node
+        # stopped in the DB — otherwise the orphaned Appium process keeps
+        # serving traffic via Selenium Grid while the manager believes it is
+        # gone (and the next start attempt fails with port collision).
+        if not await self.stop_temporary_node(db, device, handle):
+            raise NodeManagerError(
+                f"Agent did not acknowledge stop for device {device.id} on port {node.port}; "
+                "leaving node state unchanged"
+            )
         return await mark_node_stopped(db, device)
 
     async def start_temporary_node(
@@ -236,11 +244,18 @@ class RemoteNodeManager(NodeManager):
         handle: TemporaryNodeHandle,
         *,
         release_allocations: bool = True,
-    ) -> None:
+    ) -> bool:
+        """Stop the temporary node identified by ``handle`` via its agent.
+
+        Returns True on confirmed agent acknowledgement (or when the handle
+        represents a re-used pre-existing node that the caller never owned and
+        therefore should not stop). Returns False when the agent did not
+        acknowledge — caller MUST NOT mutate DB node state in that case.
+        """
         if handle.reused_existing:
-            return
+            return True
         agent_base = handle.agent_base or await self._agent_url(device)
-        await stop_remote_temporary_node(
+        stopped = await stop_remote_temporary_node(
             port=handle.port,
             agent_base=agent_base,
             http_client_factory=httpx.AsyncClient,
@@ -248,6 +263,7 @@ class RemoteNodeManager(NodeManager):
         if release_allocations and handle.owner_key:
             await appium_resource_allocator.release_owner(db, handle.owner_key)
             await db.commit()
+        return stopped
 
     async def restart_node(self, db: AsyncSession, device: Device) -> AppiumNode:
         if not device.appium_node or device.appium_node.state != NodeState.running:
@@ -262,7 +278,14 @@ class RemoteNodeManager(NodeManager):
             agent_base=await self._agent_url(device),
             owner_key=owner_key,
         )
-        await self.stop_temporary_node(db, device, handle, release_allocations=False)
+        # If the agent doesn't acknowledge the stop, do not mark the node
+        # stopped and do not attempt restart on a different port — the orphan
+        # process will collide.
+        if not await self.stop_temporary_node(db, device, handle, release_allocations=False):
+            raise NodeManagerError(
+                f"Agent did not acknowledge stop during restart for device {device.id} "
+                f"on port {node.port}; leaving node state unchanged"
+            )
         await mark_node_stopped(db, device)
 
         last_error = None
