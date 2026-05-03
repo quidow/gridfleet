@@ -11,6 +11,7 @@ const EVENT_CATALOG = [
   { name: 'session.started' },
   { name: 'run.created' },
   { name: 'device.availability_changed' },
+  { name: 'device.health_changed' },
 ];
 
 vi.mock('../api/settings', () => ({
@@ -177,6 +178,30 @@ describe('useEventStream', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(MockEventSource.instances).toHaveLength(initialCount + 3);
+  });
+
+  it('invalidates devices and device queries on device.health_changed', async () => {
+    renderHookProbe();
+    const source = MockEventSource.instances.at(-1)!;
+
+    await act(async () => {
+      source.onopen?.();
+    });
+
+    await act(async () => {
+      source.emit('device.health_changed', {
+        device_id: 'd-1',
+        healthy: false,
+        summary: 'Disconnected',
+      });
+    });
+
+    const queryKeys = invalidateQueries.mock.calls
+      .map((call) => (call[0] as { queryKey?: unknown[] } | undefined)?.queryKey)
+      .filter((key): key is unknown[] => Array.isArray(key));
+    expect(queryKeys).toEqual(
+      expect.arrayContaining([['devices'], ['device'], ['notifications']]),
+    );
   });
 
   it('stops reconnecting when the browser session has expired', async () => {
