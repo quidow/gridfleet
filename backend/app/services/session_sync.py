@@ -69,6 +69,22 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
     return sessions
 
 
+async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
+    """Backstop sweep: clear stop_pending on devices that have no running sessions.
+
+    Protects against any session-end path that bypassed
+    `lifecycle_policy.complete_deferred_stop_if_session_ended`. Runs every session_sync
+    cycle and is a no-op for devices that are correctly clean.
+    """
+    stmt = select(Device).where(
+        Device.lifecycle_policy_state["stop_pending"].astext == "true",
+    )
+    result = await db.execute(stmt)
+    candidates = result.scalars().all()
+    for device in candidates:
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
+
+
 async def _sync_sessions(db: AsyncSession) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status()
@@ -193,6 +209,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
                 if locked_device.availability_status == DeviceAvailabilityStatus.busy:
                     await restore_post_busy_availability_status(db, locked_device)
 
+    await _sweep_stale_stop_pending(db)
     await db.commit()
 
 
