@@ -12,7 +12,12 @@ from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, 
 from app.models.host import Host, HostStatus, OSType
 from app.services import device_service
 from app.services.node_manager import NodeManagerError, RemoteNodeManager, get_node_manager
-from app.services.node_manager_remote import build_agent_start_payload, start_remote_temporary_node
+from app.services.node_manager_remote import (
+    build_agent_start_payload,
+    restart_node_via_agent,
+    start_remote_temporary_node,
+)
+from app.services.node_manager_types import TemporaryNodeHandle
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -371,6 +376,58 @@ async def test_mark_node_stopped_preserves_claimed_availability(
     await node_manager_state.mark_node_stopped(db_session, loaded)
 
     assert loaded.availability_status == availability_status
+
+
+async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_candidate(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="restart-port-conflict-001",
+        connection_target="restart-port-conflict-001",
+        name="Restart Port Conflict",
+        availability_status="available",
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=123,
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+    assert loaded.appium_node is not None
+
+    with (
+        patch("app.services.node_manager_remote.stop_remote_temporary_node", new_callable=AsyncMock),
+        patch("app.services.node_manager_remote.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
+    ):
+        start_mock.return_value = TemporaryNodeHandle(
+            port=4724,
+            pid=456,
+            active_connection_target="restart-port-conflict-001",
+        )
+
+        restarted = await restart_node_via_agent(
+            db_session,
+            loaded,
+            loaded.appium_node,
+            http_client_factory=AsyncMock,
+        )
+
+    assert restarted is True
+    await db_session.refresh(loaded.appium_node)
+    assert loaded.appium_node.port == 4724
+    assert loaded.appium_node.pid == 456
+    assert loaded.appium_node.state == NodeState.running
+    start_mock.assert_awaited_once()
+    assert start_mock.await_args.kwargs["port"] == 4724
 
 
 async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None:

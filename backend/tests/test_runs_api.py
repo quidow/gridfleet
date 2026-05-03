@@ -459,6 +459,107 @@ async def test_run_cancel(client: AsyncClient, db_session: AsyncSession, default
     assert resp.json()["state"] == "cancelled"
 
 
+async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.helpers import create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cancel-live-session",
+        connection_target="cancel-live-session",
+        name="Cancel Live Session",
+        availability_status="busy",
+    )
+    run_obj = await create_reserved_run(db_session, name="Cancel Live Session Run", devices=[device])
+    session = Session(
+        session_id="grid-live-cancel",
+        device_id=device.id,
+        run_id=run_obj.id,
+        test_name="test_cancel_cleanup",
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    deleted: list[str] = []
+
+    async def fake_terminate(session_id: str) -> bool:
+        deleted.append(session_id)
+        return True
+
+    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+
+    resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
+
+    assert resp.status_code == 200
+    assert deleted == ["grid-live-cancel"]
+    await db_session.refresh(session)
+    await db_session.refresh(device)
+    assert session.status == SessionStatus.error
+    assert session.error_type == "run_released"
+    assert session.ended_at is not None
+    assert device.availability_status == DeviceAvailabilityStatus.available
+
+
+async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.helpers import create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cancel-delete-fails",
+        connection_target="cancel-delete-fails",
+        name="Cancel Delete Fails",
+        availability_status="busy",
+    )
+    run_obj = await create_reserved_run(db_session, name="Cancel Delete Fails Run", devices=[device])
+    session = Session(
+        session_id="grid-still-live",
+        device_id=device.id,
+        run_id=run_obj.id,
+        test_name="test_delete_fails",
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    async def fake_terminate(_session_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+
+    resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
+
+    assert resp.status_code == 200
+    await db_session.refresh(session)
+    await db_session.refresh(device)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+    assert device.availability_status == DeviceAvailabilityStatus.busy
+
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == run_obj.id,
+                DeviceReservation.device_id == device.id,
+            )
+        )
+    ).scalar_one()
+    assert reservation.released_at is not None
+    assert reservation.claimed_by is None
+    assert reservation.claimed_at is None
+
+
 async def test_run_heartbeat(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-hb-1", "D1")
     run = await _create_run(client)
@@ -528,6 +629,7 @@ async def test_force_release_restores_busy_run_devices(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "run-fr-busy-1", "Busy Force Release")
     run = await _create_run(client)
@@ -546,6 +648,11 @@ async def test_force_release_restores_busy_run_devices(
     assert device_row is not None
     device_row.availability_status = DeviceAvailabilityStatus.busy
     await db_session.commit()
+
+    async def fake_terminate(_session_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200

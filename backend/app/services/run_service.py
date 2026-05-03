@@ -19,6 +19,7 @@ from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, Ru
 from app.services import (
     device_health_summary,
     device_locking,
+    grid_service,
     lifecycle_incident_service,
     maintenance_service,
     platform_label_service,
@@ -950,7 +951,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     now = datetime.now(UTC)
     run.state = RunState.completed
     run.completed_at = now
-    await _release_devices(db, run, commit=False)
+    await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -978,7 +979,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
-    await _release_devices(db, run, commit=False)
+    await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -1002,7 +1003,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
-    await _release_devices(db, run, commit=False)
+    await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -1031,7 +1032,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     locked_run.state = RunState.expired
     locked_run.error = reason
     locked_run.completed_at = datetime.now(UTC)
-    await _release_devices(db, locked_run, commit=False)
+    await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
     await db.commit()
 
     await event_bus.publish(
@@ -1044,7 +1045,19 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     )
 
 
-async def _mark_running_sessions_released(db: AsyncSession, run: TestRun, released_at: datetime) -> None:
+async def _mark_running_sessions_released(
+    db: AsyncSession,
+    run: TestRun,
+    released_at: datetime,
+    *,
+    terminate_grid_sessions: bool,
+) -> None:
+    if not terminate_grid_sessions:
+        # complete_run path: session lifecycle is owned by the testkit/operator.
+        # Leaving running rows untouched keeps _device_has_running_session honest
+        # so devices with live Grid sessions are not freed under the run.
+        return
+
     stmt = select(Session).where(
         Session.run_id == run.id,
         Session.status == SessionStatus.running,
@@ -1057,6 +1070,14 @@ async def _mark_running_sessions_released(db: AsyncSession, run: TestRun, releas
 
     error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
     for session in sessions:
+        if not await grid_service.terminate_grid_session(session.session_id):
+            logger.warning(
+                "Leaving session %s running because Grid deletion failed during run %s release",
+                session.session_id,
+                run.id,
+            )
+            continue
+
         session.status = SessionStatus.error
         session.ended_at = released_at
         session.error_type = "run_released"
@@ -1077,12 +1098,23 @@ async def _device_has_running_session(db: AsyncSession, device_id: uuid.UUID) ->
     return result.scalar_one_or_none() is not None
 
 
-async def _release_devices(db: AsyncSession, run: TestRun, *, commit: bool = True) -> None:
+async def _release_devices(
+    db: AsyncSession,
+    run: TestRun,
+    *,
+    commit: bool = True,
+    terminate_grid_sessions: bool = False,
+) -> None:
     """Release all active reservations for this run and restore device statuses."""
 
     active_reservations = [reservation for reservation in run.device_reservations if reservation.released_at is None]
     released_at = datetime.now(UTC)
-    await _mark_running_sessions_released(db, run, released_at)
+    await _mark_running_sessions_released(
+        db,
+        run,
+        released_at,
+        terminate_grid_sessions=terminate_grid_sessions,
+    )
 
     if not active_reservations:
         if commit:

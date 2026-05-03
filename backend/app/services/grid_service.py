@@ -22,6 +22,25 @@ async def get_grid_status() -> dict[str, Any]:
         return {"ready": False, "error": str(e)}
 
 
+async def terminate_grid_session(session_id: str) -> bool:
+    """Delete a WebDriver session through the Selenium Grid hub.
+
+    Selenium Grid exposes the normal WebDriver endpoint at DELETE /session/{id}.
+    A 404 means the session is already gone and is safe to treat as success.
+    """
+    url = f"{settings_service.get('grid.hub_url')}/session/{session_id}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(url, timeout=10)
+            if resp.status_code == 404:
+                return True
+            resp.raise_for_status()
+            return True
+    except httpx.HTTPError as exc:
+        logger.warning("Failed to terminate Grid session %s at %s: %s", session_id, url, exc)
+        return False
+
+
 def available_node_device_ids(grid_data: dict[str, Any]) -> set[str] | None:
     """Return device IDs advertised by UP Grid nodes, or None when Grid status is unavailable."""
     value = grid_data.get("value")
