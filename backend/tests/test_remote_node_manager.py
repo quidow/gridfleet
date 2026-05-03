@@ -699,3 +699,155 @@ async def test_start_remote_temporary_node_renders_stereotype_once(
         )
 
     assert calls == 1
+
+
+async def test_stop_node_raises_when_agent_does_not_acknowledge(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Operator stop must NOT mark the node stopped in DB if the agent did
+    not acknowledge — otherwise the orphaned Appium process keeps serving
+    Selenium Grid traffic while the manager believes it is gone, producing
+    the offline+healthy split-brain UI state and blocking subsequent starts
+    via port collision."""
+    from app.services import device_health_summary
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="stop-no-ack-001",
+        connection_target="stop-no-ack-001",
+        name="Stop No Ack",
+        availability_status="available",
+    )
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1, state=NodeState.running)
+    db_session.add(node)
+    await db_session.commit()
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+
+    # Seed snapshot to known-healthy so we can assert it stays untouched.
+    await device_health_summary.update_node_state(db_session, loaded, running=True, state="running")
+    await db_session.commit()
+
+    with patch(
+        "app.services.node_manager.stop_remote_temporary_node",
+        AsyncMock(return_value=False),  # agent silent / unreachable
+    ):
+        manager = get_node_manager(loaded)
+        with pytest.raises(NodeManagerError, match="did not acknowledge"):
+            await manager.stop_node(db_session, loaded)
+
+    await db_session.refresh(node)
+    await db_session.refresh(loaded)
+    assert node.state == NodeState.running, "node row must stay running when stop is unconfirmed"
+    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
+    assert snapshot is not None
+    assert snapshot.get("node_running") is True
+
+
+async def test_stop_node_marks_stopped_and_syncs_snapshot_when_agent_acknowledges(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """When agent confirms the stop, both the appium_node row AND the
+    device_health_summary snapshot must reflect the new state in the same
+    transaction (the historic bug left the snapshot stale, producing the
+    offline+healthy badge until the next probe cycle)."""
+    from app.services import device_health_summary
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="stop-ack-sync-001",
+        connection_target="stop-ack-sync-001",
+        name="Stop Ack Sync",
+        availability_status="available",
+    )
+    node = AppiumNode(device_id=device.id, port=4724, grid_url="http://hub:4444", pid=1, state=NodeState.running)
+    db_session.add(node)
+    await db_session.commit()
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+
+    await device_health_summary.update_node_state(db_session, loaded, running=True, state="running")
+    await db_session.commit()
+
+    with patch(
+        "app.services.node_manager.stop_remote_temporary_node",
+        AsyncMock(return_value=True),
+    ):
+        manager = get_node_manager(loaded)
+        await manager.stop_node(db_session, loaded)
+
+    await db_session.refresh(node)
+    assert node.state == NodeState.stopped
+    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
+    assert snapshot is not None
+    assert snapshot.get("node_running") is False
+    assert snapshot.get("node_state") == "stopped"
+
+
+async def test_mark_node_started_syncs_snapshot(db_session: AsyncSession, db_host: Host) -> None:
+    """Symmetric to mark_node_stopped — `mark_node_started` must update the
+    snapshot so health badges flip to running immediately, not only after the
+    next probe cycle."""
+    from app.services import device_health_summary, node_manager_state
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="mark-started-sync-001",
+        connection_target="mark-started-sync-001",
+        name="Mark Started Sync",
+        availability_status="available",
+    )
+    await db_session.commit()
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+
+    # Seed snapshot to "node not running" to confirm mark_node_started flips it.
+    await device_health_summary.update_node_state(db_session, loaded, running=False, state="stopped")
+    await db_session.commit()
+
+    await node_manager_state.mark_node_started(db_session, loaded, port=4725, pid=999)
+
+    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
+    assert snapshot is not None
+    assert snapshot.get("node_running") is True
+    assert snapshot.get("node_state") == "running"
+
+
+async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -> None:
+    """``stop_remote_temporary_node`` must report agent failures via False
+    return so callers gate DB mutations correctly."""
+    from app.errors import AgentUnreachableError
+    from app.services.node_manager_remote import stop_remote_temporary_node
+
+    with patch(
+        "app.services.node_manager_remote.appium_stop",
+        AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "boom")),
+    ):
+        result = await stop_remote_temporary_node(
+            port=4723,
+            agent_base="http://10.0.0.1:5100",
+            http_client_factory=AsyncMock,
+        )
+    assert result is False
+
+
+async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
+    """Successful agent acknowledgement is a True return."""
+    from app.services.node_manager_remote import stop_remote_temporary_node
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("app.services.node_manager_remote.appium_stop", AsyncMock(return_value=mock_resp)):
+        result = await stop_remote_temporary_node(
+            port=4723,
+            agent_base="http://10.0.0.1:5100",
+            http_client_factory=AsyncMock,
+        )
+    assert result is True
