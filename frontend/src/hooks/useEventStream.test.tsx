@@ -200,7 +200,7 @@ describe('useEventStream', () => {
       .map((call) => (call[0] as { queryKey?: unknown[] } | undefined)?.queryKey)
       .filter((key): key is unknown[] => Array.isArray(key));
     expect(queryKeys).toEqual(
-      expect.arrayContaining([['devices'], ['device'], ['notifications']]),
+      expect.arrayContaining([['devices'], ['device'], ['device-health'], ['notifications']]),
     );
   });
 
