@@ -167,6 +167,19 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
     return True
 
 
+async def complete_deferred_stop_if_session_ended(db: AsyncSession, device: Device) -> bool:
+    """Idempotent helper that clears a deferred stop once the last client session has ended.
+
+    Safe to call from any session-end path. Returns True if a deferred stop was completed,
+    False otherwise (no `stop_pending` set, or another client session still running).
+    The truth check is delegated to `handle_session_finished`, which re-reads the device
+    under a row lock — so callers do not need to pre-validate state.
+    """
+    if await has_running_client_session(db, device.id):
+        return False
+    return await handle_session_finished(db, device)
+
+
 async def note_connectivity_loss(
     db: AsyncSession,
     device: Device,
