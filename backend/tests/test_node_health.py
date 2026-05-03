@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host, HostStatus
 from app.services.node_health import (
+    _check_node_health,
     _check_nodes,
     _should_probe_node_health,
     get_node_health_control_plane_state,
@@ -611,3 +613,94 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         await asyncio.wait_for(task, timeout=1)
 
     assert started_ports == {4731, 4732}
+
+
+def _build_tristate_device(db_host: Host, identity: str) -> Device:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=f"Tristate {identity}",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    device.host = db_host  # populate relationship for in-process require_management_host
+    return device
+
+
+async def test_check_node_health_returns_none_on_agent_unreachable(db_session: AsyncSession, db_host: Host) -> None:
+    device = _build_tristate_device(db_host, "nh-tristate-1")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4730, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_status",
+        AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "boom")),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities=None)
+
+    assert result is None
+
+
+async def test_check_node_health_returns_none_on_response_error(db_session: AsyncSession, db_host: Host) -> None:
+    device = _build_tristate_device(db_host, "nh-tristate-2")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4731, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_status",
+        AsyncMock(side_effect=AgentResponseError(db_host.ip, "boom", http_status=503)),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities=None)
+
+    assert result is None
+
+
+async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncSession, db_host: Host) -> None:
+    device = _build_tristate_device(db_host, "nh-tristate-3")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4732, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_status",
+        AsyncMock(side_effect=CircuitOpenError(db_host.ip, retry_after_seconds=10.0)),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities=None)
+
+    assert result is None
+
+
+async def test_check_node_health_returns_false_when_device_has_no_host(db_session: AsyncSession, db_host: Host) -> None:
+    # Device with no host relationship → require_management_host raises NodeManagerError
+    # Must surface as False (genuine misconfiguration, not reachability problem)
+    device = _build_tristate_device(db_host, "nh-tristate-4")
+    device.host = None
+    device.host_id = None
+    node = AppiumNode(device_id=None, port=4733, grid_url="http://hub:4444", state=NodeState.running)
+
+    result = await _check_node_health(node, device, probe_capabilities=None)
+    assert result is False
+
+
+async def test_check_node_health_returns_true_on_running_status(db_session: AsyncSession, db_host: Host) -> None:
+    device = _build_tristate_device(db_host, "nh-tristate-5")
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4734, grid_url="http://hub:4444", state=NodeState.running)
+
+    with patch(
+        "app.services.node_health.fetch_appium_status",
+        AsyncMock(return_value={"running": True}),
+    ):
+        result = await _check_node_health(node, device, probe_capabilities=None)
+
+    assert result is True

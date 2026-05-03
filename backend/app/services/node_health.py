@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.errors import AgentCallError
+from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.device_event import DeviceEventType
@@ -87,10 +87,18 @@ async def _check_node_health(
     device: Device,
     *,
     probe_capabilities: dict[str, Any] | None = None,
-) -> bool:
-    """Check node health via probe-session when safe, otherwise via /status."""
+) -> bool | None:
+    """Probe Appium node health.
+
+    Returns True/False when the agent answered, None when reachability prevented
+    a determinate answer (transport error, HTTP error response, or open circuit).
+    """
     try:
         host = require_management_host(device, action="monitor Appium node health")
+    except NodeManagerError:
+        return False
+
+    try:
         if probe_capabilities is not None:
             healthy, _error = await fetch_appium_probe_session(
                 host.ip,
@@ -108,8 +116,8 @@ async def _check_node_health(
             http_client_factory=httpx.AsyncClient,
         )
         return payload is not None and payload.get("running", False)
-    except (AgentCallError, NodeManagerError):
-        return False
+    except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
+        return None
 
 
 def _grid_registration_grace_active(node: AppiumNode) -> bool:
@@ -448,7 +456,7 @@ async def _check_nodes(db: AsyncSession) -> None:
             db,
             request.node,
             locked_device,
-            healthy=healthy,
+            healthy=healthy,  # type: ignore[arg-type]  # Task 4: _process_node_health will accept bool | None
             grid_device_ids=grid_device_ids,
             observed_state=request.observed_state,
             observed_port=request.observed_port,
