@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from app.models.appium_node import NodeState
@@ -51,6 +52,27 @@ RECOVERY_PROBE_ATTEMPTS = 3
 RECOVERY_PROBE_RETRY_DELAY_SEC = 10
 
 
+class DeferredStopOutcome(StrEnum):
+    """Outcome of ``complete_deferred_stop_if_session_ended`` /
+    ``handle_session_finished``.
+
+    NO_PENDING: device had no ``stop_pending`` intent.
+    RUNNING_SESSION_EXISTS: another client session is still running, so the
+        helper bailed without touching state.
+    CLEARED_RECOVERED: device became healthy before the session ended; the
+        intent was cleared and no auto-stop was performed. The caller should
+        restore device availability the same way it would for any session-end
+        on a healthy device.
+    AUTO_STOPPED: the deferred stop was completed; the device is offline (and
+        excluded from any active run).
+    """
+
+    NO_PENDING = "no_pending"
+    RUNNING_SESSION_EXISTS = "running_session_exists"
+    CLEARED_RECOVERED = "cleared_recovered"
+    AUTO_STOPPED = "auto_stopped"
+
+
 def _set_backoff(state: dict[str, Any]) -> str:
     base_seconds = int(settings_service.get("general.lifecycle_recovery_backoff_base_sec"))
     max_seconds = max(base_seconds, int(settings_service.get("general.lifecycle_recovery_backoff_max_sec")))
@@ -83,12 +105,21 @@ async def clear_pending_auto_stop_on_recovery(
     *,
     source: str,
     reason: str,
+    action: str | None = None,
+    record_incident: bool = True,
 ) -> bool:
     """Drop a previously-queued deferred auto-stop because health recovered.
 
-    Returns True when an intent was actually cleared (and a
-    ``lifecycle_recovered`` incident logged), False when nothing was pending.
-    Caller is responsible for committing.
+    Returns True when an intent was actually cleared, False when nothing was
+    pending. Caller is responsible for committing.
+
+    ``action`` refreshes ``last_action`` so callers that did not invoke
+    ``record_control_action`` ahead of time still leave an accurate trail
+    instead of a stale ``auto_stop_deferred``.
+
+    ``record_incident`` controls whether a ``lifecycle_recovered`` incident
+    is emitted. Callers that already publish their own dedicated recovery
+    incident (e.g. ``node_health``) pass ``False`` to avoid duplicates.
     """
     device = await _reload_device(db, device)
     current_state = policy_state(device)
@@ -100,25 +131,28 @@ async def clear_pending_auto_stop_on_recovery(
     current_state["stop_pending"] = False
     current_state["stop_pending_reason"] = None
     current_state["stop_pending_since"] = None
+    if action is not None:
+        set_action(current_state, action)
     write_state(device, current_state)
 
-    detail = (
-        f"Recovery cleared deferred stop queued at {pending_since}"
-        if pending_since
-        else "Recovery cleared deferred stop"
-    )
-    if pending_reason:
-        detail = f"{detail} (was: {pending_reason})"
+    if record_incident:
+        detail = (
+            f"Recovery cleared deferred stop queued at {pending_since}"
+            if pending_since
+            else "Recovery cleared deferred stop"
+        )
+        if pending_reason:
+            detail = f"{detail} (was: {pending_reason})"
 
-    await lifecycle_incident_service.record_lifecycle_incident(
-        db,
-        device,
-        DeviceEventType.lifecycle_recovered,
-        summary_state=DeviceLifecyclePolicySummaryState.idle,
-        reason=reason,
-        detail=detail,
-        source=source,
-    )
+        await lifecycle_incident_service.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_recovered,
+            summary_state=DeviceLifecyclePolicySummaryState.idle,
+            reason=reason,
+            detail=detail,
+            source=source,
+        )
     return True
 
 
@@ -188,11 +222,18 @@ async def handle_health_failure(
     return "stopped"
 
 
-async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
+async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredStopOutcome:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
     if not current_state.get("stop_pending"):
-        return False
+        return DeferredStopOutcome.NO_PENDING
+
+    # Authoritative check under the device row lock. Callers may have
+    # pre-validated outside the lock for early-exit, but a fresh client
+    # session can start between that check and the lock; only the locked
+    # check is safe.
+    if await has_running_client_session(db, device.id):
+        return DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
     snapshot = await device_health_summary.get_health_snapshot(db, str(device.id))
     summary = device_health_summary.build_public_health_summary(snapshot)
@@ -200,21 +241,21 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
     node_running = node is not None and node.state == NodeState.running
 
     if summary.get("healthy") is True and node_running:
-        # Defense in depth: recovery should already have cleared the intent
-        # via clear_pending_auto_stop_on_recovery, but if anything else slipped
-        # the device into a healthy state without going through that path,
-        # avoid stopping a healthy device after the session ends.
+        # Defense in depth: ``clear_pending_auto_stop_on_recovery`` should
+        # already have cleared the intent when health recovered. If anything
+        # slipped the device into a healthy state without going through that
+        # path, the snapshot is treated as the canonical health source — we
+        # do not stop a device the snapshot reports as healthy. Stale-but-
+        # healthy snapshots therefore lean toward leaving the device up; a
+        # subsequent failed probe will re-enter ``handle_health_failure``.
         await clear_pending_auto_stop_on_recovery(
             db,
             device,
             source=current_state.get("last_failure_source") or "session",
             reason="Session finished while device was healthy",
+            action="auto_stop_cleared",
         )
-        # Return False so session_sync._on_session_end falls through to its
-        # restore_post_busy_availability_status path — we cleared the intent
-        # but did NOT auto-stop, so the device should leave `busy` and become
-        # `available` like any other session-end on a healthy device.
-        return False
+        return DeferredStopOutcome.CLEARED_RECOVERED
 
     reason = (
         current_state.get("stop_pending_reason")
@@ -231,19 +272,14 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
         detail="Manager completed a previously deferred automatic stop",
         manager_resolver=get_node_manager,
     )
-    return True
+    return DeferredStopOutcome.AUTO_STOPPED
 
 
-async def complete_deferred_stop_if_session_ended(db: AsyncSession, device: Device) -> bool:
-    """Idempotent helper that clears a deferred stop once the last client session has ended.
-
-    Safe to call from any session-end path. Returns True if a deferred stop was completed,
-    False otherwise (no `stop_pending` set, or another client session still running).
-    The truth check is delegated to `handle_session_finished`, which re-reads the device
-    under a row lock — so callers do not need to pre-validate state.
+async def complete_deferred_stop_if_session_ended(db: AsyncSession, device: Device) -> DeferredStopOutcome:
+    """Idempotent session-end helper. Authoritative state checks live in
+    ``handle_session_finished``, which re-reads under the device row lock —
+    so callers do not need to (and must not) pre-validate state.
     """
-    if await has_running_client_session(db, device.id):
-        return False
     return await handle_session_finished(db, device)
 
 
