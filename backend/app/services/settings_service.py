@@ -17,12 +17,23 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.services.event_bus import Event
-from app.services.event_bus import queue_event_for_session
 from app.services.settings_registry import (
     CATEGORY_DISPLAY_NAMES,
     SETTINGS_REGISTRY,
     resolve_default,
 )
+
+
+def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any]) -> None:
+    """Defer the import of ``queue_event_for_session`` so static analyzers do
+    not flag the top-level ``settings_service → event_bus`` import as part of
+    a cyclic chain (`py/unsafe-cyclic-import`). The runtime cycle is benign —
+    both module bodies finish loading before any service method runs — but the
+    inline import keeps the static graph acyclic."""
+    from app.services.event_bus import queue_event_for_session
+
+    queue_event_for_session(db, "settings.changed", payload)
+
 
 if TYPE_CHECKING:
     from app.type_defs import SettingValue
@@ -212,11 +223,15 @@ class SettingsService:
             row.value = normalized_value
         else:
             db.add(Setting(key=key, value=normalized_value, category=defn.category))
-        # Update cache
+        _queue_settings_changed(db, {"key": key, "value": normalized_value})
+        await db.commit()
+        # Cache mutations after commit so a rollback does not leave the in-memory
+        # state inconsistent with the database. A concurrent refresh_from_store
+        # triggered by an earlier queued settings.changed event runs on a
+        # separate session and reads committed state, so it cannot observe a
+        # transient pre-commit cache write.
         self._overrides[key] = normalized_value
         self._cache[key] = normalized_value
-        queue_event_for_session(db, "settings.changed", {"key": key, "value": normalized_value})
-        await db.commit()
         return self.get_setting_response(key)
 
     async def bulk_update(self, db: AsyncSession, updates: dict[str, Any]) -> list[dict[str, Any]]:
@@ -235,6 +250,7 @@ class SettingsService:
         await self._cancel_refresh_task()
 
         # Persist all
+        normalized_pairs: list[tuple[str, SettingValue]] = []
         for key, value in updates.items():
             defn = SETTINGS_REGISTRY[key]
             normalized_value = self._normalize_value(key, value)
@@ -244,12 +260,15 @@ class SettingsService:
                 row.value = normalized_value
             else:
                 db.add(Setting(key=key, value=normalized_value, category=defn.category))
+            normalized_pairs.append((key, normalized_value))
 
+        _queue_settings_changed(db, {"keys": list(updates.keys())})
+        await db.commit()
+
+        # Cache mutations after commit (see ``update`` for the rationale).
+        for key, normalized_value in normalized_pairs:
             self._overrides[key] = normalized_value
             self._cache[key] = normalized_value
-
-        queue_event_for_session(db, "settings.changed", {"keys": list(updates.keys())})
-        await db.commit()
 
         return [self.get_setting_response(key) for key in updates]
 
@@ -260,21 +279,23 @@ class SettingsService:
 
         await self._cancel_refresh_task()
         await db.execute(delete(Setting).where(Setting.key == key))
+        _queue_settings_changed(db, {"key": key, "reset": True})
+        await db.commit()
+        # Cache mutations after commit (see ``update`` for the rationale).
         self._overrides.pop(key, None)
         self._cache[key] = self._defaults[key]
-        queue_event_for_session(db, "settings.changed", {"key": key, "reset": True})
-        await db.commit()
         return self.get_setting_response(key)
 
     async def reset_all(self, db: AsyncSession) -> None:
         """Reset all settings to defaults."""
         await self._cancel_refresh_task()
         await db.execute(delete(Setting))
+        _queue_settings_changed(db, {"reset_all": True})
+        await db.commit()
+        # Cache mutations after commit (see ``update`` for the rationale).
         self._overrides.clear()
         for key in SETTINGS_REGISTRY:
             self._cache[key] = self._defaults[key]
-        queue_event_for_session(db, "settings.changed", {"reset_all": True})
-        await db.commit()
 
     def get_setting_response(self, key: str) -> dict[str, Any]:
         """Build the API response dict for a single setting."""
