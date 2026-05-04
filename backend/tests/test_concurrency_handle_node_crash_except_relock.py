@@ -22,7 +22,7 @@ class _StopNodeCommitsThenRaises:
         raise NodeManagerError("simulated stop_node failure after commit")
 
 
-async def test_stop_node_and_mark_offline_relocks_after_stop_node_commit_in_except_branch(
+async def test_handle_node_crash_relocks_after_stop_node_commit_in_except_branch(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
@@ -75,7 +75,7 @@ async def test_stop_node_and_mark_offline_relocks_after_stop_node_commit_in_exce
     async with db_session_maker() as session:
         target = await session.get(Device, device_id)
         assert target is not None
-        await lifecycle_policy_actions.stop_node_and_mark_offline(
+        await lifecycle_policy_actions.handle_node_crash(
             session,
             target,
             source="test",

@@ -126,7 +126,7 @@ async def restore_run_if_needed(
     return run, entry
 
 
-async def stop_node_and_mark_offline(
+async def handle_node_crash(
     db: AsyncSession,
     device: Device,
     *,
@@ -134,6 +134,20 @@ async def stop_node_and_mark_offline(
     reason: str,
     manager_resolver: NodeManagerResolver,
 ) -> None:
+    """Record a node crash and stop the underlying Appium node.
+
+    Availability semantics:
+    - When the node is running and `manager.stop_node` succeeds, the device's
+      availability follows `mark_node_stopped` → `_node_stopped_availability_status`,
+      which preserves `busy/reserved/maintenance` (operator/run intent precedes node
+      lifecycle, see `docs/design/01-device-state-model.md` Axis 2/Axis 5) and
+      otherwise sets `offline`. The crash itself is captured by
+      `record_event(DeviceEventType.node_crash, ...)` regardless of branch — webhook
+      subscribers of `device.crashed` see the crash unconditionally.
+    - When the node is missing or `manager.stop_node` raises, this function forces
+      `offline` directly via the availability helper because there is no clean
+      `mark_node_stopped` path to delegate to.
+    """
     from app.services import appium_node_locking
 
     device = await _lock_for_state_write(db, device)
@@ -268,7 +282,7 @@ async def complete_auto_stop(
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
-    await stop_node_and_mark_offline(
+    await handle_node_crash(
         db,
         device,
         source=source,

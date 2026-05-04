@@ -95,7 +95,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
 
     Calling the lifecycle helper inline would surface partial commits on the
     caller's transaction (the helper commits internally via
-    ``stop_node_and_mark_offline``). Audit P1 — collect device IDs during
+    ``handle_node_crash``). Audit P1 — collect device IDs during
     ``_release_devices`` and run cleanup only after the run-state commit.
     """
     device = Device(
