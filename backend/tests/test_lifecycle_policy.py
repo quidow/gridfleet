@@ -12,6 +12,7 @@ from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
+from app.services import device_health_summary
 from app.services import lifecycle_policy as lifecycle_policy_module
 from app.services.lifecycle_policy import (
     attempt_auto_recovery,
@@ -802,10 +803,6 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.models.appium_node import AppiumNode, NodeState
-    from app.services import device_health_summary
-    from app.services.lifecycle_policy import handle_session_finished
-
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -856,9 +853,6 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.services import device_health_summary
-    from app.services.lifecycle_policy import handle_session_finished
-
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -884,8 +878,6 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     )
     db_session.add(device)
     await db_session.flush()
-    #     node = AppiumNode(device_id=device.id, port=4782, grid_url="http://hub:4444", state=NodeState.running)
-    #     db_session.add(node)
     await db_session.commit()
 
     # Snapshot stays unhealthy
@@ -909,10 +901,6 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.models.appium_node import AppiumNode, NodeState
-    from app.services import device_health_summary
-    from app.services.lifecycle_policy import handle_session_finished
-
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
