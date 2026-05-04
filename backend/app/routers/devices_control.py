@@ -232,6 +232,12 @@ async def reconnect_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_
     success = data.get("success", False)
 
     if success and device.auto_manage and device.appium_node:
+        # Intentionally NOT re-fetched with `get_device_for_update_or_404` here:
+        # `restart_managed_node` releases the device row lock between its stop
+        # and start steps so concurrent operator actions (maintenance enter,
+        # delete) can preempt — see
+        # `tests/test_concurrency_reconnect_restart_lock.py`. Locking at the
+        # router would serialise these and break preemption.
         try:
             await restart_managed_node(db, device)
         except Exception as exc:
