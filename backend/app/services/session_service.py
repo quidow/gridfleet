@@ -10,7 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.session import Session, SessionStatus
-from app.services import run_service
+from app.services import lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
 from app.services.event_bus import event_bus
@@ -376,6 +376,8 @@ async def register_session(
         run_id=str(activated_run.id) if activated_run is not None else None,
     )
     if status != SessionStatus.running:
+        if device is not None:
+            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
         await publish_session_ended_event(session, device=device)
     return session
 
@@ -422,6 +424,7 @@ async def update_session_status(
         return None
 
     event_device = session.device
+    deferred_stop_target: Device | None = None
     should_publish_ended = (
         session.status == SessionStatus.running and session.ended_at is None and status != SessionStatus.running
     )
@@ -434,19 +437,26 @@ async def update_session_status(
 
         locked_device = await device_locking.lock_device(db, session.device_id)
         event_device = locked_device
-        if locked_device.availability_status == DeviceAvailabilityStatus.busy:
-            running_stmt = select(Session).where(
-                Session.device_id == session.device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-                Session.session_id != session_id,
-            )
-            running_result = await db.execute(running_stmt)
-            still_running = running_result.scalars().first() is not None
-            if not still_running:
+        running_stmt = select(Session).where(
+            Session.device_id == session.device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+            Session.session_id != session_id,
+        )
+        running_result = await db.execute(running_stmt)
+        still_running = running_result.scalars().first() is not None
+        if not still_running:
+            # Restore from busy on the busy-side; lifecycle cleanup must run
+            # for any non-busy availability too (maintenance/offline can host a
+            # stale ``stop_pending``), so the deferred-stop target is captured
+            # regardless of the current availability_status branch.
+            if locked_device.availability_status == DeviceAvailabilityStatus.busy:
                 await restore_post_busy_availability_status(db, locked_device)
+            deferred_stop_target = locked_device
 
     await db.commit()
+    if deferred_stop_target is not None:
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, deferred_stop_target)
     await db.refresh(session)
     if should_publish_ended:
         await publish_session_ended_event(session, device=event_device)

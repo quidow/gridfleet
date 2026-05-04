@@ -21,6 +21,7 @@ from app.services import (
     device_locking,
     grid_service,
     lifecycle_incident_service,
+    lifecycle_policy,
     maintenance_service,
     platform_label_service,
 )
@@ -951,8 +952,9 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     now = datetime.now(UTC)
     run.state = RunState.completed
     run.completed_at = now
-    await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
     await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -979,8 +981,9 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
-    await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
     await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -1003,8 +1006,9 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
-    await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
     await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
     run = await get_run(db, run_id)
     assert run is not None
 
@@ -1032,8 +1036,9 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     locked_run.state = RunState.expired
     locked_run.error = reason
     locked_run.completed_at = datetime.now(UTC)
-    await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
     await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
 
     await event_bus.publish(
         "run.expired",
@@ -1104,8 +1109,17 @@ async def _release_devices(
     *,
     commit: bool = True,
     terminate_grid_sessions: bool = False,
-) -> None:
-    """Release all active reservations for this run and restore device statuses."""
+) -> list[uuid.UUID]:
+    """Release all active reservations for this run and restore device statuses.
+
+    Returns the device IDs that need a follow-up
+    ``complete_deferred_stop_if_session_ended`` pass. The caller MUST run
+    ``_complete_deferred_stops_post_commit`` after the encompassing run-state
+    commit; the lifecycle helper commits internally (via
+    ``stop_node_and_mark_offline``) and must not be invoked while the run-state
+    transaction is still open, otherwise a partial commit can land on disk if
+    a later step in the same call raises.
+    """
 
     active_reservations = [reservation for reservation in run.device_reservations if reservation.released_at is None]
     released_at = datetime.now(UTC)
@@ -1119,10 +1133,11 @@ async def _release_devices(
     if not active_reservations:
         if commit:
             await db.commit()
-        return
+        return []
 
     device_ids = sorted({reservation.device_id for reservation in active_reservations})
     locked_devices = {device.id: device for device in await device_locking.lock_devices(db, device_ids)}
+    devices_pending_lifecycle_cleanup: list[uuid.UUID] = []
 
     for reservation in active_reservations:
         reservation.released_at = released_at
@@ -1140,6 +1155,9 @@ async def _release_devices(
             DeviceAvailabilityStatus.reserved,
             DeviceAvailabilityStatus.busy,
         }:
+            # Belt-and-suspenders: even when we skip the availability restore,
+            # a deferred stop may have been waiting on this run's session.
+            devices_pending_lifecycle_cleanup.append(device.id)
             continue
         old_availability_status = device.availability_status
         if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
@@ -1160,8 +1178,21 @@ async def _release_devices(
                 "reason": f"Run '{run.name}' ended ({run.state.value})",
             },
         )
+        devices_pending_lifecycle_cleanup.append(device.id)
     if commit:
         await db.commit()
+    return devices_pending_lifecycle_cleanup
+
+
+async def _complete_deferred_stops_post_commit(db: AsyncSession, device_ids: list[uuid.UUID]) -> None:
+    """Run ``complete_deferred_stop_if_session_ended`` for each device after
+    the caller's run-state commit landed. Skips devices that vanished in the
+    meantime."""
+    for device_id in device_ids:
+        device = await db.get(Device, device_id)
+        if device is None:
+            continue
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
 
 
 async def fetch_session_counts(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, SessionCounts]:

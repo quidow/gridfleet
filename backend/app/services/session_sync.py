@@ -69,13 +69,39 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
     return sessions
 
 
+async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
+    """Backstop sweep: clear stop_pending on devices that have no running sessions.
+
+    Protects against any session-end path that bypassed
+    `lifecycle_policy.complete_deferred_stop_if_session_ended`. Runs every session_sync
+    cycle (independent of Grid availability) and is a no-op for devices that
+    are correctly clean.
+
+    Selects only ``Device.id`` ordered for deterministic iteration; the row
+    lock is taken inside ``handle_session_finished`` per device, never as a
+    batch.
+    """
+    stmt = select(Device.id).where(Device.lifecycle_policy_state["stop_pending"].astext == "true").order_by(Device.id)
+    result = await db.execute(stmt)
+    device_ids = list(result.scalars().all())
+    for device_id in device_ids:
+        device = await db.get(Device, device_id)
+        if device is None:
+            continue
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
+
+
 async def _sync_sessions(db: AsyncSession) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status()
 
-    # Skip if grid is unreachable
+    # Skip the Grid-driven sync when the hub is unreachable, but still run
+    # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
+    # so it must heal historical rows even during Grid outages.
     if not grid_data.get("value", {}).get("ready", False) and "error" in grid_data:
-        logger.debug("Grid unreachable, skipping session sync")
+        logger.debug("Grid unreachable, skipping Grid session sync (sweep still runs)")
+        await _sweep_stale_stop_pending(db)
+        await db.commit()
         return
 
     active = _extract_sessions_from_grid(grid_data)
@@ -184,15 +210,37 @@ async def _sync_sessions(db: AsyncSession) -> None:
             dev_stmt = select(Device).where(Device.id == device_id_str)
             dev_result = await db.execute(dev_stmt)
             device = dev_result.scalar_one_or_none()
-            if device is not None and await lifecycle_policy.handle_session_finished(db, device):
-                continue
+            if device is not None:
+                outcome = await lifecycle_policy.handle_session_finished(db, device)
+                if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
+                    continue
+                if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
+                    # A fresh client session arrived between our running-set
+                    # check and the locked check inside the helper; leave the
+                    # device busy so the new session keeps it.
+                    continue
             if device and device.availability_status == DeviceAvailabilityStatus.busy:
                 from app.services import device_locking
 
                 locked_device = await device_locking.lock_device(db, device.id)
                 if locked_device.availability_status == DeviceAvailabilityStatus.busy:
-                    await restore_post_busy_availability_status(db, locked_device)
+                    # Authoritative recheck under the row lock. ``handle_session_finished``
+                    # only does the locked running-session check when ``stop_pending``
+                    # is set; in the common no-deferred-stop path it returns NO_PENDING
+                    # without ever consulting the Session table under lock, so a fresh
+                    # session inserted between the outer ``still_running`` check and
+                    # this restore could be skipped past. Re-check here so we never
+                    # restore a device that now hosts a new running session.
+                    fresh_running_stmt = select(Session.id).where(
+                        Session.device_id == locked_device.id,
+                        Session.status == SessionStatus.running,
+                        Session.ended_at.is_(None),
+                    )
+                    fresh_running = (await db.execute(fresh_running_stmt)).scalar_one_or_none()
+                    if fresh_running is None:
+                        await restore_post_busy_availability_status(db, locked_device)
 
+    await _sweep_stale_stop_pending(db)
     await db.commit()
 
 

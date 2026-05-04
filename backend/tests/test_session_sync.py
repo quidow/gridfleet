@@ -532,6 +532,134 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     assert run.reserved_devices[0]["excluded"] is True
 
 
+async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """When `handle_session_finished` drops a deferred-stop intent because the
+    device is currently healthy (defense-in-depth branch), it returns False so
+    `_on_session_end` falls through to `restore_post_busy_availability_status`.
+    The device must end up `available`, not stuck at `busy`."""
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import device_health_summary
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-deferred-recovered",
+        connection_target="dev-deferred-recovered",
+        name="Deferred Recovered",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(device_id=device.id, port=4790, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    session = Session(session_id="sess-deferred-recovered", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    # Defer a stop (simulates an earlier transient failure during this session).
+    await handle_health_failure(db_session, device, source="node_health", reason="Probe failed")
+
+    # Health later recovers — seed snapshot to healthy. (Task 2's recovery wiring
+    # would normally clear stop_pending here, but this test exercises the
+    # defense-in-depth path where it didn't, so we leave stop_pending=True.)
+    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await db_session.commit()
+
+    # Session ends — Grid no longer reports it.
+    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(device)
+    # Intent was cleared but device should be RESTORED to available, not stopped.
+    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state["stop_pending"] is False
+
+
+async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_precheck(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Race fix: a fresh client session inserted between the outer
+    ``still_running`` check and the locked restore must NOT be restored away
+    from busy. ``handle_session_finished`` returns ``NO_PENDING`` for
+    no-deferred-stop devices without doing the locked Session check, so the
+    restore guard performs its own locked recheck.
+    """
+    from app.services import session_sync
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-race-restore",
+        connection_target="dev-race-restore",
+        name="Race Restore",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        # No deferred-stop intent — ``handle_session_finished`` will hit the
+        # NO_PENDING fast-path without checking running sessions under lock.
+        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # The "old" session that the outer loop will see as ended.
+    old_session = Session(session_id="sess-old-ending", device_id=device.id, status=SessionStatus.running)
+    db_session.add(old_session)
+    await db_session.commit()
+
+    real_handle = session_sync.lifecycle_policy.handle_session_finished
+
+    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device) -> object:
+        # Simulate: between the outer running-set probe and the restore guard,
+        # a fresh client session is inserted (e.g. a new POST /api/sessions
+        # arriving on a different worker). The new session is committed so
+        # the locked recheck inside the restore guard observes it.
+        outcome = await real_handle(db, dev)
+        new_session = Session(session_id="sess-new-fresh", device_id=dev.id, status=SessionStatus.running)
+        db.add(new_session)
+        await db.commit()
+        return outcome
+
+    monkeypatch.setattr(
+        session_sync.lifecycle_policy,
+        "handle_session_finished",
+        _handle_then_insert_fresh,
+    )
+
+    # Old session leaves the Grid (not in active map), triggering ended-session processing.
+    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+        await session_sync._sync_sessions(db_session)
+
+    await db_session.refresh(device)
+    # The race-prone restore would have moved the device to ``available``.
+    # Correct behavior: leave it ``busy`` for the fresh session.
+    assert device.availability_status == DeviceAvailabilityStatus.busy
+
+    # Sanity check the simulated fresh session is the reason.
+    fresh = await db_session.execute(select(Session).where(Session.session_id == "sess-new-fresh"))
+    assert fresh.scalar_one_or_none() is not None
+
+
 async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
     """Probe sessions are filtered out and never persisted as real Session rows."""
     device = Device(
@@ -605,3 +733,125 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
     assert result.scalar_one_or_none() is None
     await db_session.refresh(device)
     assert device.availability_status == DeviceAvailabilityStatus.reserved
+
+
+async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import grid_service, session_sync
+    from app.services.lifecycle_policy import handle_health_failure
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-sweep",
+        connection_target="policy-stuck-stop-sweep",
+        name="Stuck Deferred Stop Sweep Device",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-stuck-stop-sweep",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    assert result == "deferred"
+
+    # Simulate the historical bug: a session ended directly in the DB without the helper.
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state["stop_pending"] is True
+
+    async def _fake_grid_status() -> dict:
+        return {"value": {"ready": True, "nodes": []}}
+
+    monkeypatch.setattr(grid_service, "get_grid_status", _fake_grid_status)
+
+    await session_sync._sync_sessions(db_session)
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+
+
+async def test_sweep_runs_when_grid_is_unreachable(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runbook promises one-poll healing for stale ``stop_pending`` rows.
+
+    Tying the sweep to Grid availability would silently weaken that guarantee
+    during Grid outages, when stale rows still need to be healed because the
+    sweep relies on DB state only. Audit P2 — sweep must run independent of
+    Grid status.
+    """
+    from app.services import grid_service, session_sync
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-sweep-grid-down",
+        connection_target="policy-sweep-grid-down",
+        name="Sweep Grid Down",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-sweep-grid-down",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB hung")
+    assert result == "deferred"
+
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state["stop_pending"] is True
+
+    async def _grid_unreachable() -> dict[str, Any]:
+        # Shape that triggers the early-return branch in _sync_sessions:
+        # ready=False AND an "error" key present.
+        return {"value": {"ready": False}, "error": "connection refused"}
+
+    monkeypatch.setattr(grid_service, "get_grid_status", _grid_unreachable)
+
+    await session_sync._sync_sessions(db_session)
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
+        "sweep must heal stale stop_pending rows even when Grid is unreachable"
+    )
