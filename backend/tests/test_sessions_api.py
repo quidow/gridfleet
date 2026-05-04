@@ -460,6 +460,7 @@ async def test_register_terminal_error_session_persists_setup_failure_context(cl
     assert "requested_platform" not in detail
     assert detail["error_message"] == "Session could not be created"
 
+    await event_bus.drain_handlers()
     recent_events = event_bus.get_recent_events(limit=2)
     assert [event["type"] for event in recent_events] == ["session.started", "session.ended"]
     assert recent_events[0]["data"]["requested_pack_id"] == "appium-uiautomator2"
@@ -729,6 +730,7 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert data["status"] == "failed"
     assert data["ended_at"] is not None
 
+    await event_bus.drain_handlers()
     recent_events = event_bus.get_recent_events(limit=1)
     assert len(recent_events) == 1
     assert recent_events[0]["type"] == "session.ended"

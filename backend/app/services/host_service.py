@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.schemas.host import HostCreate, HostRegister, HostUpdate
+from app.services.event_bus import queue_event_for_session
 from app.services.settings_service import settings_service
 
 
@@ -119,6 +120,16 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
         status=status,
     )
     db.add(host)
+    await db.flush()
+    queue_event_for_session(
+        db,
+        "host.registered",
+        {
+            "host_id": str(host.id),
+            "hostname": host.hostname,
+            "status": host.status.value,
+        },
+    )
     await db.commit()
     await db.refresh(host)
     return host, True
@@ -131,7 +142,18 @@ async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
     host = result.scalar_one_or_none()
     if host is None or host.status != HostStatus.pending:
         return None
+    old_status = host.status.value
     host.status = HostStatus.online
+    queue_event_for_session(
+        db,
+        "host.status_changed",
+        {
+            "host_id": str(host.id),
+            "hostname": host.hostname,
+            "old_status": old_status,
+            "new_status": "online",
+        },
+    )
     await db.commit()
     await db.refresh(host)
     return host

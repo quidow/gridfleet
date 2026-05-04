@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import Select, and_, asc, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -14,7 +15,7 @@ from app.services import lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_availability import set_device_availability_status
 from app.services.device_availability_resolution import restore_post_busy_availability_status
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 from app.services.session_filters import exclude_non_test_sessions, exclude_reserved_sessions
 
 
@@ -68,23 +69,27 @@ def build_session_ended_event_payload(
     return payload
 
 
-async def publish_session_started_event(
+def queue_session_started_event(
+    db: AsyncSession | SyncSession,
     session: Session,
     *,
     device: Device | None,
     run_id: str | None = None,
 ) -> None:
-    await event_bus.publish(
-        "session.started", build_session_started_event_payload(session, device=device, run_id=run_id)
+    queue_event_for_session(
+        db,
+        "session.started",
+        build_session_started_event_payload(session, device=device, run_id=run_id),
     )
 
 
-async def publish_session_ended_event(
+def queue_session_ended_event(
+    db: AsyncSession | SyncSession,
     session: Session,
     *,
     device: Device | None,
 ) -> None:
-    await event_bus.publish("session.ended", build_session_ended_event_payload(session, device=device))
+    queue_event_for_session(db, "session.ended", build_session_ended_event_payload(session, device=device))
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
@@ -368,18 +373,19 @@ async def register_session(
     activated_run = None
     if device is not None and status == SessionStatus.running:
         await set_device_availability_status(device, DeviceAvailabilityStatus.busy, publish_event=False)
-        activated_run = await run_service.signal_active_for_device_session(db, device.id)
-    await db.commit()
-    await db.refresh(session)
-    await publish_session_started_event(
+        activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
+    queue_session_started_event(
+        db,
         session,
         device=device,
         run_id=str(activated_run.id) if activated_run is not None else None,
     )
     if status != SessionStatus.running:
-        if device is not None:
-            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
-        await publish_session_ended_event(session, device=device)
+        queue_session_ended_event(db, session, device=device)
+    await db.commit()
+    await db.refresh(session)
+    if status != SessionStatus.running and device is not None:
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
     return session
 
 
@@ -455,10 +461,10 @@ async def update_session_status(
                 await restore_post_busy_availability_status(db, locked_device)
             deferred_stop_target = locked_device
 
+    if should_publish_ended:
+        queue_session_ended_event(db, session, device=event_device)
     await db.commit()
     if deferred_stop_target is not None:
         await lifecycle_policy.complete_deferred_stop_if_session_ended(db, deferred_stop_target)
     await db.refresh(session)
-    if should_publish_ended:
-        await publish_session_ended_event(session, device=event_device)
     return session

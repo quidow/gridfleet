@@ -31,7 +31,7 @@ from app.services.agent_operations import appium_status as fetch_appium_status
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.lifecycle_incident_service import record_lifecycle_incident
 from app.services.node_manager_remote import require_management_host
 from app.services.node_manager_remote import restart_node_via_agent as restart_node_via_agent_helper
@@ -266,7 +266,8 @@ async def _process_node_health(
                 reason="Node health checks recovered",
                 record_incident=False,
             )
-            await event_bus.publish(
+            queue_event_for_session(
+                db,
                 "node.state_changed",
                 {
                     "device_id": str(device.id),
@@ -338,7 +339,8 @@ async def _process_node_health(
                 failure_reason="Max node health failures reached",
                 recovery_suppressed_reason="Auto-manage is disabled",
             )
-            await event_bus.publish(
+            queue_event_for_session(
+                db,
                 "node.crash",
                 {
                     "device_id": str(device.id),
@@ -346,6 +348,15 @@ async def _process_node_health(
                     "error": "Max health check failures",
                     "will_restart": False,
                 },
+            )
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source="health_check_fail",
+                reason="Max health check failures",
+                will_restart=False,
+                process=None,
             )
             await record_event(
                 db,
@@ -378,7 +389,8 @@ async def _process_node_health(
                 failure_source="node_health",
                 failure_reason="Node restarted after health failures",
             )
-            await event_bus.publish(
+            queue_event_for_session(
+                db,
                 "node.state_changed",
                 {
                     "device_id": str(device.id),
@@ -417,7 +429,8 @@ async def _process_node_health(
                 failure_reason="Node restart failed",
                 recovery_suppressed_reason="Node restart failed",
             )
-            await event_bus.publish(
+            queue_event_for_session(
+                db,
                 "node.crash",
                 {
                     "device_id": str(device.id),
@@ -425,6 +438,15 @@ async def _process_node_health(
                     "error": "Restart failed",
                     "will_restart": False,
                 },
+            )
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source="health_check_fail",
+                reason="Restart failed",
+                will_restart=False,
+                process=None,
             )
             await record_event(
                 db,

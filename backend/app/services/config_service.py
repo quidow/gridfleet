@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import Device
 from app.services import device_readiness
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 
 SENSITIVE_PATTERNS = re.compile(r"(password|secret|key|token|credential)", re.IGNORECASE)
 MASK_VALUE = "********"
@@ -88,9 +88,8 @@ async def replace_device_config(
         changed_by=changed_by,
     )
     db.add(log_entry)
-    await db.commit()
-    await db.refresh(device)
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "config.updated",
         {
             "device_id": str(device.id),
@@ -98,6 +97,8 @@ async def replace_device_config(
             "changed_by": changed_by,
         },
     )
+    await db.commit()
+    await db.refresh(device)
     return await mask_device_config(db, device, device.device_config)
 
 
@@ -128,9 +129,8 @@ async def merge_device_config(
         changed_by=changed_by,
     )
     db.add(log_entry)
-    await db.commit()
-    await db.refresh(device)
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "config.updated",
         {
             "device_id": str(device.id),
@@ -138,6 +138,8 @@ async def merge_device_config(
             "changed_by": changed_by,
         },
     )
+    await db.commit()
+    await db.refresh(device)
     return await mask_device_config(db, device, device.device_config)
 
 

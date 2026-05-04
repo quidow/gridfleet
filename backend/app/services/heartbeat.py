@@ -20,7 +20,7 @@ from app.services import control_plane_state_store, device_health_summary, host_
 from app.services.agent_operations import agent_health
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.node_health import NODE_HEALTH_NAMESPACE
 from app.services.settings_service import settings_service
@@ -279,7 +279,8 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, str(locked_node.id))
             if process == "appium":
                 locked_node.state = NodeState.running
-                await event_bus.publish(
+                queue_event_for_session(
+                    db,
                     "node.state_changed",
                     {
                         "device_id": str(device.id),
@@ -302,7 +303,8 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             continue
 
         error_message = _restart_error_message(kind, process, exit_code)
-        await event_bus.publish(
+        queue_event_for_session(
+            db,
             "node.crash",
             {
                 "device_id": str(device.id),
@@ -311,6 +313,15 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                 "will_restart": will_retry,
                 "process": process,
             },
+        )
+        queue_device_crashed_event(
+            db,
+            device_id=str(device.id),
+            device_name=device.name,
+            source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
+            reason=error_message,
+            will_restart=will_retry,
+            process=process,
         )
         await record_event(
             db,
@@ -354,7 +365,8 @@ async def _check_hosts(db: AsyncSession) -> None:
                 host.agent_version = agent_version
             if host.status != HostStatus.online:
                 logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-                await event_bus.publish(
+                queue_event_for_session(
+                    db,
                     "host.status_changed",
                     {
                         "host_id": str(host.id),
@@ -385,7 +397,8 @@ async def _check_hosts(db: AsyncSession) -> None:
 
             if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
                 logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-                await event_bus.publish(
+                queue_event_for_session(
+                    db,
                     "host.status_changed",
                     {
                         "host_id": str(host.id),
@@ -394,7 +407,8 @@ async def _check_hosts(db: AsyncSession) -> None:
                         "new_status": "offline",
                     },
                 )
-                await event_bus.publish(
+                queue_event_for_session(
+                    db,
                     "host.heartbeat_lost",
                     {
                         "host_id": str(host.id),

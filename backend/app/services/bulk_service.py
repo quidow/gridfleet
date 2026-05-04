@@ -14,7 +14,7 @@ from app.errors import AgentCallError
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
-from app.services.event_bus import event_bus
+from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from app.services.node_manager import NodeManager, get_node_manager
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
@@ -123,8 +123,8 @@ async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], au
     devices = await _load_devices(db, device_ids)
     for device in devices:
         device.auto_manage = auto_manage
-    await db.commit()
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "bulk.operation_completed",
         {
             "operation": "set_auto_manage",
@@ -133,6 +133,7 @@ async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], au
             "failed": 0,
         },
     )
+    await db.commit()
     return _result(len(devices), len(devices), {})
 
 
@@ -146,8 +147,8 @@ async def bulk_update_tags(
             device.tags = merged
         else:
             device.tags = tags
-    await db.commit()
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "bulk.operation_completed",
         {
             "operation": "update_tags",
@@ -156,6 +157,7 @@ async def bulk_update_tags(
             "failed": 0,
         },
     )
+    await db.commit()
     return _result(len(devices), len(devices), {})
 
 
@@ -193,9 +195,9 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID], 
             await enter_maintenance(db, device, drain=drain, commit=False)
         except Exception as e:
             errors[str(device_id)] = str(e)
-    await db.commit()
     succeeded = len(ordered_ids) - len(errors)
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "bulk.operation_completed",
         {
             "operation": "enter_maintenance",
@@ -204,6 +206,7 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID], 
             "failed": len(errors),
         },
     )
+    await db.commit()
     return _result(len(ordered_ids), succeeded, errors)
 
 
@@ -291,9 +294,9 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
             errors[str(device.id)] = str(e)
         except Exception as e:
             errors[str(device.id)] = str(e)
-    await db.commit()
     succeeded = len(devices) - len(errors)
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "bulk.operation_completed",
         {
             "operation": "exit_maintenance",
@@ -302,4 +305,5 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
             "failed": len(errors),
         },
     )
+    await db.commit()
     return _result(len(devices), succeeded, errors)

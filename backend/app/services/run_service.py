@@ -28,7 +28,7 @@ from app.services import (
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_availability import set_device_availability_status
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 from app.services.lifecycle_policy_state import (
     clear_backoff,
     set_action,
@@ -374,6 +374,16 @@ async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[R
             ttl_minutes=ttl_minutes,
             heartbeat_timeout_sec=heartbeat_timeout_sec,
         )
+        queue_event_for_session(
+            db,
+            "run.created",
+            {
+                "run_id": str(run.id),
+                "name": run.name,
+                "device_count": len(device_infos),
+                "created_by": run.created_by,
+            },
+        )
         await db.commit()
     except _UnmetRequirementError as exc:
         await db.rollback()
@@ -392,17 +402,6 @@ async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[R
 
     refreshed_run = await get_run(db, run.id)
     assert refreshed_run is not None
-
-    await event_bus.publish(
-        "run.created",
-        {
-            "run_id": str(refreshed_run.id),
-            "name": refreshed_run.name,
-            "device_count": len(device_infos),
-            "created_by": refreshed_run.created_by,
-        },
-    )
-
     return refreshed_run, device_infos
 
 
@@ -637,15 +636,22 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
     run.state = RunState.ready
     run.last_heartbeat = datetime.now(UTC)
+    queue_event_for_session(db, "run.ready", {"run_id": str(run.id), "name": run.name})
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
-
-    await event_bus.publish("run.ready", {"run_id": str(run.id), "name": run.name})
     return run
 
 
 async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+    await _signal_active_no_commit(db, run_id)
+    await db.commit()
+    run = await get_run(db, run_id)
+    assert run is not None
+    return run
+
+
+async def _signal_active_no_commit(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -656,11 +662,7 @@ async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.active
     run.started_at = now
     run.last_heartbeat = now
-    await db.commit()
-    run = await get_run(db, run_id)
-    assert run is not None
-
-    await event_bus.publish("run.active", {"run_id": str(run.id), "name": run.name})
+    queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
     return run
 
 
@@ -669,6 +671,13 @@ async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUI
     if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
         return None
     return await signal_active(db, run.id)
+
+
+async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
+    run, entry = await get_device_reservation_with_entry(db, device_id)
+    if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
+        return None
+    return await _signal_active_no_commit(db, run.id)
 
 
 async def report_preparation_failure(
@@ -958,15 +967,12 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.completed
     run.completed_at = now
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
-    await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
-    run = await get_run(db, run_id)
-    assert run is not None
 
     duration = None
     if run.started_at:
         duration = int((now - run.started_at).total_seconds())
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "run.completed",
         {
             "run_id": str(run.id),
@@ -974,6 +980,10 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "duration": duration,
         },
     )
+    await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    run = await get_run(db, run_id)
+    assert run is not None
     return run
 
 
@@ -987,12 +997,8 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
-    await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
-    run = await get_run(db, run_id)
-    assert run is not None
-
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "run.cancelled",
         {
             "run_id": str(run.id),
@@ -1000,6 +1006,10 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "cancelled_by": "user",
         },
     )
+    await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    run = await get_run(db, run_id)
+    assert run is not None
     return run
 
 
@@ -1012,12 +1022,8 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
-    await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
-    run = await get_run(db, run_id)
-    assert run is not None
-
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "run.cancelled",
         {
             "run_id": str(run.id),
@@ -1025,6 +1031,10 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "cancelled_by": "admin (force release)",
         },
     )
+    await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    run = await get_run(db, run_id)
+    assert run is not None
     return run
 
 
@@ -1042,10 +1052,9 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
     locked_run.error = reason
     locked_run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
-    await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
 
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "run.expired",
         {
             "run_id": str(locked_run.id),
@@ -1053,6 +1062,8 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
             "reason": reason,
         },
     )
+    await db.commit()
+    await _complete_deferred_stops_post_commit(db, cleanup_ids)
 
 
 async def _mark_running_sessions_released(

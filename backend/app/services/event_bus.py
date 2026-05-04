@@ -380,3 +380,28 @@ def queue_event_for_session(
     # inside the callback.
     sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
     sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
+
+
+def queue_device_crashed_event(
+    db: AsyncSession | Session,
+    *,
+    device_id: str,
+    device_name: str,
+    source: str,
+    reason: str,
+    will_restart: bool,
+    process: str | None = None,
+) -> None:
+    """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
+    queue_event_for_session(
+        db,
+        "device.crashed",
+        {
+            "device_id": device_id,
+            "device_name": device_name,
+            "source": source,
+            "reason": reason,
+            "will_restart": will_restart,
+            "process": process,
+        },
+    )

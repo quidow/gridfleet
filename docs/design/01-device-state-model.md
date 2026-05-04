@@ -59,7 +59,7 @@ app.services.device_availability.set_device_availability_status
 
 `backend/app/services/device_availability.py:23-51`. It asserts the device is loaded in the current session — i.e. that the row was acquired through `device_locking.lock_device` first — and publishes `device.availability_changed` to the event bus on every transition. Bypassing it (assigning `device.availability_status = ...` directly) is now blocked by `backend/tests/test_no_direct_availability_writes.py`.
 
-The `device.availability_changed` event is queued on the writer's SQLAlchemy session and dispatched **after** the outer transaction commits, via `app.services.event_bus.queue_event_for_session`. If the outer transaction rolls back, the queued event is dropped — webhook and SSE subscribers never see a transition that was not actually persisted. Contract test: `backend/tests/test_availability_event_after_commit.py`. Note: only `device.availability_changed` follows this contract today; other event types (`node.state_changed`, `host.heartbeat_lost`, `run.state_changed`) still publish synchronously inside their transactions and remain divergent on rollback — see follow-up issue.
+The `device.availability_changed` event is queued on the writer's SQLAlchemy session and dispatched **after** the outer transaction commits, via `app.services.event_bus.queue_event_for_session`. If the outer transaction rolls back, the queued event is dropped — webhook and SSE subscribers never see a transition that was not actually persisted. Contract test: `backend/tests/test_availability_event_after_commit.py`. Transactional peer events such as `node.state_changed`, `host.heartbeat_lost`, and run/session state events follow the same after-commit dispatch rule; non-transactional broadcasters are explicitly allowlisted in `backend/tests/test_event_bus_publish_allowlist.py`.
 
 Seeding scripts under `backend/app/seeding/` are exempt from the rule because fixture builders run in a single short-lived transaction with no event consumers attached.
 
@@ -95,6 +95,12 @@ unknown · healthy · warning · critical
 ```
 
 Defined in `device.py:50-54`. Written exclusively by `hardware_telemetry_loop` from agent battery/temperature reports. Never read or written by node-lifecycle code; it feeds the operator dashboard only. Treat it as out-of-band telemetry.
+
+Live event surface:
+
+- `device.hardware_health_changed` reports warning/critical hardware telemetry transitions.
+- `device.health_changed` reports aggregate health summary transitions.
+- `device.crashed` reports per-device crash incidents whenever a persisted `node_crash` event is recorded. It is separate from `node.crash`, which is per-Appium-process and may carry process granularity such as `appium` or `grid_relay`.
 
 ## Axis 4 — Lifecycle policy (`Device.lifecycle_policy_state`)
 

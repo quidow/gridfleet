@@ -9,7 +9,7 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services import device_health_summary
 from app.services.device_availability import ready_device_availability_status, set_device_availability_status
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -140,7 +140,8 @@ async def mark_node_started(
     # value until the next `node_health` probe cycle (~30s) and the aggregate
     # `health_summary.healthy` field drifts from the actual node state.
     await device_health_summary.update_node_state(db, device, running=True, state=NodeState.running.value)
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "node.state_changed",
         {
             "device_id": str(device.id),
@@ -176,7 +177,8 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
         state=NodeState.stopped.value,
         mark_offline_on_failure=False,
     )
-    await event_bus.publish(
+    queue_event_for_session(
+        db,
         "node.state_changed",
         {
             "device_id": str(device.id),

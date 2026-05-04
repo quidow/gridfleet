@@ -13,6 +13,7 @@ from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import lifecycle_incident_service, maintenance_service, run_service
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
+from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import set_action, write_state
 from app.services.lifecycle_policy_state import state as policy_state
 
@@ -170,6 +171,15 @@ async def handle_node_crash(
         device.id,
         DeviceEventType.node_crash,
         {"error": reason, "source": source, "will_restart": bool(device.auto_manage)},
+    )
+    queue_device_crashed_event(
+        db,
+        device_id=str(device.id),
+        device_name=device.name,
+        source=source,
+        reason=reason,
+        will_restart=bool(device.auto_manage),
+        process=None,
     )
 
     if node is not None and node.state == NodeState.running:

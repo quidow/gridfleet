@@ -36,10 +36,16 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
     race_attempted_lock = asyncio.Event()
     race_committed = asyncio.Event()
 
-    original_publish = heartbeat.event_bus.publish
+    original_set_availability = heartbeat.set_device_availability_status
 
-    async def gated_publish(event_name: str, payload: dict[str, object]) -> None:
-        if event_name == "device.availability_changed" and payload.get("device_id") == str(device_id):
+    async def gated_set_device_availability_status(
+        device: Device,
+        availability_status: DeviceAvailabilityStatus,
+        *,
+        reason: str | None = None,
+        publish_event: bool = True,
+    ) -> None:
+        if device.id == device_id and availability_status == DeviceAvailabilityStatus.offline:
             inside_offline_branch.set()
             await asyncio.wait_for(race_attempted_lock.wait(), timeout=2.0)
             # Pre-fix, the racing writer can acquire and commit during this
@@ -48,12 +54,17 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             # the timeout lets the fixed path continue without deadlocking.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(race_committed.wait(), timeout=0.5)
-        await original_publish(event_name, payload)
+        await original_set_availability(
+            device,
+            availability_status,
+            reason=reason,
+            publish_event=publish_event,
+        )
 
     async def heartbeat_caller() -> None:
         with (
             patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=None)),
-            patch.object(heartbeat.event_bus, "publish", new=gated_publish),
+            patch.object(heartbeat, "set_device_availability_status", new=gated_set_device_availability_status),
         ):
             async with db_session_maker() as db:
                 for _ in range(threshold):

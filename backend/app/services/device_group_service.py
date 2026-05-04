@@ -10,7 +10,7 @@ from app.models.device_group import DeviceGroup, DeviceGroupMembership, GroupTyp
 from app.schemas.device_filters import DeviceGroupFilters, DeviceQueryFilters
 from app.schemas.device_group import DeviceGroupCreate, DeviceGroupUpdate
 from app.services import device_service
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 
 
 async def create_group(db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
@@ -21,9 +21,10 @@ async def create_group(db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup
         filters=_dump_filters(data.filters),
     )
     db.add(group)
+    await db.flush()
+    queue_event_for_session(db, "device_group.updated", {"group_id": str(group.id), "action": "created"})
     await db.commit()
     await db.refresh(group)
-    await event_bus.publish("device_group.updated", {"group_id": str(group.id), "action": "created"})
     return group
 
 
@@ -88,9 +89,9 @@ async def update_group(db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupU
         updates.pop("filters")
     for field, value in updates.items():
         setattr(group, field, value)
+    queue_event_for_session(db, "device_group.updated", {"group_id": str(group.id), "action": "updated"})
     await db.commit()
     await db.refresh(group)
-    await event_bus.publish("device_group.updated", {"group_id": str(group.id), "action": "updated"})
     return group
 
 
@@ -101,8 +102,8 @@ async def delete_group(db: AsyncSession, group_id: uuid.UUID) -> bool:
     if group is None:
         return False
     await db.delete(group)
+    queue_event_for_session(db, "device_group.updated", {"group_id": str(group_id), "action": "deleted"})
     await db.commit()
-    await event_bus.publish("device_group.updated", {"group_id": str(group_id), "action": "deleted"})
     return True
 
 
@@ -118,9 +119,9 @@ async def add_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uu
         if exists.scalar_one_or_none() is None:
             db.add(DeviceGroupMembership(group_id=group_id, device_id=device_id))
             added += 1
-    await db.commit()
     if added:
-        await event_bus.publish("device_group.members_changed", {"group_id": str(group_id), "added": added})
+        queue_event_for_session(db, "device_group.members_changed", {"group_id": str(group_id), "added": added})
+    await db.commit()
     return added
 
 
@@ -129,10 +130,10 @@ async def remove_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list
         DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
     )
     result = await db.execute(stmt)
-    await db.commit()
     removed = int(getattr(result, "rowcount", 0) or 0)
     if removed:
-        await event_bus.publish("device_group.members_changed", {"group_id": str(group_id), "removed": removed})
+        queue_event_for_session(db, "device_group.members_changed", {"group_id": str(group_id), "removed": removed})
+    await db.commit()
     return removed
 
 
