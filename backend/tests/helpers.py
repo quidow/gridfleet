@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -5,8 +6,10 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.device_reservation import DeviceReservation
+from app.models.host import Host, HostStatus, OSType
 from app.models.test_run import RunState, TestRun
 
 DEFAULT_HOST_PAYLOAD = {
@@ -194,3 +197,87 @@ async def create_reserved_run(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
     return run
+
+
+async def settle_after_commit_tasks() -> None:
+    """Yield the loop twice so after_commit-created publish tasks run before assertions."""
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+async def seed_host_and_device(
+    db_session: AsyncSession,
+    *,
+    identity: str,
+    availability: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available,
+) -> tuple[Host, Device]:
+    """Seed a Host + a single Device on it. Used by event-bus contract tests."""
+    host = Host(
+        hostname=f"host-{identity}",
+        ip="10.0.0.99",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value=identity,
+        name=f"Device {identity}",
+        availability_status=availability,
+    )
+    return host, device
+
+
+async def seed_host_and_running_node(
+    db_session: AsyncSession,
+    *,
+    identity: str,
+    port: int = 4730,
+) -> tuple[Host, Device, AppiumNode]:
+    """Seed Host + Device + AppiumNode in running state. Used for crash/restart tests."""
+    host, device = await seed_host_and_device(db_session, identity=identity)
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        grid_url="http://hub.invalid:4444",
+        pid=12345,
+        active_connection_target=device.connection_target,
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(node)
+    return host, device, node
+
+
+async def seed_host_with_devices(
+    db_session: AsyncSession,
+    *,
+    count: int,
+    identity_prefix: str,
+) -> tuple[Host, list[Device]]:
+    """Seed a Host plus N devices on it. Used for heartbeat host-offline cascade tests."""
+    host = Host(
+        hostname=f"host-{identity_prefix}",
+        ip="10.0.0.99",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    devices: list[Device] = []
+    for i in range(count):
+        identity = f"{identity_prefix}-{i}"
+        device = await create_device_record(
+            db_session,
+            host_id=host.id,
+            identity_value=identity,
+            name=f"Device {identity}",
+            availability_status=DeviceAvailabilityStatus.available,
+        )
+        devices.append(device)
+    return host, devices

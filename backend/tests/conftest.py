@@ -1,6 +1,7 @@
 import os
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -196,3 +197,15 @@ async def db_host(db_session: AsyncSession) -> AsyncGenerator[Host]:
     db_session.add(host)
     await db_session.flush()
     yield host
+
+
+@pytest.fixture
+def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+    """Capture every event_bus.publish invocation for after-commit contract tests."""
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def _fake_publish(name: str, payload: dict[str, Any]) -> None:
+        captured.append((name, payload))
+
+    monkeypatch.setattr("app.services.event_bus.event_bus.publish", _fake_publish)
+    return captured
