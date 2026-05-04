@@ -97,8 +97,13 @@ async def test_publishes_event_on_unhealthy_to_healthy_transition(db_session: As
     db_session.add(device)
     await db_session.commit()
 
-    await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Disconnected")
-    await db_session.commit()
+    # Pre-seed: drive the device to unhealthy. Patch during commit+drain so the
+    # deferred tasks (availability_changed + health_changed) complete quickly via
+    # the mock and don't bleed into the assertion window below.
+    with patch("app.services.event_bus.event_bus.publish", AsyncMock()):
+        await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Disconnected")
+        await db_session.commit()
+        await _drain_after_commit_tasks()
 
     publish = AsyncMock()
     with patch("app.services.event_bus.event_bus.publish", publish):
