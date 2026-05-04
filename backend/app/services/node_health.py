@@ -255,11 +255,16 @@ async def _process_node_health(
                 failure_source="node_health",
                 failure_reason="Node health checks recovered",
             )
+            # The dedicated ``lifecycle_recovered`` incident below already
+            # describes the recovery; pass ``record_incident=False`` to avoid
+            # publishing a duplicate ``lifecycle_recovered`` event for the
+            # same recovery moment.
             await lifecycle_policy.clear_pending_auto_stop_on_recovery(
                 db,
                 device,
                 source="node_health",
                 reason="Node health checks recovered",
+                record_incident=False,
             )
             await event_bus.publish(
                 "node.state_changed",

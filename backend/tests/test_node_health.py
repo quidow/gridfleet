@@ -916,4 +916,10 @@ async def test_node_health_recovery_clears_pending_stop(
         .scalars()
         .all()
     )
-    assert any("deferred stop" in (incident.details.get("detail") or "").lower() for incident in incidents)
+    # Audit P2: the dedicated node-health ``lifecycle_recovered`` event below
+    # is the canonical recovery audit entry. ``clear_pending_auto_stop_on_recovery``
+    # is invoked with ``record_incident=False`` so the recovery moment shows up
+    # exactly once instead of twice on the device timeline.
+    assert len(incidents) == 1
+    detail = (incidents[0].details or {}).get("detail") or ""
+    assert "resumed healthy operation" in detail.lower()
