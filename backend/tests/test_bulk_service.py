@@ -12,7 +12,7 @@ from app.errors import AgentCallError
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import bulk_service
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.helpers import create_device
 

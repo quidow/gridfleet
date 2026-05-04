@@ -22,7 +22,7 @@ from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_verification_job_state import enum_value, set_stage
 from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.settings_service import settings_service
 

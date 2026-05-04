@@ -6,7 +6,7 @@ from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services.device_availability import set_device_availability_status
 from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 
 logger = logging.getLogger(__name__)
 

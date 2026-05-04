@@ -17,7 +17,7 @@ from app.services.node_manager_remote import (
     restart_node_via_agent,
     start_remote_temporary_node,
 )
-from app.services.node_manager_types import TemporaryNodeHandle
+from app.services.node_service_types import TemporaryNodeHandle
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -239,7 +239,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
 
     from app.services import node_manager_state
     from app.services.event_bus import event_bus
-    from app.services.node_manager_types import NodeManagerError
+    from app.services.node_service_types import NodeManagerError
 
     host = Host(
         hostname="lock-host-3",

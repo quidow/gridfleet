@@ -25,7 +25,7 @@ async def _lock_device_for_node_state_write(db: AsyncSession, device_id: uuid.UU
     try:
         return await device_locking.lock_device(db, device_id)
     except NoResultFound:
-        from app.services.node_manager_types import NodeManagerError
+        from app.services.node_service_types import NodeManagerError
 
         raise NodeManagerError(f"Device {device_id} no longer exists") from None
 
@@ -67,7 +67,7 @@ async def candidate_ports(
     if ports:
         return ports
 
-    from app.services.node_manager_types import NodeManagerError
+    from app.services.node_service_types import NodeManagerError
 
     raise NodeManagerError("No free ports available in the configured range")
 

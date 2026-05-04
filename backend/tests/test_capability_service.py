@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceType
-from app.services import capability_service, node_manager_common
+from app.services import capability_service, node_service_common
 
 
 def _device(
@@ -82,8 +82,8 @@ def test_config_appium_caps_cannot_override_manager_owned_routing_caps() -> None
     assert caps["appium:gridfleet:deviceId"] == str(device.id)
     assert caps["appium:noReset"] is True
 
-    extra_caps = node_manager_common.build_extra_caps(device)
-    stereotype_caps = node_manager_common.build_grid_stereotype_caps(device)
+    extra_caps = node_service_common.build_extra_caps(device)
+    stereotype_caps = node_service_common.build_grid_stereotype_caps(device)
     assert extra_caps["appium:gridfleet:deviceId"] == str(device.id)
     assert extra_caps["appium:gridfleet:deviceName"] == "Trusted Device"
     assert extra_caps["appium:noReset"] is True

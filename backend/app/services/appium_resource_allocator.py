@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models.appium_node import NodeState
 from app.services import control_plane_state_store
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

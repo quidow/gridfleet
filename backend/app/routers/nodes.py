@@ -11,7 +11,7 @@ from app.schemas.device import AppiumNodeRead
 from app.services import device_health_summary, run_service
 from app.services.device_readiness import assess_device_async
 from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 

@@ -38,7 +38,7 @@ from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
 from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:

@@ -1,7 +1,7 @@
 import uuid
 
 from app.models.device import ConnectionType, Device, DeviceType
-from app.services.node_manager_common import build_extra_caps
+from app.services.node_service_common import build_extra_caps
 
 
 def _device(**overrides: object) -> Device:

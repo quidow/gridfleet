@@ -8,7 +8,7 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.host import Host
 from app.services import appium_node_locking, device_locking, lifecycle_policy_actions
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]

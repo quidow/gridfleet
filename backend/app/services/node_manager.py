@@ -20,7 +20,7 @@ from app.services.node_manager_remote import (
 from app.services.node_manager_state import allocate_port as allocate_port_impl
 from app.services.node_manager_state import candidate_ports as candidate_ports_impl
 from app.services.node_manager_state import mark_node_started, mark_node_stopped
-from app.services.node_manager_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
 from app.services.pack_platform_resolver import resolve_pack_platform
 
 logger = logging.getLogger(__name__)

@@ -10,12 +10,12 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.services import appium_resource_allocator
 from app.services.agent_operations import appium_start, appium_status, appium_stop, response_json_dict
 from app.services.device_identity import appium_connection_target
-from app.services.node_manager_common import (
+from app.services.node_service_common import (
     build_appium_driver_caps,
     build_grid_stereotype_caps,
     get_default_plugins,
 )
-from app.services.node_manager_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
 from app.services.pack_capability_service import (
     render_default_capabilities,
     render_device_field_capabilities,

@@ -9,7 +9,7 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.services import appium_resource_allocator, device_service
 from app.services.node_manager import RemoteNodeManager
 from app.services.node_manager_remote import restart_node_via_agent
-from app.services.node_manager_types import TemporaryNodeHandle
+from app.services.node_service_types import TemporaryNodeHandle
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
