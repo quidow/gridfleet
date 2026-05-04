@@ -924,7 +924,7 @@ async def release_claimed_device_with_cooldown(
         entry.claimed_by = None
         entry.claimed_at = None
 
-        from app.services.device_availability import restore_post_busy_availability_status
+        from app.services.device_availability_resolution import restore_post_busy_availability_status
 
         next_status = await restore_post_busy_availability_status(db, device, reason=f"cooldown:{clean_reason}")
 

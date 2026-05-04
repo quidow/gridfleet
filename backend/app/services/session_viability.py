@@ -14,7 +14,8 @@ from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
 from app.services import capability_service, control_plane_state_store, device_health_summary, lifecycle_policy
 from app.services.agent_operations import appium_probe_session
-from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.device_availability import set_device_availability_status
+from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.settings_service import settings_service
 

@@ -13,7 +13,8 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import grid_service, lifecycle_policy, run_service, session_service
-from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.device_availability import set_device_availability_status
+from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
 

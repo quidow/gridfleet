@@ -12,7 +12,8 @@ from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, 
 from app.models.session import Session, SessionStatus
 from app.services import lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.device_availability import set_device_availability_status
+from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.event_bus import event_bus
 from app.services.session_filters import exclude_non_test_sessions, exclude_reserved_sessions
 
