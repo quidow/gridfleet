@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
+from app.services import device_health_summary
 from app.services.node_health import (
     _check_node_health,
     _check_nodes,
@@ -862,10 +864,6 @@ async def test_node_health_recovery_clears_pending_stop(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.models.device_event import DeviceEvent, DeviceEventType
-    from app.services import device_health_summary
-    from app.services.node_health import set_node_health_failure_count
-
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",

@@ -841,12 +841,18 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     assert reloaded is not None
     stopped = await handle_session_finished(db_session, reloaded)
     await db_session.commit()
-    assert stopped is True  # Helper returns True (intent cleared) but device NOT stopped.
+    # Returns False so session_sync._on_session_end falls through to its
+    # restore_post_busy_availability_status path. The intent IS cleared, but
+    # since we did not auto-stop, the caller must restore availability.
+    assert stopped is False
 
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.availability_status == DeviceAvailabilityStatus.busy  # NOT offline
+    # handle_session_finished itself does not touch availability_status —
+    # restoration is the caller's responsibility (covered by the integration
+    # test test_session_sync_restores_busy_after_healthy_drop).
+    assert reloaded.availability_status == DeviceAvailabilityStatus.busy
 
 
 async def test_handle_session_finished_executes_stop_when_unhealthy(

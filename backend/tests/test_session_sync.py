@@ -532,6 +532,62 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     assert run.reserved_devices[0]["excluded"] is True
 
 
+async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """When `handle_session_finished` drops a deferred-stop intent because the
+    device is currently healthy (defense-in-depth branch), it returns False so
+    `_on_session_end` falls through to `restore_post_busy_availability_status`.
+    The device must end up `available`, not stuck at `busy`."""
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import device_health_summary
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-deferred-recovered",
+        connection_target="dev-deferred-recovered",
+        name="Deferred Recovered",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(device_id=device.id, port=4790, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    session = Session(session_id="sess-deferred-recovered", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    # Defer a stop (simulates an earlier transient failure during this session).
+    await handle_health_failure(db_session, device, source="node_health", reason="Probe failed")
+
+    # Health later recovers — seed snapshot to healthy. (Task 2's recovery wiring
+    # would normally clear stop_pending here, but this test exercises the
+    # defense-in-depth path where it didn't, so we leave stop_pending=True.)
+    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await db_session.commit()
+
+    # Session ends — Grid no longer reports it.
+    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(device)
+    # Intent was cleared but device should be RESTORED to available, not stopped.
+    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state["stop_pending"] is False
+
+
 async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
     """Probe sessions are filtered out and never persisted as real Session rows."""
     device = Device(
