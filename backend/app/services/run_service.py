@@ -26,6 +26,7 @@ from app.services import (
     platform_label_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.services.device_availability import set_device_availability_status
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
 from app.services.lifecycle_policy_state import (
@@ -314,7 +315,11 @@ async def _attempt_create_run(
 
     device_infos: list[ReservedDeviceInfo] = []
     for device in all_matched:
-        device.availability_status = DeviceAvailabilityStatus.reserved
+        await set_device_availability_status(
+            device,
+            DeviceAvailabilityStatus.reserved,
+            reason=f"Reserved for run '{data.name}'",
+        )
         device_infos.append(
             _build_device_info(
                 device,
@@ -919,7 +924,7 @@ async def release_claimed_device_with_cooldown(
         entry.claimed_by = None
         entry.claimed_at = None
 
-        from app.services.device_availability import restore_post_busy_availability_status
+        from app.services.device_availability_resolution import restore_post_busy_availability_status
 
         next_status = await restore_post_busy_availability_status(db, device, reason=f"cooldown:{clean_reason}")
 
@@ -1159,24 +1164,19 @@ async def _release_devices(
             # a deferred stop may have been waiting on this run's session.
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
-        old_availability_status = device.availability_status
-        if old_availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
+        if device.availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
             db, device.id
         ):
             continue
-        if await is_ready_for_use_async(db, device):
-            device.availability_status = DeviceAvailabilityStatus.available
-        else:
-            device.availability_status = DeviceAvailabilityStatus.offline
-        await event_bus.publish(
-            "device.availability_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_availability_status": old_availability_status.value,
-                "new_availability_status": device.availability_status.value,
-                "reason": f"Run '{run.name}' ended ({run.state.value})",
-            },
+        next_status = (
+            DeviceAvailabilityStatus.available
+            if await is_ready_for_use_async(db, device)
+            else DeviceAvailabilityStatus.offline
+        )
+        await set_device_availability_status(
+            device,
+            next_status,
+            reason=f"Run '{run.name}' ended ({run.state.value})",
         )
         devices_pending_lifecycle_cleanup.append(device.id)
     if commit:

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
-from app.services.event_bus import event_bus
+from app.services.device_availability import set_device_availability_status
 from app.services.node_manager import get_node_manager
 from app.services.node_manager_types import NodeManagerError
 
@@ -22,8 +22,11 @@ async def enter_maintenance(
     if not allow_reserved and device.availability_status == DeviceAvailabilityStatus.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
-    old_availability_status = device.availability_status.value
-    device.availability_status = DeviceAvailabilityStatus.maintenance
+    await set_device_availability_status(
+        device,
+        DeviceAvailabilityStatus.maintenance,
+        reason="Operator entered maintenance",
+    )
 
     if not drain and device.appium_node and device.appium_node.state == NodeState.running:
         try:
@@ -34,19 +37,14 @@ async def enter_maintenance(
             from app.services import device_locking
 
             device = await device_locking.lock_device(db, device.id)
-            device.availability_status = DeviceAvailabilityStatus.maintenance
+            await set_device_availability_status(
+                device,
+                DeviceAvailabilityStatus.maintenance,
+                reason="Operator entered maintenance (re-asserted after node stop)",
+            )
         except NodeManagerError as exc:
             logger.warning("Failed to stop node for %s during maintenance: %s", device.id, exc)
 
-    await event_bus.publish(
-        "device.availability_changed",
-        {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_availability_status": old_availability_status,
-            "new_availability_status": DeviceAvailabilityStatus.maintenance.value,
-        },
-    )
     if commit:
         await db.commit()
         await db.refresh(device)
@@ -62,15 +60,10 @@ async def exit_maintenance(
     if device.availability_status != DeviceAvailabilityStatus.maintenance:
         raise ValueError(f"Device is not in maintenance (status: {device.availability_status.value})")
 
-    device.availability_status = DeviceAvailabilityStatus.offline
-    await event_bus.publish(
-        "device.availability_changed",
-        {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_availability_status": DeviceAvailabilityStatus.maintenance.value,
-            "new_availability_status": DeviceAvailabilityStatus.offline.value,
-        },
+    await set_device_availability_status(
+        device,
+        DeviceAvailabilityStatus.offline,
+        reason="Operator exited maintenance",
     )
     if commit:
         await db.commit()

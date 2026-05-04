@@ -9,7 +9,8 @@ from app.models.host import Host
 from app.models.job import Job
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
-from app.services.device_availability import restore_post_busy_availability_status, set_device_availability_status
+from app.services.device_availability import set_device_availability_status
+from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.device_connectivity import (
     get_connectivity_control_plane_state,
     reset_connectivity_control_plane_state,

@@ -51,23 +51,15 @@ Semantics:
 
 ### Who is allowed to write `availability_status`
 
-The sanctioned writer is:
+There is exactly **one** sanctioned writer:
 
 ```text
 app.services.device_availability.set_device_availability_status
 ```
 
-`backend/app/services/device_availability.py:23-51`. It asserts the device is loaded in the current session — i.e. that the row was acquired through `device_locking.lock_device` first — and publishes `device.availability_changed` to the event bus on transition.
+`backend/app/services/device_availability.py:23-51`. It asserts the device is loaded in the current session — i.e. that the row was acquired through `device_locking.lock_device` first — and publishes `device.availability_changed` to the event bus on every transition. Bypassing it (assigning `device.availability_status = ...` directly) is now blocked by `backend/tests/test_no_direct_availability_writes.py`.
 
-**Known direct-write exceptions** (assign `device.availability_status = ...` without going through the helper). These bypass the persistent-session assertion and the availability-changed event:
-
-- `app/services/lifecycle_policy.py:546, 549, 560, 562` — auto-recovery branches inside `restore_run_if_needed` / connectivity-restored flow, after a manual `lock_device` is held.
-- `app/services/lifecycle_policy_actions.py:165, 171` — `record_node_crash` writes `offline` directly under a re-acquired row lock.
-- `app/services/maintenance_service.py:26, 37, 65` — operator maintenance enter/exit reimplements the event publish locally.
-- `app/services/run_service.py:317, 1168, 1170` — reservation create + release reimplement the event publish.
-- `app/services/heartbeat.py:435` — host-offline cascade marking each host's devices `offline`, inside the loop's per-host transaction.
-
-Both call sites still hold a device row lock and commit in the same transaction, so the locking invariant is satisfied. The cost of the shortcut is no `device.availability_changed` event for those transitions and no central observability. New code should not copy this pattern; treat these two files as candidates to normalise to the helper.
+Seeding scripts under `backend/app/seeding/` are exempt from the rule because fixture builders run in a single short-lived transaction with no event consumers attached.
 
 ### Transition rules
 

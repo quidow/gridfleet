@@ -11,6 +11,7 @@ from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import device_health_summary, lifecycle_incident_service, lifecycle_policy_summary, run_service
+from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.lifecycle_policy_actions import (
@@ -543,10 +544,18 @@ async def attempt_auto_recovery(
                 DeviceEventType.node_restart,
                 {"recovered_from": source, "reason": reason},
             )
-            device.availability_status = DeviceAvailabilityStatus.reserved
+            await set_device_availability_status(
+                device,
+                DeviceAvailabilityStatus.reserved,
+                reason=f"Rejoined run after {source}: {reason}",
+            )
             await db.commit()
         else:
-            device.availability_status = DeviceAvailabilityStatus.reserved
+            await set_device_availability_status(
+                device,
+                DeviceAvailabilityStatus.reserved,
+                reason=f"Rejoined run after {source}: {reason}",
+            )
             await db.commit()
     else:
         await record_event(
@@ -556,10 +565,16 @@ async def attempt_auto_recovery(
             {"recovered_from": source, "reason": reason},
         )
         if device.availability_status != DeviceAvailabilityStatus.available:
-            if await is_ready_for_use_async(db, device):
-                device.availability_status = DeviceAvailabilityStatus.available
-            else:
-                device.availability_status = DeviceAvailabilityStatus.offline
+            next_status = (
+                DeviceAvailabilityStatus.available
+                if await is_ready_for_use_async(db, device)
+                else DeviceAvailabilityStatus.offline
+            )
+            await set_device_availability_status(
+                device,
+                next_status,
+                reason=f"Connectivity restored ({source}): {reason}",
+            )
         await db.commit()
 
     await record_event(

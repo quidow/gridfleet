@@ -18,6 +18,7 @@ from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
 from app.services import control_plane_state_store, device_health_summary, host_service, plugin_service
 from app.services.agent_operations import agent_health
+from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.event_bus import event_bus
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
@@ -410,16 +411,6 @@ async def _check_hosts(db: AsyncSession) -> None:
                 device_id_stmt = select(Device.id).where(Device.host_id == host.id)
                 device_ids = list((await db.execute(device_id_stmt)).scalars().all())
                 for device in await device_locking.lock_devices(db, device_ids):
-                    await event_bus.publish(
-                        "device.availability_changed",
-                        {
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "old_availability_status": device.availability_status.value,
-                            "new_availability_status": "offline",
-                            "reason": f"Host {host.hostname} offline",
-                        },
-                    )
                     await record_event(
                         db,
                         device.id,
@@ -432,7 +423,11 @@ async def _check_hosts(db: AsyncSession) -> None:
                         healthy=False,
                         summary=f"Host {host.hostname} offline",
                     )
-                    device.availability_status = DeviceAvailabilityStatus.offline
+                    await set_device_availability_status(
+                        device,
+                        DeviceAvailabilityStatus.offline,
+                        reason=f"Host {host.hostname} offline",
+                    )
 
     await db.commit()
 
