@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.services.event_bus import Event
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 from app.services.settings_registry import (
     CATEGORY_DISPLAY_NAMES,
     SETTINGS_REGISTRY,
@@ -205,13 +205,12 @@ class SettingsService:
             row.value = normalized_value
         else:
             db.add(Setting(key=key, value=normalized_value, category=defn.category))
+        queue_event_for_session(db, "settings.changed", {"key": key, "value": normalized_value})
         await db.commit()
 
         # Update cache
         self._overrides[key] = normalized_value
         self._cache[key] = normalized_value
-
-        await event_bus.publish("settings.changed", {"key": key, "value": normalized_value})
         return self.get_setting_response(key)
 
     async def bulk_update(self, db: AsyncSession, updates: dict[str, Any]) -> list[dict[str, Any]]:
@@ -241,9 +240,9 @@ class SettingsService:
             self._overrides[key] = normalized_value
             self._cache[key] = normalized_value
 
+        queue_event_for_session(db, "settings.changed", {"keys": list(updates.keys())})
         await db.commit()
 
-        await event_bus.publish("settings.changed", {"keys": list(updates.keys())})
         return [self.get_setting_response(key) for key in updates]
 
     async def reset(self, db: AsyncSession, key: str) -> dict[str, Any]:
@@ -252,24 +251,22 @@ class SettingsService:
             raise KeyError(f"Unknown setting: {key}")
 
         await db.execute(delete(Setting).where(Setting.key == key))
+        queue_event_for_session(db, "settings.changed", {"key": key, "reset": True})
         await db.commit()
 
         self._overrides.pop(key, None)
         self._cache[key] = self._defaults[key]
-
-        await event_bus.publish("settings.changed", {"key": key, "reset": True})
         return self.get_setting_response(key)
 
     async def reset_all(self, db: AsyncSession) -> None:
         """Reset all settings to defaults."""
         await db.execute(delete(Setting))
+        queue_event_for_session(db, "settings.changed", {"reset_all": True})
         await db.commit()
 
         self._overrides.clear()
         for key in SETTINGS_REGISTRY:
             self._cache[key] = self._defaults[key]
-
-        await event_bus.publish("settings.changed", {"reset_all": True})
 
     def get_setting_response(self, key: str) -> dict[str, Any]:
         """Build the API response dict for a single setting."""
