@@ -17,8 +17,11 @@ export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 
 As of the fix in this release:
 
-- Each session-end path now invokes `lifecycle_policy.complete_deferred_stop_if_session_ended`.
-- The `session_sync` background loop runs `_sweep_stale_stop_pending` every cycle, clearing rows that escaped per-path wiring (and healing historical leftovers). The poll interval is governed by the `grid.session_poll_interval_sec` setting.
+- Each session-end path (`PATCH /api/sessions/{id}/status`, `register_session` with a terminal status, run release / cancel / force-release / expire, and `session_sync` end-of-session) calls `lifecycle_policy.complete_deferred_stop_if_session_ended`. The helper delegates to `handle_session_finished`, which re-reads the device under a row lock so a concurrent fresh session cannot be raced past.
+- `update_session_status` runs the helper on terminal status updates regardless of current device availability — `maintenance` and `offline` rows with stale `stop_pending` are healed too, not just `busy`.
+- The `session_sync` background loop runs `_sweep_stale_stop_pending` every cycle as a backstop. The sweep relies on DB state only and runs **independent of Grid availability** — historical stale rows are healed within one poll interval even when the Grid hub is unreachable. The poll interval is governed by the `grid.session_poll_interval_sec` setting.
+- When health recovers before the session ends (e.g. via `node_health` recovery), the deferred-stop intent is cleared in place and the device stays up — the audit trail records a single `lifecycle_recovered` event, and `last_action` advances to `auto_stop_cleared` so the dashboard does not show a stale `auto_stop_deferred`.
+- The session-end helper trusts `device_health_summary` as the canonical health source. If the snapshot reads healthy but `last_failure_*` still describes a recent failure (stale-but-healthy snapshot), the intent is cleared rather than auto-stopping a device the snapshot says is working. A subsequent failed probe will re-arm the deferred stop.
 
 If the dashboard still shows a stale "Deferred Stop" entry, the periodic sweep should clear it within one poll interval. If it does not, follow the manual recovery below.
 
