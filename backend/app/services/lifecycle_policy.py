@@ -255,6 +255,12 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
             reason="Session finished while device was healthy",
             action="auto_stop_cleared",
         )
+        # Mirror the AUTO_STOPPED branch (which commits via ``complete_auto_stop``):
+        # commit the cleared intent here so callers do not need to know about the
+        # internal helper contract. Without this commit, request-scoped sessions
+        # (FastAPI ``get_db``) close before the cleared state is persisted, and
+        # the dashboard keeps rendering stale ``stop_pending``.
+        await db.commit()
         return DeferredStopOutcome.CLEARED_RECOVERED
 
     reason = (

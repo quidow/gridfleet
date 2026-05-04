@@ -224,7 +224,21 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
                 locked_device = await device_locking.lock_device(db, device.id)
                 if locked_device.availability_status == DeviceAvailabilityStatus.busy:
-                    await restore_post_busy_availability_status(db, locked_device)
+                    # Authoritative recheck under the row lock. ``handle_session_finished``
+                    # only does the locked running-session check when ``stop_pending``
+                    # is set; in the common no-deferred-stop path it returns NO_PENDING
+                    # without ever consulting the Session table under lock, so a fresh
+                    # session inserted between the outer ``still_running`` check and
+                    # this restore could be skipped past. Re-check here so we never
+                    # restore a device that now hosts a new running session.
+                    fresh_running_stmt = select(Session.id).where(
+                        Session.device_id == locked_device.id,
+                        Session.status == SessionStatus.running,
+                        Session.ended_at.is_(None),
+                    )
+                    fresh_running = (await db.execute(fresh_running_stmt)).scalar_one_or_none()
+                    if fresh_running is None:
+                        await restore_post_busy_availability_status(db, locked_device)
 
     await _sweep_stale_stop_pending(db)
     await db.commit()

@@ -588,6 +588,78 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     assert device.lifecycle_policy_state["stop_pending"] is False
 
 
+async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_precheck(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Race fix: a fresh client session inserted between the outer
+    ``still_running`` check and the locked restore must NOT be restored away
+    from busy. ``handle_session_finished`` returns ``NO_PENDING`` for
+    no-deferred-stop devices without doing the locked Session check, so the
+    restore guard performs its own locked recheck.
+    """
+    from app.services import session_sync
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-race-restore",
+        connection_target="dev-race-restore",
+        name="Race Restore",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        # No deferred-stop intent — ``handle_session_finished`` will hit the
+        # NO_PENDING fast-path without checking running sessions under lock.
+        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # The "old" session that the outer loop will see as ended.
+    old_session = Session(session_id="sess-old-ending", device_id=device.id, status=SessionStatus.running)
+    db_session.add(old_session)
+    await db_session.commit()
+
+    real_handle = session_sync.lifecycle_policy.handle_session_finished
+
+    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device) -> object:
+        # Simulate: between the outer running-set probe and the restore guard,
+        # a fresh client session is inserted (e.g. a new POST /api/sessions
+        # arriving on a different worker). The new session is committed so
+        # the locked recheck inside the restore guard observes it.
+        outcome = await real_handle(db, dev)
+        new_session = Session(session_id="sess-new-fresh", device_id=dev.id, status=SessionStatus.running)
+        db.add(new_session)
+        await db.commit()
+        return outcome
+
+    monkeypatch.setattr(
+        session_sync.lifecycle_policy,
+        "handle_session_finished",
+        _handle_then_insert_fresh,
+    )
+
+    # Old session leaves the Grid (not in active map), triggering ended-session processing.
+    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+        await session_sync._sync_sessions(db_session)
+
+    await db_session.refresh(device)
+    # The race-prone restore would have moved the device to ``available``.
+    # Correct behavior: leave it ``busy`` for the fresh session.
+    assert device.availability_status == DeviceAvailabilityStatus.busy
+
+    # Sanity check the simulated fresh session is the reason.
+    fresh = await db_session.execute(select(Session).where(Session.session_id == "sess-new-fresh"))
+    assert fresh.scalar_one_or_none() is not None
+
+
 async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
     """Probe sessions are filtered out and never persisted as real Session rows."""
     device = Device(

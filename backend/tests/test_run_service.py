@@ -149,8 +149,14 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     real_helper = run_service.lifecycle_policy.complete_deferred_stop_if_session_ended
 
     async def _spy_release(*args: object, **kwargs: object) -> list:
-        call_log.append("release")
-        return await real_release(*args, **kwargs)
+        # Marker is recorded AFTER awaiting the real implementation so the
+        # ordering assertion proves the helper ran strictly after
+        # ``_release_devices`` returned (i.e. after the run-state commit
+        # window closed). Logging before the await would also pass for a
+        # regression where the helper runs inside ``_release_devices``.
+        result = await real_release(*args, **kwargs)
+        call_log.append("release_done")
+        return result
 
     async def _spy_helper(*args: object, **kwargs: object) -> object:
         call_log.append("helper")
@@ -172,6 +178,6 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     # _release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could
     # leak under the run-state transaction.
-    assert "release" in call_log
+    assert "release_done" in call_log
     assert "helper" in call_log
-    assert call_log.index("release") < call_log.index("helper"), call_log
+    assert call_log.index("release_done") < call_log.index("helper"), call_log
