@@ -796,3 +796,162 @@ async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
     incident_stmt = select(DeviceEvent).where(DeviceEvent.device_id == device.id)
     incidents = list((await db_session.execute(incident_stmt)).scalars().all())
     assert incidents == []
+
+
+async def test_handle_session_finished_drops_intent_when_healthy(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import device_health_summary
+    from app.services.lifecycle_policy import handle_session_finished
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-finish-healthy",
+        connection_target="lifecycle-finish-healthy",
+        name="Finish Healthy",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "ADB not responsive",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(device_id=device.id, port=4781, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    await db_session.commit()
+
+    # Seed snapshot to healthy
+    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await db_session.commit()
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    stopped = await handle_session_finished(db_session, reloaded)
+    await db_session.commit()
+    assert stopped is True  # Helper returns True (intent cleared) but device NOT stopped.
+
+    await db_session.refresh(reloaded)
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.availability_status == DeviceAvailabilityStatus.busy  # NOT offline
+
+
+async def test_handle_session_finished_executes_stop_when_unhealthy(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    from app.services import device_health_summary
+    from app.services.lifecycle_policy import handle_session_finished
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-finish-unhealthy",
+        connection_target="lifecycle-finish-unhealthy",
+        name="Finish Unhealthy",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "ADB not responsive",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.flush()
+    #     node = AppiumNode(device_id=device.id, port=4782, grid_url="http://hub:4444", state=NodeState.running)
+    #     db_session.add(node)
+    await db_session.commit()
+
+    # Snapshot stays unhealthy
+    await device_health_summary.update_node_state(db_session, device, running=False, state="error")
+    await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Probe failed")
+    await db_session.commit()
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    stopped = await handle_session_finished(db_session, reloaded)
+    await db_session.commit()
+    assert stopped is True
+
+    await db_session.refresh(reloaded)
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.availability_status == DeviceAvailabilityStatus.offline  # complete_auto_stop ran
+
+
+async def test_handle_session_finished_executes_stop_when_node_not_running(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import device_health_summary
+    from app.services.lifecycle_policy import handle_session_finished
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-finish-node-stopped",
+        connection_target="lifecycle-finish-node-stopped",
+        name="Finish Node Stopped",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "stop_pending": True,
+            "stop_pending_reason": "Disconnected",
+            "stop_pending_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "device_checks",
+            "last_failure_reason": "Disconnected",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.flush()
+    # Node already stopped — even if snapshot reads healthy, complete_auto_stop must still run.
+    node = AppiumNode(device_id=device.id, port=4783, grid_url="http://hub:4444", state=NodeState.stopped)
+    db_session.add(node)
+    await db_session.commit()
+    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await db_session.commit()
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    stopped = await handle_session_finished(db_session, reloaded)
+    await db_session.commit()
+    assert stopped is True
+
+    await db_session.refresh(reloaded)
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False
+    assert reloaded.availability_status == DeviceAvailabilityStatus.offline

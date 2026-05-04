@@ -9,7 +9,7 @@ from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import lifecycle_incident_service, lifecycle_policy_summary, run_service
+from app.services import device_health_summary, lifecycle_incident_service, lifecycle_policy_summary, run_service
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.lifecycle_policy_actions import (
@@ -193,6 +193,23 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
     current_state = policy_state(device)
     if not current_state.get("stop_pending"):
         return False
+
+    snapshot = await device_health_summary.get_health_snapshot(db, str(device.id))
+    summary = device_health_summary.build_public_health_summary(snapshot)
+    node = loaded_node(device)
+    node_running = node is not None and node.state == NodeState.running
+
+    if summary.get("healthy") is True and node_running:
+        # Defense in depth: recovery should already have cleared the intent
+        # via clear_pending_auto_stop_on_recovery, but if anything else slipped
+        # the device into a healthy state without going through that path,
+        # avoid stopping a healthy device after the session ends.
+        return await clear_pending_auto_stop_on_recovery(
+            db,
+            device,
+            source=current_state.get("last_failure_source") or "session",
+            reason="Session finished while device was healthy",
+        )
 
     reason = (
         current_state.get("stop_pending_reason")
