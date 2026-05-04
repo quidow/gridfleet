@@ -7,6 +7,7 @@ from sqlalchemy.exc import NoResultFound
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
+from app.services import device_health_summary
 from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.event_bus import event_bus
 from app.services.settings_service import settings_service
@@ -134,6 +135,11 @@ async def mark_node_started(
     node = upsert_node(db, device, port, pid, active_connection_target)
     next_status = await _node_started_availability_status(db, device)
     await set_device_availability_status(device, next_status)
+    # Sync the device_health_summary snapshot so `node_running` reflects the
+    # new node state immediately. Without this the snapshot keeps the previous
+    # value until the next `node_health` probe cycle (~30s) and the aggregate
+    # `health_summary.healthy` field drifts from the actual node state.
+    await device_health_summary.update_node_state(db, device, running=True, state=NodeState.running.value)
     await event_bus.publish(
         "node.state_changed",
         {
@@ -160,6 +166,16 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     node.pid = None
     node.active_connection_target = None
     await set_device_availability_status(device, _node_stopped_availability_status(device))
+    # Sync the device_health_summary snapshot — see mark_node_started for the
+    # reason; without this the device renders as "offline + healthy" because
+    # the snapshot keeps `node_running=True` from the last successful probe.
+    await device_health_summary.update_node_state(
+        db,
+        device,
+        running=False,
+        state=NodeState.stopped.value,
+        mark_offline_on_failure=False,
+    )
     await event_bus.publish(
         "node.state_changed",
         {

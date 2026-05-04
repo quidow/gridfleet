@@ -291,7 +291,15 @@ async def stop_remote_temporary_node(
     port: int,
     agent_base: str,
     http_client_factory: AgentClientFactory,
-) -> None:
+) -> bool:
+    """Ask the agent to stop the Appium node on ``port``.
+
+    Returns True on confirmed agent acknowledgement, False otherwise. Callers
+    that mutate DB node state on the back of a stop MUST gate that mutation on
+    True — a False return means we cannot prove the agent process is gone, and
+    flipping the DB to ``stopped`` would leave the agent process orphaned with
+    its Selenium Grid registration intact.
+    """
     try:
         resp = await appium_stop(
             agent_base,
@@ -300,8 +308,9 @@ async def stop_remote_temporary_node(
             http_client_factory=http_client_factory,
         )
         resp.raise_for_status()
+        return True
     except (AgentCallError, httpx.HTTPError):
-        return
+        return False
 
 
 async def stop_node_via_agent(
@@ -355,11 +364,17 @@ async def restart_node_via_agent(
     )
 
     try:
-        await stop_remote_temporary_node(
+        stopped = await stop_remote_temporary_node(
             port=node.port,
             agent_base=agent_base,
             http_client_factory=http_client_factory,
         )
+        if not stopped:
+            # Agent did not acknowledge the stop. Starting on a different
+            # candidate port now would race the orphan Appium/Grid relay that
+            # may still be alive on the old port. Refuse to proceed and let the
+            # caller retry once the agent is reachable again.
+            return False
 
         last_conflict: NodePortConflictError | None = None
         started_handle: TemporaryNodeHandle | None = None
