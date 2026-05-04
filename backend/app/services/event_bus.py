@@ -9,13 +9,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import event as sa_event
 from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session  # noqa: TC002
 
 from app.models.system_event import SystemEvent
 from app.observability import get_logger
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 logger = get_logger(__name__)
 
@@ -313,3 +316,67 @@ class EventBus:
 
 
 event_bus = EventBus()
+
+_PENDING_EVENTS_KEY = "_pending_event_bus_events"
+_PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"
+
+
+async def _publish_pending_events(events: list[tuple[str, dict[str, Any]]]) -> None:
+    for event_type, data in events:
+        try:
+            await event_bus.publish(event_type, data)
+        except Exception:
+            logger.exception("Failed to publish deferred event %s", event_type)
+
+
+def queue_event_for_session(
+    db: AsyncSession | Session,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    """Queue an event to dispatch after the outer transaction commits.
+
+    Accepts either an ``AsyncSession`` or the underlying sync ``Session`` —
+    callers that pull the session out of ``inspect(obj).session`` get the
+    sync object directly and can pass it without reconstructing the
+    ``AsyncSession``.
+
+    On commit, ``loop.create_task(event_bus.publish(event_type, data))`` runs
+    for each queued event. On rollback, the queue is dropped — webhook/SSE
+    subscribers never see a transition that did not become durable. ``data``
+    is captured by reference — do not mutate it after queuing.
+
+    The running loop is captured at registration time (when this function is
+    called from inside an awaited coroutine). This is strictly safer than
+    resolving the loop inside the after_commit hook itself, which can fire
+    from non-greenlet contexts (sync fixture teardown) where
+    ``asyncio.get_running_loop()`` would raise ``RuntimeError``.
+    """
+    sync_session = db.sync_session if isinstance(db, AsyncSession) else db
+    loop = asyncio.get_running_loop()
+
+    pending: list[tuple[str, dict[str, Any]]] = sync_session.info.setdefault(_PENDING_EVENTS_KEY, [])
+    pending.append((event_type, data))
+
+    if sync_session.info.get(_PENDING_EVENTS_LISTENER_KEY):
+        return
+    sync_session.info[_PENDING_EVENTS_LISTENER_KEY] = True
+
+    def _flush_on_commit(_session: object) -> None:
+        events: list[tuple[str, dict[str, Any]]] = sync_session.info.pop(_PENDING_EVENTS_KEY, [])
+        sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
+        if not events:
+            return
+        task = loop.create_task(_publish_pending_events(events))
+        event_bus._handler_tasks.add(task)
+        task.add_done_callback(event_bus._handler_tasks.discard)
+
+    def _drop_on_rollback(_session: object) -> None:
+        sync_session.info.pop(_PENDING_EVENTS_KEY, None)
+        sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
+
+    # ``once=True`` makes SQLAlchemy auto-remove the listener after firing —
+    # avoids deque-mutation hazards if anything tried ``sa_event.remove`` from
+    # inside the callback.
+    sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
+    sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
