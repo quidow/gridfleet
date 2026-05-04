@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.observability import get_logger
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 
 logger = get_logger(__name__)
 

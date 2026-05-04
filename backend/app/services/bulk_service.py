@@ -16,7 +16,7 @@ from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
-from app.services.node_manager import NodeManager, get_node_manager
+from app.services.node_service import restart_node, start_node, stop_node
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 
@@ -49,7 +49,7 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-ManagerCall = Callable[[NodeManager, AsyncSession, Device], Awaitable[object]]
+ManagerCall = Callable[[AsyncSession, Device], Awaitable[object]]
 
 
 async def _run_per_device_node_action(
@@ -68,8 +68,7 @@ async def _run_per_device_node_action(
         async with sem, session_factory() as session:
             try:
                 device = await device_locking.lock_device(session, device_id)
-                manager = get_node_manager(device)
-                await manager_call(manager, session, device)
+                await manager_call(session, device)
                 await session.commit()
             except NoResultFound:
                 errors[str(device_id)] = "Device not found"
@@ -97,7 +96,7 @@ async def bulk_start_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dic
         db,
         device_ids,
         operation="start_nodes",
-        manager_call=lambda mgr, sess, dev: mgr.start_node(sess, dev),
+        manager_call=start_node,
     )
 
 
@@ -106,7 +105,7 @@ async def bulk_stop_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict
         db,
         device_ids,
         operation="stop_nodes",
-        manager_call=lambda mgr, sess, dev: mgr.stop_node(sess, dev),
+        manager_call=stop_node,
     )
 
 
@@ -115,7 +114,7 @@ async def bulk_restart_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> d
         db,
         device_ids,
         operation="restart_nodes",
-        manager_call=lambda mgr, sess, dev: mgr.restart_node(sess, dev),
+        manager_call=restart_node,
     )
 
 

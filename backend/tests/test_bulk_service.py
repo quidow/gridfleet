@@ -12,7 +12,7 @@ from app.errors import AgentCallError
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import bulk_service
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.helpers import create_device
 
@@ -71,16 +71,25 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             verified=True,
         ),
     ]
-    manager_ok = AsyncMock()
-    manager_fail = AsyncMock()
-    manager_fail.start_node.side_effect = NodeManagerError("cannot start")
-    manager_fail.stop_node.side_effect = RuntimeError("cannot stop")
-    manager_fail.restart_node.side_effect = NodeManagerError("cannot restart")
 
-    monkeypatch.setattr(
-        "app.services.bulk_service.get_node_manager",
-        lambda device: manager_fail if device.id == devices[1].id else manager_ok,
-    )
+    async def fake_start_node(_db: AsyncSession, device: Device) -> object:
+        if device.id == devices[1].id:
+            raise NodeManagerError("cannot start")
+        return object()
+
+    async def fake_stop_node(_db: AsyncSession, device: Device) -> object:
+        if device.id == devices[1].id:
+            raise RuntimeError("cannot stop")
+        return object()
+
+    async def fake_restart_node(_db: AsyncSession, device: Device) -> object:
+        if device.id == devices[1].id:
+            raise NodeManagerError("cannot restart")
+        return object()
+
+    monkeypatch.setattr("app.services.bulk_service.start_node", fake_start_node)
+    monkeypatch.setattr("app.services.bulk_service.stop_node", fake_stop_node)
+    monkeypatch.setattr("app.services.bulk_service.restart_node", fake_restart_node)
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
 
     started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])

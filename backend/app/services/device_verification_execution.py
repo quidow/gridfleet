@@ -21,8 +21,8 @@ from app.services.device_availability import ready_device_availability_status, s
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_verification_job_state import enum_value, set_stage
-from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError, TemporaryNodeHandle
+from app.services.node_service import restart_node, start_temporary_node, stop_node, stop_temporary_node
+from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.settings_service import settings_service
 
@@ -136,8 +136,7 @@ async def run_cleanup(
 
     await set_stage(job, "cleanup", "running")
     try:
-        manager = get_node_manager(device)
-        await manager.stop_temporary_node(db, device, handle)
+        await stop_temporary_node(db, device, handle)
     except Exception as exc:
         detail = f"Temporary node cleanup failed: {exc}"
         await set_stage(job, "cleanup", "failed", detail=detail)
@@ -167,8 +166,7 @@ async def stop_existing_managed_node_for_update(
         detail="Stopping existing managed node before starting updated verification node",
     )
     try:
-        manager = get_node_manager(existing_device)
-        await manager.stop_node(db, existing_device)
+        await stop_node(db, existing_device)
     except NodeManagerError as exc:
         detail = f"Failed to stop existing managed node before verification: {exc}"
         await set_stage(job, "node_start", "failed", detail=detail)
@@ -231,7 +229,7 @@ async def retain_verified_node(
                 "running",
                 detail="Refreshing retained node Grid registration",
             )
-            refreshed_node = await get_node_manager(device).restart_node(db, device)
+            refreshed_node = await restart_node(db, device)
             handle.port = refreshed_node.port
             handle.pid = refreshed_node.pid
             handle.active_connection_target = refreshed_node.active_connection_target
@@ -268,8 +266,7 @@ async def run_probe(
 ) -> tuple[TemporaryNodeHandle | None, str | None]:
     await set_stage(job, "node_start", "running")
     try:
-        manager = get_node_manager(device)
-        handle = await manager.start_temporary_node(db, device, owner_key=owner_key)
+        handle = await start_temporary_node(db, device, owner_key=owner_key)
     except NodeManagerError as exc:
         detail = str(exc)
         await set_stage(job, "node_start", "failed", detail=detail)

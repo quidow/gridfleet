@@ -11,13 +11,16 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import device_service
-from app.services.node_manager import NodeManagerError, RemoteNodeManager, get_node_manager
-from app.services.node_manager_remote import (
+from app.services.node_service import (
+    agent_url,
     build_agent_start_payload,
     restart_node_via_agent,
+    start_node,
     start_remote_temporary_node,
+    stop_node,
+    stop_temporary_node,
 )
-from app.services.node_manager_types import TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -73,8 +76,8 @@ async def test_remote_start_node(client: AsyncClient, db_session: AsyncSession) 
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.node_manager_remote.assert_runnable", new=AsyncMock(return_value=None)),
-        patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client),
+        patch("app.services.node_service.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client),
     ):
         resp = await client.post(f"/api/devices/{device.id}/node/start")
 
@@ -128,10 +131,10 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.node_manager_remote.assert_runnable", new=AsyncMock(return_value=None)),
-        patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client),
+        patch("app.services.node_service.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client),
     ):
-        node = await RemoteNodeManager().start_node(db_session, loaded_device)
+        node = await start_node(db_session, loaded_device)
 
     assert loaded_device.appium_node is node
     assert node.state == NodeState.running
@@ -178,10 +181,10 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
 
     with (
         patch(
-            "app.services.node_manager.RemoteNodeManager._agent_url",
+            "app.services.node_service.agent_url",
             new=AsyncMock(return_value="http://192.168.1.50:5100"),
         ),
-        patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_stop_client),
+        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_stop_client),
     ):
         resp = await client.post(f"/api/devices/{device.id}/node/stop")
 
@@ -193,7 +196,7 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
 
 
 async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.services import node_manager_state
+    from app.services import node_service
 
     host = Host(
         hostname="lock-host",
@@ -224,10 +227,10 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    real = node_manager_state._hold_device_row_lock
+    real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
-    with patch("app.services.node_manager_state._hold_device_row_lock", spy):
-        await node_manager_state.mark_node_started(db_session, loaded, port=4723, pid=12345)
+    with patch("app.services.node_service._hold_device_row_lock", spy):
+        await node_service.mark_node_started(db_session, loaded, port=4723, pid=12345)
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -237,9 +240,9 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     from sqlalchemy import delete as sa_delete
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.services import node_manager_state
+    from app.services import node_service
     from app.services.event_bus import event_bus
-    from app.services.node_manager_types import NodeManagerError
+    from app.services.node_service_types import NodeManagerError
 
     host = Host(
         hostname="lock-host-3",
@@ -282,13 +285,13 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
         patch.object(event_bus, "publish", publish_spy),
         pytest.raises(NodeManagerError, match="no longer exists"),
     ):
-        await node_manager_state.mark_node_started(db_session, loaded, port=4723, pid=12345)
+        await node_service.mark_node_started(db_session, loaded, port=4723, pid=12345)
 
     publish_spy.assert_not_awaited()
 
 
 async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.services import node_manager_state
+    from app.services import node_service
 
     host = Host(
         hostname="lock-host-2",
@@ -322,10 +325,10 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    real = node_manager_state._hold_device_row_lock
+    real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
-    with patch("app.services.node_manager_state._hold_device_row_lock", spy):
-        await node_manager_state.mark_node_stopped(db_session, loaded)
+    with patch("app.services.node_service._hold_device_row_lock", spy):
+        await node_service.mark_node_stopped(db_session, loaded)
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -339,7 +342,7 @@ async def test_mark_node_stopped_preserves_claimed_availability(
     db_session: AsyncSession,
     availability_status: DeviceAvailabilityStatus,
 ) -> None:
-    from app.services import node_manager_state
+    from app.services import node_service
 
     host = Host(
         hostname=f"claim-host-{availability_status.value}",
@@ -373,7 +376,7 @@ async def test_mark_node_stopped_preserves_claimed_availability(
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    await node_manager_state.mark_node_stopped(db_session, loaded)
+    await node_service.mark_node_stopped(db_session, loaded)
 
     assert loaded.availability_status == availability_status
 
@@ -405,8 +408,8 @@ async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_
     assert loaded.appium_node is not None
 
     with (
-        patch("app.services.node_manager_remote.stop_remote_temporary_node", new_callable=AsyncMock),
-        patch("app.services.node_manager_remote.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
+        patch("app.services.node_service.stop_remote_temporary_node", new_callable=AsyncMock),
+        patch("app.services.node_service.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
     ):
         start_mock.return_value = TemporaryNodeHandle(
             port=4724,
@@ -448,11 +451,8 @@ async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None
         connection_type=ConnectionType.usb,
     )
 
-    manager = get_node_manager(device)
-    assert isinstance(manager, RemoteNodeManager)
-
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await manager._agent_url(device)
+        await agent_url(device)
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +473,7 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
         device_type="emulator",
     )
 
-    with patch("app.services.node_manager_remote.settings_service") as mock_settings:
+    with patch("app.services.node_service.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4723)
 
@@ -494,7 +494,7 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
         tags={"emulator_headless": "false"},
     )
 
-    with patch("app.services.node_manager_remote.settings_service") as mock_settings:
+    with patch("app.services.node_service.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4724)
 
@@ -518,7 +518,7 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
         name="Android Browser Device",
     )
 
-    with patch("app.services.node_manager_remote.settings_service") as mock_settings:
+    with patch("app.services.node_service.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4725)
 
@@ -563,17 +563,15 @@ async def test_start_remote_temporary_node_aligns_simulator_caps_with_probe_requ
     )
 
     with (
-        patch("app.services.node_manager_remote.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.services.node_service.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.services.node_service.appium_start", new=AsyncMock(return_value=start_response)) as start_mock,
+        patch("app.services.node_service.appium_status", new=AsyncMock(return_value={"running": True})),
         patch(
-            "app.services.node_manager_remote.appium_start", new=AsyncMock(return_value=start_response)
-        ) as start_mock,
-        patch("app.services.node_manager_remote.appium_status", new=AsyncMock(return_value={"running": True})),
-        patch(
-            "app.services.node_manager_remote.render_stereotype",
+            "app.services.node_service.render_stereotype",
             new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
         ),
-        patch("app.services.node_manager_remote.get_default_plugins", return_value=[]),
-        patch("app.services.node_manager_remote.settings_service") as mock_settings,
+        patch("app.services.node_service.get_default_plugins", return_value=[]),
+        patch("app.services.node_service.settings_service") as mock_settings,
     ):
         mock_settings.get.side_effect = lambda key: {
             "grid.hub_url": "http://selenium-hub:4444",
@@ -627,7 +625,7 @@ async def test_start_remote_temporary_node_rejects_disabled_pack(client: AsyncCl
     mock_client_obj.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client_obj),
+        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client_obj),
         pytest.raises(PackDisabledError),
     ):
         await start_remote_temporary_node(
@@ -645,7 +643,7 @@ async def test_start_remote_temporary_node_rejects_disabled_pack(client: AsyncCl
 async def test_start_remote_temporary_node_renders_stereotype_once(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.services import node_manager_remote, pack_capability_service, pack_start_shim
+    from app.services import node_service, pack_capability_service, pack_start_shim
     from tests.pack.factories import seed_test_packs
 
     await seed_test_packs(db_session)
@@ -674,7 +672,7 @@ async def test_start_remote_temporary_node_renders_stereotype_once(
         return await original(*args, **kwargs)
 
     # Patch the locally-bound name in both consumer modules so we count every call
-    monkeypatch.setattr(node_manager_remote, "render_stereotype", counting)
+    monkeypatch.setattr(node_service, "render_stereotype", counting)
     monkeypatch.setattr(pack_start_shim, "render_stereotype", counting)
 
     mock_client_obj = AsyncMock()
@@ -688,7 +686,7 @@ async def test_start_remote_temporary_node_renders_stereotype_once(
     def _client_factory(**_kwargs: object) -> AsyncMock:
         return mock_client_obj
 
-    with patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client_obj):
+    with patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client_obj):
         await start_remote_temporary_node(
             db_session,
             loaded,
@@ -730,13 +728,14 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
     await device_health_summary.update_node_state(db_session, loaded, running=True, state="running")
     await db_session.commit()
 
-    with patch(
-        "app.services.node_manager.stop_remote_temporary_node",
-        AsyncMock(return_value=False),  # agent silent / unreachable
+    with (
+        patch(
+            "app.services.node_service.stop_remote_temporary_node",
+            AsyncMock(return_value=False),  # agent silent / unreachable
+        ),
+        pytest.raises(NodeManagerError, match="did not acknowledge"),
     ):
-        manager = get_node_manager(loaded)
-        with pytest.raises(NodeManagerError, match="did not acknowledge"):
-            await manager.stop_node(db_session, loaded)
+        await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
     await db_session.refresh(loaded)
@@ -774,11 +773,10 @@ async def test_stop_node_marks_stopped_and_syncs_snapshot_when_agent_acknowledge
     await db_session.commit()
 
     with patch(
-        "app.services.node_manager.stop_remote_temporary_node",
+        "app.services.node_service.stop_remote_temporary_node",
         AsyncMock(return_value=True),
     ):
-        manager = get_node_manager(loaded)
-        await manager.stop_node(db_session, loaded)
+        await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
     assert node.state == NodeState.stopped
@@ -792,7 +790,7 @@ async def test_mark_node_started_syncs_snapshot(db_session: AsyncSession, db_hos
     """Symmetric to mark_node_stopped — `mark_node_started` must update the
     snapshot so health badges flip to running immediately, not only after the
     next probe cycle."""
-    from app.services import device_health_summary, node_manager_state
+    from app.services import device_health_summary, node_service
 
     device = await create_device_record(
         db_session,
@@ -810,7 +808,7 @@ async def test_mark_node_started_syncs_snapshot(db_session: AsyncSession, db_hos
     await device_health_summary.update_node_state(db_session, loaded, running=False, state="stopped")
     await db_session.commit()
 
-    await node_manager_state.mark_node_started(db_session, loaded, port=4725, pid=999)
+    await node_service.mark_node_started(db_session, loaded, port=4725, pid=999)
 
     snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
     assert snapshot is not None
@@ -822,10 +820,10 @@ async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -
     """``stop_remote_temporary_node`` must report agent failures via False
     return so callers gate DB mutations correctly."""
     from app.errors import AgentUnreachableError
-    from app.services.node_manager_remote import stop_remote_temporary_node
+    from app.services.node_service import stop_remote_temporary_node
 
     with patch(
-        "app.services.node_manager_remote.appium_stop",
+        "app.services.node_service.appium_stop",
         AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "boom")),
     ):
         result = await stop_remote_temporary_node(
@@ -838,13 +836,13 @@ async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -
 
 async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
     """Successful agent acknowledgement is a True return."""
-    from app.services.node_manager_remote import stop_remote_temporary_node
+    from app.services.node_service import stop_remote_temporary_node
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("app.services.node_manager_remote.appium_stop", AsyncMock(return_value=mock_resp)):
+    with patch("app.services.node_service.appium_stop", AsyncMock(return_value=mock_resp)):
         result = await stop_remote_temporary_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
@@ -893,11 +891,10 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
     )
 
     with patch(
-        "app.services.node_manager.stop_remote_temporary_node",
+        "app.services.node_service.stop_remote_temporary_node",
         AsyncMock(return_value=False),
     ):
-        manager = get_node_manager(device)
-        stopped = await manager.stop_temporary_node(db_session, device, handle)
+        stopped = await stop_temporary_node(db_session, device, handle)
 
     assert stopped is False
     bundle = await appium_resource_allocator.get_owner_bundle(db_session, owner_key)
@@ -943,11 +940,10 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
     )
 
     with patch(
-        "app.services.node_manager.stop_remote_temporary_node",
+        "app.services.node_service.stop_remote_temporary_node",
         AsyncMock(return_value=True),
     ):
-        manager = get_node_manager(device)
-        stopped = await manager.stop_temporary_node(db_session, device, handle)
+        stopped = await stop_temporary_node(db_session, device, handle)
 
     assert stopped is True
     assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is None
@@ -985,11 +981,11 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
 
     with (
         patch(
-            "app.services.node_manager_remote.stop_remote_temporary_node",
+            "app.services.node_service.stop_remote_temporary_node",
             AsyncMock(return_value=False),
         ),
         patch(
-            "app.services.node_manager_remote.start_remote_temporary_node",
+            "app.services.node_service.start_remote_temporary_node",
             new_callable=AsyncMock,
         ) as start_mock,
     ):

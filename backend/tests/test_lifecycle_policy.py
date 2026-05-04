@@ -322,7 +322,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.get_node_manager", return_value=manager),
+        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -407,7 +407,7 @@ async def test_recovery_rejoin_publishes_availability_event(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.get_node_manager", return_value=manager),
+        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -470,7 +470,7 @@ async def test_recovery_reloads_device_before_starting_node(
         await other_session.commit()
 
     manager = SimpleNamespace(start_node=AsyncMock())
-    with patch("app.services.lifecycle_policy.get_node_manager", return_value=manager):
+    with patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node):
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is False
@@ -524,7 +524,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.get_node_manager", return_value=manager),
+        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -578,7 +578,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.get_node_manager", return_value=manager),
+        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -678,7 +678,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.get_node_manager", return_value=manager),
+        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
         patch(
             "app.services.lifecycle_policy.settings_service.get",
             side_effect=lambda key: {

@@ -64,7 +64,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
             await proceed_delete.wait()
         return locked
 
-    async def observed_stop_node(self: object, db: AsyncSession, dev: Device) -> AppiumNode:
+    async def observed_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
         dev.appium_node.state = NodeState.stopped
@@ -77,7 +77,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
                 patch.object(device_service, "get_device", new=gated_get_device),
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
-                    "app.services.node_manager.RemoteNodeManager.stop_node",
+                    "app.services.node_service.stop_node",
                     new=observed_stop_node,
                 ),
             ):
@@ -164,7 +164,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     starter_committed = asyncio.Event()
     stop_calls = 0
 
-    async def observed_stop_node(self: object, db: AsyncSession, dev: Device) -> AppiumNode:
+    async def observed_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
         nonlocal stop_calls
 
         stop_calls += 1
@@ -179,7 +179,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     async def deleter() -> bool:
         async with db_session_maker() as db:
             with patch(
-                "app.services.node_manager.RemoteNodeManager.stop_node",
+                "app.services.node_service.stop_node",
                 new=observed_stop_node,
             ):
                 return await device_service.delete_device(db, device_id)

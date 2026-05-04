@@ -16,6 +16,7 @@ from app.services.device_event_service import record_event
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import set_action, write_state
 from app.services.lifecycle_policy_state import state as policy_state
+from app.services.node_service import stop_node as stop_managed_node
 
 if TYPE_CHECKING:
     import uuid
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
 
     from app.models.device_reservation import DeviceReservation
     from app.models.test_run import TestRun
-    from app.type_defs import NodeManagerResolver
 
 
 async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
@@ -133,7 +133,6 @@ async def handle_node_crash(
     *,
     source: str,
     reason: str,
-    manager_resolver: NodeManagerResolver,
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 
@@ -142,12 +141,12 @@ async def handle_node_crash(
     invocation persists a ``node_crash`` event unconditionally.
 
     Availability semantics (three distinct paths):
-    - Node running + ``manager.stop_node`` succeeds: availability delegates to
+    - Node running + ``stop_managed_node`` succeeds: availability delegates to
       ``mark_node_stopped`` → ``_node_stopped_availability_status``, which
       preserves ``busy/reserved/maintenance`` (operator/run intent precedes node
       lifecycle, see ``docs/design/01-device-state-model.md`` Axis 2/Axis 5) and
       otherwise sets ``offline``. This function makes no direct availability write.
-    - Node running + ``manager.stop_node`` raises: re-acquires both row locks
+    - Node running + ``stop_managed_node`` raises: re-acquires both row locks
       (Device → AppiumNode, documented order) before forcing ``offline`` and
       setting ``node.state = NodeState.error``.
     - Node not running or absent (``else`` branch): forces ``offline`` directly
@@ -184,10 +183,9 @@ async def handle_node_crash(
 
     if node is not None and node.state == NodeState.running:
         try:
-            manager = manager_resolver(device)
-            await manager.stop_node(db, device)
+            await stop_managed_node(db, device)
         except Exception:
-            # stop_node may commit before raising, releasing both row locks.
+            # stop_managed_node may commit before raising, releasing both row locks.
             # Re-acquire in the documented Device -> AppiumNode order before
             # writing offline/error state.
             from app.services import appium_node_locking, device_locking
@@ -295,7 +293,6 @@ async def complete_auto_stop(
     reason: str,
     source: str,
     detail: str,
-    manager_resolver: NodeManagerResolver,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
@@ -304,7 +301,6 @@ async def complete_auto_stop(
         device,
         source=source,
         reason=reason,
-        manager_resolver=manager_resolver,
     )
     next_state["stop_pending"] = False
     next_state["stop_pending_reason"] = None

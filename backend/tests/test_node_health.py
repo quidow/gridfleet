@@ -19,7 +19,7 @@ from app.services.node_health import (
     get_node_health_control_plane_state,
     set_node_health_failure_count,
 )
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

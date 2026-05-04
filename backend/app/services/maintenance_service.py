@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services.device_availability import set_device_availability_status
-from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service import stop_node
+from app.services.node_service_types import NodeManagerError
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,7 @@ async def enter_maintenance(
 
     if not drain and device.appium_node and device.appium_node.state == NodeState.running:
         try:
-            manager = get_node_manager(device)
-            await manager.stop_node(db, device)
+            await stop_node(db, device)
             # stop_node commits via mark_node_stopped, releasing our row lock.
             # Re-acquire the Device row before restoring maintenance.
             from app.services import device_locking

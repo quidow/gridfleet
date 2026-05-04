@@ -7,9 +7,8 @@ import pytest
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.services import appium_resource_allocator, device_service
-from app.services.node_manager import RemoteNodeManager
-from app.services.node_manager_remote import restart_node_via_agent
-from app.services.node_manager_types import TemporaryNodeHandle
+from app.services.node_service import restart_node, restart_node_via_agent, start_temporary_node, stop_temporary_node
+from app.services.node_service_types import TemporaryNodeHandle
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -153,13 +152,12 @@ async def test_remote_node_manager_restart_reuses_existing_allocations(db_sessio
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    manager = RemoteNodeManager()
     with (
-        patch("app.services.node_manager.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
-        patch("app.services.node_manager.stop_remote_temporary_node", new_callable=AsyncMock),
+        patch("app.services.node_service.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
+        patch("app.services.node_service.stop_remote_temporary_node", new_callable=AsyncMock),
     ):
         start_mock.return_value = TemporaryNodeHandle(port=4723, pid=456)
-        restarted = await manager.restart_node(db_session, loaded)
+        restarted = await restart_node(db_session, loaded)
 
     assert restarted.state == NodeState.running
     assert start_mock.await_args is not None
@@ -200,9 +198,8 @@ async def test_remote_node_manager_temporary_start_reuses_existing_managed_node(
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    manager = RemoteNodeManager()
-    with patch("app.services.node_manager.start_remote_temporary_node", new_callable=AsyncMock) as start_mock:
-        handle = await manager.start_temporary_node(db_session, loaded, owner_key=owner_key)
+    with patch("app.services.node_service.start_remote_temporary_node", new_callable=AsyncMock) as start_mock:
+        handle = await start_temporary_node(db_session, loaded, owner_key=owner_key)
 
     assert handle.reused_existing is True
     assert handle.port == 4726
@@ -226,16 +223,15 @@ async def test_remote_node_manager_reused_temporary_handle_skips_stop(
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    manager = RemoteNodeManager()
     handle = TemporaryNodeHandle(port=4727, pid=654, reused_existing=True, owner_key="device:managed")
     with (
-        patch("app.services.node_manager.stop_remote_temporary_node", new_callable=AsyncMock) as stop_mock,
+        patch("app.services.node_service.stop_remote_temporary_node", new_callable=AsyncMock) as stop_mock,
         patch(
-            "app.services.node_manager.appium_resource_allocator.release_owner",
+            "app.services.node_service.appium_resource_allocator.release_owner",
             new_callable=AsyncMock,
         ) as release_mock,
     ):
-        await manager.stop_temporary_node(db_session, loaded, handle)
+        await stop_temporary_node(db_session, loaded, handle)
 
     stop_mock.assert_not_awaited()
     release_mock.assert_not_awaited()
@@ -270,15 +266,15 @@ async def test_restart_node_via_agent_reuses_existing_allocations(db_session: As
     start_response.json.return_value = {"pid": 999}
 
     with (
-        patch("app.services.node_manager_remote.assert_runnable", new_callable=AsyncMock),
-        patch("app.services.node_manager_remote.appium_stop", new_callable=AsyncMock, return_value=stop_response),
+        patch("app.services.node_service.assert_runnable", new_callable=AsyncMock),
+        patch("app.services.node_service.appium_stop", new_callable=AsyncMock, return_value=stop_response),
         patch(
-            "app.services.node_manager_remote.appium_start",
+            "app.services.node_service.appium_start",
             new_callable=AsyncMock,
             return_value=start_response,
         ) as start_mock,
-        patch("app.services.node_manager_remote.appium_status", new_callable=AsyncMock, return_value={"running": True}),
-        patch("app.services.node_manager_remote.asyncio.sleep", new_callable=AsyncMock),
+        patch("app.services.node_service.appium_status", new_callable=AsyncMock, return_value={"running": True}),
+        patch("app.services.node_service.asyncio.sleep", new_callable=AsyncMock),
     ):
         ok = await restart_node_via_agent(
             db_session,

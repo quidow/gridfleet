@@ -37,8 +37,8 @@ from app.services.lifecycle_policy_state import (
 from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
-from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service import start_node as start_managed_node
+from app.services.node_service_types import NodeManagerError
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -218,7 +218,6 @@ async def handle_health_failure(
         reason=reason,
         source=source,
         detail="Manager stopped the device automatically after a lifecycle failure",
-        manager_resolver=get_node_manager,
     )
     return "stopped"
 
@@ -277,7 +276,6 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
         reason=reason,
         source=source,
         detail="Manager completed a previously deferred automatic stop",
-        manager_resolver=get_node_manager,
     )
     return DeferredStopOutcome.AUTO_STOPPED
 
@@ -403,8 +401,7 @@ async def attempt_auto_recovery(
     node = loaded_node(device)
     if node is None or node.state != NodeState.running:
         try:
-            manager = get_node_manager(device)
-            await manager.start_node(db, device)
+            await start_managed_node(db, device)
         except NodeManagerError as exc:
             current_state["last_failure_source"] = source
             current_state["last_failure_reason"] = str(exc)
@@ -464,7 +461,6 @@ async def attempt_auto_recovery(
             reason=failure_reason,
             source="session_viability",
             detail="Manager stopped the device after a failed recovery viability probe",
-            manager_resolver=get_node_manager,
         )
 
         # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases

@@ -1,0 +1,849 @@
+"""Single-module node lifecycle service."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING, Any
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
+
+from app.errors import AgentCallError
+from app.models.appium_node import AppiumNode, NodeState
+from app.models.device import DeviceAvailabilityStatus
+from app.services import appium_resource_allocator, device_health_summary
+from app.services.agent_operations import appium_start, appium_status, appium_stop, response_json_dict
+from app.services.device_availability import ready_device_availability_status, set_device_availability_status
+from app.services.device_identity import appium_connection_target
+from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.services.event_bus import queue_event_for_session
+from app.services.node_service_common import (
+    build_appium_driver_caps,
+    build_grid_stereotype_caps,
+    get_default_plugins,
+)
+from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
+from app.services.pack_capability_service import (
+    render_default_capabilities,
+    render_device_field_capabilities,
+    render_stereotype,
+)
+from app.services.pack_platform_catalog import device_is_virtual
+from app.services.pack_platform_resolver import assert_runnable, resolve_pack_platform
+from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
+from app.services.settings_service import settings_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_client import AgentClientFactory
+    from app.models.device import Device
+    from app.models.host import Host
+
+logger = logging.getLogger(__name__)
+
+RESTART_BACKOFF_BASE = 2
+RESTART_MAX_RETRIES = 3
+AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
+
+__all__ = [
+    "AVD_LAUNCH_HTTP_TIMEOUT_SECS",
+    "RESTART_BACKOFF_BASE",
+    "RESTART_MAX_RETRIES",
+    "NodeManagerError",
+    "NodePortConflictError",
+    "TemporaryNodeHandle",
+    "agent_url",
+    "allocate_port",
+    "build_agent_start_payload",
+    "candidate_ports",
+    "mark_node_started",
+    "mark_node_stopped",
+    "require_management_host",
+    "restart_node",
+    "restart_node_via_agent",
+    "start_node",
+    "start_remote_temporary_node",
+    "start_temporary_node",
+    "stop_node",
+    "stop_node_via_agent",
+    "stop_remote_temporary_node",
+    "stop_temporary_node",
+]
+
+
+async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
+    """Acquire and refresh the Device row used for node-state writes."""
+    from app.services import device_locking
+
+    try:
+        return await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        raise NodeManagerError(f"Device {device_id} no longer exists") from None
+
+
+async def allocate_port(db: AsyncSession) -> int:
+    return (await candidate_ports(db))[0]
+
+
+async def candidate_ports(
+    db: AsyncSession,
+    *,
+    preferred_port: int | None = None,
+    exclude_ports: set[int] | None = None,
+) -> list[int]:
+    stmt = select(AppiumNode.port).where(AppiumNode.state == NodeState.running)
+    result = await db.execute(stmt)
+    used_ports = {row[0] for row in result.all()}
+    excluded = exclude_ports or set()
+    start_port = settings_service.get("appium.port_range_start")
+    end_port = settings_service.get("appium.port_range_end")
+
+    def is_available(port: int) -> bool:
+        return start_port <= port <= end_port and port not in used_ports and port not in excluded
+
+    ports: list[int] = []
+    if preferred_port is not None and is_available(preferred_port):
+        ports.append(preferred_port)
+
+    for port in range(start_port, end_port + 1):
+        if port == preferred_port:
+            continue
+        if is_available(port):
+            ports.append(port)
+
+    if ports:
+        return ports
+
+    raise NodeManagerError("No free ports available in the configured range")
+
+
+def upsert_node(
+    db: AsyncSession,
+    device: Device,
+    port: int,
+    pid: int | None,
+    active_connection_target: str | None,
+) -> AppiumNode:
+    if device.appium_node:
+        node = device.appium_node
+        node.port = port
+        node.grid_url = settings_service.get("grid.hub_url")
+        node.pid = pid
+        node.active_connection_target = active_connection_target
+        node.state = NodeState.running
+    else:
+        node = AppiumNode(
+            device_id=device.id,
+            port=port,
+            grid_url=settings_service.get("grid.hub_url"),
+            pid=pid,
+            active_connection_target=active_connection_target,
+            state=NodeState.running,
+        )
+        db.add(node)
+    device.appium_node = node
+    return node
+
+
+async def _node_started_availability_status(db: AsyncSession, device: Device) -> DeviceAvailabilityStatus:
+    if device.availability_status in {
+        DeviceAvailabilityStatus.busy,
+        DeviceAvailabilityStatus.reserved,
+        DeviceAvailabilityStatus.maintenance,
+    }:
+        return device.availability_status
+    return await ready_device_availability_status(db, device)
+
+
+def _node_stopped_availability_status(device: Device) -> DeviceAvailabilityStatus:
+    if device.availability_status in {
+        DeviceAvailabilityStatus.busy,
+        DeviceAvailabilityStatus.reserved,
+        DeviceAvailabilityStatus.maintenance,
+    }:
+        return device.availability_status
+    return DeviceAvailabilityStatus.offline
+
+
+async def mark_node_started(
+    db: AsyncSession,
+    device: Device,
+    *,
+    port: int,
+    pid: int | None,
+    active_connection_target: str | None = None,
+) -> AppiumNode:
+    device = await _hold_device_row_lock(db, device.id)
+    from app.services import appium_node_locking
+
+    await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    node = upsert_node(db, device, port, pid, active_connection_target)
+    next_status = await _node_started_availability_status(db, device)
+    await set_device_availability_status(device, next_status)
+    # Sync the device_health_summary snapshot so `node_running` reflects the
+    # new node state immediately. Without this the snapshot keeps the previous
+    # value until the next `node_health` probe cycle (~30s) and the aggregate
+    # `health_summary.healthy` field drifts from the actual node state.
+    await device_health_summary.update_node_state(db, device, running=True, state=NodeState.running.value)
+    queue_event_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "stopped",
+            "new_state": "running",
+            "port": port,
+        },
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
+    device = await _hold_device_row_lock(db, device.id)
+    from app.services import appium_node_locking
+
+    await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    node = device.appium_node
+    assert node is not None
+    node.state = NodeState.stopped
+    node.pid = None
+    node.active_connection_target = None
+    await set_device_availability_status(device, _node_stopped_availability_status(device))
+    # Sync the device_health_summary snapshot — see mark_node_started for the
+    # reason; without this the device renders as "offline + healthy" because
+    # the snapshot keeps `node_running=True` from the last successful probe.
+    await device_health_summary.update_node_state(
+        db,
+        device,
+        running=False,
+        state=NodeState.stopped.value,
+        mark_offline_on_failure=False,
+    )
+    queue_event_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "running",
+            "new_state": "stopped",
+        },
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+def require_management_host(device: Device, *, action: str = "use remote management") -> Host:
+    host = device.host
+    if host is None or device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned — cannot {action}")
+    return host
+
+
+async def agent_url(device: Device) -> str:
+    host = require_management_host(device)
+    return f"http://{host.ip}:{host.agent_port}"
+
+
+def _build_device_owner_key(device: Device) -> str:
+    if device.id is None:
+        return appium_resource_allocator.temporary_owner_key(device)
+    return appium_resource_allocator.managed_owner_key(device.id)
+
+
+async def _wait_for_remote_appium_ready(
+    host: Host,
+    *,
+    port: int,
+    http_client_factory: AgentClientFactory,
+    stabilization_timeout_sec: float = 2.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + stabilization_timeout_sec
+
+    while True:
+        payload = await appium_status(
+            host.ip,
+            host.agent_port,
+            port,
+            http_client_factory=http_client_factory,
+        )
+        if payload is not None and payload.get("running") is True:
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+
+    raise NodeManagerError(f"Agent reported node start, but Appium is not reachable on port {port}")
+
+
+def build_agent_start_payload(
+    device: Device,
+    port: int,
+    *,
+    allocated_caps: dict[str, Any] | None = None,
+    extra_caps: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    headless = (device.tags or {}).get("emulator_headless", "true") != "false"
+    manager_owned_keys = appium_resource_allocator.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
+    return {
+        "connection_target": appium_connection_target(device),
+        "platform_id": device.platform_id,
+        "port": port,
+        "grid_url": settings_service.get("grid.hub_url"),
+        "plugins": get_default_plugins() or None,
+        "extra_caps": extra_caps
+        if extra_caps is not None
+        else (
+            build_appium_driver_caps(
+                device,
+                session_caps=allocated_caps,
+                manager_owned_keys=manager_owned_keys,
+            )
+            or None
+        ),
+        "stereotype_caps": build_grid_stereotype_caps(
+            device,
+            session_caps=allocated_caps,
+            extra_caps=extra_caps,
+            manager_owned_keys=manager_owned_keys,
+        )
+        or None,
+        "device_type": device.device_type.value,
+        "ip_address": device.ip_address,
+        "allocated_caps": allocated_caps or None,
+        "session_override": settings_service.get("appium.session_override"),
+        "headless": headless,
+    }
+
+
+async def _build_appium_default_pack_caps(db: AsyncSession, device: Device) -> dict[str, Any]:
+    resolved = resolve_pack_for_device(device)
+    if resolved is None:
+        return {}
+    pack_id, platform_id = resolved
+    resolved_plat = await resolve_pack_platform(
+        db,
+        pack_id=pack_id,
+        platform_id=platform_id,
+        device_type=device.device_type.value if device.device_type else None,
+    )
+    device_context = {
+        "ip_address": device.ip_address,
+        "connection_target": getattr(device, "connection_target", None),
+        "identity_value": getattr(device, "identity_value", None),
+        "os_version": device.os_version,
+    }
+    caps = render_default_capabilities(resolved_plat, device_context=device_context)
+    caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
+    return caps
+
+
+async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payload: dict[str, Any]) -> None:
+    pack_caps = await _build_appium_default_pack_caps(db, device)
+    if not pack_caps:
+        return
+    payload["extra_caps"] = {
+        **(payload.get("extra_caps") or {}),
+        **pack_caps,
+    }
+
+
+def _agent_start_timeout(device: Device) -> float | int:
+    base = int(settings_service.get("appium.startup_timeout_sec")) + 5
+    if device_is_virtual(device):
+        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
+    return base
+
+
+async def start_remote_temporary_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    port: int,
+    allocated_caps: dict[str, Any] | None,
+    agent_base: str,
+    http_client_factory: AgentClientFactory,
+) -> TemporaryNodeHandle:
+    await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
+    host = require_management_host(device, action="start Appium nodes")
+
+    # Resolve stereotype once for both consumers (_build_session_aligned_start_caps
+    # and build_pack_start_payload) to avoid duplicate DB queries.
+    resolved_pack = resolve_pack_for_device(device)
+    if resolved_pack is None:
+        raise NodeManagerError(f"Device {device.id} has no driver pack platform")
+    stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    plat = await resolve_pack_platform(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    appium_platform_name = plat.appium_platform_name
+    extra_caps = await _build_session_aligned_start_caps(
+        db,
+        device,
+        allocated_caps=allocated_caps,
+        stereotype=stereotype,
+        appium_platform_name=appium_platform_name,
+    )
+    payload = build_agent_start_payload(
+        device,
+        port,
+        allocated_caps=allocated_caps,
+        extra_caps=extra_caps,
+    )
+    await _merge_appium_default_pack_caps(db, device, payload)
+    try:
+        pack_overrides = await build_pack_start_payload(db, device=device, stereotype=stereotype)
+    except PackStartPayloadError as exc:
+        raise NodeManagerError(str(exc)) from exc
+    if pack_overrides is not None:
+        payload["pack_id"] = pack_overrides["pack_id"]
+        payload["platform_id"] = pack_overrides["platform_id"]
+        payload["appium_platform_name"] = pack_overrides["appium_platform_name"]
+        payload["stereotype_caps"] = {
+            **(payload.get("stereotype_caps") or {}),
+            **pack_overrides["stereotype_caps"],
+        }
+        if "grid_slots" in pack_overrides:
+            payload["grid_slots"] = pack_overrides["grid_slots"]
+        for key in ("lifecycle_actions", "connection_behavior", "insecure_features", "workaround_env"):
+            if key in pack_overrides:
+                payload[key] = pack_overrides[key]
+    try:
+        resp = await appium_start(
+            agent_base,
+            host=host.ip,
+            payload=payload,
+            http_client_factory=http_client_factory,
+            timeout=_agent_start_timeout(device),
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.json().get("detail", str(exc)) if exc.response else str(exc)
+        message = f"Agent failed to start node: {detail}"
+        lowered = detail.lower()
+        if "already in use" in lowered or "already running on port" in lowered:
+            raise NodePortConflictError(message) from exc
+        raise NodeManagerError(message) from exc
+    except AgentCallError:
+        raise
+    except httpx.HTTPError as exc:
+        raise NodeManagerError(f"Cannot reach agent at {agent_base}: {exc}") from exc
+
+    data = response_json_dict(resp)
+    try:
+        await _wait_for_remote_appium_ready(
+            host,
+            port=port,
+            http_client_factory=http_client_factory,
+        )
+    except Exception:
+        await stop_remote_temporary_node(
+            port=port,
+            agent_base=agent_base,
+            http_client_factory=http_client_factory,
+        )
+        raise
+    active_connection_target = data.get("connection_target")
+    return TemporaryNodeHandle(
+        port=port,
+        pid=data.get("pid"),
+        active_connection_target=active_connection_target if isinstance(active_connection_target, str) else None,
+        agent_base=agent_base,
+    )
+
+
+async def _build_session_aligned_start_caps(
+    db: AsyncSession,
+    device: Device,
+    *,
+    allocated_caps: dict[str, Any] | None,
+    stereotype: dict[str, Any] | None = None,
+    appium_platform_name: str | None = None,
+) -> dict[str, Any]:
+    """Build extra_caps aligned with what a session probe would request.
+
+    Avoids accessing lazily-loaded relationships (e.g. device.appium_node).
+    If *stereotype* is provided (pre-resolved by the caller) it is used directly
+    and no additional DB query is issued.
+    """
+    manager_owned_keys = appium_resource_allocator.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
+    caps: dict[str, Any] = build_appium_driver_caps(
+        device,
+        session_caps=allocated_caps,
+        manager_owned_keys=manager_owned_keys,
+    )
+    if stereotype is None:
+        resolved = resolve_pack_for_device(device)
+        if resolved is not None:
+            pack_id, platform_id = resolved
+            stereotype = await render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
+    if stereotype is not None:
+        automation_name = stereotype.get("appium:automationName")
+        if automation_name:
+            caps["appium:automationName"] = automation_name
+    return caps
+
+
+async def stop_remote_temporary_node(
+    *,
+    port: int,
+    agent_base: str,
+    http_client_factory: AgentClientFactory,
+) -> bool:
+    """Ask the agent to stop the Appium node on ``port``.
+
+    Returns True on confirmed agent acknowledgement, False otherwise. Callers
+    that mutate DB node state on the back of a stop MUST gate that mutation on
+    True — a False return means we cannot prove the agent process is gone, and
+    flipping the DB to ``stopped`` would leave the agent process orphaned with
+    its Selenium Grid registration intact.
+    """
+    try:
+        resp = await appium_stop(
+            agent_base,
+            host=agent_base,
+            port=port,
+            http_client_factory=http_client_factory,
+        )
+        resp.raise_for_status()
+        return True
+    except (AgentCallError, httpx.HTTPError):
+        return False
+
+
+async def stop_node_via_agent(
+    device: Device,
+    node: AppiumNode,
+    *,
+    http_client_factory: AgentClientFactory,
+) -> bool:
+    try:
+        host = require_management_host(device, action="stop Appium nodes")
+    except NodeManagerError:
+        return False
+    try:
+        resp = await appium_stop(
+            f"http://{host.ip}:{host.agent_port}",
+            host=host.ip,
+            port=node.port,
+            http_client_factory=http_client_factory,
+        )
+        resp.raise_for_status()
+        return True
+    except (AgentCallError, httpx.HTTPError):
+        return False
+
+
+async def restart_node_via_agent(
+    db: AsyncSession,
+    device: Device,
+    node: AppiumNode,
+    *,
+    http_client_factory: AgentClientFactory,
+) -> bool:
+    from app.services import appium_node_locking, device_locking
+
+    try:
+        host = require_management_host(device, action="restart Appium nodes")
+    except NodeManagerError:
+        return False
+
+    device = await device_locking.lock_device(db, device.id)
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    if locked_node is None:
+        return False
+    node = locked_node
+
+    agent_base = f"http://{host.ip}:{host.agent_port}"
+    allocated_caps = await appium_resource_allocator.get_owner_capabilities(
+        db,
+        appium_resource_allocator.managed_owner_key(device.id),
+    )
+
+    try:
+        stopped = await stop_remote_temporary_node(
+            port=node.port,
+            agent_base=agent_base,
+            http_client_factory=http_client_factory,
+        )
+        if not stopped:
+            # Agent did not acknowledge the stop. Starting on a different
+            # candidate port now would race the orphan Appium/Grid relay that
+            # may still be alive on the old port. Refuse to proceed and let the
+            # caller retry once the agent is reachable again.
+            return False
+
+        last_conflict: NodePortConflictError | None = None
+        started_handle: TemporaryNodeHandle | None = None
+        # The DB row still says the old node is running, so candidate_ports()
+        # intentionally excludes node.port here. That is desirable after an
+        # unmanaged-listener conflict: restart on the next free managed port.
+        for candidate_port in await candidate_ports(db, preferred_port=node.port):
+            try:
+                started_handle = await start_remote_temporary_node(
+                    db,
+                    device,
+                    port=candidate_port,
+                    allocated_caps=allocated_caps,
+                    agent_base=agent_base,
+                    http_client_factory=http_client_factory,
+                )
+                break
+            except NodePortConflictError as exc:
+                last_conflict = exc
+                continue
+
+        if started_handle is None:
+            if last_conflict is not None:
+                raise last_conflict
+            raise NodeManagerError(f"No candidate Appium port could restart device {device.id}")
+
+        node.port = started_handle.port
+        node.pid = started_handle.pid
+        node.active_connection_target = started_handle.active_connection_target
+        node.state = NodeState.running
+        await db.flush()
+        return True
+    except (AgentCallError, httpx.HTTPError):
+        return False
+    except NodeManagerError:
+        await stop_remote_temporary_node(
+            port=node.port,
+            agent_base=agent_base,
+            http_client_factory=http_client_factory,
+        )
+        return False
+
+
+async def _start_with_owner(
+    db: AsyncSession,
+    device: Device,
+    *,
+    owner_key: str,
+    preferred_port: int | None = None,
+    release_allocations_on_failure: bool = True,
+) -> TemporaryNodeHandle:
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
+    resource_ports: dict[str, int] = {}
+    needs_derived_data_path = False
+    try:
+        resolved = await resolve_pack_platform(
+            db,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            device_type=device.device_type.value if device.device_type else None,
+        )
+        resource_ports = {p.capability_name: p.start for p in resolved.parallel_resources.ports}
+        needs_derived_data_path = resolved.parallel_resources.derived_data_path
+    except LookupError:
+        # Pack platform missing or unresolved — fall back to no parallel
+        # resource allocation. Devices without a pack still start, the
+        # allocator simply gets no port/derived-data-path hints.
+        pass
+    allocated_caps = await appium_resource_allocator.get_or_create_owner_capabilities(
+        db,
+        owner_key=owner_key,
+        host_id=device.host_id,
+        resource_ports=resource_ports,
+        needs_derived_data_path=needs_derived_data_path,
+    )
+    agent_base = await agent_url(device)
+    try:
+        last_conflict: NodePortConflictError | None = None
+        for port in await candidate_ports(db, preferred_port=preferred_port):
+            try:
+                handle = await start_remote_temporary_node(
+                    db,
+                    device,
+                    port=port,
+                    allocated_caps=allocated_caps,
+                    agent_base=agent_base,
+                    http_client_factory=httpx.AsyncClient,
+                )
+                break
+            except NodePortConflictError as exc:
+                last_conflict = exc
+                logger.warning(
+                    "Managed Appium port conflict for device %s on port %d; trying next candidate",
+                    device.id,
+                    port,
+                )
+        else:
+            assert last_conflict is not None
+            raise last_conflict
+    except Exception:
+        if release_allocations_on_failure:
+            await appium_resource_allocator.release_owner(db, owner_key)
+            await db.commit()
+        raise
+    handle.owner_key = owner_key
+    handle.allocated_caps = allocated_caps
+    return handle
+
+
+async def start_node(db: AsyncSession, device: Device) -> AppiumNode:
+    if device.appium_node and device.appium_node.state == NodeState.running:
+        raise NodeManagerError(f"Node already running for device {device.id}")
+    if not await is_ready_for_use_async(db, device):
+        raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
+
+    owner_key = _build_device_owner_key(device)
+    handle = await start_temporary_node(db, device, owner_key=owner_key)
+    return await mark_node_started(
+        db,
+        device,
+        port=handle.port,
+        pid=handle.pid,
+        active_connection_target=handle.active_connection_target,
+    )
+
+
+async def stop_node(db: AsyncSession, device: Device) -> AppiumNode:
+    node = device.appium_node
+    if not node or node.state != NodeState.running:
+        raise NodeManagerError(f"No running node for device {device.id}")
+
+    handle = TemporaryNodeHandle(
+        port=node.port,
+        pid=node.pid,
+        active_connection_target=node.active_connection_target,
+        agent_base=await agent_url(device),
+        owner_key=appium_resource_allocator.managed_owner_key(device.id),
+    )
+    # If the agent doesn't acknowledge the stop, refuse to mark the node
+    # stopped in the DB — otherwise the orphaned Appium process keeps
+    # serving traffic via Selenium Grid while the manager believes it is
+    # gone (and the next start attempt fails with port collision).
+    if not await stop_temporary_node(db, device, handle):
+        raise NodeManagerError(
+            f"Agent did not acknowledge stop for device {device.id} on port {node.port}; leaving node state unchanged"
+        )
+    return await mark_node_stopped(db, device)
+
+
+async def start_temporary_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    owner_key: str | None = None,
+    port: int | None = None,
+) -> TemporaryNodeHandle:
+    resolved_owner_key = owner_key or _build_device_owner_key(device)
+    if (
+        device.id is not None
+        and device.appium_node is not None
+        and device.appium_node.state == NodeState.running
+        and resolved_owner_key == appium_resource_allocator.managed_owner_key(device.id)
+    ):
+        return TemporaryNodeHandle(
+            port=device.appium_node.port,
+            pid=device.appium_node.pid,
+            active_connection_target=device.appium_node.active_connection_target,
+            reused_existing=True,
+            agent_base=await agent_url(device),
+            owner_key=resolved_owner_key,
+            allocated_caps=await appium_resource_allocator.get_owner_capabilities(db, resolved_owner_key),
+        )
+    return await _start_with_owner(
+        db,
+        device,
+        owner_key=resolved_owner_key,
+        preferred_port=port,
+    )
+
+
+async def stop_temporary_node(
+    db: AsyncSession,
+    device: Device,
+    handle: TemporaryNodeHandle,
+    *,
+    release_allocations: bool = True,
+) -> bool:
+    """Stop the temporary node identified by ``handle`` via its agent.
+
+    Returns True on confirmed agent acknowledgement (or when the handle
+    represents a re-used pre-existing node that the caller never owned and
+    therefore should not stop). Returns False when the agent did not
+    acknowledge — caller MUST NOT mutate DB node state in that case.
+    """
+    if handle.reused_existing:
+        return True
+    agent_base = handle.agent_base or await agent_url(device)
+    stopped = await stop_remote_temporary_node(
+        port=handle.port,
+        agent_base=agent_base,
+        http_client_factory=httpx.AsyncClient,
+    )
+    # Only release the owner allocation when the agent confirmed the stop.
+    # An unacknowledged stop may leave the Appium process and its allocated
+    # ports in use; freeing the owner here would let the allocator hand the
+    # same resources to a new owner while the orphan is still running.
+    if stopped and release_allocations and handle.owner_key:
+        await appium_resource_allocator.release_owner(db, handle.owner_key)
+        await db.commit()
+    return stopped
+
+
+async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
+    if not device.appium_node or device.appium_node.state != NodeState.running:
+        return await start_node(db, device)
+
+    node = device.appium_node
+    owner_key = appium_resource_allocator.managed_owner_key(device.id)
+    handle = TemporaryNodeHandle(
+        port=node.port,
+        pid=node.pid,
+        active_connection_target=node.active_connection_target,
+        agent_base=await agent_url(device),
+        owner_key=owner_key,
+    )
+    # If the agent doesn't acknowledge the stop, do not mark the node
+    # stopped and do not attempt restart on a different port — the orphan
+    # process will collide.
+    if not await stop_temporary_node(db, device, handle, release_allocations=False):
+        raise NodeManagerError(
+            f"Agent did not acknowledge stop during restart for device {device.id} "
+            f"on port {node.port}; leaving node state unchanged"
+        )
+    await mark_node_stopped(db, device)
+
+    last_error = None
+    for attempt in range(RESTART_MAX_RETRIES):
+        try:
+            restarted = await _start_with_owner(
+                db,
+                device,
+                owner_key=owner_key,
+                preferred_port=node.port,
+                release_allocations_on_failure=False,
+            )
+            return await mark_node_started(
+                db,
+                device,
+                port=restarted.port,
+                pid=restarted.pid,
+                active_connection_target=restarted.active_connection_target,
+            )
+        except NodeManagerError as exc:
+            last_error = exc
+            wait = RESTART_BACKOFF_BASE**attempt
+            logger.warning(
+                "Restart attempt %d failed for device %s, retrying in %ds: %s",
+                attempt + 1,
+                device.id,
+                wait,
+                exc,
+            )
+            await asyncio.sleep(wait)
+
+    await appium_resource_allocator.release_owner(db, owner_key)
+    await db.commit()
+    raise NodeManagerError(f"Failed to restart node after {RESTART_MAX_RETRIES} attempts: {last_error}")

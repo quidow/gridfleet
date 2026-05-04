@@ -10,8 +10,16 @@ from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
 from app.services import device_health_summary, run_service
 from app.services.device_readiness import assess_device_async
-from app.services.node_manager import get_node_manager
-from app.services.node_manager_types import NodeManagerError
+from app.services.node_service import (
+    restart_node as restart_managed_node,
+)
+from app.services.node_service import (
+    start_node as start_managed_node,
+)
+from app.services.node_service import (
+    stop_node as stop_managed_node,
+)
+from app.services.node_service_types import NodeManagerError
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 
@@ -46,9 +54,8 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
     await _assert_device_verified(db, device, action="start a node")
-    manager = get_node_manager(device)
     try:
-        node = await manager.start_node(db, device)
+        node = await start_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
@@ -60,9 +67,8 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
-    manager = get_node_manager(device)
     try:
-        node = await manager.stop_node(db, device)
+        node = await stop_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     await device_health_summary.update_node_state(db, device, running=False, state=node.state.value)
@@ -76,9 +82,8 @@ async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
     await _assert_device_verified(db, device, action="restart a node")
-    manager = get_node_manager(device)
     try:
-        node = await manager.restart_node(db, device)
+        node = await restart_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     await device_health_summary.update_node_state(
