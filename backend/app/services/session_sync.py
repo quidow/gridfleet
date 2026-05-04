@@ -74,14 +74,20 @@ async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
 
     Protects against any session-end path that bypassed
     `lifecycle_policy.complete_deferred_stop_if_session_ended`. Runs every session_sync
-    cycle and is a no-op for devices that are correctly clean.
+    cycle (independent of Grid availability) and is a no-op for devices that
+    are correctly clean.
+
+    Selects only ``Device.id`` ordered for deterministic iteration; the row
+    lock is taken inside ``handle_session_finished`` per device, never as a
+    batch.
     """
-    stmt = select(Device).where(
-        Device.lifecycle_policy_state["stop_pending"].astext == "true",
-    )
+    stmt = select(Device.id).where(Device.lifecycle_policy_state["stop_pending"].astext == "true").order_by(Device.id)
     result = await db.execute(stmt)
-    candidates = result.scalars().all()
-    for device in candidates:
+    device_ids = list(result.scalars().all())
+    for device_id in device_ids:
+        device = await db.get(Device, device_id)
+        if device is None:
+            continue
         await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
 
 
@@ -89,9 +95,13 @@ async def _sync_sessions(db: AsyncSession) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status()
 
-    # Skip if grid is unreachable
+    # Skip the Grid-driven sync when the hub is unreachable, but still run
+    # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
+    # so it must heal historical rows even during Grid outages.
     if not grid_data.get("value", {}).get("ready", False) and "error" in grid_data:
-        logger.debug("Grid unreachable, skipping session sync")
+        logger.debug("Grid unreachable, skipping Grid session sync (sweep still runs)")
+        await _sweep_stale_stop_pending(db)
+        await db.commit()
         return
 
     active = _extract_sessions_from_grid(grid_data)
@@ -200,8 +210,15 @@ async def _sync_sessions(db: AsyncSession) -> None:
             dev_stmt = select(Device).where(Device.id == device_id_str)
             dev_result = await db.execute(dev_stmt)
             device = dev_result.scalar_one_or_none()
-            if device is not None and await lifecycle_policy.handle_session_finished(db, device):
-                continue
+            if device is not None:
+                outcome = await lifecycle_policy.handle_session_finished(db, device)
+                if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
+                    continue
+                if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
+                    # A fresh client session arrived between our running-set
+                    # check and the locked check inside the helper; leave the
+                    # device busy so the new session keeps it.
+                    continue
             if device and device.availability_status == DeviceAvailabilityStatus.busy:
                 from app.services import device_locking
 

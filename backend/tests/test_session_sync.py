@@ -717,3 +717,69 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
+
+
+async def test_sweep_runs_when_grid_is_unreachable(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runbook promises one-poll healing for stale ``stop_pending`` rows.
+
+    Tying the sweep to Grid availability would silently weaken that guarantee
+    during Grid outages, when stale rows still need to be healed because the
+    sweep relies on DB state only. Audit P2 — sweep must run independent of
+    Grid status.
+    """
+    from app.services import grid_service, session_sync
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-sweep-grid-down",
+        connection_target="policy-sweep-grid-down",
+        name="Sweep Grid Down",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-sweep-grid-down",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB hung")
+    assert result == "deferred"
+
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state["stop_pending"] is True
+
+    async def _grid_unreachable() -> dict[str, Any]:
+        # Shape that triggers the early-return branch in _sync_sessions:
+        # ready=False AND an "error" key present.
+        return {"value": {"ready": False}, "error": "connection refused"}
+
+    monkeypatch.setattr(grid_service, "get_grid_status", _grid_unreachable)
+
+    await session_sync._sync_sessions(db_session)
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
+        "sweep must heal stale stop_pending rows even when Grid is unreachable"
+    )
