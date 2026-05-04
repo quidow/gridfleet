@@ -204,12 +204,17 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> bool:
         # via clear_pending_auto_stop_on_recovery, but if anything else slipped
         # the device into a healthy state without going through that path,
         # avoid stopping a healthy device after the session ends.
-        return await clear_pending_auto_stop_on_recovery(
+        await clear_pending_auto_stop_on_recovery(
             db,
             device,
             source=current_state.get("last_failure_source") or "session",
             reason="Session finished while device was healthy",
         )
+        # Return False so session_sync._on_session_end falls through to its
+        # restore_post_busy_availability_status path — we cleared the intent
+        # but did NOT auto-stop, so the device should leave `busy` and become
+        # `available` like any other session-end on a healthy device.
+        return False
 
     reason = (
         current_state.get("stop_pending_reason")
