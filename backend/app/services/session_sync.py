@@ -165,8 +165,9 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         locked_device = await device_locking.lock_device(db, device.id)
         await set_device_availability_status(locked_device, DeviceAvailabilityStatus.busy, publish_event=False)
-        activated_run = await run_service.signal_active_for_device_session(db, device.id)
-        await session_service.publish_session_started_event(
+        activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
+        session_service.queue_session_started_event(
+            db,
             session,
             device=device,
             run_id=str(activated_run.id) if activated_run and activated_run.state == RunState.active else None,
@@ -196,7 +197,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
                 ended_session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
             else:
                 ended_session.status = SessionStatus.passed  # default; pytest helper can override
-            await session_service.publish_session_ended_event(ended_session, device=ended_device)
+            session_service.queue_session_ended_event(db, ended_session, device=ended_device)
             logger.info("Session %s ended", sid)
 
         # Check if device has other running sessions
