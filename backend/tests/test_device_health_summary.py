@@ -35,9 +35,8 @@ def _make_device(db_host: Host, identity: str) -> Device:
 
 
 async def _drain_after_commit_tasks() -> None:
-    # `_schedule_health_event_after_commit` schedules the publish via
-    # `loop.call_soon_threadsafe(loop.create_task(...))`. Two yields are enough
-    # to let both the soon-callback and the resulting Task make progress.
+    # _flush_on_commit calls loop.create_task(...) directly from the after_commit hook.
+    # One yield lets the task start; a second lets it complete its first await.
     for _ in range(2):
         await asyncio.sleep(0)
 
