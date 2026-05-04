@@ -125,6 +125,8 @@ async def test_set_device_availability_status_publishes_only_on_change(db_sessio
 
     changed = await set_device_availability_status(device, DeviceAvailabilityStatus.busy, reason="Probe started")
     assert changed is True
+    await db_session.commit()
+    await event_bus.drain_handlers()
     events = event_bus.get_recent_events()
     assert len(events) == 1
     assert events[0]["data"]["old_availability_status"] == "available"

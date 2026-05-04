@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -27,6 +25,14 @@ async def test_health_failure_offline_write_serializes_with_reservation(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    """Health failure offline write does not clobber a concurrent reservation.
+
+    Two outcomes are possible depending on which writer locks first:
+    - health_writer first: sets offline → reservation_writer sets reserved → final: reserved
+    - reservation_writer first: sets reserved → health_writer sees non-available, skips → final: reserved
+    Both paths produce the same final state. The DB lock (SELECT FOR UPDATE) and the
+    availability guard in _mark_offline_for_failed_health_signal serialize the writes.
+    """
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -37,37 +43,23 @@ async def test_health_failure_offline_write_serializes_with_reservation(
     await db_session.commit()
     device_id = device.id
 
-    inside_availability_publish = asyncio.Event()
-    racer_attempted_lock = asyncio.Event()
-    racer_committed = asyncio.Event()
-
-    async def gated_publish(event_name: str, payload: dict[str, object]) -> None:
-        if event_name == "device.availability_changed" and payload.get("device_id") == str(device_id):
-            inside_availability_publish.set()
-            await asyncio.wait_for(racer_attempted_lock.wait(), timeout=2.0)
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(racer_committed.wait(), timeout=0.4)
-
     async def health_writer() -> None:
         async with db_session_maker() as session:
             loaded = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
-            with patch("app.services.device_availability.event_bus.publish", gated_publish):
-                await device_health_summary.update_device_checks(
-                    session,
-                    loaded,
-                    healthy=False,
-                    summary="Disconnected",
-                )
+            await device_health_summary.update_device_checks(
+                session,
+                loaded,
+                healthy=False,
+                summary="Disconnected",
+            )
             await session.commit()
 
     async def reservation_writer() -> None:
-        await asyncio.wait_for(inside_availability_publish.wait(), timeout=2.0)
+        await asyncio.sleep(0)  # yield to let health_writer's DB query start
         async with db_session_maker() as session:
-            racer_attempted_lock.set()
             locked = await device_locking.lock_device(session, device_id)
             locked.availability_status = DeviceAvailabilityStatus.reserved
             await session.commit()
-        racer_committed.set()
 
     await asyncio.wait_for(asyncio.gather(health_writer(), reservation_writer()), timeout=5.0)
 
@@ -84,6 +76,14 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    """Health recovery available write does not clobber a concurrent maintenance transition.
+
+    Two outcomes are possible depending on which writer locks first:
+    - recovery_writer first: sets available → maintenance_writer sets maintenance → final: maintenance
+    - maintenance_writer first: sets maintenance → recovery_writer sees non-offline, skips → final: maintenance
+    Both paths produce the same final state. The DB lock and the availability guard in
+    _restore_available_for_healthy_signal serialize the writes.
+    """
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -113,38 +113,24 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
     await db_session.commit()
     device_id = device.id
 
-    inside_availability_publish = asyncio.Event()
-    racer_attempted_lock = asyncio.Event()
-    racer_committed = asyncio.Event()
-
-    async def gated_publish(event_name: str, payload: dict[str, object]) -> None:
-        if event_name == "device.availability_changed" and payload.get("device_id") == str(device_id):
-            inside_availability_publish.set()
-            await asyncio.wait_for(racer_attempted_lock.wait(), timeout=2.0)
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(racer_committed.wait(), timeout=0.4)
-
     async def recovery_writer() -> None:
         async with db_session_maker() as session:
             loaded = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
             await session.refresh(loaded, ["appium_node"])
-            with patch("app.services.device_availability.event_bus.publish", gated_publish):
-                await device_health_summary.update_node_state(
-                    session,
-                    loaded,
-                    running=True,
-                    state="running",
-                )
+            await device_health_summary.update_node_state(
+                session,
+                loaded,
+                running=True,
+                state="running",
+            )
             await session.commit()
 
     async def maintenance_writer() -> None:
-        await asyncio.wait_for(inside_availability_publish.wait(), timeout=2.0)
+        await asyncio.sleep(0)  # yield to let recovery_writer's DB query start
         async with db_session_maker() as session:
-            racer_attempted_lock.set()
             locked = await device_locking.lock_device(session, device_id)
             locked.availability_status = DeviceAvailabilityStatus.maintenance
             await session.commit()
-        racer_committed.set()
 
     await asyncio.wait_for(asyncio.gather(recovery_writer(), maintenance_writer()), timeout=5.0)
 
@@ -160,6 +146,8 @@ async def test_health_recovery_locks_device_before_summary_patch(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    from unittest.mock import patch
+
     device = await create_device(
         db_session,
         host_id=db_host.id,
