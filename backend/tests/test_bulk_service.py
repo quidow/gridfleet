@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -153,6 +153,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     db = AsyncMock()
     monkeypatch.setattr("app.services.bulk_service._load_devices", AsyncMock(return_value=devices))
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.services.bulk_service.queue_event_for_session", Mock())
     monkeypatch.setattr(
         "app.services.device_service.delete_device",
         AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),
