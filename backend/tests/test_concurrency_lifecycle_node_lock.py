@@ -42,22 +42,21 @@ async def test_handle_node_crash_locks_appium_node(
         await asyncio.sleep(0.15)
         return await original_record_event(*args, **kwargs)
 
-    fake_manager = AsyncMock()
-    fake_manager.stop_node = AsyncMock(side_effect=RuntimeError("stop failed"))
-
-    def manager_resolver(_device: object) -> object:
-        return fake_manager
-
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
-            with patch("app.services.lifecycle_policy_actions.record_event", racing_record_event):
+            with (
+                patch("app.services.lifecycle_policy_actions.record_event", racing_record_event),
+                patch(
+                    "app.services.lifecycle_policy_actions.stop_managed_node",
+                    AsyncMock(side_effect=RuntimeError("stop failed")),
+                ),
+            ):
                 await lifecycle_policy_actions.handle_node_crash(
                     session,
                     target,
                     source="test",
                     reason="test",
-                    manager_resolver=manager_resolver,
                 )
 
     async def stomper() -> None:

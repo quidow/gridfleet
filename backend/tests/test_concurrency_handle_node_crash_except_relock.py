@@ -14,12 +14,11 @@ from tests.helpers import create_device
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-class _StopNodeCommitsThenRaises:
-    async def stop_node(self, db: AsyncSession, device: Device) -> AppiumNode:
-        assert device.appium_node is not None
-        device.availability_status = DeviceAvailabilityStatus.offline
-        await db.commit()
-        raise NodeManagerError("simulated stop_node failure after commit")
+async def _stop_node_commits_then_raises(db: AsyncSession, device: Device) -> AppiumNode:
+    assert device.appium_node is not None
+    device.availability_status = DeviceAvailabilityStatus.offline
+    await db.commit()
+    raise NodeManagerError("simulated stop_node failure after commit")
 
 
 async def test_handle_node_crash_relocks_after_stop_node_commit_in_except_branch(
@@ -75,12 +74,12 @@ async def test_handle_node_crash_relocks_after_stop_node_commit_in_except_branch
     async with db_session_maker() as session:
         target = await session.get(Device, device_id)
         assert target is not None
+        monkeypatch.setattr(lifecycle_policy_actions, "stop_managed_node", _stop_node_commits_then_raises)
         await lifecycle_policy_actions.handle_node_crash(
             session,
             target,
             source="test",
             reason="simulated failure",
-            manager_resolver=lambda _device: _StopNodeCommitsThenRaises(),
         )
 
     assert device_lock_count >= 2, "Device was not re-locked after stop_node committed and raised"
