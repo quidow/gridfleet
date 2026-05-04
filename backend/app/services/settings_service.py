@@ -58,16 +58,14 @@ class SettingsService:
 
     async def initialize(self, db: AsyncSession) -> None:
         """Load all settings from DB and build the in-memory cache."""
-        self._cache.clear()
-        self._overrides.clear()
-        self._defaults.clear()
-
         # Resolve defaults from config.py / env vars
+        defaults: dict[str, SettingValue] = {}
         for key, definition in SETTINGS_REGISTRY.items():
-            self._defaults[key] = resolve_default(definition)
+            defaults[key] = resolve_default(definition)
 
         # Load DB overrides
         result = await db.execute(select(Setting))
+        overrides: dict[str, SettingValue] = {}
         dirty = False
         for row in result.scalars().all():
             if row.key in SETTINGS_REGISTRY:
@@ -75,30 +73,38 @@ class SettingsService:
                 if normalized != row.value:
                     row.value = normalized
                     dirty = True
-                self._overrides[row.key] = normalized
+                overrides[row.key] = normalized
 
         if dirty:
             await db.commit()
 
         # Build cache: override if present, else default
+        cache: dict[str, SettingValue] = {}
         for key in SETTINGS_REGISTRY:
-            if key in self._overrides:
-                self._cache[key] = self._overrides[key]
+            if key in overrides:
+                cache[key] = overrides[key]
             else:
-                self._cache[key] = self._defaults[key]
+                cache[key] = defaults[key]
 
-        logger.info("Settings service initialized (%d overrides loaded)", len(self._overrides))
+        self._defaults = defaults
+        self._overrides = overrides
+        self._cache = cache
+
+        logger.info("Settings service initialized (%d overrides loaded)", len(overrides))
 
     def configure_store_refresh(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def shutdown(self) -> None:
+        await self._cancel_refresh_task()
+        self._session_factory = None
+
+    async def _cancel_refresh_task(self) -> None:
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
         self._refresh_task = None
-        self._session_factory = None
 
     async def handle_system_event(self, event: Event) -> None:
         if event.type != "settings.changed" or self._session_factory is None:
@@ -197,6 +203,7 @@ class SettingsService:
         normalized_value = self._normalize_value(key, value)
 
         defn = SETTINGS_REGISTRY[key]
+        await self._cancel_refresh_task()
 
         # Upsert DB row
         result = await db.execute(select(Setting).where(Setting.key == key))
@@ -205,12 +212,11 @@ class SettingsService:
             row.value = normalized_value
         else:
             db.add(Setting(key=key, value=normalized_value, category=defn.category))
-        queue_event_for_session(db, "settings.changed", {"key": key, "value": normalized_value})
-        await db.commit()
-
         # Update cache
         self._overrides[key] = normalized_value
         self._cache[key] = normalized_value
+        queue_event_for_session(db, "settings.changed", {"key": key, "value": normalized_value})
+        await db.commit()
         return self.get_setting_response(key)
 
     async def bulk_update(self, db: AsyncSession, updates: dict[str, Any]) -> list[dict[str, Any]]:
@@ -225,6 +231,8 @@ class SettingsService:
             cross_error = _cross_field_validate(key, value)
             if cross_error:
                 raise ValueError(cross_error)
+
+        await self._cancel_refresh_task()
 
         # Persist all
         for key, value in updates.items():
@@ -250,23 +258,23 @@ class SettingsService:
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")
 
+        await self._cancel_refresh_task()
         await db.execute(delete(Setting).where(Setting.key == key))
-        queue_event_for_session(db, "settings.changed", {"key": key, "reset": True})
-        await db.commit()
-
         self._overrides.pop(key, None)
         self._cache[key] = self._defaults[key]
+        queue_event_for_session(db, "settings.changed", {"key": key, "reset": True})
+        await db.commit()
         return self.get_setting_response(key)
 
     async def reset_all(self, db: AsyncSession) -> None:
         """Reset all settings to defaults."""
+        await self._cancel_refresh_task()
         await db.execute(delete(Setting))
-        queue_event_for_session(db, "settings.changed", {"reset_all": True})
-        await db.commit()
-
         self._overrides.clear()
         for key in SETTINGS_REGISTRY:
             self._cache[key] = self._defaults[key]
+        queue_event_for_session(db, "settings.changed", {"reset_all": True})
+        await db.commit()
 
     def get_setting_response(self, key: str) -> dict[str, Any]:
         """Build the API response dict for a single setting."""

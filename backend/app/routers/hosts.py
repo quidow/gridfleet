@@ -104,14 +104,6 @@ async def register_host(data: HostRegister, response: Response, db: AsyncSession
 
     if is_new:
         response.status_code = 201
-        await event_bus.publish(
-            "host.registered",
-            {
-                "host_id": str(host.id),
-                "hostname": host.hostname,
-                "status": host.status.value,
-            },
-        )
         if settings_service.get("agent.auto_accept_hosts"):
             _fire_and_forget(_auto_discover, host.id)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
@@ -124,15 +116,6 @@ async def approve_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
     host = await host_service.approve_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
-    await event_bus.publish(
-        "host.status_changed",
-        {
-            "host_id": str(host.id),
-            "hostname": host.hostname,
-            "old_status": "pending",
-            "new_status": "online",
-        },
-    )
     _fire_and_forget(_auto_discover, host.id)
     _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
     return host
