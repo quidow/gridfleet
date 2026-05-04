@@ -136,17 +136,24 @@ async def handle_node_crash(
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 
-    Availability semantics:
-    - When the node is running and `manager.stop_node` succeeds, the device's
-      availability follows `mark_node_stopped` → `_node_stopped_availability_status`,
-      which preserves `busy/reserved/maintenance` (operator/run intent precedes node
-      lifecycle, see `docs/design/01-device-state-model.md` Axis 2/Axis 5) and
-      otherwise sets `offline`. The crash itself is captured by
-      `record_event(DeviceEventType.node_crash, ...)` regardless of branch — webhook
-      subscribers of `device.crashed` see the crash unconditionally.
-    - When the node is missing or `manager.stop_node` raises, this function forces
-      `offline` directly via the availability helper because there is no clean
-      `mark_node_stopped` path to delegate to.
+    Triggered by ``complete_auto_stop`` on ``connectivity_lost`` and
+    ``health_check_fail`` in addition to genuine Appium crashes — every
+    invocation persists a ``node_crash`` event unconditionally.
+
+    Availability semantics (three distinct paths):
+    - Node running + ``manager.stop_node`` succeeds: availability delegates to
+      ``mark_node_stopped`` → ``_node_stopped_availability_status``, which
+      preserves ``busy/reserved/maintenance`` (operator/run intent precedes node
+      lifecycle, see ``docs/design/01-device-state-model.md`` Axis 2/Axis 5) and
+      otherwise sets ``offline``. This function makes no direct availability write.
+    - Node running + ``manager.stop_node`` raises: re-acquires both row locks
+      (Device → AppiumNode, documented order) before forcing ``offline`` and
+      setting ``node.state = NodeState.error``.
+    - Node not running or absent (``else`` branch): forces ``offline`` directly
+      using the already-held row lock; no re-acquisition needed.
+
+    ``record_event(DeviceEventType.node_crash, ...)`` fires on every branch —
+    webhook subscribers of ``device.crashed`` see the crash unconditionally.
     """
     from app.services import appium_node_locking
 
