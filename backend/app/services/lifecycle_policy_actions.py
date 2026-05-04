@@ -141,12 +141,12 @@ async def handle_node_crash(
     invocation persists a ``node_crash`` event unconditionally.
 
     Availability semantics (three distinct paths):
-    - Node running + ``manager.stop_node`` succeeds: availability delegates to
+    - Node running + ``stop_managed_node`` succeeds: availability delegates to
       ``mark_node_stopped`` → ``_node_stopped_availability_status``, which
       preserves ``busy/reserved/maintenance`` (operator/run intent precedes node
       lifecycle, see ``docs/design/01-device-state-model.md`` Axis 2/Axis 5) and
       otherwise sets ``offline``. This function makes no direct availability write.
-    - Node running + ``manager.stop_node`` raises: re-acquires both row locks
+    - Node running + ``stop_managed_node`` raises: re-acquires both row locks
       (Device → AppiumNode, documented order) before forcing ``offline`` and
       setting ``node.state = NodeState.error``.
     - Node not running or absent (``else`` branch): forces ``offline`` directly
@@ -185,7 +185,7 @@ async def handle_node_crash(
         try:
             await stop_managed_node(db, device)
         except Exception:
-            # stop_node may commit before raising, releasing both row locks.
+            # stop_managed_node may commit before raising, releasing both row locks.
             # Re-acquire in the documented Device -> AppiumNode order before
             # writing offline/error state.
             from app.services import appium_node_locking, device_locking

@@ -44,7 +44,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         return await node_service.mark_node_started(db, dev, port=4723, pid=123)
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(node_service, "restart_node", fake_restart_node)
+    monkeypatch.setattr(devices_control, "restart_managed_node", fake_restart_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:

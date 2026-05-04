@@ -32,7 +32,6 @@ from app.services.pack_capability_service import (
 )
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.pack_platform_resolver import assert_runnable, resolve_pack_platform
-from app.services.pack_platform_resolver import resolve_pack_platform as resolve_pack_platform_fn
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
 from app.services.settings_service import settings_service
 
@@ -77,7 +76,7 @@ __all__ = [
 ]
 
 
-async def _lock_device_for_node_state_write(db: AsyncSession, device_id: uuid.UUID) -> Device:
+async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
     """Acquire and refresh the Device row used for node-state writes."""
     from app.services import device_locking
 
@@ -85,10 +84,6 @@ async def _lock_device_for_node_state_write(db: AsyncSession, device_id: uuid.UU
         return await device_locking.lock_device(db, device_id)
     except NoResultFound:
         raise NodeManagerError(f"Device {device_id} no longer exists") from None
-
-
-async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
-    return await _lock_device_for_node_state_write(db, device_id)
 
 
 async def allocate_port(db: AsyncSession) -> int:
@@ -335,7 +330,7 @@ async def _build_appium_default_pack_caps(db: AsyncSession, device: Device) -> d
     if resolved is None:
         return {}
     pack_id, platform_id = resolved
-    resolved_plat = await resolve_pack_platform_fn(
+    resolved_plat = await resolve_pack_platform(
         db,
         pack_id=pack_id,
         platform_id=platform_id,
@@ -387,7 +382,7 @@ async def start_remote_temporary_node(
     if resolved_pack is None:
         raise NodeManagerError(f"Device {device.id} has no driver pack platform")
     stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
-    plat = await resolve_pack_platform_fn(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    plat = await resolve_pack_platform(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
     appium_platform_name = plat.appium_platform_name
     extra_caps = await _build_session_aligned_start_caps(
         db,
@@ -649,6 +644,9 @@ async def _start_with_owner(
         resource_ports = {p.capability_name: p.start for p in resolved.parallel_resources.ports}
         needs_derived_data_path = resolved.parallel_resources.derived_data_path
     except LookupError:
+        # Pack platform missing or unresolved — fall back to no parallel
+        # resource allocation. Devices without a pack still start, the
+        # allocator simply gets no port/derived-data-path hints.
         pass
     allocated_caps = await appium_resource_allocator.get_or_create_owner_capabilities(
         db,

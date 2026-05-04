@@ -86,7 +86,7 @@ async def test_restart_node_via_agent_locks_device_and_node(
                     return_value={},
                 ),
                 patch(
-                    "app.services.node_service.resolve_pack_platform_fn",
+                    "app.services.node_service.resolve_pack_platform",
                     return_value=type("RP", (), {"appium_platform_name": "Android"})(),
                 ),
                 patch(

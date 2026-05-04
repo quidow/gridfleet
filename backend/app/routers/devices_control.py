@@ -36,6 +36,7 @@ from app.services.auth_dependencies import require_admin
 from app.services.device_health_summary import patch_health_snapshot
 from app.services.device_identity import appium_connection_target
 from app.services.node_service import require_management_host
+from app.services.node_service import restart_node as restart_managed_node
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 
@@ -231,8 +232,6 @@ async def reconnect_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_
     success = data.get("success", False)
 
     if success and device.auto_manage and device.appium_node:
-        from app.services.node_service import restart_node as restart_managed_node
-
         try:
             await restart_managed_node(db, device)
         except Exception as exc:

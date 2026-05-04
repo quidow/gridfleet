@@ -80,7 +80,7 @@ async def test_restart_mutations_visible_after_caller_commit(
             patch("app.services.node_service.build_pack_start_payload", return_value=None),
             patch("app.services.node_service.render_stereotype", return_value={}),
             patch(
-                "app.services.node_service.resolve_pack_platform_fn",
+                "app.services.node_service.resolve_pack_platform",
                 return_value=type("ResolvedPlatform", (), {"appium_platform_name": "Android"})(),
             ),
             patch("app.services.node_service._build_session_aligned_start_caps", return_value={}),
