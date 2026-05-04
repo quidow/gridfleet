@@ -75,7 +75,8 @@ class NodeManager(abc.ABC):
         handle: TemporaryNodeHandle,
         *,
         release_allocations: bool = True,
-    ) -> bool: ...
+    ) -> bool:
+        raise NotImplementedError
 
     async def restart_node(self, db: AsyncSession, device: Device) -> AppiumNode:
         """Stop then start with exponential backoff on failure."""
@@ -260,7 +261,11 @@ class RemoteNodeManager(NodeManager):
             agent_base=agent_base,
             http_client_factory=httpx.AsyncClient,
         )
-        if release_allocations and handle.owner_key:
+        # Only release the owner allocation when the agent confirmed the stop.
+        # An unacknowledged stop may leave the Appium process and its allocated
+        # ports in use; freeing the owner here would let the allocator hand the
+        # same resources to a new owner while the orphan is still running.
+        if stopped and release_allocations and handle.owner_key:
             await appium_resource_allocator.release_owner(db, handle.owner_key)
             await db.commit()
         return stopped

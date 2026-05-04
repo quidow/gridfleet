@@ -851,3 +851,157 @@ async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
             http_client_factory=AsyncMock,
         )
     assert result is True
+
+
+async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_acknowledge(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """If the agent never confirms the stop, the owner allocation MUST stay
+    intact — releasing it would let the allocator hand the same parallel-resource
+    ports to a new owner while the orphan Appium process is still using them."""
+    from app.services import appium_resource_allocator
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="stop-no-ack-alloc-001",
+        connection_target="stop-no-ack-alloc-001",
+        name="Stop No Ack Allocation",
+        availability_status="available",
+    )
+    owner_key = appium_resource_allocator.managed_owner_key(device.id)
+    await appium_resource_allocator.get_or_create_owner_capabilities(
+        db_session,
+        owner_key=owner_key,
+        host_id=db_host.id,
+        resource_ports={
+            "appium:systemPort": 8200,
+            "appium:chromedriverPort": 9515,
+            "appium:mjpegServerPort": 9200,
+        },
+    )
+    await db_session.commit()
+    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is not None
+
+    handle = TemporaryNodeHandle(
+        port=4723,
+        pid=12345,
+        active_connection_target="stop-no-ack-alloc-001",
+        agent_base=f"http://{db_host.ip}:{db_host.agent_port}",
+        owner_key=owner_key,
+    )
+
+    with patch(
+        "app.services.node_manager.stop_remote_temporary_node",
+        AsyncMock(return_value=False),
+    ):
+        manager = get_node_manager(device)
+        stopped = await manager.stop_temporary_node(db_session, device, handle)
+
+    assert stopped is False
+    bundle = await appium_resource_allocator.get_owner_bundle(db_session, owner_key)
+    assert bundle is not None, "owner allocation must persist after unacknowledged stop"
+
+
+async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowledges(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Symmetric to the unacknowledged case: a confirmed stop MUST release the
+    owner allocation so the parallel-resource ports become reusable."""
+    from app.services import appium_resource_allocator
+
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="stop-ack-alloc-001",
+        connection_target="stop-ack-alloc-001",
+        name="Stop Ack Allocation",
+        availability_status="available",
+    )
+    owner_key = appium_resource_allocator.managed_owner_key(device.id)
+    await appium_resource_allocator.get_or_create_owner_capabilities(
+        db_session,
+        owner_key=owner_key,
+        host_id=db_host.id,
+        resource_ports={
+            "appium:systemPort": 8200,
+            "appium:chromedriverPort": 9515,
+            "appium:mjpegServerPort": 9200,
+        },
+    )
+    await db_session.commit()
+    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is not None
+
+    handle = TemporaryNodeHandle(
+        port=4723,
+        pid=12345,
+        active_connection_target="stop-ack-alloc-001",
+        agent_base=f"http://{db_host.ip}:{db_host.agent_port}",
+        owner_key=owner_key,
+    )
+
+    with patch(
+        "app.services.node_manager.stop_remote_temporary_node",
+        AsyncMock(return_value=True),
+    ):
+        manager = get_node_manager(device)
+        stopped = await manager.stop_temporary_node(db_session, device, handle)
+
+    assert stopped is True
+    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is None
+
+
+async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """If the agent does not acknowledge the stop, ``restart_node_via_agent``
+    MUST refuse to start a new Appium on a different candidate port — the
+    orphan Appium/Grid relay may still be alive on the old port and would
+    collide or duplicate Selenium Grid registrations."""
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="restart-no-ack-001",
+        connection_target="restart-no-ack-001",
+        name="Restart No Ack",
+        availability_status="available",
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=123,
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    loaded = await device_service.get_device(db_session, device.id)
+    assert loaded is not None
+    assert loaded.appium_node is not None
+
+    with (
+        patch(
+            "app.services.node_manager_remote.stop_remote_temporary_node",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.node_manager_remote.start_remote_temporary_node",
+            new_callable=AsyncMock,
+        ) as start_mock,
+    ):
+        result = await restart_node_via_agent(
+            db_session,
+            loaded,
+            loaded.appium_node,
+            http_client_factory=AsyncMock,
+        )
+
+    assert result is False
+    start_mock.assert_not_awaited()
+    await db_session.refresh(loaded.appium_node)
+    assert loaded.appium_node.port == 4723, "node row must keep the original port when stop is unconfirmed"
+    assert loaded.appium_node.state == NodeState.running

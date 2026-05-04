@@ -364,11 +364,17 @@ async def restart_node_via_agent(
     )
 
     try:
-        await stop_remote_temporary_node(
+        stopped = await stop_remote_temporary_node(
             port=node.port,
             agent_base=agent_base,
             http_client_factory=http_client_factory,
         )
+        if not stopped:
+            # Agent did not acknowledge the stop. Starting on a different
+            # candidate port now would race the orphan Appium/Grid relay that
+            # may still be alive on the old port. Refuse to proceed and let the
+            # caller retry once the agent is reachable again.
+            return False
 
         last_conflict: NodePortConflictError | None = None
         started_handle: TemporaryNodeHandle | None = None
