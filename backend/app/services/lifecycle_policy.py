@@ -468,7 +468,7 @@ async def attempt_auto_recovery(
         )
 
         # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
-        # the row lock via intermediate commits in stop_node_and_mark_offline.
+        # the row lock via intermediate commits in handle_node_crash.
         # Without this re-lock, the trailing write_state below would clobber any
         # concurrent writer (e.g., note_connectivity_loss) on the same device.
         from app.services import device_locking

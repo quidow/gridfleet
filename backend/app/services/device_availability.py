@@ -6,7 +6,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,5 +45,7 @@ async def set_device_availability_status(
         }
         if reason is not None:
             payload["reason"] = reason
-        await event_bus.publish("device.availability_changed", payload)
+        session = device_state.session
+        assert session is not None, "set_device_availability_status: device has no session despite persistent==True"
+        queue_event_for_session(session, "device.availability_changed", payload)
     return True

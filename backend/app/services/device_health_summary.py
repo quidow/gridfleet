@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import event as sa_event
 from sqlalchemy.exc import NoResultFound
 
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.observability import get_logger
 from app.services import control_plane_state_store
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,18 +111,6 @@ async def _lock_device_for_health_transition(db: AsyncSession, device: Device | 
         return None
 
 
-_PENDING_HEALTH_EVENTS_KEY = "_pending_device_health_events"
-_PENDING_HEALTH_LISTENER_KEY = "_pending_device_health_events_listener"
-
-
-async def _publish_pending_health_events(events: list[dict[str, Any]]) -> None:
-    for item in events:
-        try:
-            await event_bus.publish("device.health_changed", item)
-        except Exception:
-            logger.exception("Failed to publish device.health_changed for %s", item.get("device_id"))
-
-
 def _schedule_health_event_after_commit(
     db: AsyncSession,
     *,
@@ -132,46 +118,13 @@ def _schedule_health_event_after_commit(
     healthy: bool | None,
     summary: str | None,
 ) -> None:
-    """Defer event_bus.publish until the caller's snapshot transaction commits.
+    """Defer device.health_changed publish until the caller's transaction commits.
 
-    Stores the pending event payload on the AsyncSession's `info` dict and
-    registers an `after_commit` listener (once per session) on the underlying
-    sync Session. On commit, the listener spawns a publishing Task and
-    registers it on ``event_bus._handler_tasks`` so that ``event_bus.shutdown``
-    drains it together with the handler fan-out (otherwise the Task can outlive
-    the test schema or the connection pool). Rollback drops pending payloads
-    without publishing, preserving the invariant that consumers only see
-    events for transitions that actually became durable.
+    Thin shim over ``queue_event_for_session`` — all sessions
+    converge on a single after-commit dispatch primitive.
     """
-    sync_session = db.sync_session
-    loop = asyncio.get_running_loop()
     payload: dict[str, Any] = {"device_id": device_id, "healthy": healthy, "summary": summary}
-
-    pending: list[dict[str, Any]] = sync_session.info.setdefault(_PENDING_HEALTH_EVENTS_KEY, [])
-    pending.append(payload)
-
-    if sync_session.info.get(_PENDING_HEALTH_LISTENER_KEY):
-        return
-    sync_session.info[_PENDING_HEALTH_LISTENER_KEY] = True
-
-    def _flush_on_commit(_session: object) -> None:
-        events: list[dict[str, Any]] = sync_session.info.pop(_PENDING_HEALTH_EVENTS_KEY, [])
-        sync_session.info.pop(_PENDING_HEALTH_LISTENER_KEY, None)
-        if not events:
-            return
-        task = loop.create_task(_publish_pending_health_events(events))
-        event_bus._handler_tasks.add(task)
-        task.add_done_callback(event_bus._handler_tasks.discard)
-
-    def _drop_on_rollback(_session: object) -> None:
-        sync_session.info.pop(_PENDING_HEALTH_EVENTS_KEY, None)
-        sync_session.info.pop(_PENDING_HEALTH_LISTENER_KEY, None)
-
-    # `once=True` ensures SQLAlchemy auto-removes the listener after firing,
-    # avoiding "deque mutated during iteration" if we tried to call
-    # ``sa_event.remove`` from within the callback.
-    sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
-    sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
+    queue_event_for_session(db, "device.health_changed", payload)
 
 
 async def _mark_offline_for_failed_health_signal(

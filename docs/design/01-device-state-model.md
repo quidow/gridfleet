@@ -59,6 +59,8 @@ app.services.device_availability.set_device_availability_status
 
 `backend/app/services/device_availability.py:23-51`. It asserts the device is loaded in the current session — i.e. that the row was acquired through `device_locking.lock_device` first — and publishes `device.availability_changed` to the event bus on every transition. Bypassing it (assigning `device.availability_status = ...` directly) is now blocked by `backend/tests/test_no_direct_availability_writes.py`.
 
+The `device.availability_changed` event is queued on the writer's SQLAlchemy session and dispatched **after** the outer transaction commits, via `app.services.event_bus.queue_event_for_session`. If the outer transaction rolls back, the queued event is dropped — webhook and SSE subscribers never see a transition that was not actually persisted. Contract test: `backend/tests/test_availability_event_after_commit.py`. Note: only `device.availability_changed` follows this contract today; other event types (`node.state_changed`, `host.heartbeat_lost`, `run.state_changed`) still publish synchronously inside their transactions and remain divergent on rollback — see follow-up issue.
+
 Seeding scripts under `backend/app/seeding/` are exempt from the rule because fixture builders run in a single short-lived transaction with no event consumers attached.
 
 ### Transition rules

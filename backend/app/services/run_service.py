@@ -1121,7 +1121,7 @@ async def _release_devices(
     ``complete_deferred_stop_if_session_ended`` pass. The caller MUST run
     ``_complete_deferred_stops_post_commit`` after the encompassing run-state
     commit; the lifecycle helper commits internally (via
-    ``stop_node_and_mark_offline``) and must not be invoked while the run-state
+    ``handle_node_crash``) and must not be invoked while the run-state
     transaction is still open, otherwise a partial commit can land on disk if
     a later step in the same call raises.
     """

@@ -35,9 +35,8 @@ def _make_device(db_host: Host, identity: str) -> Device:
 
 
 async def _drain_after_commit_tasks() -> None:
-    # `_schedule_health_event_after_commit` schedules the publish via
-    # `loop.call_soon_threadsafe(loop.create_task(...))`. Two yields are enough
-    # to let both the soon-callback and the resulting Task make progress.
+    # _flush_on_commit calls loop.create_task(...) directly from the after_commit hook.
+    # One yield lets the task start; a second lets it complete its first await.
     for _ in range(2):
         await asyncio.sleep(0)
 
@@ -57,7 +56,7 @@ async def test_publishes_event_on_healthy_to_unhealthy_transition(db_session: As
     await db_session.commit()
 
     publish = AsyncMock()
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         await device_health_summary.update_node_state(
             db_session, device, running=False, state="error", mark_offline_on_failure=False
         )
@@ -84,7 +83,7 @@ async def test_no_event_when_healthy_unchanged(db_session: AsyncSession, db_host
     await db_session.commit()
 
     publish = AsyncMock()
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         # Same value again — only timestamp changes, healthy stays True
         await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
         await db_session.commit()
@@ -98,11 +97,16 @@ async def test_publishes_event_on_unhealthy_to_healthy_transition(db_session: As
     db_session.add(device)
     await db_session.commit()
 
-    await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Disconnected")
-    await db_session.commit()
+    # Pre-seed: drive the device to unhealthy. Patch during commit+drain so the
+    # deferred tasks (availability_changed + health_changed) complete quickly via
+    # the mock and don't bleed into the assertion window below.
+    with patch("app.services.event_bus.event_bus.publish", AsyncMock()):
+        await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Disconnected")
+        await db_session.commit()
+        await _drain_after_commit_tasks()
 
     publish = AsyncMock()
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
         await db_session.commit()
         await _drain_after_commit_tasks()
@@ -121,7 +125,7 @@ async def test_event_not_published_on_rollback(db_session: AsyncSession, db_host
     await db_session.commit()
 
     publish = AsyncMock()
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Lost")
         await db_session.rollback()
         await _drain_after_commit_tasks()
@@ -141,7 +145,7 @@ async def test_str_id_path_locks_device_and_publishes_once(db_session: AsyncSess
     await db_session.commit()
 
     publish = AsyncMock()
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         await device_health_summary.update_node_state(
             db_session,
             str(device.id),  # heartbeat-style str argument
@@ -164,7 +168,7 @@ async def test_str_id_path_with_unknown_device_does_not_publish(db_session: Asyn
     healthy stays unchanged (None → None) and lock returns None."""
     publish = AsyncMock()
     unknown_id = "00000000-0000-0000-0000-000000000000"
-    with patch("app.services.device_health_summary.event_bus.publish", publish):
+    with patch("app.services.event_bus.event_bus.publish", publish):
         await device_health_summary.update_device_checks(db_session, unknown_id, healthy=True, summary="Healthy")
         await db_session.commit()
         await _drain_after_commit_tasks()

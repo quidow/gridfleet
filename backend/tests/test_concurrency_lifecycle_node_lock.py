@@ -14,12 +14,12 @@ from tests.helpers import create_device
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_stop_node_and_mark_offline_locks_appium_node(
+async def test_handle_node_crash_locks_appium_node(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """``stop_node_and_mark_offline`` writes ``node.state`` and ``node.pid``.
+    """``handle_node_crash`` writes ``node.state`` and ``node.pid``.
     The AppiumNode row must be locked across those writes.
     """
     device = await create_device(
@@ -52,7 +52,7 @@ async def test_stop_node_and_mark_offline_locks_appium_node(
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
             with patch("app.services.lifecycle_policy_actions.record_event", racing_record_event):
-                await lifecycle_policy_actions.stop_node_and_mark_offline(
+                await lifecycle_policy_actions.handle_node_crash(
                     session,
                     target,
                     source="test",
@@ -75,9 +75,9 @@ async def test_stop_node_and_mark_offline_locks_appium_node(
 
     assert verify_node.state == NodeState.running, (
         f"Expected running but got {verify_node.state.value} — "
-        "stop_node_and_mark_offline overwrote the concurrent running write "
+        "handle_node_crash overwrote the concurrent running write "
         "(missing AppiumNode lock)"
     )
     assert verify_node.pid == 12345, (
-        f"Expected pid=12345 but got {verify_node.pid} — stop_node_and_mark_offline overwrote the concurrent pid write"
+        f"Expected pid=12345 but got {verify_node.pid} — handle_node_crash overwrote the concurrent pid write"
     )
