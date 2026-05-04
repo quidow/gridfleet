@@ -437,18 +437,22 @@ async def update_session_status(
 
         locked_device = await device_locking.lock_device(db, session.device_id)
         event_device = locked_device
-        if locked_device.availability_status == DeviceAvailabilityStatus.busy:
-            running_stmt = select(Session).where(
-                Session.device_id == session.device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-                Session.session_id != session_id,
-            )
-            running_result = await db.execute(running_stmt)
-            still_running = running_result.scalars().first() is not None
-            if not still_running:
+        running_stmt = select(Session).where(
+            Session.device_id == session.device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+            Session.session_id != session_id,
+        )
+        running_result = await db.execute(running_stmt)
+        still_running = running_result.scalars().first() is not None
+        if not still_running:
+            # Restore from busy on the busy-side; lifecycle cleanup must run
+            # for any non-busy availability too (maintenance/offline can host a
+            # stale ``stop_pending``), so the deferred-stop target is captured
+            # regardless of the current availability_status branch.
+            if locked_device.availability_status == DeviceAvailabilityStatus.busy:
                 await restore_post_busy_availability_status(db, locked_device)
-                deferred_stop_target = locked_device
+            deferred_stop_target = locked_device
 
     await db.commit()
     if deferred_stop_target is not None:

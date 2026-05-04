@@ -209,3 +209,60 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     assert reloaded is not None
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
+
+
+async def test_update_session_status_clears_stop_pending_on_non_busy_device(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Non-busy availability must not gate deferred-stop cleanup.
+
+    A concurrent operator action (or background loop) can move the device
+    out of ``busy`` while the running Session row still exists. When that
+    session is patched terminal, ``update_session_status`` must still run the
+    lifecycle helper so a stale ``stop_pending`` does not survive the
+    session-end. The previous gate on ``availability == busy`` skipped this
+    case (see audit P1 / CodeAnt comment on PR 64).
+    """
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-stuck-stop-non-busy",
+        connection_target="policy-stuck-stop-non-busy",
+        name="Stuck Stop Non-Busy",
+        os_version="14",
+        host_id=db_host.id,
+        availability_status=DeviceAvailabilityStatus.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-stuck-stop-non-busy",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB hung")
+    assert result == "deferred"
+
+    # Simulate an operator (or another loop) flipping the device into
+    # maintenance while the session row is still ``running``.
+    await db_session.refresh(device)
+    device.availability_status = DeviceAvailabilityStatus.maintenance
+    await db_session.commit()
+
+    updated = await session_service.update_session_status(db_session, "sess-stuck-stop-non-busy", SessionStatus.passed)
+    assert updated is not None
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
+        "update_session_status must clear stop_pending even when device availability is no longer busy"
+    )
