@@ -89,6 +89,7 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
+    await event_bus.drain_handlers()
     events, total = await event_bus.get_recent_events_persisted(limit=10)
     assert total == 1
     assert events[0]["type"] == "device.hardware_health_changed"

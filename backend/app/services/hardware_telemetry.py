@@ -25,7 +25,7 @@ from app.schemas.device import HardwareTelemetryState
 from app.services import control_plane_state_store
 from app.services.agent_operations import pack_device_telemetry as fetch_pack_device_telemetry
 from app.services.device_event_service import record_event
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -244,7 +244,7 @@ async def apply_telemetry_sample(
             DeviceEventType.hardware_health_changed,
             payload,
         )
-        await event_bus.publish("device.hardware_health_changed", payload)
+        queue_event_for_session(db, "device.hardware_health_changed", payload)
 
     return next_status
 

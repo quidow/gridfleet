@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.services.event_bus import event_bus
+from app.services.event_bus import queue_event_for_session
 
 if TYPE_CHECKING:
     import uuid
@@ -83,7 +83,8 @@ async def record_feature_status(
         await session.refresh(existing)
 
     if event_type is not None:
-        await event_bus.publish(
+        queue_event_for_session(
+            session,
             event_type,
             {
                 "host_id": str(host_id),
