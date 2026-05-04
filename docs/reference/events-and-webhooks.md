@@ -64,7 +64,25 @@ The manager publishes one shared event object shape:
 | `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | node start/stop/recovery paths |
 | `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | node-health failure handling |
+| `device.crashed` | `device_id`, `device_name`, `source`, `reason`, `will_restart`, `process` | persisted `node_crash` incidents |
 | `config.updated` | `device_id`, `device_name`, `changed_by` | device config writes |
+
+### `device.crashed`
+
+Per-device crash signal. Fires whenever a `DeviceEvent` row of type `node_crash` is persisted. Distinct from `node.crash` (per-Appium-process): `device.crashed` is the device-granularity counterpart and aligns semantically with `device.availability_changed` and `device.health_changed`.
+
+**Sources:** `lifecycle_policy_actions.handle_node_crash`, `heartbeat._ingest_appium_restart_events`, and `node_health._process_node_health`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `device_id` | string (UUID) | Device identifier. |
+| `device_name` | string | Display name. |
+| `source` | string | One of `appium_crash`, `connectivity_lost`, `health_check_fail`, `agent_restart_exhausted`. |
+| `reason` | string | Free-form; mirrors `DeviceEvent.details["reason"]` or crash error text. |
+| `will_restart` | bool | Whether lifecycle policy or agent restart logic will retry. |
+| `process` | string \| null | `"appium"` or `"grid_relay"` for heartbeat restart events; `null` for probe-driven and lifecycle-driven crashes. |
+
+Dispatched after the writer transaction commits. Dropped on rollback.
 
 ### Host and discovery
 
@@ -98,6 +116,18 @@ The manager publishes one shared event object shape:
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | settings writes |
 | `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted` | retention cleanup loop |
 | `webhook.test` | `webhook_id`, `webhook_name`, `message` | webhook test endpoint |
+
+## Event Delivery Semantics
+
+Transactional events (those produced inside code paths that mutate the database) dispatch to webhook and SSE subscribers only after the writer's SQLAlchemy transaction commits successfully. If the transaction rolls back, queued events are dropped, so subscribers do not observe state transitions that did not become durable.
+
+This is rollback-safe but not a durable outbox. Events are queued in memory on `Session.info`; the SQLAlchemy `after_commit` hook schedules `event_bus.publish` with `loop.create_task`, and `event_bus.publish` persists the `SystemEvent` row in a separate transaction. If the process exits between the writer commit and the `SystemEvent` commit, the event can be lost. A durable outbox is out of scope for issue #73.
+
+A small set of broadcasters publish eagerly without an outer transaction: in-memory circuit-breaker transitions, background-loop summaries, synthetic test events, per-device-session bulk summaries, and helpers that open their own short-lived persistence session before publishing. These are listed with rationale in `backend/tests/test_event_bus_publish_allowlist.py`.
+
+Within a single transaction, events queued in source order dispatch in FIFO order. Cross-transaction ordering across event types is not guaranteed; subscribers that need ordering should use the event envelope `timestamp` field set by `app.services.event_bus.Event.to_dict()`. Per-type payloads do not consistently carry their own timestamps.
+
+Run terminal events (`run.completed`, `run.cancelled`, `run.expired`) now dispatch via the `after_commit` hook and can interleave with `_complete_deferred_stops_post_commit`. Subscribers must not assume deferred lifecycle cleanup has finished by the time the run terminal event arrives.
 
 ## Persisted Device Event Types
 

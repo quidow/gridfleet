@@ -66,6 +66,22 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("device_id", "device_name", "error", "will_restart"),
     ),
     PublicEventDefinition(
+        name="device.crashed",
+        category="device_and_node_lifecycle",
+        description=(
+            "Device-level crash signal. Fires whenever a node_crash incident is persisted; "
+            "distinct from node.crash, which is per-Appium-process."
+        ),
+        typical_data_fields=(
+            "device_id",
+            "device_name",
+            "source",
+            "reason",
+            "will_restart",
+            "process",
+        ),
+    ),
+    PublicEventDefinition(
         name="device.health_changed",
         category="device_and_node_lifecycle",
         description="Aggregate device health flipped between healthy, unhealthy, or unknown.",
