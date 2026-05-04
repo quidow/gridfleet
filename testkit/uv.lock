@@ -18,15 +18,15 @@ wheels = [
 
 [[package]]
 name = "appium-python-client"
-version = "5.3.0"
+version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "selenium" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/09/8efda0362a3a79fcfd6c59a83929304899e8b507a2e47b5cea3e6f4ff727/appium_python_client-5.3.0.tar.gz", hash = "sha256:5380dbc204ecfb6bf36b1bb6358984ecce49a79fecbd77d05ccc702dfb7abe6e", size = 253631, upload-time = "2026-03-28T06:20:56.098Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/54/e8046c9677521a61dc311a137b93b37d4411f79202a363d844d04b8d98d9/appium_python_client-5.3.1.tar.gz", hash = "sha256:30800f9a53a585814138e7c8f569fd295273f933c9b34ad1a9580f3bf923fc63", size = 253876, upload-time = "2026-04-19T21:17:05.683Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/4b/356bc419a5eff061aa87d445789eae51c93219ad4adc6e11fdee8bc1ae54/appium_python_client-5.3.0-py3-none-any.whl", hash = "sha256:8eef79c38daf1e999cac41d2eea3a505abf60afb72d9f252580c530122473a5e", size = 351259, upload-time = "2026-03-28T06:20:54.417Z" },
+    { url = "https://files.pythonhosted.org/packages/14/fe/ced736d8cd0e8563003ba729214c73f3b6e28be9322c6c0fda1e331de325/appium_python_client-5.3.1-py3-none-any.whl", hash = "sha256:da0d3227ee059c31908a16f30a131424713ea96998fcd48e255d2cf9d107b557", size = 351262, upload-time = "2026-04-19T21:17:03.818Z" },
 ]
 
 [[package]]
@@ -98,7 +98,7 @@ wheels = [
 
 [[package]]
 name = "gridfleet-testkit"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
