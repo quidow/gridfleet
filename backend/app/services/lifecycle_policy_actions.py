@@ -11,6 +11,7 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import lifecycle_incident_service, maintenance_service, run_service
+from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.lifecycle_policy_state import set_action, write_state
 from app.services.lifecycle_policy_state import state as policy_state
@@ -162,13 +163,21 @@ async def stop_node_and_mark_offline(
 
             device = await device_locking.lock_device(db, device.id, load_sessions=True)
             locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-            device.availability_status = DeviceAvailabilityStatus.offline
+            await set_device_availability_status(
+                device,
+                DeviceAvailabilityStatus.offline,
+                reason=f"Node crash recorded ({source}): {reason}",
+            )
             if locked_node is not None:
                 locked_node.state = NodeState.error
                 locked_node.pid = None
             await db.commit()
     else:
-        device.availability_status = DeviceAvailabilityStatus.offline
+        await set_device_availability_status(
+            device,
+            DeviceAvailabilityStatus.offline,
+            reason=f"Node crash recorded ({source}): {reason}",
+        )
         if node is not None and node.state == NodeState.running:
             node.state = NodeState.stopped
             node.pid = None
