@@ -3,6 +3,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -103,6 +104,63 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     await db_session.refresh(device)
     assert host.status == HostStatus.offline
     assert device.availability_status == DeviceAvailabilityStatus.offline
+
+
+async def test_host_offline_cascade_publishes_canonical_availability_event(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_publish(name: str, payload: dict[str, object]) -> None:
+        captured.append((name, payload))
+
+    monkeypatch.setattr("app.services.event_bus.event_bus.publish", fake_publish)
+
+    host = Host(
+        hostname="cascade-host",
+        ip="10.0.0.42",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-cascade",
+        connection_target="dev-cascade",
+        name="Cascade Device",
+        os_version="14",
+        host_id=host.id,
+        availability_status=DeviceAvailabilityStatus.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    with patch("app.services.heartbeat._ping_agent", return_value=None):
+        await _check_hosts(db_session)
+        await _check_hosts(db_session)
+        await _check_hosts(db_session)
+
+    availability_events = [payload for name, payload in captured if name == "device.availability_changed"]
+    cascade_events = [
+        e
+        for e in availability_events
+        if e.get("device_id") == str(device.id) and e.get("new_availability_status") == "offline"
+    ]
+    assert len(cascade_events) == 1, (
+        f"Expected exactly one cascade event for device, got {len(cascade_events)}: {cascade_events}"
+    )
+    payload = cascade_events[0]
+    assert payload["old_availability_status"] == "available"
+    assert payload["new_availability_status"] == "offline"
+    assert payload["reason"] == f"Host {host.hostname} offline"
 
 
 async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
