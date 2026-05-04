@@ -1,6 +1,5 @@
 import asyncio
 import uuid
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -13,21 +12,6 @@ from app.services import device_locking, maintenance_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
-
-
-class _StopNodeCommitsManager:
-    def __init__(self, stop_committed: asyncio.Event) -> None:
-        self._stop_committed = stop_committed
-
-    async def stop_node(self, db: AsyncSession, device: Device) -> AppiumNode:
-        assert device.appium_node is not None
-        node = device.appium_node
-        node.state = NodeState.stopped
-        node.pid = None
-        device.availability_status = DeviceAvailabilityStatus.offline
-        await db.commit()
-        self._stop_committed.set()
-        return node
 
 
 async def test_enter_maintenance_relocks_after_stop_node_commit(
@@ -71,13 +55,23 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
         return locked
 
     monkeypatch.setattr(device_locking, "lock_device", observed_lock_device)
-    manager = _StopNodeCommitsManager(stop_committed)
+
+    async def stop_node_commits(db: AsyncSession, device: Device) -> AppiumNode:
+        assert device.appium_node is not None
+        node = device.appium_node
+        node.state = NodeState.stopped
+        node.pid = None
+        device.availability_status = DeviceAvailabilityStatus.offline
+        await db.commit()
+        stop_committed.set()
+        return node
+
+    monkeypatch.setattr(maintenance_service, "stop_node", stop_node_commits)
 
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await original_lock_device(session, device_id)
-            with patch("app.services.maintenance_service.get_node_manager", return_value=manager):
-                await maintenance_service.enter_maintenance(session, target, drain=False)
+            await maintenance_service.enter_maintenance(session, target, drain=False)
 
     runner_task = asyncio.create_task(runner())
     try:

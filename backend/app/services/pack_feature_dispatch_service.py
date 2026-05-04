@@ -144,7 +144,7 @@ async def _call_agent(
     """POST the action body to the agent and parse the response.
 
     Mirrors the ``_send_request`` pattern used by
-    :mod:`app.services.agent_operations` (see ``node_manager_remote.py:114-208``
+    :mod:`app.services.agent_operations` (see ``node_service.py``
     and ``agent_operations.py:24-47``) so that circuit-breaker bookkeeping,
     request-id headers, and timeout semantics stay consistent across all
     backend → agent calls.

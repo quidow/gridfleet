@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.routers import devices_control
-from app.services import device_locking, maintenance_service, node_manager, node_manager_state
+from app.services import device_locking, maintenance_service, node_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -38,13 +38,13 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     restart_entered = asyncio.Event()
     allow_restart = asyncio.Event()
 
-    async def fake_restart_node(self: object, db: AsyncSession, dev: Device) -> AppiumNode:
+    async def fake_restart_node(db: AsyncSession, dev: Device) -> AppiumNode:
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        return await node_manager_state.mark_node_started(db, dev, port=4723, pid=123)
+        return await node_service.mark_node_started(db, dev, port=4723, pid=123)
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(node_manager.RemoteNodeManager, "restart_node", fake_restart_node)
+    monkeypatch.setattr(node_service, "restart_node", fake_restart_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:

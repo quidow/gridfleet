@@ -45,7 +45,7 @@ async def test_start_node_locks_device_before_reservation_check(
     inside_start = asyncio.Event()
     proceed_start = asyncio.Event()
 
-    async def gated_start_node(self: object, db: AsyncSession, dev: Device) -> AppiumNode:
+    async def gated_start_node(db: AsyncSession, dev: Device) -> AppiumNode:
         inside_start.set()
         await proceed_start.wait()
 
@@ -61,7 +61,7 @@ async def test_start_node_locks_device_before_reservation_check(
 
     try:
         with patch(
-            "app.services.node_manager.RemoteNodeManager.start_node",
+            "app.routers.nodes.start_managed_node",
             new=gated_start_node,
         ):
 

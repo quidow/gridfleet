@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.host import Host
-from app.services import node_manager_remote
+from app.services import node_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -71,26 +71,26 @@ async def test_restart_mutations_visible_after_caller_commit(
         target_node = target.appium_node
 
         with (
-            patch("app.services.node_manager_remote.appium_stop", stub_stop),
-            patch("app.services.node_manager_remote.appium_start", stub_start),
-            patch("app.services.node_manager_remote._wait_for_remote_appium_ready", stub_wait),
-            patch("app.services.node_manager_remote.assert_runnable", return_value=None),
-            patch("app.services.node_manager_remote.build_agent_start_payload", return_value={}),
-            patch("app.services.node_manager_remote._merge_appium_default_pack_caps", return_value=None),
-            patch("app.services.node_manager_remote.build_pack_start_payload", return_value=None),
-            patch("app.services.node_manager_remote.render_stereotype", return_value={}),
+            patch("app.services.node_service.appium_stop", stub_stop),
+            patch("app.services.node_service.appium_start", stub_start),
+            patch("app.services.node_service._wait_for_remote_appium_ready", stub_wait),
+            patch("app.services.node_service.assert_runnable", return_value=None),
+            patch("app.services.node_service.build_agent_start_payload", return_value={}),
+            patch("app.services.node_service._merge_appium_default_pack_caps", return_value=None),
+            patch("app.services.node_service.build_pack_start_payload", return_value=None),
+            patch("app.services.node_service.render_stereotype", return_value={}),
             patch(
-                "app.services.node_manager_remote.resolve_pack_platform_fn",
+                "app.services.node_service.resolve_pack_platform_fn",
                 return_value=type("ResolvedPlatform", (), {"appium_platform_name": "Android"})(),
             ),
-            patch("app.services.node_manager_remote._build_session_aligned_start_caps", return_value={}),
-            patch("app.services.node_manager_remote.appium_resource_allocator.get_owner_capabilities", return_value={}),
+            patch("app.services.node_service._build_session_aligned_start_caps", return_value={}),
+            patch("app.services.node_service.appium_resource_allocator.get_owner_capabilities", return_value={}),
             patch(
-                "app.services.node_manager_remote.resolve_pack_for_device",
+                "app.services.node_service.resolve_pack_for_device",
                 return_value=("appium-uiautomator2", "android_mobile"),
             ),
         ):
-            result = await node_manager_remote.restart_node_via_agent(
+            result = await node_service.restart_node_via_agent(
                 session,
                 target,
                 target_node,

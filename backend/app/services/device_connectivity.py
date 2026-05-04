@@ -24,7 +24,7 @@ from app.services.agent_operations import (
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.node_manager_remote import stop_node_via_agent as stop_node_via_agent_helper
+from app.services.node_service import stop_node_via_agent as stop_node_via_agent_helper
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.settings_service import settings_service

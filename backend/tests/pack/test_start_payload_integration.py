@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.host import Host, HostStatus, OSType
-from app.services import node_manager_remote
-from app.services.node_manager_remote import build_agent_start_payload
+from app.services import node_service
+from app.services.node_service import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.pack.factories import seed_test_packs
@@ -21,7 +21,7 @@ class _FakeHost:
 
 
 class _FakeHttpxResponse:
-    """Minimal shim for httpx.Response used by node_manager_remote.
+    """Minimal shim for httpx.Response used by node_service.
 
     `response_json_dict(resp)` calls `resp.json()`; caller also calls
     `resp.raise_for_status()` in both start and restart paths.
@@ -77,9 +77,9 @@ def _patched_remote_start(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(node_manager_remote, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_manager_remote, "_wait_for_remote_appium_ready", _noop_ready)
-    monkeypatch.setattr(node_manager_remote, "_build_session_aligned_start_caps", _noop_session_aligned)
+    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
+    monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
     return captured
 
 
@@ -99,7 +99,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
     await db_session.commit()
 
     # Stub management host lookup and legacy stereotype so the assertions are deterministic.
-    monkeypatch.setattr(node_manager_remote, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
 
     legacy_caps = {
         "appium:gridfleet:deviceId": str(_android_real_device.id),
@@ -111,7 +111,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         "appium:model": "Pixel 6",
     }
     monkeypatch.setattr(
-        node_manager_remote,
+        node_service,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": "ABCD1234",
@@ -129,7 +129,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    await node_manager_remote.start_remote_temporary_node(
+    await node_service.start_remote_temporary_node(
         db_session,
         _android_real_device,
         port=4723,
@@ -180,9 +180,9 @@ async def test_temporary_start_forwards_pack_workaround_env(
         device_config={"wda_base_url": "http://192.168.1.5"},
     )
 
-    monkeypatch.setattr(node_manager_remote, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
     monkeypatch.setattr(
-        node_manager_remote,
+        node_service,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": device.connection_target,
@@ -200,7 +200,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         },
     )
 
-    await node_manager_remote.start_remote_temporary_node(
+    await node_service.start_remote_temporary_node(
         db_session,
         device,
         port=4723,
@@ -254,11 +254,11 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
     async def _noop_ready(*args: Any, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(node_manager_remote, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(node_manager_remote, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_manager_remote, "_wait_for_remote_appium_ready", _noop_ready)
+    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
 
-    await node_manager_remote.start_remote_temporary_node(
+    await node_service.start_remote_temporary_node(
         db_session,
         device,
         port=4724,
@@ -279,7 +279,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Parallel assertion for the restart path (`restart_node_via_agent` at
-    `backend/app/services/node_manager_remote.py:288`, containing the
+    `backend/app/services/node_service.py:288`, containing the
     `restart_pack_overrides` block around line 313-317).
     """
     await seed_test_packs(db_session)
@@ -361,19 +361,19 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         "appium:device_type": "real_device",
     }
 
-    monkeypatch.setattr(node_manager_remote, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(node_manager_remote, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_manager_remote, "appium_stop", _fake_appium_stop)
-    monkeypatch.setattr(node_manager_remote, "_wait_for_remote_appium_ready", _noop_ready)
-    monkeypatch.setattr(node_manager_remote, "_build_session_aligned_start_caps", _noop_session_aligned)
-    monkeypatch.setattr(node_manager_remote.asyncio, "sleep", _noop_sleep)
+    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(node_service, "appium_stop", _fake_appium_stop)
+    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
+    monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
+    monkeypatch.setattr(node_service.asyncio, "sleep", _noop_sleep)
     monkeypatch.setattr(
-        node_manager_remote.appium_resource_allocator,
+        node_service.appium_resource_allocator,
         "get_owner_capabilities",
         _noop_get_owner_capabilities,
     )
     monkeypatch.setattr(
-        node_manager_remote,
+        node_service,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": "ABCD1234",
@@ -391,7 +391,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    from app.services.node_manager_remote import restart_node_via_agent
+    from app.services.node_service import restart_node_via_agent
 
     node = MagicMock()
     node.port = 4723

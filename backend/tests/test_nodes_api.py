@@ -85,7 +85,7 @@ def remote_manager_client() -> Generator[AsyncMock, None, None]:
     mock_client.get.return_value = _mock_agent_response(
         {"running": True, "port": 4723, "appium_status": {"value": {"ready": True}}}
     )
-    with patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client):
+    with patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client):
         yield mock_client
 
 

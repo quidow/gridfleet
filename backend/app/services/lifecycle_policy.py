@@ -37,7 +37,7 @@ from app.services.lifecycle_policy_state import (
 from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
-from app.services.node_manager import get_node_manager
+from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
 from app.services.settings_service import settings_service
 
@@ -401,8 +401,7 @@ async def attempt_auto_recovery(
     node = loaded_node(device)
     if node is None or node.state != NodeState.running:
         try:
-            manager = get_node_manager(device)
-            await manager.start_node(db, device)
+            await start_managed_node(db, device)
         except NodeManagerError as exc:
             current_state["last_failure_source"] = source
             current_state["last_failure_reason"] = str(exc)

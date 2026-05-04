@@ -96,26 +96,26 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
     )
 
 
-class _FakeNodeManager:
-    async def start_node(self, db: AsyncSession, device: Device) -> AppiumNode:
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://grid:4444",
-            pid=12345,
-            state=NodeState.running,
-        )
-        db.add(node)
-        await db.commit()
-        await db.refresh(node)
-        return node
+async def _fake_start_node(db: AsyncSession, device: Device) -> AppiumNode:
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        pid=12345,
+        state=NodeState.running,
+    )
+    db.add(node)
+    await db.commit()
+    await db.refresh(node)
+    return node
 
-    async def stop_node(self, db: AsyncSession, device: Device) -> AppiumNode:
-        assert device.appium_node is not None
-        device.appium_node.state = NodeState.stopped
-        await db.commit()
-        await db.refresh(device.appium_node)
-        return device.appium_node
+
+async def _fake_stop_node(db: AsyncSession, device: Device) -> AppiumNode:
+    assert device.appium_node is not None
+    device.appium_node.state = NodeState.stopped
+    await db.commit()
+    await db.refresh(device.appium_node)
+    return device.appium_node
 
 
 @pytest.mark.asyncio
@@ -969,8 +969,8 @@ async def test_enter_device_maintenance_with_drain_false_stops_running_node(
     device_id = str(device.id)
 
     with (
-        patch("app.routers.nodes.get_node_manager", return_value=_FakeNodeManager()),
-        patch("app.services.maintenance_service.get_node_manager", return_value=_FakeNodeManager()),
+        patch("app.routers.nodes.start_managed_node", new=_fake_start_node),
+        patch("app.services.maintenance_service.stop_node", new=_fake_stop_node),
     ):
         start_resp = await client.post(f"/api/devices/{device_id}/node/start")
         assert start_resp.status_code == 200
@@ -996,8 +996,8 @@ async def test_enter_device_maintenance_with_drain_true_keeps_running_node(
     device_id = str(device.id)
 
     with (
-        patch("app.routers.nodes.get_node_manager", return_value=_FakeNodeManager()),
-        patch("app.services.maintenance_service.get_node_manager", return_value=_FakeNodeManager()),
+        patch("app.routers.nodes.start_managed_node", new=_fake_start_node),
+        patch("app.services.maintenance_service.stop_node", new=_fake_stop_node),
     ):
         start_resp = await client.post(f"/api/devices/{device_id}/node/start")
         assert start_resp.status_code == 200

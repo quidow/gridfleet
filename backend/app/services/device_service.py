@@ -305,12 +305,11 @@ async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Dev
 
 
 async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device_id: uuid.UUID) -> Device | None:
-    from app.services.node_manager import get_node_manager
+    from app.services.node_service import stop_node
 
-    manager = get_node_manager(device)
     while device.appium_node and device.appium_node.state == NodeState.running:
         try:
-            await manager.stop_node(db, device)
+            await stop_node(db, device)
         except Exception as e:
             logger.warning("Failed to stop node for device %s before delete: %s", device_id, e)
             return await _lock_device_for_delete(db, device_id)

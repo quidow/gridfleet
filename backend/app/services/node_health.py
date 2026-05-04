@@ -33,8 +33,8 @@ from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.lifecycle_incident_service import record_lifecycle_incident
-from app.services.node_manager_remote import require_management_host
-from app.services.node_manager_remote import restart_node_via_agent as restart_node_via_agent_helper
+from app.services.node_service import require_management_host
+from app.services.node_service import restart_node_via_agent as restart_node_via_agent_helper
 from app.services.node_service_types import NodeManagerError
 from app.services.session_viability import build_probe_capabilities
 from app.services.settings_service import settings_service

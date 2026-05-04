@@ -47,32 +47,30 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     release_b = asyncio.Event()
     racer_acquired_b = asyncio.Event()
 
-    class FakeNodeManager:
-        async def start_node(self, db: AsyncSession, dev: Device) -> AppiumNode:
-            if dev.id == device_b_id:
-                # The bulk helper calls the manager only after acquiring B's
-                # row lock. Holding here makes the lock window observable.
-                b_manager_entered.set()
-                await release_b.wait()
-            elif dev.id == device_a_id:
-                await asyncio.wait_for(b_manager_entered.wait(), timeout=3.0)
-                # Simulate mark_node_started's intermediate commit. In the
-                # buggy shared-session path, this releases A and B's locks.
-                await db.commit()
-                a_committed.set()
+    async def fake_start_node(db: AsyncSession, dev: Device) -> AppiumNode:
+        if dev.id == device_b_id:
+            # The bulk helper calls the service only after acquiring B's
+            # row lock. Holding here makes the lock window observable.
+            b_manager_entered.set()
+            await release_b.wait()
+        elif dev.id == device_a_id:
+            await asyncio.wait_for(b_manager_entered.wait(), timeout=3.0)
+            # Simulate mark_node_started's intermediate commit. In the
+            # buggy shared-session path, this releases A and B's locks.
+            await db.commit()
+            a_committed.set()
 
-            node = AppiumNode(
-                device_id=dev.id,
-                port=4720 + (1 if dev.id == device_a_id else 2),
-                grid_url="http://grid.example.test:4444",
-                state=NodeState.running,
-            )
-            db.add(node)
-            await db.flush()
-            return node
+        node = AppiumNode(
+            device_id=dev.id,
+            port=4720 + (1 if dev.id == device_a_id else 2),
+            grid_url="http://grid.example.test:4444",
+            state=NodeState.running,
+        )
+        db.add(node)
+        await db.flush()
+        return node
 
-    fake_manager = FakeNodeManager()
-    monkeypatch.setattr(bulk_service, "get_node_manager", lambda device: fake_manager)
+    monkeypatch.setattr(bulk_service, "start_node", fake_start_node)
 
     async def racer() -> None:
         await a_committed.wait()

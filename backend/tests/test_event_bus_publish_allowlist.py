@@ -20,13 +20,13 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
     "app/routers/webhooks.py:60": "webhook.test is a synthetic broadcaster with no paired DB write.",
     "app/services/agent_circuit_breaker.py:64": ("In-memory state-machine transition to closed; no DB write paired."),
     "app/services/agent_circuit_breaker.py:106": ("In-memory state-machine transition to opened; no DB write paired."),
-    "app/services/bulk_service.py:83": (
+    "app/services/bulk_service.py:82": (
         "_run_per_device_node_action summary. Per-device sessions commit independently of the outer db."
     ),
-    "app/services/bulk_service.py:176": (
+    "app/services/bulk_service.py:175": (
         "bulk_delete summary spans delete_device calls that commit independently; no aggregate transaction."
     ),
-    "app/services/bulk_service.py:275": "bulk_reconnect summary is HTTP-only with no paired DB writes.",
+    "app/services/bulk_service.py:274": "bulk_reconnect summary is HTTP-only with no paired DB writes.",
     "app/services/data_cleanup.py:143": (
         "Background-loop summary aggregating committed delete batches across inner sessions."
     ),

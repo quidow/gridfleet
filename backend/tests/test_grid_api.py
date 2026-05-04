@@ -129,7 +129,7 @@ async def test_grid_status_with_running_node(
     )
 
     with (
-        patch("app.services.node_manager.httpx.AsyncClient", return_value=mock_client),
+        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client),
         patch("app.routers.grid.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS),
     ):
         await client.post(f"/api/devices/{device.id}/node/start")
