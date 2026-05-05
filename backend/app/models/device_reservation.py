@@ -59,15 +59,25 @@ class DeviceReservation(Base):
     device: Mapped[Device] = relationship("Device", back_populates="reservations")
 
     def to_reserved_device_info(self) -> dict[str, Any]:
+        device = self.device
         return {
             "device_id": str(self.device_id),
             "identity_value": self.identity_value,
+            "name": device.name if device is not None else None,
             "connection_target": self.connection_target,
             "pack_id": self.pack_id,
             "platform_id": self.platform_id,
             "platform_label": self.platform_label,
             "os_version": self.os_version,
             "host_ip": self.host_ip,
+            "device_type": (
+                device.device_type.value if device is not None and device.device_type is not None else None
+            ),
+            "connection_type": (
+                device.connection_type.value if device is not None and device.connection_type is not None else None
+            ),
+            "manufacturer": device.manufacturer if device is not None else None,
+            "model": device.model if device is not None else None,
             "excluded": self.excluded,
             "exclusion_reason": self.exclusion_reason,
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,

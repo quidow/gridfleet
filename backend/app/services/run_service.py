@@ -421,7 +421,7 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
     stmt = (
         select(TestRun)
         .where(TestRun.id == run_id)
-        .options(selectinload(TestRun.device_reservations))
+        .options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
         .execution_options(populate_existing=True)
     )
     result = await db.execute(stmt)
@@ -432,7 +432,7 @@ async def _get_run_for_update(db: AsyncSession, run_id: uuid.UUID) -> TestRun | 
     stmt = (
         select(TestRun)
         .where(TestRun.id == run_id)
-        .options(selectinload(TestRun.device_reservations))
+        .options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -447,7 +447,11 @@ async def get_device_reservation_with_entry(
     stmt = (
         select(DeviceReservation)
         .where(DeviceReservation.device_id == device_id, DeviceReservation.released_at.is_(None))
-        .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
+        .options(
+            selectinload(DeviceReservation.run)
+            .selectinload(TestRun.device_reservations)
+            .selectinload(DeviceReservation.device)
+        )
         .order_by(DeviceReservation.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -464,7 +468,11 @@ async def get_device_reservation_map(db: AsyncSession, device_ids: list[uuid.UUI
     stmt = (
         select(DeviceReservation)
         .where(DeviceReservation.device_id.in_(device_ids), DeviceReservation.released_at.is_(None))
-        .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
+        .options(
+            selectinload(DeviceReservation.run)
+            .selectinload(TestRun.device_reservations)
+            .selectinload(DeviceReservation.device)
+        )
     )
     result = await db.execute(stmt)
     reservation_map: dict[uuid.UUID, TestRun] = {}
@@ -552,7 +560,7 @@ async def list_runs(
     sort_by: str = "created_at",
     sort_dir: str = "desc",
 ) -> tuple[list[TestRun], int]:
-    stmt = select(TestRun).options(selectinload(TestRun.device_reservations))
+    stmt = select(TestRun).options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
     if state is not None:
         stmt = stmt.where(TestRun.state == state)
     if created_from is not None:
@@ -600,7 +608,7 @@ async def list_runs_cursor(
     cursor: str | None = None,
     direction: str = "older",
 ) -> CursorPage[TestRun]:
-    stmt = select(TestRun).options(selectinload(TestRun.device_reservations))
+    stmt = select(TestRun).options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
     if state is not None:
         stmt = stmt.where(TestRun.state == state)
     if created_from is not None:
@@ -916,6 +924,7 @@ async def release_claimed_device_with_cooldown(
 
         result = await db.execute(
             select(DeviceReservation)
+            .options(selectinload(DeviceReservation.device))
             .where(DeviceReservation.run_id == run_id)
             .where(DeviceReservation.device_id == device_id)
             .where(DeviceReservation.released_at.is_(None))

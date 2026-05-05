@@ -118,3 +118,77 @@ async def test_claim_response_includes_tier1_fields(
     assert body["connection_type"] == "usb"
     assert body["manufacturer"] == "Apple"
     assert body["model"] == "iPhone 15"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_run_detail_devices_expose_tier1_fields(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="run-detail-device",
+        device_type="emulator",
+        connection_type="virtual",
+    )
+    run = await create_reserved_run(db_session, name="rd", devices=[device])
+    response = await client.get(f"/api/runs/{run.id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["devices"][0]["name"] == "run-detail-device"
+    assert body["devices"][0]["device_type"] == "emulator"
+    assert body["devices"][0]["connection_type"] == "virtual"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_run_list_reserved_devices_expose_tier1_fields(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="run-list-device",
+        device_type="real_device",
+        connection_type="usb",
+    )
+    await create_reserved_run(db_session, name="rl", devices=[device])
+    response = await client.get("/api/runs")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert any(
+        item["reserved_devices"] and item["reserved_devices"][0]["name"] == "run-list-device" for item in body["items"]
+    )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_release_with_cooldown_response_exposes_tier1_fields(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="cooldown-device",
+        device_type="real_device",
+        connection_type="usb",
+        manufacturer="OnePlus",
+        model="9 Pro",
+        operational_state="available",
+    )
+    run = await create_reserved_run(db_session, name="cd-run", devices=[device])
+    claim = await client.post(f"/api/runs/{run.id}/claim", json={"worker_id": "w1"})
+    assert claim.status_code == 200, claim.text
+
+    response = await client.post(
+        f"/api/runs/{run.id}/devices/{device.id}/release-with-cooldown",
+        json={"worker_id": "w1", "reason": "flaky", "ttl_seconds": 60},
+    )
+    assert response.status_code == 200, response.text
+    reservation = response.json()["reservation"]
+    assert reservation["name"] == "cooldown-device"
+    assert reservation["device_type"] == "real_device"
+    assert reservation["connection_type"] == "usb"
+    assert reservation["manufacturer"] == "OnePlus"
+    assert reservation["model"] == "9 Pro"
