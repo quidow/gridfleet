@@ -423,6 +423,31 @@ _DEFINITIONS: list[SettingDefinition] = [
         ),
         env_var="GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS",
     ),
+    SettingDefinition(
+        key="agent.http_pool_enabled",
+        category="agent",
+        setting_type="bool",
+        default=True,
+        description="When true, pool one httpx.AsyncClient per (host, port) tuple for backend->agent calls",
+    ),
+    SettingDefinition(
+        key="agent.http_pool_max_keepalive",
+        category="agent",
+        setting_type="int",
+        default=10,
+        description="Max keepalive connections per pooled client",
+        min_value=1,
+        max_value=100,
+    ),
+    SettingDefinition(
+        key="agent.http_pool_idle_seconds",
+        category="agent",
+        setting_type="int",
+        default=60,
+        description="Idle time (seconds) after which a pooled keepalive connection is closed",
+        min_value=5,
+        max_value=600,
+    ),
     # ── Reservations ──
     SettingDefinition(
         key="reservations.default_ttl_minutes",
