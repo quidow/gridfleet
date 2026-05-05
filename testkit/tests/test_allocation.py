@@ -240,6 +240,41 @@ def test_hydrate_allocated_device_uses_inline_live_capabilities_even_when_fetch_
     assert client.capability_calls == []
 
 
+def test_hydrate_allocated_device_surfaces_unavailable_includes() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_unavailable_includes_defaults_to_empty_tuple() -> None:
+    client = FakeClient()
+
+    allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == ()
+
+
+def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[
+            {"include": "capabilities", "reason": "device_offline"},
+            {"include": "config"},
+            "not-a-dict",
+            {"reason": "missing_include_key"},
+        ],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)

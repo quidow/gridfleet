@@ -99,6 +99,21 @@ def _merge_device_detail(payload: dict[str, Any], detail: dict[str, Any]) -> dic
     return merged
 
 
+def _parse_unavailable_includes(payload: dict[str, Any]) -> tuple[UnavailableInclude, ...]:
+    raw = payload.get("unavailable_includes")
+    if not isinstance(raw, list):
+        return ()
+    parsed: list[UnavailableInclude] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        include = entry.get("include")
+        reason = entry.get("reason")
+        if isinstance(include, str) and include and isinstance(reason, str) and reason:
+            parsed.append(UnavailableInclude(include=include, reason=reason))
+    return tuple(parsed)
+
+
 def hydrate_allocated_device(
     claim_response: dict[str, Any],
     *,
@@ -132,6 +147,8 @@ def hydrate_allocated_device(
     else:
         live_capabilities = None
 
+    unavailable_includes = _parse_unavailable_includes(payload)
+
     return AllocatedDevice(
         run_id=run_id,
         device_id=device_id,
@@ -152,6 +169,7 @@ def hydrate_allocated_device(
         config=config,
         config_is_masked=config_is_masked,
         live_capabilities=live_capabilities,
+        unavailable_includes=unavailable_includes,
     )
 
 
