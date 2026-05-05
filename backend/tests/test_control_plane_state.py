@@ -21,11 +21,6 @@ from app.services.device_verification import (
     store_verification_job_for_test,
 )
 from app.services.event_bus import event_bus
-from app.services.node_health import (
-    get_node_health_control_plane_state,
-    reset_node_health_control_plane_state,
-    set_node_health_failure_count,
-)
 from app.services.session_viability import (
     get_session_viability_control_plane_state,
     reset_session_viability_control_plane_state,
@@ -65,7 +60,6 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
     db_session.add(session)
     await db_session.commit()
     await track_previously_offline_device(db_session, "device-1")
-    await set_node_health_failure_count(db_session, "node-1", 2)
     await set_session_viability_control_plane_entry(
         db_session,
         "device-1",
@@ -85,18 +79,15 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
         "sess-1": str(device_id)
     }
     assert await get_connectivity_control_plane_state(db_session) == {"device-1"}
-    assert await get_node_health_control_plane_state(db_session) == {"node-1": 2}
     assert "device-1" in (await get_session_viability_control_plane_state(db_session))["state"]
 
     await clear_verification_jobs(session_factory=session_factory)
     await reset_connectivity_control_plane_state(db_session)
-    await reset_node_health_control_plane_state(db_session)
     await reset_session_viability_control_plane_state(db_session)
 
     async with session_factory() as fresh_db:
         assert await fresh_db.get(Job, uuid.UUID(job_id)) is None
     assert await get_connectivity_control_plane_state(db_session) == set()
-    assert await get_node_health_control_plane_state(db_session) == {}
     assert (await get_session_viability_control_plane_state(db_session))["state"] == {}
 
 

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -17,7 +16,7 @@ from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts
 from app.services import (
-    device_health_summary,
+    device_health,
     device_locking,
     grid_service,
     lifecycle_incident_service,
@@ -170,7 +169,7 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
 
 
 async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
-    return await is_ready_for_use_async(db, device) and await device_health_summary.device_allows_allocation(db, device)
+    return await is_ready_for_use_async(db, device) and device_health.device_allows_allocation(device)
 
 
 def _device_matches_requirement_tags(device: Device, tags: dict[str, str] | None) -> bool:
@@ -722,14 +721,7 @@ async def report_preparation_failure(
     write_state(device, current_state)
 
     await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
-    await device_health_summary.update_device_checks(db, device, healthy=False, summary=reason)
-    if device.appium_node is not None:
-        await device_health_summary.update_node_state(
-            db,
-            device,
-            running=device.appium_node.state == NodeState.running,
-            state=device.appium_node.state.value,
-        )
+    await device_health.update_device_checks(db, device, healthy=False, summary=reason)
 
     await lifecycle_incident_service.record_lifecycle_incident(
         db,

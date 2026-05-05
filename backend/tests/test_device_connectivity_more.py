@@ -220,14 +220,14 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
         patch("app.services.device_connectivity._get_lifecycle_state", new=AsyncMock(return_value="booted")),
         patch("app.services.device_connectivity._get_device_health", new=AsyncMock(return_value={"healthy": True})),
         patch(
-            "app.services.device_connectivity.device_health_summary.patch_health_snapshot",
+            "app.services.device_connectivity.device_health.update_emulator_state",
             new=AsyncMock(),
-        ) as patch_snapshot,
+        ) as update_emulator_state,
         patch("app.services.device_connectivity.record_event", new=AsyncMock()) as record_event,
     ):
         await device_connectivity._check_connectivity(db_session)
 
-    assert any(call.args[2] == {"emulator_state": "booted"} for call in patch_snapshot.await_args_list)
+    assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
     record_event.assert_not_awaited()
 
 

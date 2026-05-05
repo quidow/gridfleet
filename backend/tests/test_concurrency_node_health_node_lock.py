@@ -9,6 +9,7 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import DeviceAvailabilityStatus
 from app.models.host import Host
 from app.services import node_health
+from app.services.agent_probe_result import ProbeResult
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -55,7 +56,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     session,
                     locked_device.appium_node,
                     locked_device,
-                    healthy=False,
+                    result=ProbeResult(status="refused"),
                     grid_device_ids=set(),
                 )
             await session.commit()
@@ -69,12 +70,10 @@ async def test_node_health_failure_path_locks_appium_node(
             await session.execute(update(AppiumNode).where(AppiumNode.id == node_id).values(state=NodeState.running))
             await session.commit()
 
-    from app.services import control_plane_state_store
     from app.services.settings_service import settings_service
 
     threshold = int(settings_service.get("general.node_max_failures"))
-    for _ in range(threshold - 1):
-        await control_plane_state_store.increment_counter(db_session, node_health.NODE_HEALTH_NAMESPACE, str(node.id))
+    node.consecutive_health_failures = threshold - 1
     await db_session.commit()
 
     await asyncio.gather(health_runner(), stomper())

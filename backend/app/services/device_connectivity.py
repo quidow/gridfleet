@@ -13,7 +13,7 @@ from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, 
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import control_plane_state_store, device_health_summary, device_locking, lifecycle_policy
+from app.services import control_plane_state_store, device_health, device_locking, lifecycle_policy
 from app.services.agent_operations import (
     get_pack_devices,
     pack_device_lifecycle_action,
@@ -205,12 +205,10 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
         return None
 
     stopped = await _stop_node_via_agent(locked_device, locked_node)
+    new_state = NodeState.stopped if stopped else NodeState.error
     if stopped:
-        locked_node.state = NodeState.stopped
         locked_node.pid = None
-    else:
-        locked_node.state = NodeState.error
-    await device_health_summary.update_node_state(db, locked_device, running=False, state=locked_node.state.value)
+    await device_health.apply_node_state_transition(db, locked_device, new_state=new_state, mark_offline=True)
     return stopped
 
 
@@ -246,13 +244,13 @@ async def _check_connectivity(db: AsyncSession) -> None:
         for device in devices:
             lifecycle_state = await _get_lifecycle_state(db, device)
             if lifecycle_state is not None:
-                await device_health_summary.patch_health_snapshot(db, device, {"emulator_state": lifecycle_state})
+                await device_health.update_emulator_state(db, device, lifecycle_state)
 
             if _device_expected_aliases(device) & connected_targets:
                 # Device is connected
                 health_result = await _get_device_health(device)
                 if health_result is not None and not health_result.get("healthy", False):
-                    await device_health_summary.update_device_checks(
+                    await device_health.update_device_checks(
                         db,
                         device,
                         healthy=False,
@@ -270,7 +268,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     summary = (
                         "Healthy" if health_result.get("healthy", False) else _summarize_unhealthy_result(health_result)
                     )
-                    await device_health_summary.update_device_checks(
+                    await device_health.update_device_checks(
                         db,
                         device,
                         healthy=bool(health_result.get("healthy", False)),
@@ -311,7 +309,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                 if await _uses_endpoint_health(db, device):
                     health_result = await _get_device_health(device)
                     if health_result is not None and health_result.get("healthy", False):
-                        await device_health_summary.update_device_checks(db, device, healthy=True, summary="Healthy")
+                        await device_health.update_device_checks(db, device, healthy=True, summary="Healthy")
                         if device.availability_status == DeviceAvailabilityStatus.offline:
                             if not await is_ready_for_use_async(db, device):
                                 logger.debug("Device %s is healthy but still awaiting setup/verification", device.name)
@@ -388,7 +386,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         DeviceEventType.connectivity_lost,
                         {"reason": "Device disconnected (kept active state)"},
                     )
-                    await device_health_summary.update_device_checks(db, device, healthy=False, summary="Disconnected")
+                    await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
                     if locked_device.availability_status in ACTIVE_STATES:
                         await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
@@ -414,7 +412,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     DeviceEventType.connectivity_lost,
                     {"reason": "Device disconnected"},
                 )
-                await device_health_summary.update_device_checks(db, device, healthy=False, summary="Disconnected")
+                await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                 locked_device = await device_locking.lock_device(db, device.id)
                 if locked_device.availability_status not in ACTIVE_STATES:
                     await set_device_availability_status(
