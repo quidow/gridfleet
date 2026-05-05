@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import os
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,6 +9,7 @@ from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import freeze_background_loops_enabled
 from app.database import engine, get_db
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
@@ -45,6 +45,8 @@ from app.services import auth as auth_service
 from app.services import device_health, device_service, webhook_dispatcher
 from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
+from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
+from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
 from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
@@ -78,8 +80,7 @@ def _freeze_background_loops() -> bool:
     a frozen state — no heartbeat/health/reaper mutations marking hosts and
     devices offline.
     """
-    raw = os.getenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return freeze_background_loops_enabled()
 
 
 def _validate_appium_reservation_settings() -> None:
@@ -93,6 +94,19 @@ def _validate_appium_reservation_settings() -> None:
             f"must exceed appium.startup_timeout_sec ({startup_timeout}) + 5s. "
             "Lower startup_timeout_sec or raise reservation_ttl_sec."
         )
+
+
+def _validate_leader_keepalive_settings() -> None:
+    from app.services.settings_service import settings_service, validate_leader_keepalive_settings
+
+    keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
+    stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
+    error = validate_leader_keepalive_settings(
+        keepalive_interval_sec=keepalive_interval_sec,
+        stale_threshold_sec=stale_threshold_sec,
+    )
+    if error:
+        raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
 
 
 @asynccontextmanager
@@ -117,6 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as db:
         await settings_service.initialize(db)
     _validate_appium_reservation_settings()
+    _validate_leader_keepalive_settings()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
@@ -134,6 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             registered_signals.append(signum)
 
     freeze = _freeze_background_loops()
+    watcher_task: asyncio.Task[None] | None = None
 
     if freeze:
         logger.warning(
@@ -142,24 +158,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "cleanup, capacity). State in the database will not be mutated by "
             "the backend. Use this only for frozen demo databases."
         )
-    if not freeze and await control_plane_leader.try_acquire(engine):
-        tasks = [
-            asyncio.create_task(heartbeat_loop()),
-            asyncio.create_task(session_sync_loop()),
-            asyncio.create_task(node_health_loop()),
-            asyncio.create_task(device_connectivity_loop()),
-            asyncio.create_task(property_refresh_loop()),
-            asyncio.create_task(hardware_telemetry_loop()),
-            asyncio.create_task(host_resource_telemetry_loop()),
-            asyncio.create_task(durable_job_worker_loop(session_factory)),
-            asyncio.create_task(webhook_dispatcher.webhook_delivery_loop(session_factory)),
-            asyncio.create_task(run_reaper_loop()),
-            asyncio.create_task(data_cleanup_loop()),
-            asyncio.create_task(session_viability_loop()),
-            asyncio.create_task(fleet_capacity_collector_loop()),
-            asyncio.create_task(pack_drain_loop()),
-            asyncio.create_task(appium_resource_sweeper_loop()),
-        ]
+    if not freeze:
+        if await control_plane_leader.try_acquire(engine):
+            tasks = [
+                asyncio.create_task(control_plane_leader_keepalive_loop(), name="control_plane_leader_keepalive"),
+                asyncio.create_task(heartbeat_loop(), name="heartbeat_loop"),
+                asyncio.create_task(session_sync_loop(), name="session_sync_loop"),
+                asyncio.create_task(node_health_loop(), name="node_health_loop"),
+                asyncio.create_task(device_connectivity_loop(), name="device_connectivity_loop"),
+                asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
+                asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
+                asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
+                asyncio.create_task(durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
+                asyncio.create_task(
+                    webhook_dispatcher.webhook_delivery_loop(session_factory),
+                    name="webhook_dispatcher.webhook_delivery_loop",
+                ),
+                asyncio.create_task(run_reaper_loop(), name="run_reaper_loop"),
+                asyncio.create_task(data_cleanup_loop(), name="data_cleanup_loop"),
+                asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
+                asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
+                asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
+                asyncio.create_task(appium_resource_sweeper_loop(), name="appium_resource_sweeper_loop"),
+            ]
+        watcher_task = asyncio.create_task(
+            control_plane_leader_watcher_loop(),
+            name="control_plane_leader_watcher",
+        )
     try:
         yield
     finally:
@@ -169,6 +194,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await t
+        if watcher_task is not None:
+            watcher_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher_task
         await shutdown_background_tasks()
         await settings_service.shutdown()
         await control_plane_leader.release()

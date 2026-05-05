@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -47,3 +48,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def freeze_background_loops_enabled() -> bool:
+    """Return whether leader-owned background loops should be skipped."""
+    value = os.getenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}

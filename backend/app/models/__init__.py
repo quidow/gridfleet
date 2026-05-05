@@ -3,6 +3,7 @@ from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.appium_plugin import AppiumPlugin
 from app.models.config_audit_log import ConfigAuditLog
+from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
 from app.models.device import Device
 from app.models.device_event import DeviceEvent
@@ -38,6 +39,7 @@ __all__ = [
     "AppiumNodeResourceClaim",
     "AppiumPlugin",
     "ConfigAuditLog",
+    "ControlPlaneLeaderHeartbeat",
     "ControlPlaneStateEntry",
     "Device",
     "DeviceEvent",
