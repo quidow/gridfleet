@@ -58,6 +58,11 @@ EVENTS_PUBLISHED_TOTAL = Counter(
     "System events published by the backend.",
     labelnames=("event_type",),
 )
+RUN_CLAIMS_TOTAL = Counter(
+    "gridfleet_run_claims_total",
+    "Total successful claim_device responses, labeled by which include flags were requested.",
+    labelnames=("include_config", "include_capabilities"),
+)
 ACTIVE_SSE_CONNECTIONS = Gauge(
     "active_sse_connections",
     "Number of active SSE subscribers.",
@@ -158,6 +163,7 @@ __all__ = [
     "HTTP_REQUESTS_TOTAL",
     "HTTP_REQUEST_DURATION_SECONDS",
     "PENDING_JOBS",
+    "RUN_CLAIMS_TOTAL",
     "WEBHOOK_DELIVERIES_TOTAL",
     "record_agent_call",
     "record_background_loop_error",

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.metrics import RUN_CLAIMS_TOTAL
 from app.models.test_run import RunState
 from app.schemas.run import (
     ClaimRequest,
@@ -298,6 +299,10 @@ async def claim_device(
 
     assert info.claimed_by is not None
     assert info.claimed_at is not None
+    RUN_CLAIMS_TOTAL.labels(
+        include_config="true" if "config" in includes else "false",
+        include_capabilities="true" if "capabilities" in includes else "false",
+    ).inc()
     return ClaimResponse(
         device_id=info.device_id,
         identity_value=info.identity_value,

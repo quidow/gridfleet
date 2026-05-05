@@ -7,6 +7,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.metrics import RUN_CLAIMS_TOTAL
 from app.models.device import Device
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
 from app.services import run_service
@@ -454,3 +455,21 @@ async def test_reserve_with_include_capabilities_returns_wrapped_422(
     assert response.status_code == 422
     body = response.json()
     assert body["error"]["details"]["code"] == "reserve_capabilities_unsupported"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_increments_run_claims_counter_with_boolean_include_labels(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(db_session, host_id=default_host_id, name="metrics-d", operational_state="available")
+    run = await create_reserved_run(db_session, name="metrics-run", devices=[device])
+
+    labels = RUN_CLAIMS_TOTAL.labels(include_config="true", include_capabilities="false")
+    before = labels._value.get()  # type: ignore[attr-defined]
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
+    assert response.status_code == 200, response.text
+
+    after = labels._value.get()  # type: ignore[attr-defined]
+    assert after == before + 1
