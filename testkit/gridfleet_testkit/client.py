@@ -304,6 +304,23 @@ class GridFleetClient:
         )
         resp.raise_for_status()
 
+    def release_device_safe(self, run_id: str, *, device_id: str, worker_id: str) -> bool:
+        """Release a claim while tolerating already-terminal run/device states.
+
+        Returns True when the manager accepts the release, False when the run or
+        claim is already gone. Unexpected HTTP errors still raise.
+        """
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/release",
+            json={"device_id": device_id, "worker_id": worker_id},
+            timeout=10,
+            auth=self._auth,
+        )
+        if resp.status_code in {404, 409}:
+            return False
+        resp.raise_for_status()
+        return True
+
     def release_device_with_cooldown(
         self,
         run_id: str,

@@ -459,6 +459,52 @@ def test_release_device_calls_api(monkeypatch):
     }
 
 
+@pytest.mark.parametrize("status_code, expected", [(200, True), (204, True), (404, False), (409, False)])
+def test_release_device_safe_returns_bool_for_expected_states(monkeypatch, status_code, expected):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"status": "released"}, status_code=status_code)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    released = client.release_device_safe("run-123", device_id="dev-1", worker_id="gw0")
+
+    assert released is expected
+    assert recorded == {
+        "url": "http://manager/api/runs/run-123/release",
+        "json": {"device_id": "dev-1", "worker_id": "gw0"},
+        "timeout": 10,
+    }
+
+
+def test_release_device_safe_raises_for_unexpected_error(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "backend unavailable"}, status_code=500)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(httpx.HTTPStatusError):
+        client.release_device_safe("run-123", device_id="dev-1", worker_id="gw0")
+
+
 def test_release_device_with_cooldown_calls_api(monkeypatch):
     recorded: dict[str, Any] = {}
 
