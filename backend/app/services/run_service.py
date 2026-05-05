@@ -2,6 +2,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -146,6 +147,20 @@ def _reserved_entry_for_device(
 
 def _generated_worker_id() -> str:
     return f"anonymous-{uuid.uuid4().hex[:8]}"
+
+
+def parse_includes(value: str | None, *, allowed: set[str]) -> set[str]:
+    if not value:
+        return set()
+    tokens = [token.strip() for token in value.split(",")]
+    tokens = [token for token in tokens if token]
+    unknown = sorted({token for token in tokens if token not in allowed})
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_include", "values": unknown},
+        )
+    return set(tokens)
 
 
 def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:

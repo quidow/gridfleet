@@ -1,6 +1,7 @@
 from typing import get_type_hints
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.device import Device
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
+from app.services import run_service
 from app.services.run_service import _build_device_info
 from tests.helpers import create_device, create_reserved_run
 
@@ -192,3 +194,32 @@ async def test_release_with_cooldown_response_exposes_tier1_fields(
     assert reservation["connection_type"] == "usb"
     assert reservation["manufacturer"] == "OnePlus"
     assert reservation["model"] == "9 Pro"
+
+
+def test_parse_includes_none_returns_empty_set() -> None:
+    assert run_service.parse_includes(None, allowed={"config", "capabilities"}) == set()
+
+
+def test_parse_includes_empty_string_returns_empty_set() -> None:
+    assert run_service.parse_includes("", allowed={"config", "capabilities"}) == set()
+
+
+def test_parse_includes_strips_whitespace_and_skips_empty_tokens() -> None:
+    assert run_service.parse_includes(" config , ", allowed={"config", "capabilities"}) == {"config"}
+
+
+def test_parse_includes_accepts_multiple_tokens() -> None:
+    assert run_service.parse_includes("config,capabilities", allowed={"config", "capabilities"}) == {
+        "config",
+        "capabilities",
+    }
+
+
+def test_parse_includes_rejects_unknown_token_with_machine_readable_detail() -> None:
+    with pytest.raises(HTTPException) as exc:
+        run_service.parse_includes("config,garbage", allowed={"config", "capabilities"})
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {
+        "code": "unknown_include",
+        "values": ["garbage"],
+    }
