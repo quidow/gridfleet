@@ -37,8 +37,8 @@ class NoClaimableDevicesError(RuntimeError):
         self,
         message: str,
         *,
-        run_id: str,
         retry_after_sec: int,
+        run_id: str = "",
         next_available_at: str | None = None,
     ) -> None:
         self.run_id = run_id
@@ -68,6 +68,15 @@ def _raise_for_status(resp: Any, *, run_id: str) -> None:
                     next_available_at=next_available_at if isinstance(next_available_at, str) else None,
                 )
     resp.raise_for_status()
+
+
+def _is_safe_release_conflict(resp: Any) -> bool:
+    try:
+        payload = resp.json()
+    except Exception:
+        return False
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return isinstance(detail, str) and "is not claimed" in detail.lower()
 
 
 def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
@@ -307,8 +316,9 @@ class GridFleetClient:
     def release_device_safe(self, run_id: str, *, device_id: str, worker_id: str) -> bool:
         """Release a claim while tolerating already-terminal run/device states.
 
-        Returns True when the manager accepts the release, False when the run or
-        claim is already gone. Unexpected HTTP errors still raise.
+        Returns True when the manager accepts the release, False when the run is
+        gone or the claim is explicitly already unclaimed. Other HTTP errors,
+        including wrong-worker conflicts, still raise.
         """
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/release",
@@ -316,7 +326,7 @@ class GridFleetClient:
             timeout=10,
             auth=self._auth,
         )
-        if resp.status_code in {404, 409}:
+        if resp.status_code == 404 or (resp.status_code == 409 and _is_safe_release_conflict(resp)):
             return False
         resp.raise_for_status()
         return True

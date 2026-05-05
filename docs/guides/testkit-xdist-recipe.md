@@ -82,6 +82,8 @@ Tune this:
 - Prefer `PYTEST_XDIST_TESTRUNUID` for local xdist runs because it is shared across workers.
 - Set `GRIDFLEET_RUN_STATE_PATH` explicitly in CI when your launcher controls shared workspace paths.
 - The `os.getpid()` fallback prevents non-xdist tempfile collisions; it is not the worker-sharing contract.
+- The controller writes the run-state file once before workers read it. Do not write run state from workers.
+- This recipe attaches `_gridfleet_run` and `_gridfleet_client` to `pytest.Config` for brevity. For stricter suites, prefer `config.stash` on pytest 7+.
 
 ## Per-Test Claim And Release
 
@@ -115,9 +117,8 @@ def claim_for_test(client: GridFleetClient, run_id: str, worker_id: str, *, cool
                     reason=type(error).__name__,
                     ttl_seconds=cooldown_on_error,
                 )
-            except httpx.HTTPStatusError as exc:
-                if exc.response is None or exc.response.status_code not in {404, 409}:
-                    raise
+            except httpx.HTTPError:
+                pass
         else:
             client.release_device_safe(run_id, device_id=allocated.device_id, worker_id=worker_id)
 
@@ -141,6 +142,7 @@ def appium_session(request: pytest.FixtureRequest):
 Tune this:
 
 - `_is_device_level` is project policy. Keep assertion failures as normal releases; use cooldown for Appium/WebDriver/device connectivity failures.
+- Prefer `isinstance` checks in `_is_device_level` when your suite can import the Selenium/Appium exception classes directly.
 - `cooldown_on_error` is scoped to the active run. Completing or cancelling the run releases physical devices normally.
 - `worker_id` may be any string. pytest-xdist workers usually provide `gw0`, `gw1`, and so on.
 
@@ -164,6 +166,8 @@ This test validates the claim/release control flow without starting Appium:
 
 ```python
 from dataclasses import dataclass
+
+from conftest import claim_for_test
 
 
 @dataclass
