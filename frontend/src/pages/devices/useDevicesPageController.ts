@@ -5,7 +5,7 @@ import { useDevices, useDevicesPaginated } from '../../hooks/useDevices';
 import { useHosts } from '../../hooks/useHosts';
 import type {
   ConnectionType,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceRead,
   DeviceType,
   HardwareHealthStatus,
@@ -13,7 +13,7 @@ import type {
   DeviceVerificationUpdate,
 } from '../../types';
 import {
-  AVAILABILITY_STATUSES,
+  CHIP_STATUSES,
   CONNECTION_TYPES,
   DEVICE_TYPES,
   HARDWARE_HEALTH_STATUSES,
@@ -47,7 +47,7 @@ export function useDevicesPageController() {
 
   const platformFilter = searchParams.get('platform_id') ?? '';
   const packIdFilter = searchParams.get('pack_id') ?? '';
-  const availabilityFilter = readEnumSearchParam(searchParams, 'availability_status', AVAILABILITY_STATUSES);
+  const statusFilter = readEnumSearchParam(searchParams, 'status', CHIP_STATUSES);
   const needsAttentionFilter = searchParams.get('needs_attention') === 'true';
   const deviceTypeFilter = readEnumSearchParam(searchParams, 'device_type', DEVICE_TYPES);
   const connectionTypeFilter = readEnumSearchParam(searchParams, 'connection_type', CONNECTION_TYPES);
@@ -78,7 +78,7 @@ export function useDevicesPageController() {
   const offset = (page - 1) * pageSize;
   const { data: paginatedResult, isLoading, dataUpdatedAt } = useDevicesPaginated({
     ...sharedFilters,
-    availability_status: availabilityFilter || undefined,
+    status: statusFilter || undefined,
     needs_attention: needsAttentionFilter || undefined,
     limit: pageSize,
     offset,
@@ -128,8 +128,8 @@ export function useDevicesPageController() {
     });
   }
 
-  function updateAvailabilityFilter(next: DeviceAvailabilityStatus | '') {
-    updateSearchParam('availability_status', next);
+  function updateAvailabilityFilter(next: DeviceChipStatus | '') {
+    updateSearchParam('status', next);
   }
 
   function updateNeedsAttentionFilter(next: boolean) {
@@ -222,7 +222,7 @@ export function useDevicesPageController() {
   }
 
   const hasFilters = Boolean(
-    packIdFilter || platformFilter || availabilityFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
+    packIdFilter || platformFilter || statusFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
     hardwareHealthStatusFilter || hardwareTelemetryStateFilter || osVersionFilter || search,
   );
 
@@ -239,7 +239,7 @@ export function useDevicesPageController() {
     setPackIdFilter: updatePackIdFilter,
     platformFilter,
     setPlatformFilter: updatePlatformFilter,
-    availabilityFilter,
+    statusFilter,
     setAvailabilityFilter: updateAvailabilityFilter,
     needsAttentionFilter,
     setNeedsAttentionFilter: updateNeedsAttentionFilter,

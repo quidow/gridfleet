@@ -3,7 +3,9 @@ import type {
   ConnectionType,
   CursorDirection,
   CursorPaginatedResponse,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
+  DeviceHold,
+  DeviceOperationalState,
   DeviceType,
   PaginatedResponse,
   RunState,
@@ -33,7 +35,8 @@ export interface GridStatus {
       connection_target: string | null;
       name: string;
       platform_id: string;
-      availability_status: string;
+      operational_state: DeviceOperationalState;
+      hold: DeviceHold | null;
       node_state: string | null;
       node_port: number | null;
     }>;
@@ -79,7 +82,7 @@ export interface BulkOperationResult {
 export interface DeviceGroupFilters {
   pack_id?: string;
   platform_id?: string;
-  availability_status?: DeviceAvailabilityStatus;
+  status?: DeviceChipStatus;
   host_id?: string;
   identity_value?: string;
   connection_target?: string;

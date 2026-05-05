@@ -6,7 +6,8 @@ import { READINESS_GLOSSARY, deviceUpdateRequiresReverification } from '../../co
 import { useUpdateDevice } from '../../hooks/useDevices';
 import DeviceManifestFields from './DeviceManifestFields';
 import type { DevicePatch, DeviceRead, DeviceVerificationUpdate } from '../../types';
-import { CONNECTION_TYPE_LABELS, DEVICE_AVAILABILITY_LABELS, resolvePlatformLabel } from '../../lib/labels';
+import { deviceChipStatus } from '../../lib/deviceState';
+import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import {
   buildUpdatePayload,
   getGeneratedDefaultsPreview,
@@ -58,6 +59,7 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
   const [editTagsText, setEditTagsText] = useState(() => JSON.stringify(operatorTags(device.tags), null, 2));
   const [editTagsError, setEditTagsError] = useState<string | null>(null);
   const hostName = hostMap.get(device.host_id) ?? device.host_id;
+  const status = deviceChipStatus(device);
 
   const generatedDefaults = getGeneratedDefaultsPreview({
     device_type: device.device_type,
@@ -133,7 +135,7 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
               { term: 'Connection Type', definition: CONNECTION_TYPE_LABELS[device.connection_type] },
               {
                 term: 'Availability',
-                definition: DEVICE_AVAILABILITY_LABELS[device.availability_status] ?? device.availability_status,
+                definition: DEVICE_STATUS_LABELS[status] ?? status,
               },
             ]}
           />

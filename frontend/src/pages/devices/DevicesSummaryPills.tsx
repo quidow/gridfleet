@@ -48,34 +48,34 @@ export default function DevicesSummaryPills({ stats, searchParams, isLoading }: 
         label="Available"
         value={displayValue(isLoading, stats.available)}
         tone={isLoading ? 'neutral' : 'ok'}
-        to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'available' })}
+        to={buildDevicesSummaryHref(searchParams, { status: 'available' })}
       />
       <SummaryLink
         label="Busy"
         value={displayValue(isLoading, stats.busy)}
         tone={isLoading ? 'neutral' : 'warn'}
-        to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'busy' })}
+        to={buildDevicesSummaryHref(searchParams, { status: 'busy' })}
       />
       {stats.reserved > 0 ? (
         <SummaryLink
           label="Reserved"
           value={displayValue(isLoading, stats.reserved)}
           tone="neutral"
-          to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'reserved' })}
+          to={buildDevicesSummaryHref(searchParams, { status: 'reserved' })}
         />
       ) : null}
       <SummaryLink
         label="Offline"
         value={displayValue(isLoading, stats.offline)}
         tone={isLoading ? 'neutral' : 'error'}
-        to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'offline' })}
+        to={buildDevicesSummaryHref(searchParams, { status: 'offline' })}
       />
       {stats.maintenance > 0 ? (
         <SummaryLink
           label="Maintenance"
           value={displayValue(isLoading, stats.maintenance)}
           tone="neutral"
-          to={buildDevicesSummaryHref(searchParams, { availabilityStatus: 'maintenance' })}
+          to={buildDevicesSummaryHref(searchParams, { status: 'maintenance' })}
         />
       ) : null}
       <SummaryLink

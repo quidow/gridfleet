@@ -10,7 +10,7 @@ import type {
   DevicePatch,
   DeviceRead,
   SessionOutcomeHeatmapRow,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceType,
   DeviceVerificationCreate,
   DeviceVerificationJob,
@@ -21,7 +21,7 @@ import type { PaginatedResponse } from '../types/shared';
 export async function fetchDevices(params?: {
   pack_id?: string;
   platform_id?: string;
-  availability_status?: DeviceAvailabilityStatus;
+  status?: DeviceChipStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -42,14 +42,14 @@ export type DeviceSortBy =
   | 'connection_type'
   | 'os_version'
   | 'host'
-  | 'availability_status'
+  | 'status'
   | 'created_at';
 export type DeviceSortDir = 'asc' | 'desc';
 
 export async function fetchDevicesPaginated(params: {
   pack_id?: string;
   platform_id?: string;
-  availability_status?: DeviceAvailabilityStatus;
+  status?: DeviceChipStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;

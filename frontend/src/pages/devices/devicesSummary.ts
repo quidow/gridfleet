@@ -1,14 +1,14 @@
 import type { SummaryPillTone } from '../../components/ui';
 import type {
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceRead,
   HardwareHealthStatus,
   HardwareTelemetryState,
 } from '../../types';
+import { deviceChipStatus } from '../../lib/deviceState';
 
 const SUMMARY_PARAM_KEYS = [
   'status',
-  'availability_status',
   'needs_attention',
   'hardware_health_status',
   'hardware_telemetry_state',
@@ -28,14 +28,14 @@ export interface DevicesSummaryStats {
 }
 
 interface DevicesSummaryHrefOptions {
-  availabilityStatus?: DeviceAvailabilityStatus | null;
+  status?: DeviceChipStatus | null;
   needsAttention?: boolean;
   hardwareHealthStatus?: HardwareHealthStatus | null;
   hardwareTelemetryState?: HardwareTelemetryState | null;
 }
 
-function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceAvailabilityStatus) {
-  return devices.filter((device) => device.availability_status === status).length;
+function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceChipStatus) {
+  return devices.filter((device) => deviceChipStatus(device) === status).length;
 }
 
 export function deriveDevicesSummaryStats(devices: DeviceRead[]): DevicesSummaryStats {
@@ -71,8 +71,8 @@ export function buildDevicesSummaryHref(
     nextParams.delete(key);
   }
 
-  if (options.availabilityStatus) {
-    nextParams.set('availability_status', options.availabilityStatus);
+  if (options.status) {
+    nextParams.set('status', options.status);
   }
   if (options.needsAttention) {
     nextParams.set('needs_attention', 'true');

@@ -10,14 +10,16 @@ import type {
   ConnectionType,
   DevicePatch,
   DeviceRead,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceType,
   HardwareHealthStatus,
   HardwareTelemetryState,
   DeviceVerificationUpdate,
   PlatformDescriptor,
 } from '../../types';
-export const AVAILABILITY_STATUSES: DeviceAvailabilityStatus[] = ['available', 'busy', 'offline', 'maintenance', 'reserved'];
+import { DEVICE_STATUSES } from '../../lib/deviceState';
+
+export const CHIP_STATUSES: DeviceChipStatus[] = DEVICE_STATUSES;
 export const DEVICE_TYPES: DeviceType[] = DEVICE_TYPE_OPTIONS;
 export const CONNECTION_TYPES: ConnectionType[] = CONNECTION_TYPE_OPTIONS;
 export const HARDWARE_HEALTH_STATUSES: HardwareHealthStatus[] = ['unknown', 'healthy', 'warning', 'critical'];
@@ -56,7 +58,7 @@ export type DeviceSortKey =
   | 'connection_type'
   | 'os_version'
   | 'host'
-  | 'availability_status';
+  | 'status';
 
 export type VerificationRequest = {
   device: DeviceRead;

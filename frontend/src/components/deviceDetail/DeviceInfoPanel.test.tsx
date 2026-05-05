@@ -17,7 +17,7 @@ const deviceFixture: Partial<DeviceDetail> = {
   connection_type: 'virtual',
   ip_address: null,
   os_version: 'API 37',
-  availability_status: 'offline',
+  operational_state: 'offline', hold: null,
   host_id: 'host-uuid-abc',
   tags: {},
   manufacturer: null,

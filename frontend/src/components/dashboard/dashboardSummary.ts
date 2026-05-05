@@ -11,6 +11,8 @@ import type {
 } from '../../types';
 import type { BadgeTone } from '../ui/Badge';
 import { isLifecycleSummaryActive } from '../lifecyclePolicy';
+import { deviceChipStatus } from '../../lib/deviceState';
+import type { DeviceChipStatus } from '../../types';
 
 type GridHealthTone = 'ready' | 'warning' | 'error';
 
@@ -63,13 +65,13 @@ interface GroupedLifecycleIncident {
   backoffUntil: string | null;
 }
 
-function countByAvailability(devices: DeviceRead[], status: DeviceRead['availability_status']) {
-  return devices.filter((device) => device.availability_status === status).length;
+function countByAvailability(devices: DeviceRead[], status: DeviceChipStatus) {
+  return devices.filter((device) => deviceChipStatus(device) === status).length;
 }
 
 export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): DashboardFleetSummary {
   const lifecycleDevices = devices.filter((device) => isLifecycleSummaryActive(device.lifecycle_policy_summary));
-  const busyDevices = devices.filter((device) => device.availability_status === 'busy');
+  const busyDevices = devices.filter((device) => device.operational_state === 'busy');
   const hardwareWarning = devices.filter((device) => device.hardware_health_status === 'warning').length;
   const hardwareCritical = devices.filter((device) => device.hardware_health_status === 'critical').length;
   const staleTelemetry = devices.filter((device) => device.hardware_telemetry_state === 'stale').length;

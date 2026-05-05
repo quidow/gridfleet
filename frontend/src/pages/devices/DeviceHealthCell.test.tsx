@@ -12,7 +12,7 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       platform_id: 'roku_network',
       platform_label: 'Roku Network',
       os_version: '15.1.4',
-      availability_status: 'available',
+      operational_state: 'available', hold: null,
       needs_attention: false,
       readiness_state: 'verified',
       auto_manage: true,

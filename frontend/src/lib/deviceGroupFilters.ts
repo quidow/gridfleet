@@ -1,11 +1,11 @@
 import type {
   ConnectionType,
   DeviceGroupFilters,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceType,
 } from '../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS } from '../pages/devices/devicePageHelpers';
-import { DEVICE_AVAILABILITY_LABELS, resolvePlatformLabel } from './labels';
+import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from './labels';
 
 export type DeviceGroupTagDraft = {
   key: string;
@@ -15,7 +15,7 @@ export type DeviceGroupTagDraft = {
 export type DeviceGroupFilterDraft = {
   pack_id: string;
   platform_id: string;
-  availability_status: DeviceAvailabilityStatus | '';
+  status: DeviceChipStatus | '';
   host_id: string;
   identity_value: string;
   connection_target: string;
@@ -38,7 +38,7 @@ export function createEmptyDeviceGroupFilterDraft(): DeviceGroupFilterDraft {
   return {
     pack_id: '',
     platform_id: '',
-    availability_status: '',
+    status: '',
     host_id: '',
     identity_value: '',
     connection_target: '',
@@ -58,7 +58,7 @@ export function draftFromDeviceGroupFilters(filters: DeviceGroupFilters | null |
   return {
     pack_id: filters.pack_id ?? '',
     platform_id: filters.platform_id ?? '',
-    availability_status: filters.availability_status ?? '',
+    status: filters.status ?? '',
     host_id: filters.host_id ?? '',
     identity_value: filters.identity_value ?? '',
     connection_target: filters.connection_target ?? '',
@@ -75,7 +75,7 @@ export function draftToDeviceGroupFilters(draft: DeviceGroupFilterDraft): Device
 
   if (draft.pack_id) filters.pack_id = draft.pack_id;
   if (draft.platform_id) filters.platform_id = draft.platform_id;
-  if (draft.availability_status) filters.availability_status = draft.availability_status;
+  if (draft.status) filters.status = draft.status;
   if (draft.host_id.trim()) filters.host_id = draft.host_id.trim();
   if (draft.identity_value.trim()) filters.identity_value = draft.identity_value.trim();
   if (draft.connection_target.trim()) filters.connection_target = draft.connection_target.trim();
@@ -114,11 +114,11 @@ export function describeDeviceGroupFilters(
     const catalogLabel = platformLabels?.get(filters.platform_id) ?? null;
     items.push({ key: 'platform_id', label: 'Platform', value: resolvePlatformLabel(filters.platform_id, catalogLabel) });
   }
-  if (filters.availability_status) {
+  if (filters.status) {
     items.push({
-      key: 'availability_status',
+      key: 'status',
       label: 'Availability',
-      value: DEVICE_AVAILABILITY_LABELS[filters.availability_status],
+      value: DEVICE_STATUS_LABELS[filters.status],
     });
   }
   if (filters.host_id) {

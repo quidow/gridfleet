@@ -22,7 +22,7 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     model: null,
     os_version: '14',
     host_id: 'host-1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     tags: null,
     auto_manage: true,
@@ -125,11 +125,11 @@ describe('dashboardSummary', () => {
 
   it('counts needsAttention, maintenance, and reserved devices in fleet summary', () => {
     const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'backoff1', needs_attention: true, availability_status: 'available', lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
-      makeDevice({ id: 'backoff2', needs_attention: true, availability_status: 'available', lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
-      makeDevice({ id: 'excluded1', needs_attention: true, availability_status: 'available', lifecycle_policy_summary: { state: 'excluded', label: 'Excluded', detail: null, backoff_until: null } }),
-      makeDevice({ id: 'maintenance', needs_attention: false, availability_status: 'maintenance' }),
-      makeDevice({ id: 'reserved', needs_attention: false, availability_status: 'reserved' }),
+      makeDevice({ id: 'backoff1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'backoff2', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'excluded1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'excluded', label: 'Excluded', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'maintenance', needs_attention: false, operational_state: 'available', hold: 'maintenance' }),
+      makeDevice({ id: 'reserved', needs_attention: false, operational_state: 'available', hold: 'reserved' }),
       makeDevice({ id: 'ok1', needs_attention: false }),
     ]);
     expect(summary.needsAttention).toBe(3);

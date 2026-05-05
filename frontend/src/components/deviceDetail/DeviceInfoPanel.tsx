@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Pencil } from 'lucide-react';
-import { CONNECTION_TYPE_LABELS, DEVICE_AVAILABILITY_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
+import { deviceChipStatus } from '../../lib/deviceState';
+import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import type { DeviceDetail } from '../../types';
 import { formatDate } from './utils';
 import DefinitionList from '../ui/DefinitionList';
@@ -68,6 +69,7 @@ export default function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
   const reservationLabel = reservation
     ? `${reservation.run_name}${reservation.excluded ? ' (excluded)' : ''}`
     : EMPTY_GLYPH;
+  const status = deviceChipStatus(device);
 
   return (
     <div className="p-5">
@@ -104,7 +106,7 @@ export default function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
           { term: 'Tags', definition: tagsList(device.tags) },
           {
             term: 'Availability',
-            definition: DEVICE_AVAILABILITY_LABELS[device.availability_status] ?? device.availability_status,
+            definition: DEVICE_STATUS_LABELS[status] ?? status,
           },
           { term: 'Reserved By', definition: reservationLabel },
           {

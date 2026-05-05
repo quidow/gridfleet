@@ -37,7 +37,7 @@ function makeDevice(): DeviceDetail {
     name: 'Pixel',
     os_version: '15',
     host_id: 'host-1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     tags: null,
     manufacturer: 'Google',

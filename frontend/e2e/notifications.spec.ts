@@ -11,7 +11,7 @@ async function fulfillJson(route: Route, body: unknown) {
 
 const EVENTS = Array.from({ length: 60 }, (_, index) => ({
   id: `evt-${index + 1}`,
-  type: index < 30 ? 'run.created' : 'device.availability_changed',
+  type: index < 30 ? 'run.created' : 'device.operational_state_changed',
   timestamp: new Date(Date.UTC(2026, 3, 1, 10, 0 - index, 0)).toISOString(),
   data: index < 30 ? { run_id: `run-${index + 1}`, name: `Smoke Run ${index + 1}` } : { device_id: `dev-${index + 1}` },
 }));
@@ -41,10 +41,10 @@ async function mockNotificationsApis(page: Page) {
     await fulfillJson(route, {
       events: [
         {
-          name: 'device.availability_changed',
+          name: 'device.operational_state_changed',
           category: 'device_and_node_lifecycle',
           category_display_name: 'Device And Node Lifecycle',
-          description: 'Device availability changed.',
+          description: 'Device operational state changed.',
           typical_data_fields: ['device_id'],
         },
         {

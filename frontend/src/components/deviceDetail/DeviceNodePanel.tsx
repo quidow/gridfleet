@@ -49,7 +49,7 @@ export default function DeviceNodePanel({ device }: Props) {
   const node = device.appium_node;
   const reservation = device.reservation;
   const reservationLocked = !!reservation;
-  const maintenanceLocked = device.availability_status === 'maintenance';
+  const maintenanceLocked = device.hold === 'maintenance';
   const readinessLocked = device.readiness_state !== 'verified';
   const pendingAction = getPendingDeviceAction(device.id, [
     {

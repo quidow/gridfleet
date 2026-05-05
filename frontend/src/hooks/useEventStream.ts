@@ -8,7 +8,8 @@ import type { SettingsGrouped } from '../types';
 import { formatEventDetails } from '../components/notifications/eventRegistry';
 
 const EVENT_QUERY_MAP: Record<string, string[][]> = {
-  'device.availability_changed': [['devices'], ['device']],
+  'device.operational_state_changed': [['devices'], ['device']],
+  'device.hold_changed': [['devices'], ['device']],
   'device.verification.updated': [['devices'], ['device']],
   'node.state_changed': [['devices'], ['device']],
   'node.crash': [['devices'], ['device']],
@@ -38,11 +39,18 @@ type ToastKind = NonNullable<ToastResult>['type'];
 type ToastSeverity = 'info' | 'warning' | 'error';
 
 const TOAST_EVENTS: Record<string, (data: Record<string, unknown>) => ToastResult> = {
-  'device.availability_changed': (data) => {
-    if (data.new_availability_status === 'offline')
+  'device.operational_state_changed': (data) => {
+    if (data.new_operational_state === 'offline')
       return { type: 'error', message: `${data.device_name} went offline` };
-    if (data.new_availability_status === 'available' && data.old_availability_status === 'offline')
+    if (data.new_operational_state === 'available' && data.old_operational_state === 'offline')
       return { type: 'success', message: `${data.device_name} is back online` };
+    return null;
+  },
+  'device.hold_changed': (data) => {
+    if (data.new_hold === 'maintenance')
+      return { type: 'warning', message: `${data.device_name} entered maintenance` };
+    if (data.old_hold === 'maintenance' && data.new_hold === null)
+      return { type: 'success', message: `${data.device_name} exited maintenance` };
     return null;
   },
   'node.crash': (data) => ({
@@ -78,7 +86,13 @@ const INITIAL_RECONNECT_DELAY = 1_000;
 const MAX_RECONNECT_DELAY = 30_000;
 const HIGH_VOLUME_INVALIDATION_DELAY = 3_000;
 
-const DEFAULT_TOAST_EVENTS = ['node.crash', 'host.heartbeat_lost', 'device.availability_changed', 'run.expired'];
+const DEFAULT_TOAST_EVENTS = [
+  'node.crash',
+  'host.heartbeat_lost',
+  'device.operational_state_changed',
+  'device.hold_changed',
+  'run.expired',
+];
 const DEFAULT_TOAST_DISMISS_SEC = 5;
 const DEFAULT_TOAST_THRESHOLD: ToastSeverity = 'warning';
 type ToastConfig = {
