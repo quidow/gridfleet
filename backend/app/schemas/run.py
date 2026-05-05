@@ -49,15 +49,25 @@ class RunPreparationFailureReport(BaseModel):
     source: str = "ci_preparation"
 
 
+class UnavailableInclude(BaseModel):
+    include: str
+    reason: str
+
+
 class ReservedDeviceInfo(BaseModel):
     device_id: str
     identity_value: str
+    name: str | None = None
     connection_target: str | None = None
     pack_id: str
     platform_id: str
     platform_label: str | None = None
     os_version: str
     host_ip: str | None = None
+    device_type: str | None = None
+    connection_type: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
     excluded: bool = False
     exclusion_reason: str | None = None
     excluded_at: str | None = None
@@ -65,6 +75,9 @@ class ReservedDeviceInfo(BaseModel):
     cooldown_remaining_sec: int | None = None
     claimed_by: str | None = None
     claimed_at: str | None = None
+    config: dict[str, Any] | None = None
+    live_capabilities: dict[str, Any] | None = None
+    unavailable_includes: list[UnavailableInclude] | None = None
 
 
 class SessionCounts(BaseModel):
@@ -139,14 +152,22 @@ class ClaimRequest(BaseModel):
 class ClaimResponse(BaseModel):
     device_id: str
     identity_value: str
+    name: str | None = None
     connection_target: str | None = None
     pack_id: str
     platform_id: str
     platform_label: str | None = None
     os_version: str
     host_ip: str | None = None
+    device_type: str | None = None
+    connection_type: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
     claimed_by: str
     claimed_at: str
+    config: dict[str, Any] | None = None
+    live_capabilities: dict[str, Any] | None = None
+    unavailable_includes: list[UnavailableInclude] | None = None
 
 
 class ReleaseRequest(BaseModel):

@@ -2,6 +2,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from app.models.device_reservation import DeviceReservation
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts
+from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts, UnavailableInclude
 from app.services import (
     device_health,
     device_locking,
@@ -148,16 +149,120 @@ def _generated_worker_id() -> str:
     return f"anonymous-{uuid.uuid4().hex[:8]}"
 
 
+def parse_includes(value: str | None, *, allowed: set[str]) -> set[str]:
+    if not value:
+        return set()
+    tokens = [token.strip() for token in value.split(",")]
+    tokens = [token for token in tokens if token]
+    unknown = sorted({token for token in tokens if token not in allowed})
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_include", "values": unknown},
+        )
+    return set(tokens)
+
+
+async def hydrate_reserved_device_info(
+    db: AsyncSession,
+    info: ReservedDeviceInfo,
+    device: Device,
+    *,
+    includes: set[str],
+    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None,
+) -> None:
+    """Attach optional config + live capabilities to a single ReservedDeviceInfo.
+
+    Mutates ``info.config``/``live_capabilities``/``unavailable_includes`` in place.
+    Caller must pass a ``Device`` with the ``appium_node`` relationship loaded.
+    Never raises on missing data — sets ``None`` and records the reason.
+    """
+    from app.services import capability_service, config_service, device_config_masking
+
+    unavailable: list[UnavailableInclude] = []
+
+    if "config" in includes:
+        try:
+            if sensitive_key_map is not None:
+                info.config = await device_config_masking.mask_device_config(
+                    db,
+                    device,
+                    device.device_config or {},
+                    sensitive_key_map=sensitive_key_map,
+                )
+            else:
+                info.config = await config_service.get_device_config(db, device, keys=None, reveal=False)
+        except Exception as exc:
+            info.config = None
+            unavailable.append(UnavailableInclude(include="config", reason=type(exc).__name__))
+
+    if "capabilities" in includes:
+        try:
+            info.live_capabilities = await capability_service.get_device_capabilities(db, device)
+        except Exception as exc:
+            info.live_capabilities = None
+            unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))
+
+    info.unavailable_includes = unavailable or None
+
+
+async def hydrate_reserved_device_infos(
+    db: AsyncSession,
+    pairs: list[tuple[ReservedDeviceInfo, Device]],
+    *,
+    includes: set[str],
+) -> None:
+    """Batched variant for reserve. Loads sensitive-key map once for all devices."""
+    if not includes or not pairs:
+        return
+    from app.services import device_config_masking
+
+    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None
+    if "config" in includes:
+        sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(
+            db, [device for _, device in pairs]
+        )
+    for info, device in pairs:
+        await hydrate_reserved_device_info(db, info, device, includes=includes, sensitive_key_map=sensitive_key_map)
+
+
+def mark_reserved_device_info_includes_unavailable(
+    info: ReservedDeviceInfo,
+    *,
+    includes: set[str],
+    reason: str,
+) -> None:
+    if "config" in includes:
+        info.config = None
+    if "capabilities" in includes:
+        info.live_capabilities = None
+
+    unavailable = list(info.unavailable_includes or [])
+    existing = {item.include for item in unavailable}
+    for include in ("config", "capabilities"):
+        if include in includes and include not in existing:
+            unavailable.append(UnavailableInclude(include=include, reason=reason))
+    info.unavailable_includes = unavailable or None
+
+
 def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
+    device = entry.device
     return ReservedDeviceInfo(
         device_id=str(entry.device_id),
         identity_value=entry.identity_value,
+        name=device.name if device is not None else None,
         connection_target=entry.connection_target,
         pack_id=entry.pack_id,
         platform_id=entry.platform_id,
         platform_label=entry.platform_label,
         os_version=entry.os_version,
         host_ip=entry.host_ip,
+        device_type=(device.device_type.value if device is not None and device.device_type is not None else None),
+        connection_type=(
+            device.connection_type.value if device is not None and device.connection_type is not None else None
+        ),
+        manufacturer=device.manufacturer if device is not None else None,
+        model=device.model if device is not None else None,
         excluded=entry.excluded,
         exclusion_reason=entry.exclusion_reason,
         excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
@@ -241,12 +346,17 @@ def _build_device_info(device: Device, *, platform_label: str | None) -> Reserve
     return ReservedDeviceInfo(
         device_id=str(device.id),
         identity_value=device.identity_value,
+        name=device.name,
         connection_target=device.connection_target,
         pack_id=device.pack_id,
         platform_id=device.platform_id,
         platform_label=platform_label,
         os_version=device.os_version,
         host_ip=host_ip,
+        device_type=device.device_type.value if device.device_type is not None else None,
+        connection_type=device.connection_type.value if device.connection_type is not None else None,
+        manufacturer=device.manufacturer,
+        model=device.model,
         excluded=False,
     )
 
@@ -408,7 +518,7 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
     stmt = (
         select(TestRun)
         .where(TestRun.id == run_id)
-        .options(selectinload(TestRun.device_reservations))
+        .options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
         .execution_options(populate_existing=True)
     )
     result = await db.execute(stmt)
@@ -419,7 +529,7 @@ async def _get_run_for_update(db: AsyncSession, run_id: uuid.UUID) -> TestRun | 
     stmt = (
         select(TestRun)
         .where(TestRun.id == run_id)
-        .options(selectinload(TestRun.device_reservations))
+        .options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -539,7 +649,7 @@ async def list_runs(
     sort_by: str = "created_at",
     sort_dir: str = "desc",
 ) -> tuple[list[TestRun], int]:
-    stmt = select(TestRun).options(selectinload(TestRun.device_reservations))
+    stmt = select(TestRun).options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
     if state is not None:
         stmt = stmt.where(TestRun.state == state)
     if created_from is not None:
@@ -587,7 +697,7 @@ async def list_runs_cursor(
     cursor: str | None = None,
     direction: str = "older",
 ) -> CursorPage[TestRun]:
-    stmt = select(TestRun).options(selectinload(TestRun.device_reservations))
+    stmt = select(TestRun).options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
     if state is not None:
         stmt = stmt.where(TestRun.state == state)
     if created_from is not None:
@@ -792,6 +902,7 @@ async def claim_device(
 
     candidate_result = await db.execute(
         select(DeviceReservation)
+        .options(selectinload(DeviceReservation.device))
         .where(DeviceReservation.run_id == run_id)
         .where(DeviceReservation.released_at.is_(None))
         .where(_reservation_claimable_expr(now))
@@ -902,6 +1013,7 @@ async def release_claimed_device_with_cooldown(
 
         result = await db.execute(
             select(DeviceReservation)
+            .options(selectinload(DeviceReservation.device))
             .where(DeviceReservation.run_id == run_id)
             .where(DeviceReservation.device_id == device_id)
             .where(DeviceReservation.released_at.is_(None))
