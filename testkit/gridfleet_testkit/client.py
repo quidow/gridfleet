@@ -9,7 +9,10 @@ import os
 import signal
 import threading
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 import httpx
 
@@ -119,6 +122,26 @@ def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float |
         else:
             params.append((key, str(value)))
     return params
+
+
+def _normalize_include(include: Sequence[str] | None) -> tuple[str, ...] | None:
+    if include is None:
+        return None
+    if isinstance(include, (str, bytes)):
+        raise TypeError(
+            "include must be a sequence of strings, not a string itself "
+            "(e.g. include=('config',), not include='config')"
+        )
+    return tuple(include)
+
+
+def _include_param(include: tuple[str, ...] | None) -> list[tuple[str, str | int | float | bool | None]] | None:
+    if include is None:
+        return None
+    values = [v for v in include if v]
+    if not values:
+        return None
+    return [("include", ",".join(values))]
 
 
 def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> None:
@@ -324,10 +347,18 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
-    def claim_device(self, run_id: str, *, worker_id: str) -> dict[str, Any]:
+    def claim_device(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        include: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        include_tuple = _normalize_include(include)
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/claim",
             json={"worker_id": worker_id},
+            params=_include_param(include_tuple),
             timeout=10,
             auth=self._auth,
         )
