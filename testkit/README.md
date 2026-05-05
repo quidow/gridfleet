@@ -136,6 +136,7 @@ finally:
 | `GridFleetClient.claim_device(run_id, worker_id=...)` | Claim one reserved device for a worker |
 | `GridFleetClient.claim_device_with_retry(run_id, worker_id=..., max_wait_sec=300)` | Claim one reserved device, sleeping according to server `Retry-After` responses |
 | `GridFleetClient.release_device(run_id, device_id=..., worker_id=...)` | Release a worker claim without cooldown |
+| `GridFleetClient.release_device_safe(run_id, device_id=..., worker_id=...)` | Release a worker claim and tolerate 404/409 when cleanup races with run finalization or a prior release |
 | `GridFleetClient.release_device_with_cooldown(run_id, device_id=..., worker_id=..., reason=..., ttl_seconds=...)` | Release a worker claim and keep that run from reclaiming the device until cooldown expires |
 | `GridFleetClient.signal_ready(run_id)` | Move a run to `ready` |
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
@@ -151,6 +152,10 @@ finally:
 | `hydrate_allocated_device(claim_response, run_id, client)` | Combine a claim response with optional device config and live capabilities |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` and signal cleanup that completes or cancels a run |
+
+### Worker Identity
+
+`worker_id` is an arbitrary string used for claim ownership, telemetry, and cooldown attribution. For pytest-xdist, pass `request.config.workerinput["workerid"]` from worker processes; values are normally `gw0`, `gw1`, and so on. For controller-only flows, use `"controller"` or a stable hostname. For custom schedulers, use a UUID or job-specific worker name.
 
 ### Reservation Flow
 
@@ -220,6 +225,8 @@ else:
 ```
 
 Cooldowns are scoped to the active run. They prevent the same run from reclaiming the device until `ttl_seconds` expires, but completing or cancelling the run releases the physical device normally.
+
+For pytest-xdist controller/worker orchestration, see [Testkit xdist recipe](../docs/guides/testkit-xdist-recipe.md). The recipe is copyable guidance, not a public testkit abstraction.
 
 ### Allocated Device Hydration
 

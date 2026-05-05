@@ -383,8 +383,16 @@ def test_claim_device_raises_no_claimable_devices_with_retry_metadata(monkeypatc
     with pytest.raises(NoClaimableDevicesError) as exc_info:
         client.claim_device("run-123", worker_id="gw0")
 
+    assert exc_info.value.run_id == "run-123"
     assert exc_info.value.retry_after_sec == 7
     assert exc_info.value.next_available_at == "2026-05-03T20:00:00Z"
+
+
+def test_no_claimable_devices_error_defaults_run_id_for_compatibility():
+    exc = NoClaimableDevicesError("No devices", retry_after_sec=5)
+
+    assert exc.run_id == ""
+    assert exc.retry_after_sec == 5
 
 
 def test_claim_device_with_retry_sleeps_and_retries(monkeypatch):
@@ -456,6 +464,85 @@ def test_release_device_calls_api(monkeypatch):
         "json": {"device_id": "dev-1", "worker_id": "gw0"},
         "timeout": 10,
     }
+
+
+@pytest.mark.parametrize("status_code, expected", [(200, True), (204, True), (404, False)])
+def test_release_device_safe_returns_bool_for_expected_states(monkeypatch, status_code, expected):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"status": "released"}, status_code=status_code)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    released = client.release_device_safe("run-123", device_id="dev-1", worker_id="gw0")
+
+    assert released is expected
+    assert recorded == {
+        "url": "http://manager/api/runs/run-123/release",
+        "json": {"device_id": "dev-1", "worker_id": "gw0"},
+        "timeout": 10,
+    }
+
+
+def test_release_device_safe_returns_false_for_unclaimed_conflict(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "Device dev-1 is not claimed"}, status_code=409)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    assert client.release_device_safe("run-123", device_id="dev-1", worker_id="gw0") is False
+
+
+def test_release_device_safe_raises_for_wrong_worker_conflict(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "Device dev-1 is claimed by another worker"}, status_code=409)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(httpx.HTTPStatusError):
+        client.release_device_safe("run-123", device_id="dev-1", worker_id="gw1")
+
+
+def test_release_device_safe_raises_for_unexpected_error(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "backend unavailable"}, status_code=500)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(httpx.HTTPStatusError):
+        client.release_device_safe("run-123", device_id="dev-1", worker_id="gw0")
 
 
 def test_release_device_with_cooldown_calls_api(monkeypatch):

@@ -38,14 +38,16 @@ class NoClaimableDevicesError(RuntimeError):
         message: str,
         *,
         retry_after_sec: int,
+        run_id: str = "",
         next_available_at: str | None = None,
     ) -> None:
+        self.run_id = run_id
         self.retry_after_sec = retry_after_sec
         self.next_available_at = next_available_at
         super().__init__(message)
 
 
-def _raise_for_status(resp: Any) -> None:
+def _raise_for_status(resp: Any, *, run_id: str) -> None:
     if resp.status_code == 409:
         try:
             payload = resp.json()
@@ -61,10 +63,20 @@ def _raise_for_status(resp: Any) -> None:
                 next_available_at = details.get("next_available_at")
                 raise NoClaimableDevicesError(
                     str(error.get("message") or "No unclaimed devices available in this run"),
+                    run_id=run_id,
                     retry_after_sec=retry_after,
                     next_available_at=next_available_at if isinstance(next_available_at, str) else None,
                 )
     resp.raise_for_status()
+
+
+def _is_safe_release_conflict(resp: Any) -> bool:
+    try:
+        payload = resp.json()
+    except Exception:
+        return False
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return isinstance(detail, str) and "is not claimed" in detail.lower()
 
 
 def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
@@ -289,7 +301,7 @@ class GridFleetClient:
             timeout=10,
             auth=self._auth,
         )
-        _raise_for_status(resp)
+        _raise_for_status(resp, run_id=run_id)
         return cast("dict[str, Any]", resp.json())
 
     def release_device(self, run_id: str, *, device_id: str, worker_id: str) -> None:
@@ -300,6 +312,24 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
+
+    def release_device_safe(self, run_id: str, *, device_id: str, worker_id: str) -> bool:
+        """Release a claim while tolerating already-terminal run/device states.
+
+        Returns True when the manager accepts the release, False when the run is
+        gone or the claim is explicitly already unclaimed. Other HTTP errors,
+        including wrong-worker conflicts, still raise.
+        """
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/release",
+            json={"device_id": device_id, "worker_id": worker_id},
+            timeout=10,
+            auth=self._auth,
+        )
+        if resp.status_code == 404 or (resp.status_code == 409 and _is_safe_release_conflict(resp)):
+            return False
+        resp.raise_for_status()
+        return True
 
     def release_device_with_cooldown(
         self,
