@@ -98,11 +98,13 @@ def _validate_appium_reservation_settings() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.database import async_session as session_factory
+    from app.services.agent_http_pool import agent_http_pool
     from app.services.event_bus import event_bus
     from app.services.settings_service import settings_service
 
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
+    await agent_http_pool.reopen()
 
     event_bus.configure(session_factory=session_factory, engine=engine)
     settings_service.configure_store_refresh(session_factory)
@@ -171,8 +173,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_service.shutdown()
         await control_plane_leader.release()
         await event_bus.shutdown()
-        from app.services.agent_http_pool import agent_http_pool
-
         await agent_http_pool.close()
         await engine.dispose()
         for task in list(signal_tasks):

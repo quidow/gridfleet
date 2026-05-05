@@ -5,21 +5,21 @@ key is (host_ip, agent_port). Auth is intentionally not part of the key today;
 backend->agent does not pass httpx.Auth. When machine credentials are added,
 extend the key in that PR.
 
-Pool tuning settings (max_keepalive_connections, keepalive_expiry) are tracked
-per pooled client. When `_send_request` calls `get_client` with values that
-differ from the existing entry, the live entry is replaced and the previous
-client is moved into a bounded deferred-close list with a creation timestamp.
+Pool tuning settings (max_keepalive_connections, keepalive_expiry) and the
+largest request timeout served by a pooled client are tracked per entry. When
+`_send_request` calls `get_client` with values that differ from the existing
+entry, the live entry is replaced and the previous client is moved into a
+bounded deferred-close list with the earliest safe close timestamp.
 The stale client is NOT aclose()d immediately, because in-flight requests
 obtained their reference before the replacement and would otherwise fail with
 a closed-client error mid-flight (httpx raises during the response read).
 
 Deferred clients are drained when:
-  1. their grace window has elapsed (default DEFERRED_GRACE_SECONDS); by then
-     any concurrent request that obtained the old client has long since
-     completed or hit its own request timeout, so aclose() is safe;
-  2. the deferred list exceeds DEFERRED_MAX, in which case the oldest entries
-     are aclose()d immediately (FIFO eviction) regardless of age — this
-     bounds memory under pathological tuning loops;
+  1. their safe-close timestamp has elapsed; this is the larger of
+     DEFERRED_GRACE_SECONDS and the max request timeout observed while the
+     client was active;
+  2. the deferred list exceeds DEFERRED_MAX and old entries are already safe to
+     close, in which case they are aclose()d FIFO to trim the list;
   3. the pool is being shut down via close().
 
 This makes runtime changes via `agent.http_pool_max_keepalive` /
@@ -39,15 +39,14 @@ from app.observability import get_logger
 
 logger = get_logger(__name__)
 
-# Time after which a deferred (stale) client is safe to aclose(). Must be
-# greater than the longest realistic in-flight request, including the
-# request timeout (30s) plus the agent's response time. 90s is conservative.
+# Minimum time after which a deferred (stale) client is safe to aclose().
+# Each pooled entry also tracks the largest per-request timeout it served; the
+# actual safe-close delay is max(DEFERRED_GRACE_SECONDS, observed_timeout).
 DEFERRED_GRACE_SECONDS: float = 90.0
 
-# Hard cap on outstanding deferred clients. If exceeded, oldest entries are
-# aclose()d immediately. Tuning changes are an operator action that fires at
-# most a handful of times per process; a cap of 32 absorbs reasonable activity
-# while preventing leaks under a stuck-loop misconfiguration.
+# Soft cap on outstanding deferred clients. If exceeded, oldest entries that
+# are already past their safe-close timestamp are aclose()d. Unsafe entries are
+# left open so tuning changes cannot break in-flight requests.
 DEFERRED_MAX: int = 32
 
 
@@ -65,12 +64,18 @@ class _ClientConfig:
 class _PooledEntry:
     client: httpx.AsyncClient
     config: _ClientConfig
+    max_timeout: float
 
 
 @dataclass
 class _DeferredEntry:
     client: httpx.AsyncClient
     deferred_at: float
+    close_after: float
+
+
+def _timeout_seconds(timeout: float | int) -> float:
+    return float(timeout)
 
 
 class AgentHttpPool:
@@ -100,6 +105,7 @@ class AgentHttpPool:
             max_keepalive=int(max_keepalive),
             keepalive_expiry=float(keepalive_expiry),
         )
+        timeout_seconds = _timeout_seconds(timeout)
 
         # Collect anything that needs aclose()ing outside the lock so we
         # do not block other callers on network teardown work.
@@ -108,39 +114,38 @@ class AgentHttpPool:
             if self._closed:
                 raise PoolClosedError("agent_http_pool is closed")
 
+            now = time.monotonic()
+            to_close = self._collect_closeable_locked(now)
             entry = self._entries.get(key)
             if entry is not None and not entry.client.is_closed and entry.config == config:
-                return entry.client
+                entry.max_timeout = max(entry.max_timeout, timeout_seconds)
+                client = entry.client
+            else:
+                if entry is not None and not entry.client.is_closed:
+                    close_after = now + max(DEFERRED_GRACE_SECONDS, entry.max_timeout)
+                    self._deferred.append(_DeferredEntry(client=entry.client, deferred_at=now, close_after=close_after))
+                    logger.info(
+                        "agent_http_pool_client_replaced",
+                        host_ip=host_ip,
+                        agent_port=agent_port,
+                        old_max_keepalive=entry.config.max_keepalive,
+                        new_max_keepalive=config.max_keepalive,
+                        old_keepalive_expiry=entry.config.keepalive_expiry,
+                        new_keepalive_expiry=config.keepalive_expiry,
+                        deferred_count=len(self._deferred),
+                    )
 
-            # Phase 1: drain entries past the grace window (from previous
-            # cycles only — a freshly stale entry is appended below).
-            to_close = self._collect_grace_drainable_locked()
+                # Trim only stale entries that are already safe to close.
+                to_close.extend(self._enforce_cap_locked(now))
 
-            if entry is not None and not entry.client.is_closed:
-                self._deferred.append(_DeferredEntry(client=entry.client, deferred_at=time.monotonic()))
-                logger.info(
-                    "agent_http_pool_client_replaced",
-                    host_ip=host_ip,
-                    agent_port=agent_port,
-                    old_max_keepalive=entry.config.max_keepalive,
-                    new_max_keepalive=config.max_keepalive,
-                    old_keepalive_expiry=entry.config.keepalive_expiry,
-                    new_keepalive_expiry=config.keepalive_expiry,
-                    deferred_count=len(self._deferred),
+                client = httpx.AsyncClient(
+                    timeout=timeout,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=config.max_keepalive,
+                        keepalive_expiry=config.keepalive_expiry,
+                    ),
                 )
-
-            # Phase 2: enforce hard cap AFTER the new stale is recorded.
-            # Oldest entries beyond DEFERRED_MAX are evicted FIFO.
-            to_close.extend(self._enforce_cap_locked())
-
-            client = httpx.AsyncClient(
-                timeout=timeout,
-                limits=httpx.Limits(
-                    max_keepalive_connections=config.max_keepalive,
-                    keepalive_expiry=config.keepalive_expiry,
-                ),
-            )
-            self._entries[key] = _PooledEntry(client=client, config=config)
+                self._entries[key] = _PooledEntry(client=client, config=config, max_timeout=timeout_seconds)
 
         for stale in to_close:
             try:
@@ -150,34 +155,51 @@ class AgentHttpPool:
 
         return client
 
-    def _collect_grace_drainable_locked(self) -> list[httpx.AsyncClient]:
-        """Return deferred clients past the grace window. Caller holds the lock."""
-        now = time.monotonic()
+    def _collect_closeable_locked(self, now: float) -> list[httpx.AsyncClient]:
+        """Return deferred clients past their safe-close timestamp. Locked."""
         drainable: list[httpx.AsyncClient] = []
         keep: list[_DeferredEntry] = []
         for d in self._deferred:
-            if now - d.deferred_at >= DEFERRED_GRACE_SECONDS:
+            if now >= d.close_after:
                 drainable.append(d.client)
             else:
                 keep.append(d)
         self._deferred = keep
         return drainable
 
-    def _enforce_cap_locked(self) -> list[httpx.AsyncClient]:
-        """Evict oldest deferred entries while count > DEFERRED_MAX. Locked."""
+    def _enforce_cap_locked(self, now: float) -> list[httpx.AsyncClient]:
+        """Evict oldest safe deferred entries while count > DEFERRED_MAX. Locked."""
         if len(self._deferred) <= DEFERRED_MAX:
             return []
+
         overflow = len(self._deferred) - DEFERRED_MAX
-        evicted = [d.client for d in self._deferred[:overflow]]
-        now = time.monotonic()
-        for d in self._deferred[:overflow]:
+        evicted: list[httpx.AsyncClient] = []
+        keep: list[_DeferredEntry] = []
+        for d in self._deferred:
+            if overflow > 0 and now >= d.close_after:
+                evicted.append(d.client)
+                overflow -= 1
+                logger.warning(
+                    "agent_http_pool_deferred_evicted",
+                    reason="deferred_max_exceeded",
+                    age_sec=now - d.deferred_at,
+                )
+            else:
+                keep.append(d)
+        self._deferred = keep
+        if overflow > 0:
             logger.warning(
-                "agent_http_pool_deferred_evicted",
-                reason="deferred_max_exceeded",
-                age_sec=now - d.deferred_at,
+                "agent_http_pool_deferred_over_cap",
+                reason="deferred_entries_not_yet_safe_to_close",
+                deferred_count=len(self._deferred),
+                deferred_max=DEFERRED_MAX,
+                unsafe_overflow=overflow,
             )
-        self._deferred = self._deferred[overflow:]
         return evicted
+
+    async def reopen(self) -> None:
+        async with self._lock:
+            self._closed = False
 
     async def close(self) -> None:
         async with self._lock:

@@ -202,14 +202,21 @@ async def test_deferred_entries_drained_after_grace_window(monkeypatch: pytest.M
     """Stale clients older than DEFERRED_GRACE_SECONDS get aclose()d on the
     next get_client invocation, bounding memory under long-lived processes.
     """
+    now = 100.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr(pool_module.time, "monotonic", monotonic)
     monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 0.0)
     pool = AgentHttpPool()
     try:
-        a = await pool.get_client("10.0.0.1", 5100, max_keepalive=10)
-        await pool.get_client("10.0.0.1", 5100, max_keepalive=20)
+        a = await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=10)
+        await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=20)
         assert pool.deferred_count() == 1
-        # Next swap forces a drainable scan; grace window 0 → drains a.
-        await pool.get_client("10.0.0.1", 5100, max_keepalive=30)
+        # Next swap after the observed request timeout drains a.
+        now = 106.0
+        await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=30)
         assert a.is_closed
         assert pool.deferred_count() == 1  # only the post-drain stale entry
     finally:
@@ -217,22 +224,89 @@ async def test_deferred_entries_drained_after_grace_window(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_deferred_hard_cap_evicts_oldest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When deferred entries exceed DEFERRED_MAX, oldest are aclose()d FIFO."""
+async def test_deferred_entries_respect_long_observed_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deferred client must stay open until the longest request it served
+    could have timed out, even if DEFERRED_GRACE_SECONDS has elapsed.
+    """
+    now = 100.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr(pool_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 90.0)
+    pool = AgentHttpPool()
+    try:
+        a = await pool.get_client("10.0.0.1", 5100, timeout=360, max_keepalive=10)
+        await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=20)
+
+        now = 191.0
+        await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=30)
+        assert not a.is_closed
+        assert pool.deferred_count() == 2
+
+        now = 461.0
+        await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=30)
+        assert a.is_closed
+        assert pool.deferred_count() == 0
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_same_config_get_client_drains_ready_deferred(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr(pool_module.time, "monotonic", monotonic)
+    monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 0.0)
+    pool = AgentHttpPool()
+    try:
+        a = await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=10)
+        b = await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=20)
+        now = 106.0
+        c = await pool.get_client("10.0.0.1", 5100, timeout=5, max_keepalive=20)
+        assert b is c
+        assert a.is_closed
+        assert pool.deferred_count() == 0
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_deferred_hard_cap_only_evicts_safe_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cap must not close clients that are still within their safety window."""
     monkeypatch.setattr(pool_module, "DEFERRED_MAX", 2)
-    # Keep grace large so only the cap evicts.
-    monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 1e9)
+    monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 90.0)
+    now = 100.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr(pool_module.time, "monotonic", monotonic)
     pool = AgentHttpPool()
     try:
         c0 = await pool.get_client("10.0.0.1", 5100, max_keepalive=10)
+        now = 101.0
         c1 = await pool.get_client("10.0.0.1", 5100, max_keepalive=11)
+        now = 102.0
         c2 = await pool.get_client("10.0.0.1", 5100, max_keepalive=12)
         # 2 deferred so far (c0, c1); current is c2. Cap is 2. Not over yet.
         assert pool.deferred_count() == 2
         assert not c0.is_closed and not c1.is_closed and not c2.is_closed
 
+        now = 103.0
         await pool.get_client("10.0.0.1", 5100, max_keepalive=13)
-        # Now c2 enters deferred (3 total). Cap=2 → oldest (c0) evicted.
+        # Now c2 enters deferred (3 total), but all entries are still unsafe
+        # to close, so the cap cannot force-close them.
+        assert not c0.is_closed
+        assert not c1.is_closed and not c2.is_closed
+        assert pool.deferred_count() == 3
+
+        now = 191.5
+        await pool.get_client("10.0.0.1", 5100, max_keepalive=13)
         assert c0.is_closed
         assert not c1.is_closed and not c2.is_closed
         assert pool.deferred_count() == 2
@@ -259,6 +333,21 @@ async def test_close_is_idempotent() -> None:
     # Second close is a no-op, not an error.
     await pool.close()
     assert pool.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_reopen_allows_reuse_after_close() -> None:
+    pool = AgentHttpPool()
+    await pool.get_client("10.0.0.1", 5100)
+    await pool.close()
+
+    await pool.reopen()
+    client = await pool.get_client("10.0.0.1", 5100)
+    try:
+        assert not client.is_closed
+        assert pool.size() == 1
+    finally:
+        await pool.close()
 
 
 @pytest.mark.asyncio
