@@ -275,6 +275,16 @@ def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() 
     assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
 
 
+def test_hydrate_allocated_device_rejects_reserve_shaped_payload_without_claim_metadata() -> None:
+    client = FakeClient()
+    reserve_shaped = claim_payload()
+    del reserve_shaped["claimed_by"]
+    del reserve_shaped["claimed_at"]
+
+    with pytest.raises(ValueError, match="missing claimed_by"):
+        hydrate_allocated_device(reserve_shaped, run_id="run-1", client=client, fetch_config=False)
+
+
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)

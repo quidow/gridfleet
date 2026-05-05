@@ -122,7 +122,14 @@ def hydrate_allocated_device(
     fetch_config: bool = True,
     fetch_capabilities: bool = False,
 ) -> AllocatedDevice:
-    """Combine a claim response with optional static config and live capabilities."""
+    """Combine a claim response with optional static config and live capabilities.
+
+    Accepts a ``ClaimResponse`` payload from ``GridFleetClient.claim_device`` only.
+    Reserve responses (``RunCreateResponse.devices`` entries before any worker
+    has claimed) lack ``claimed_by`` / ``claimed_at`` and will raise
+    ``ValueError``. Iterate ``reserve_response['devices']`` and call
+    ``claim_device`` per worker before hydrating.
+    """
     payload = dict(claim_response)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
