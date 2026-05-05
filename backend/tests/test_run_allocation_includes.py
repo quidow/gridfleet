@@ -10,12 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.metrics import RUN_CLAIMS_TOTAL
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
-from app.services import run_service
+from app.services import appium_node_resource_service, run_service
 from app.services.config_service import MASK_VALUE
 from app.services.run_service import _build_device_info
-from tests.helpers import create_device, create_reserved_run
+from tests.helpers import create_device, create_device_record, create_reserved_run
 
 
 @contextlib.contextmanager
@@ -525,3 +526,66 @@ async def test_reserve_with_include_config_adds_o1_sensitive_key_queries(
         f"({baseline_driver_pack_count} → {include_driver_pack_count}); "
         f"expected ≤{len(distinct_pairs)} (one per distinct pack/platform pair)"
     )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_with_include_capabilities_returns_live_caps_for_running_node(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="claim-caps-running",
+        connection_target="claim-caps-running",
+        name="Claim Caps Running",
+        device_config={
+            "appium_caps": {
+                "appium:noReset": True,
+                "appium:systemPort": 9999,
+            }
+        },
+        operational_state="available",
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.flush()
+    expected_system_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=device.host_id,
+        capability_key="appium:systemPort",
+        start_port=8200,
+        node_id=node.id,
+    )
+    expected_chromedriver_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=device.host_id,
+        capability_key="appium:chromedriverPort",
+        start_port=9515,
+        node_id=node.id,
+    )
+    expected_mjpeg_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=device.host_id,
+        capability_key="appium:mjpegServerPort",
+        start_port=9200,
+        node_id=node.id,
+    )
+    await db_session.commit()
+
+    run = await create_reserved_run(db_session, name="caps-live-run", devices=[device])
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=capabilities", json={"worker_id": "w1"})
+
+    assert response.status_code == 200, response.text
+    caps = response.json()["live_capabilities"]
+    assert caps is not None
+    assert caps["appium:noReset"] is True
+    assert caps["appium:systemPort"] == expected_system_port
+    assert caps["appium:chromedriverPort"] == expected_chromedriver_port
+    assert caps["appium:mjpegServerPort"] == expected_mjpeg_port
