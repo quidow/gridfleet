@@ -2,6 +2,23 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.1...gridfleet-testkit-v0.3.0) (2026-05-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** promote public api helpers ([#92](https://github.com/quidow/gridfleet/issues/92))
+
+### Features
+
+* **testkit:** add xdist recipe primitives ([#93](https://github.com/quidow/gridfleet/issues/93)) ([58fd3c3](https://github.com/quidow/gridfleet/commit/58fd3c3402ba7e735aae55e27abbe65a05c8ffe8))
+* **testkit:** promote public api helpers ([#92](https://github.com/quidow/gridfleet/issues/92)) ([80d4483](https://github.com/quidow/gridfleet/commit/80d44832903f532de3da238d020b5dc27eb8b30e))
+
+
+### Bug Fixes
+
+* **agent:** trigger release for port conflict cleanup ([6a561ca](https://github.com/quidow/gridfleet/commit/6a561ca480c62b9abb2d5141fa98fc4e1a7696b6))
+
 ## [0.2.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.0...gridfleet-testkit-v0.2.1) (2026-05-03)
 
 
