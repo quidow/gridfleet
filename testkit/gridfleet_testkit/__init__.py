@@ -1,5 +1,12 @@
 """Supported Python integration helpers for GridFleet.
 
+**0.4.0 masking change**: when callers opt in to inline `config` via
+`claim_device(include=("config",))`, the inline `config` payload is **always
+masked** (sensitive values are replaced with `"********"`). Code that needs raw
+secrets must continue to call `client.get_device_config(connection_target,
+reveal=True)` explicitly. `AllocatedDevice.config_is_masked` is `True` whenever
+the inline path was taken.
+
 Environment variables read by the client:
 
 - GRID_URL: Selenium Grid URL used by Appium helper defaults.
@@ -13,7 +20,12 @@ this package because run-state sharing is consumer policy.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .allocation import AllocatedDevice, hydrate_allocated_device, hydrate_allocated_device_from_driver
+from .allocation import (
+    AllocatedDevice,
+    UnavailableInclude,
+    hydrate_allocated_device,
+    hydrate_allocated_device_from_driver,
+)
 from .appium import (
     build_appium_options,
     create_appium_driver,
@@ -26,6 +38,8 @@ from .client import (
     GridFleetClient,
     HeartbeatThread,
     NoClaimableDevicesError,
+    ReserveCapabilitiesUnsupportedError,
+    UnknownIncludeError,
     register_run_cleanup,
 )
 from .sessions import build_error_session_payload
@@ -42,6 +56,9 @@ __all__ = [
     "GridFleetClient",
     "HeartbeatThread",
     "NoClaimableDevicesError",
+    "ReserveCapabilitiesUnsupportedError",
+    "UnavailableInclude",
+    "UnknownIncludeError",
     "__version__",
     "build_appium_options",
     "build_error_session_payload",
