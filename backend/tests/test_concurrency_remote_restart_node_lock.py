@@ -94,7 +94,7 @@ async def test_restart_node_via_agent_locks_device_and_node(
                     return_value={},
                 ),
                 patch(
-                    "app.services.node_service.appium_resource_allocator.get_owner_capabilities",
+                    "app.services.appium_node_resource_service.get_capabilities",
                     return_value={},
                 ),
                 patch(

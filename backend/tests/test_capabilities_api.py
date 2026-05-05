@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.services import appium_resource_allocator
+from app.services import appium_node_resource_service
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -62,20 +62,33 @@ async def test_capabilities_endpoint_returns_live_android_allocations_for_runnin
         },
         availability_status="available",
     )
-    owner_key = appium_resource_allocator.managed_owner_key(device.id)
-    expected_caps = await appium_resource_allocator.get_or_create_owner_capabilities(
-        db_session,
-        owner_key=owner_key,
-        host_id=device.host_id,
-        resource_ports={
-            "appium:systemPort": 8200,
-            "appium:chromedriverPort": 9515,
-            "appium:mjpegServerPort": 9200,
-        },
-    )
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running))
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    await db_session.flush()
+    expected_caps = {
+        "appium:systemPort": await appium_node_resource_service.reserve(
+            db_session,
+            host_id=device.host_id,
+            capability_key="appium:systemPort",
+            start_port=8200,
+            node_id=node.id,
+        ),
+        "appium:chromedriverPort": await appium_node_resource_service.reserve(
+            db_session,
+            host_id=device.host_id,
+            capability_key="appium:chromedriverPort",
+            start_port=9515,
+            node_id=node.id,
+        ),
+        "appium:mjpegServerPort": await appium_node_resource_service.reserve(
+            db_session,
+            host_id=device.host_id,
+            capability_key="appium:mjpegServerPort",
+            start_port=9200,
+            node_id=node.id,
+        ),
+    }
     await db_session.commit()
-
     resp = await client.get(f"/api/devices/{device.id}/capabilities")
     assert resp.status_code == 200
     data = resp.json()
@@ -142,18 +155,32 @@ async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_runni
             }
         },
     )
-    owner_key = appium_resource_allocator.managed_owner_key(device.id)
-    expected_caps = await appium_resource_allocator.get_or_create_owner_capabilities(
+    node = AppiumNode(device_id=device.id, port=4725, grid_url="http://hub:4444", state=NodeState.running)
+    db_session.add(node)
+    await db_session.flush()
+    expected_caps = {
+        "appium:wdaLocalPort": await appium_node_resource_service.reserve(
+            db_session,
+            host_id=device.host_id,
+            capability_key="appium:wdaLocalPort",
+            start_port=8100,
+            node_id=node.id,
+        ),
+        "appium:mjpegServerPort": await appium_node_resource_service.reserve(
+            db_session,
+            host_id=device.host_id,
+            capability_key="appium:mjpegServerPort",
+            start_port=9100,
+            node_id=node.id,
+        ),
+        "appium:derivedDataPath": "/tmp/gridfleet/derived-data/test",
+    }
+    await appium_node_resource_service.set_node_extra_capability(
         db_session,
-        owner_key=owner_key,
-        host_id=device.host_id,
-        resource_ports={
-            "appium:wdaLocalPort": 8100,
-            "appium:mjpegServerPort": 9100,
-        },
-        needs_derived_data_path=True,
+        node_id=node.id,
+        capability_key="appium:derivedDataPath",
+        value=expected_caps["appium:derivedDataPath"],
     )
-    db_session.add(AppiumNode(device_id=device.id, port=4725, grid_url="http://hub:4444", state=NodeState.running))
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device.id}/capabilities")

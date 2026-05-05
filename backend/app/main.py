@@ -44,6 +44,7 @@ from app.routers import (
 )
 from app.services import auth as auth_service
 from app.services import device_health_summary, device_service, webhook_dispatcher
+from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
@@ -82,6 +83,19 @@ def _freeze_background_loops() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _validate_appium_reservation_settings() -> None:
+    from app.services.settings_service import settings_service
+
+    ttl = int(settings_service.get("appium.reservation_ttl_sec"))
+    startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
+    if ttl <= startup_timeout + 5:
+        raise RuntimeError(
+            f"Misconfigured Appium settings: appium.reservation_ttl_sec ({ttl}) "
+            f"must exceed appium.startup_timeout_sec ({startup_timeout}) + 5s. "
+            "Lower startup_timeout_sec or raise reservation_ttl_sec."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.database import async_session as session_factory
@@ -101,6 +115,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
         await settings_service.initialize(db)
+    _validate_appium_reservation_settings()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
@@ -142,6 +157,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             asyncio.create_task(session_viability_loop()),
             asyncio.create_task(fleet_capacity_collector_loop()),
             asyncio.create_task(pack_drain_loop()),
+            asyncio.create_task(appium_resource_sweeper_loop()),
         ]
     try:
         yield

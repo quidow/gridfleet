@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceType
-from app.services import appium_resource_allocator, control_plane_state_store
+from app.services import appium_capability_keys, control_plane_state_store
 from app.services.device_identity import appium_connection_target
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.pack_capability_service import (
@@ -114,7 +114,7 @@ async def get_device_capabilities(
     automation_name: str | None = None
     appium_platform_name: str | None = None
     pack_caps: dict[str, Any] = {}
-    manager_owned = appium_resource_allocator.core_manager_owned_cap_keys()
+    manager_owned = appium_capability_keys.core_manager_owned_cap_keys()
     resolved = resolve_pack_for_device(device)
     if resolved is not None:
         pack_id, platform_id = resolved
@@ -131,7 +131,7 @@ async def get_device_capabilities(
                 platform_id=platform_id,
                 device_type=device.device_type.value if device.device_type else None,
             )
-            manager_owned = appium_resource_allocator.manager_owned_cap_keys(
+            manager_owned = appium_capability_keys.manager_owned_cap_keys(
                 frozenset(port.capability_name for port in resolved_plat.parallel_resources.ports)
             )
             if appium_platform_name is None:
@@ -146,11 +146,16 @@ async def get_device_capabilities(
             pack_caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
         except LookupError:
             raise
-    user_caps = appium_resource_allocator.sanitize_appium_caps(
+    user_caps = appium_capability_keys.sanitize_appium_caps(
         (device.device_config or {}).get("appium_caps"),
         manager_owned=manager_owned,
     )
-    live_caps = await appium_resource_allocator.get_live_device_capabilities(db, device) or {}
+    from app.services import appium_node_resource_service
+
+    if device.appium_node is None or device.appium_node.state != NodeState.running:
+        live_caps = {}
+    else:
+        live_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)
     if active_connection_target is None:
         active_connection_target = await _get_live_active_connection_target(db, device)
     overlay = {**pack_caps, **user_caps, **live_caps}

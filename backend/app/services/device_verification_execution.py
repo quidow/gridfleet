@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,6 @@ from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
-    appium_resource_allocator,
     capability_service,
     device_locking,
     device_service,
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from app.type_defs import ProbeSessionFn
 
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -188,19 +189,10 @@ async def retain_verified_node(
         # On the refresh path, restart_node commits internally and drives availability
         # via mark_node_started; that path's locking is tracked separately.
         device = await device_locking.lock_device(db, device.id)
-        target_owner_key = appium_resource_allocator.managed_owner_key(device.id)
-        source_owner_key = handle.owner_key
-        needs_registration_refresh = bool(source_owner_key and source_owner_key != target_owner_key)
-        if needs_registration_refresh:
-            assert source_owner_key is not None
-            await appium_resource_allocator.transfer_owner(
-                db,
-                source_owner_key=source_owner_key,
-                target_owner_key=target_owner_key,
-            )
-            handle.owner_key = target_owner_key
+        if device.host_id is None:
+            raise NodeManagerError(f"Verification device {device.identity_value} has no host assigned")
 
-        from app.services import appium_node_locking
+        from app.services import appium_node_locking, appium_node_resource_service
 
         node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if node is None:
@@ -213,6 +205,7 @@ async def retain_verified_node(
                 state=NodeState.running,
             )
             db.add(node)
+            await db.flush()
             device.appium_node = node
         else:
             node.port = handle.port
@@ -220,6 +213,34 @@ async def retain_verified_node(
             node.pid = handle.pid
             node.active_connection_target = handle.active_connection_target
             node.state = NodeState.running
+
+        target_owner_key = f"device:{device.id}"
+        source_owner_key = handle.owner_key
+        needs_registration_refresh = bool(source_owner_key and source_owner_key != target_owner_key)
+        if source_owner_key:
+            rowcount = await appium_node_resource_service.transfer_temporary_to_managed(
+                db,
+                host_id=device.host_id,
+                owner_token=source_owner_key,
+                node_id=node.id,
+            )
+            if rowcount == 0:
+                logger.warning(
+                    "verification: 0 claims promoted for owner_token=%s host=%s node=%s",
+                    source_owner_key,
+                    device.host_id,
+                    node.id,
+                )
+            for key, value in (handle.allocated_caps or {}).items():
+                if isinstance(value, int):
+                    continue
+                await appium_node_resource_service.set_node_extra_capability(
+                    db,
+                    node_id=node.id,
+                    capability_key=key,
+                    value=value,
+                )
+            handle.owner_key = target_owner_key
 
         if needs_registration_refresh:
             await db.commit()
@@ -368,11 +389,14 @@ async def execute_verification_context(
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     handle: TemporaryNodeHandle | None = None
-    probe_owner_key = (
-        appium_resource_allocator.managed_owner_key(context.save_device_id)
-        if context.save_device_id is not None
-        else appium_resource_allocator.temporary_owner_key(device)
-    )
+    if context.save_device_id is not None:
+        probe_owner_key = f"device:{context.save_device_id}"
+    else:
+        host_id = device.host_id
+        if host_id is None:
+            raise NodeManagerError(f"Verification device {device.identity_value} has no host assigned")
+        identity = device.connection_target or device.identity_value
+        probe_owner_key = f"temp:{host_id}:{identity}"
 
     try:
         existing_stop_error = await stop_existing_managed_node_for_update(job, db, context)

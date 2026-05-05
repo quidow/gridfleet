@@ -84,7 +84,7 @@ async def test_restart_mutations_visible_after_caller_commit(
                 return_value=type("ResolvedPlatform", (), {"appium_platform_name": "Android"})(),
             ),
             patch("app.services.node_service._build_session_aligned_start_caps", return_value={}),
-            patch("app.services.node_service.appium_resource_allocator.get_owner_capabilities", return_value={}),
+            patch("app.services.appium_node_resource_service.get_capabilities", return_value={}),
             patch(
                 "app.services.node_service.resolve_pack_for_device",
                 return_value=("appium-uiautomator2", "android_mobile"),

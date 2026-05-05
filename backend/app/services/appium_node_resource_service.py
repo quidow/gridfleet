@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -154,10 +155,11 @@ async def set_node_extra_capability(
     await db.execute(
         text(
             "UPDATE appium_nodes SET live_capabilities = "
-            "COALESCE(live_capabilities, '{}'::jsonb) || jsonb_build_object(:k, :v) "
+            "COALESCE(live_capabilities, '{}'::jsonb) || "
+            "jsonb_build_object(CAST(:k AS text), CAST(:v AS jsonb)) "
             "WHERE id = :node_id"
         ),
-        {"k": capability_key, "v": value, "node_id": node_id},
+        {"k": capability_key, "v": json.dumps(value), "node_id": node_id},
     )
 
 

@@ -37,6 +37,7 @@ BACKGROUND_LOOP_NAMES = (
     "data_cleanup",
     "session_viability",
     "fleet_capacity_collector",
+    "appium_resource_sweeper",
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
