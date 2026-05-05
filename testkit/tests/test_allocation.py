@@ -6,6 +6,7 @@ import pytest
 
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
+    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -161,6 +162,34 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.udid == "emulator-5554"
     assert allocated.device_ip == "10.0.0.9"
     assert allocated.platform_name == "Android"
+
+
+def test_allocated_device_defaults_unavailable_includes_and_config_is_masked() -> None:
+    allocated = AllocatedDevice(
+        run_id="run-1",
+        device_id="dev-1",
+        identity_value="SERIAL123",
+        name="Pixel 6",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        platform_label="Android",
+        os_version="14",
+        connection_target="SERIAL123",
+        host_ip="192.168.1.10",
+        device_type="real_device",
+        connection_type="usb",
+        manufacturer="Google",
+        model="Pixel 6",
+        claimed_by="gw0",
+        claimed_at="2026-05-05T10:00:00Z",
+        config=None,
+        live_capabilities=None,
+    )
+
+    assert allocated.unavailable_includes == ()
+    assert isinstance(allocated.unavailable_includes, tuple)
+    assert all(isinstance(u, UnavailableInclude) for u in allocated.unavailable_includes)
+    assert allocated.config_is_masked is False
 
 
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:

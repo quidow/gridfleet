@@ -10,6 +10,14 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class UnavailableInclude:
+    """One include key the backend could not satisfy on this allocation."""
+
+    include: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class AllocatedDevice:
     """Combined view of a claimed device, ready for driver creation."""
 
@@ -31,6 +39,8 @@ class AllocatedDevice:
     claimed_at: str
     config: dict[str, Any] | None
     live_capabilities: dict[str, Any] | None
+    unavailable_includes: tuple[UnavailableInclude, ...] = ()
+    config_is_masked: bool = False
 
     @property
     def is_real_device(self) -> bool:
