@@ -31,10 +31,13 @@ class ConnectionType(enum.StrEnum):
     virtual = "virtual"
 
 
-class DeviceAvailabilityStatus(enum.StrEnum):
+class DeviceOperationalState(enum.StrEnum):
     available = "available"
     busy = "busy"
     offline = "offline"
+
+
+class DeviceHold(enum.StrEnum):
     maintenance = "maintenance"
     reserved = "reserved"
 
@@ -93,10 +96,15 @@ class Device(Base):
     host_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="RESTRICT"), nullable=False
     )
-    availability_status: Mapped[DeviceAvailabilityStatus] = mapped_column(
-        Enum(DeviceAvailabilityStatus),
-        default=DeviceAvailabilityStatus.offline,
+    operational_state: Mapped[DeviceOperationalState] = mapped_column(
+        Enum(DeviceOperationalState),
+        default=DeviceOperationalState.offline,
         nullable=False,
+    )
+    hold: Mapped[DeviceHold | None] = mapped_column(
+        Enum(DeviceHold),
+        nullable=True,
+        default=None,
     )
     tags: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True, default=dict)
     manufacturer: Mapped[str | None] = mapped_column(String, nullable=True)
