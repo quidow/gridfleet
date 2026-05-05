@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import inspect
+
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.schemas.device import DeviceReservationRead
 from app.services import (
@@ -50,6 +52,11 @@ def build_reservation_read(
     )
 
 
+async def _ensure_appium_node_loaded(db: AsyncSession, device: Device) -> None:
+    if "appium_node" in inspect(device).unloaded:
+        await db.refresh(device, attribute_names=["appium_node"])
+
+
 async def serialize_device(
     db: AsyncSession,
     device: Device,
@@ -64,6 +71,7 @@ async def serialize_device(
     readiness = await device_readiness.assess_device_async(db, device)
     policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
     lifecycle_summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
+    await _ensure_appium_node_loaded(db, device)
     if health_summary is None:
         health_summary = device_health.build_public_summary(device)
     hardware_status = hardware_telemetry.current_hardware_health_status(device)

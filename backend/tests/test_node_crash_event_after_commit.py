@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.services.agent_probe_result import ProbeResult
 from app.services.heartbeat import _ingest_appium_restart_events
 from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
 
@@ -135,7 +136,7 @@ async def test_probe_failure_threshold_queues_node_crash_and_device_crashed(
         db_session,
         node,
         device,
-        healthy=False,
+        result=ProbeResult(status="refused"),
         grid_device_ids=set(),
         observed_state=NodeState.running,
         observed_port=node.port,
