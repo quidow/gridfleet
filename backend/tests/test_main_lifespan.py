@@ -44,6 +44,24 @@ async def _forever() -> None:
     await asyncio.Event().wait()
 
 
+def _setting_value(key: str) -> int:
+    values = {
+        "appium.reservation_ttl_sec": 120,
+        "appium.startup_timeout_sec": 30,
+    }
+    return values[key]
+
+
+def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
+    import app.services.agent_http_pool as agent_http_pool_module
+
+    reopen = AsyncMock()
+    close = AsyncMock()
+    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "reopen", reopen)
+    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "close", close)
+    return reopen, close
+
+
 async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: MonkeyPatch) -> None:
     db = AsyncMock()
     session_factory = FakeSessionFactory(db)
@@ -61,6 +79,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     import app.services.event_bus as event_bus_module
     import app.services.settings_service as settings_service_module
 
+    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
@@ -68,6 +87,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
     monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
@@ -103,6 +123,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         await asyncio.sleep(0)
 
     assert settings_service_module.settings_service.initialize.await_count == 1
+    assert pool_reopen.await_count == 1
+    assert pool_close.await_count == 1
     assert len(loop.removed) == 2
     assert all(task.done() for task in created_tasks)
 
@@ -118,6 +140,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     import app.services.event_bus as event_bus_module
     import app.services.settings_service as settings_service_module
 
+    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
@@ -125,6 +148,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
     monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
@@ -143,6 +167,8 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
         pass
 
     assert create_task.call_count == 0
+    assert pool_reopen.await_count == 1
+    assert pool_close.await_count == 1
 
 
 async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch: MonkeyPatch) -> None:
@@ -158,6 +184,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     import app.services.settings_service as settings_service_module
 
     monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
+    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
@@ -165,6 +192,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
     monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
@@ -184,3 +212,5 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
 
     assert create_task.call_count == 0
     assert try_acquire.await_count == 0
+    assert pool_reopen.await_count == 1
+    assert pool_close.await_count == 1
