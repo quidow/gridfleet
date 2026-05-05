@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 from app.models.device import (
     ConnectionType,
     Device,
-    DeviceAvailabilityStatus,
+    DeviceHold,
+    DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
     HardwareHealthStatus,
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 
 BATTERY_PLATFORM_IDS = {"android_mobile", "ios"}
+SeedDeviceStatus = DeviceOperationalState | DeviceHold
 
 # Mapping from platform_id to (pack_id, default identity_scheme, default identity_scope)
 _PACK_IDENTITY_BY_PLATFORM_ID: dict[str, tuple[str, str, str]] = {
@@ -61,7 +63,7 @@ def make_device(
     model: str,
     manufacturer: str,
     os_version: str,
-    availability_status: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available,
+    status: SeedDeviceStatus = DeviceOperationalState.available,
     verified: bool = True,
     extra_tags: dict[str, str] | None = None,
     connection_target: str | None = None,
@@ -90,9 +92,11 @@ def make_device(
     # emulators/simulators don't support hardware telemetry, offline devices
     # have no recent report. Callers can override any field explicitly.
     is_real = device_type is DeviceType.real_device
-    is_online = availability_status in {
-        DeviceAvailabilityStatus.available,
-        DeviceAvailabilityStatus.busy,
+    operational_state = status if isinstance(status, DeviceOperationalState) else DeviceOperationalState.available
+    hold = status if isinstance(status, DeviceHold) else None
+    is_online = operational_state in {
+        DeviceOperationalState.available,
+        DeviceOperationalState.busy,
     }
 
     if hardware_telemetry_support_status is None:
@@ -131,7 +135,8 @@ def make_device(
         name=name,
         os_version=os_version,
         host_id=host_id,
-        availability_status=availability_status,
+        operational_state=operational_state,
+        hold=hold,
         tags=tags,
         manufacturer=manufacturer,
         model=model,

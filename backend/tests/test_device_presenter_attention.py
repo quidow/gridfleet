@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services import device_presenter
 
@@ -16,7 +16,7 @@ async def test_serialize_device_includes_needs_attention(db_session: AsyncSessio
         name="Attention Test",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -39,7 +39,7 @@ async def test_serialize_device_includes_extended_device_info(db_session: AsyncS
         name="Fire TV Stick 4K",
         os_version="6.0",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         manufacturer="Amazon",
         model="Fire TV Stick 4K",
         model_number="AFTMM",

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import bulk_service, device_locking
 from tests.helpers import create_device
@@ -28,14 +28,14 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
         db_session,
         host_id=db_host.id,
         name="bulk-share-a",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     device_b = await create_device(
         db_session,
         host_id=db_host.id,
         name="bulk-share-b",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     await db_session.commit()
@@ -86,7 +86,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                 )
                 racer_acquired_b.set()
                 # Touch the row so the lock attempt is observable.
-                locked.availability_status = DeviceAvailabilityStatus.offline
+                locked.operational_state = DeviceOperationalState.offline
                 await racer_db.commit()
             except TimeoutError:
                 # Expected post-fix: per-task session holds B's lock during A's gate.
@@ -115,6 +115,6 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
 
     async with db_session_maker() as verify:
         device_b_row = (await verify.execute(select(Device).where(Device.id == device_b_id))).scalar_one()
-    assert device_b_row.availability_status != DeviceAvailabilityStatus.offline, (
+    assert device_b_row.operational_state != DeviceOperationalState.offline, (
         "racer's offline write landed on device_b - confirms shared-session lock release"
     )

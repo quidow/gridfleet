@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from app.models.device import ConnectionType, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
 from app.models.host import HostStatus, OSType
 from app.models.session import SessionStatus
@@ -74,7 +74,7 @@ async def apply_chaos(ctx: SeedContext) -> None:
         manufacturer="Google",
         os_version="14",
     )
-    # maintenance device (satisfies: at least one device with availability_status=maintenance)
+    # maintenance device (satisfies: at least one device with status=maintenance)
     dev_maintenance = make_device(
         ctx,
         host_id=host_a.id,
@@ -86,7 +86,7 @@ async def apply_chaos(ctx: SeedContext) -> None:
         model="Galaxy S22",
         manufacturer="Samsung",
         os_version="13",
-        availability_status=DeviceAvailabilityStatus.maintenance,
+        status=DeviceHold.maintenance,
     )
     # flapping device — will get connectivity_lost/restored event pairs
     dev_flapping = make_device(
@@ -126,7 +126,7 @@ async def apply_chaos(ctx: SeedContext) -> None:
         model="SHIELD TV",
         manufacturer="NVIDIA",
         os_version="11",
-        availability_status=DeviceAvailabilityStatus.offline,
+        status=DeviceOperationalState.offline,
     )
     dev_offline_b = make_device(
         ctx,
@@ -139,7 +139,7 @@ async def apply_chaos(ctx: SeedContext) -> None:
         model="Chromecast with Google TV",
         manufacturer="Google",
         os_version="12",
-        availability_status=DeviceAvailabilityStatus.offline,
+        status=DeviceOperationalState.offline,
     )
     # verification_required: discovered but not yet verified by an admin
     dev_unverified = make_device(
@@ -225,7 +225,7 @@ async def apply_chaos(ctx: SeedContext) -> None:
     session.add(make_reservation(ctx, run=run_completed, device=dev_normal, released=True))
     session.add(make_reservation(ctx, run=run_failed, device=dev_normal, released=True))
     # open reservation for the active/stuck run
-    dev_stuck.availability_status = DeviceAvailabilityStatus.busy
+    dev_stuck.operational_state = DeviceOperationalState.busy
     session.add(make_reservation(ctx, run=run_active, device=dev_stuck, released=False))
 
     # ── Sessions ──────────────────────────────────────────────────────────────

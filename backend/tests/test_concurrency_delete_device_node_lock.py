@@ -8,7 +8,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, device_service
 from tests.helpers import create_device
@@ -27,7 +27,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
         db_session,
         host_id=db_host.id,
         name="del-toctou",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     node = AppiumNode(
         device_id=device.id,
@@ -147,7 +147,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
         db_session,
         host_id=db_host.id,
         name="del-after-stop-race",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     node = AppiumNode(
         device_id=device.id,

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.config_audit_log import ConfigAuditLog
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.models.host import Host, HostStatus
@@ -74,8 +74,8 @@ async def test_full_demo_seeds_realistic_live_states_and_network_metadata(db_ses
     devices = (await db_session.execute(select(Device).order_by(Device.created_at, Device.id))).scalars().all()
     payloads = [await device_presenter.serialize_device(db_session, device) for device in devices]
 
-    availability_statuses = {payload["availability_status"] for payload in payloads}
-    assert len(availability_statuses) >= 3
+    chip_statuses = {payload["hold"] or payload["operational_state"] for payload in payloads}
+    assert len(chip_statuses) >= 3
     assert {payload["readiness_state"] for payload in payloads} >= {
         "setup_required",
         "verification_required",
@@ -99,7 +99,7 @@ async def test_full_demo_seeds_realistic_live_states_and_network_metadata(db_ses
         .all()
     )
     assert active_session_devices
-    assert all(device.availability_status is DeviceAvailabilityStatus.busy for device in active_session_devices)
+    assert all(device.operational_state is DeviceOperationalState.busy for device in active_session_devices)
 
     network_devices = [device for device in devices if device.connection_type is ConnectionType.network]
     assert network_devices
@@ -165,10 +165,8 @@ async def test_full_demo_seeds_pack_runtime_and_node_surfaces(db_session) -> Non
     for node in running_nodes:
         device = device_by_id[node.device_id]
         assert device.verified_at is not None
-        assert device.availability_status not in {
-            DeviceAvailabilityStatus.offline,
-            DeviceAvailabilityStatus.maintenance,
-        }
+        assert device.operational_state is not DeviceOperationalState.offline
+        assert device.hold is not DeviceHold.maintenance
         assert host_by_id[device.host_id].status is HostStatus.online
         assert node.active_connection_target == device.connection_target
 

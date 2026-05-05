@@ -123,7 +123,7 @@ async def test_bulk_enter_maintenance(client: AsyncClient, db_session: AsyncSess
 
     for device_id in ids:
         r = await client.get(f"/api/devices/{device_id}")
-        assert r.json()["availability_status"] == "maintenance"
+        assert r.json()["hold"] == "maintenance"
 
 
 async def test_bulk_exit_maintenance(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -143,7 +143,7 @@ async def test_bulk_exit_maintenance(client: AsyncClient, db_session: AsyncSessi
 
     for device_id in ids:
         r = await client.get(f"/api/devices/{device_id}")
-        assert r.json()["availability_status"] == "offline"
+        assert r.json()["operational_state"] == "offline"
 
 
 async def test_bulk_exit_maintenance_not_in_maintenance(

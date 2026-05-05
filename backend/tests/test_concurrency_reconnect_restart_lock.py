@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.routers import devices_control
 from app.services import device_locking, maintenance_service, node_service
 from tests.helpers import create_device
@@ -23,7 +23,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         db_session,
         host_id=default_host_id,
         name="reconnect-maintenance-race",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         connection_type="network",
         ip_address="10.0.0.50",
         verified=True,
@@ -60,6 +60,9 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final == DeviceAvailabilityStatus.maintenance
+    assert final.operational_state == DeviceOperationalState.available
+    assert final.hold == DeviceHold.maintenance

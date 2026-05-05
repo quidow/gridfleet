@@ -4,18 +4,17 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.models.job import Job
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
-from app.services.device_availability import set_device_availability_status
-from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.device_connectivity import (
     get_connectivity_control_plane_state,
     reset_connectivity_control_plane_state,
     track_previously_offline_device,
 )
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification import (
     clear_verification_jobs,
     store_verification_job_for_test,
@@ -51,7 +50,7 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
         name="Control Plane Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -91,7 +90,7 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
     assert (await get_session_viability_control_plane_state(db_session))["state"] == {}
 
 
-async def test_set_device_availability_status_publishes_only_on_change(db_session: AsyncSession, db_host: Host) -> None:
+async def test_set_operational_state_publishes_only_on_change(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -102,7 +101,7 @@ async def test_set_device_availability_status_publishes_only_on_change(db_sessio
         name="Availability Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -110,22 +109,22 @@ async def test_set_device_availability_status_publishes_only_on_change(db_sessio
     db_session.add(device)
     await db_session.commit()
 
-    changed = await set_device_availability_status(device, DeviceAvailabilityStatus.available)
+    changed = await set_operational_state(device, DeviceOperationalState.available)
     assert changed is False
     assert event_bus.get_recent_events() == []
 
-    changed = await set_device_availability_status(device, DeviceAvailabilityStatus.busy, reason="Probe started")
+    changed = await set_operational_state(device, DeviceOperationalState.busy, reason="Probe started")
     assert changed is True
     await db_session.commit()
     await event_bus.drain_handlers()
     events = event_bus.get_recent_events()
     assert len(events) == 1
-    assert events[0]["data"]["old_availability_status"] == "available"
-    assert events[0]["data"]["new_availability_status"] == "busy"
+    assert events[0]["data"]["old_operational_state"] == "available"
+    assert events[0]["data"]["new_operational_state"] == "busy"
     assert events[0]["data"]["reason"] == "Probe started"
 
 
-async def test_restore_post_busy_availability_status_returns_reserved_for_active_run(
+async def test_ready_operational_state_leaves_hold_independent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -139,7 +138,7 @@ async def test_restore_post_busy_availability_status_returns_reserved_for_active
         name="Reserved Availability Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -171,7 +170,8 @@ async def test_restore_post_busy_availability_status_returns_reserved_for_active
     db_session.add(run)
     await db_session.commit()
 
-    restored = await restore_post_busy_availability_status(db_session, device)
+    device.hold = DeviceHold.reserved
+    restored = await ready_operational_state(db_session, device)
 
-    assert restored == DeviceAvailabilityStatus.reserved
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert restored == DeviceOperationalState.offline
+    assert device.hold == DeviceHold.reserved

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
@@ -70,7 +70,7 @@ async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> 
         name="Test Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -90,7 +90,7 @@ async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> 
     assert session.device_id == device.id
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> None:
@@ -104,7 +104,7 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
         name="Test Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -127,7 +127,7 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     assert session.ended_at is not None
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSession, db_host: Host) -> None:
@@ -141,7 +141,7 @@ async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSessi
         name="Reset Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -164,7 +164,7 @@ async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSessi
 
     refreshed_device = await db_session.get(Device, device.id)
     assert refreshed_device is not None
-    assert refreshed_device.availability_status == DeviceAvailabilityStatus.available
+    assert refreshed_device.operational_state == DeviceOperationalState.available
 
 
 async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
@@ -180,7 +180,7 @@ async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
         identity_value="late-ended-cancel",
         connection_target="late-ended-cancel",
         name="Late Ended Cancel",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(
         db_session,
@@ -211,7 +211,7 @@ async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
     assert session.error_type == "run_released"
     assert session.error_message == "Run ended while session was still running (cancelled)"
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_sync_ignores_unknown_connection_target(db_session: AsyncSession) -> None:
@@ -235,7 +235,7 @@ async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: As
         name="Pixel 6",
         os_version="15",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -253,7 +253,7 @@ async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: As
     assert session.device_id == device.id
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, db_host: Host) -> None:
@@ -267,7 +267,7 @@ async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, d
         name="Multi Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -287,7 +287,7 @@ async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, d
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy  # sess-4b still running
+    assert device.operational_state == DeviceOperationalState.busy  # sess-4b still running
 
 
 async def test_sync_startup_recovery(db_session: AsyncSession, db_host: Host) -> None:
@@ -301,7 +301,7 @@ async def test_sync_startup_recovery(db_session: AsyncSession, db_host: Host) ->
         name="Recovery Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -338,7 +338,7 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
         name="Terminal Race Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -378,7 +378,7 @@ async def test_sync_promotes_ready_run_to_active(db_session: AsyncSession, db_ho
         name="Reserved Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.reserved,
+        hold=DeviceHold.reserved,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -416,10 +416,10 @@ async def test_sync_promotes_ready_run_to_active(db_session: AsyncSession, db_ho
     await db_session.refresh(device)
     assert run.state == RunState.active
     assert run.started_at is not None
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
 
-async def test_sync_restores_reserved_status_after_session_end_for_reserved_run(
+async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -433,7 +433,8 @@ async def test_sync_restores_reserved_status_after_session_end_for_reserved_run(
         name="Reserved Return",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
+        hold=DeviceHold.reserved,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -470,7 +471,7 @@ async def test_sync_restores_reserved_status_after_session_end_for_reserved_run(
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert device.hold == DeviceHold.reserved
 
 
 async def test_sync_stops_deferred_unhealthy_device_after_session_end(
@@ -487,7 +488,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
         name="Deferred Stop",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -527,7 +528,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
 
@@ -538,7 +539,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
 ) -> None:
     """When `handle_session_finished` drops a deferred-stop intent because the
     device is currently healthy (defense-in-depth branch), it returns False so
-    `_on_session_end` falls through to `restore_post_busy_availability_status`.
+    `_on_session_end` falls through to `ready_operational_state`.
     The device must end up `available`, not stuck at `busy`."""
     from app.models.appium_node import AppiumNode, NodeState
     from app.services import device_health
@@ -553,7 +554,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
         name="Deferred Recovered",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -590,7 +591,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
 
     await db_session.refresh(device)
     # Intent was cleared but device should be RESTORED to available, not stopped.
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["stop_pending"] is False
 
@@ -618,7 +619,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
         name="Race Restore",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -660,7 +661,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     await db_session.refresh(device)
     # The race-prone restore would have moved the device to ``available``.
     # Correct behavior: leave it ``busy`` for the fresh session.
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
     # Sanity check the simulated fresh session is the reason.
     fresh = await db_session.execute(select(Session).where(Session.session_id == "sess-new-fresh"))
@@ -679,7 +680,7 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
         name="Probe Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -709,7 +710,7 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
     assert sessions == []
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSession, db_host: Host) -> None:
@@ -723,7 +724,7 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
         name="Reserved Placeholder Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.reserved,
+        hold=DeviceHold.reserved,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.emulator,
         connection_type=ConnectionType.usb,
@@ -739,7 +740,7 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved"))
     assert result.scalar_one_or_none() is None
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert device.hold == DeviceHold.reserved
 
 
 async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
@@ -760,7 +761,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
         name="Stuck Deferred Stop Sweep Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -822,7 +823,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
         name="Sweep Grid Down",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )

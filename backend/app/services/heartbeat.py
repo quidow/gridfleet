@@ -12,14 +12,14 @@ from sqlalchemy.orm import selectinload
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
 from app.services import control_plane_state_store, device_health, host_service, plugin_service
 from app.services.agent_operations import agent_health
-from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
+from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.settings_service import settings_service
@@ -425,7 +425,7 @@ async def _check_hosts(db: AsyncSession) -> None:
                 host.status = HostStatus.offline
                 # Mark all devices on this host as offline. lock_devices
                 # acquires SELECT FOR UPDATE on each row in id order so
-                # availability_status writes serialize against concurrent writers.
+                # operational_state writes serialize against concurrent writers.
                 from app.services import device_locking
 
                 device_id_stmt = select(Device.id).where(Device.host_id == host.id)
@@ -443,9 +443,9 @@ async def _check_hosts(db: AsyncSession) -> None:
                         healthy=False,
                         summary=f"Host {host.hostname} offline",
                     )
-                    await set_device_availability_status(
+                    await set_operational_state(
                         device,
-                        DeviceAvailabilityStatus.offline,
+                        DeviceOperationalState.offline,
                         reason=f"Host {host.hostname} offline",
                     )
 

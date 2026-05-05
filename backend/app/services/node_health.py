@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.database import async_session
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
 from app.observability import get_logger, observe_background_loop
 from app.schemas.device import DeviceLifecyclePolicySummaryState
@@ -77,7 +77,11 @@ async def _should_probe_node_health(db: AsyncSession, device: Device) -> bool:
         or device.connection_type == ConnectionType.virtual
     ):
         return False
-    return device.availability_status == DeviceAvailabilityStatus.available and await is_ready_for_use_async(db, device)
+    return (
+        device.operational_state == DeviceOperationalState.available
+        and device.hold is None
+        and await is_ready_for_use_async(db, device)
+    )
 
 
 async def _build_probe_capabilities_for_node(db: AsyncSession, device: Device) -> dict[str, Any] | None:

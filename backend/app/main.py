@@ -15,7 +15,6 @@ from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.middleware import RequestContextMiddleware
-from app.models.device import DeviceAvailabilityStatus
 from app.observability import configure_logging, get_logger
 from app.routers import (
     agent_driver_packs,
@@ -239,9 +238,7 @@ async def check_availability(
     count: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    available_devices = await device_service.list_devices(
-        db, platform_id=platform_id, availability_status=DeviceAvailabilityStatus.available
-    )
+    available_devices = await device_service.list_devices(db, platform_id=platform_id, status="available")
     matched = 0
     for device in available_devices:
         ready = await is_ready_for_use_async(db, device)

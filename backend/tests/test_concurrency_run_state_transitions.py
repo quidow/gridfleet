@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceHold
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState, TestRun
 from app.services import run_service
@@ -22,7 +22,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
             host_id=default_host_id,
             identity_value="run-transition-race-001",
             name="Run Transition Race 001",
-            availability_status=DeviceAvailabilityStatus.reserved,
+            hold=DeviceHold.reserved,
         )
         run = await create_reserved_run(setup, name="run-transition-race", devices=[device], state=RunState.ready)
         run_id = run.id

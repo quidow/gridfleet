@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, heartbeat
 from app.services.settings_service import settings_service
@@ -26,7 +26,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         db_session,
         host_id=db_host.id,
         name="hb-offline-lock",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     device_id = device.id
 
@@ -36,16 +36,16 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
     race_attempted_lock = asyncio.Event()
     race_committed = asyncio.Event()
 
-    original_set_availability = heartbeat.set_device_availability_status
+    original_set_operational_state = heartbeat.set_operational_state
 
-    async def gated_set_device_availability_status(
+    async def gated_set_operational_state(
         device: Device,
-        availability_status: DeviceAvailabilityStatus,
+        operational_state: DeviceOperationalState,
         *,
         reason: str | None = None,
         publish_event: bool = True,
     ) -> None:
-        if device.id == device_id and availability_status == DeviceAvailabilityStatus.offline:
+        if device.id == device_id and operational_state == DeviceOperationalState.offline:
             inside_offline_branch.set()
             await asyncio.wait_for(race_attempted_lock.wait(), timeout=2.0)
             # Pre-fix, the racing writer can acquire and commit during this
@@ -54,9 +54,9 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             # the timeout lets the fixed path continue without deadlocking.
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(race_committed.wait(), timeout=0.5)
-        await original_set_availability(
+        await original_set_operational_state(
             device,
-            availability_status,
+            operational_state,
             reason=reason,
             publish_event=publish_event,
         )
@@ -64,7 +64,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
     async def heartbeat_caller() -> None:
         with (
             patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=None)),
-            patch.object(heartbeat, "set_device_availability_status", new=gated_set_device_availability_status),
+            patch.object(heartbeat, "set_operational_state", new=gated_set_operational_state),
         ):
             async with db_session_maker() as db:
                 for _ in range(threshold):
@@ -75,18 +75,19 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         async with db_session_maker() as db:
             race_attempted_lock.set()
             device = await device_locking.lock_device(db, device_id)
-            device.availability_status = DeviceAvailabilityStatus.reserved
+            device.hold = DeviceHold.reserved
             await db.commit()
         race_committed.set()
 
     await asyncio.wait_for(asyncio.gather(heartbeat_caller(), race_writer()), timeout=5.0)
 
     async with db_session_maker() as db:
-        final = (await db.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (await db.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))).one()
 
-    assert final == DeviceAvailabilityStatus.reserved, (
+    assert final.operational_state == DeviceOperationalState.offline
+    assert final.hold == DeviceHold.reserved, (
         f"Heartbeat _check_hosts did not lock device rows before the offline "
-        f"write; final availability_status={final} indicates the host-offline "
+        f"write; final hold={final.hold} indicates the host-offline "
         f"write raced the concurrent reservation writer instead of serializing "
         f"through device_locking.lock_devices"
     )

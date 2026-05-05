@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState
 from app.schemas.run import ClaimRequest, ClaimResponse, ReleaseRequest, ReservedDeviceInfo
@@ -30,7 +30,7 @@ async def _make_device(db_session: AsyncSession, host_id: str, serial: str) -> D
         host_id=host_id,
         identity_value=serial,
         name=f"Device {serial}",
-        availability_status=DeviceAvailabilityStatus.reserved,
+        operational_state=DeviceOperationalState.available,
     )
 
 
@@ -320,8 +320,8 @@ async def test_release_claimed_device_not_in_run(
 async def test_claim_endpoint(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     d1 = await _make_device(db_session, default_host_id, "api-claim-001")
     d2 = await _make_device(db_session, default_host_id, "api-claim-002")
-    d1.availability_status = DeviceAvailabilityStatus.available
-    d2.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
+    d2.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "API Claim Run", count=2)
@@ -348,7 +348,7 @@ async def test_claim_endpoint_allows_missing_body(
     default_host_id: str,
 ) -> None:
     d1 = await _make_device(db_session, default_host_id, "api-nobody-001")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "No Body Run")
@@ -360,7 +360,7 @@ async def test_claim_endpoint_allows_missing_body(
 
 async def test_release_endpoint(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     d1 = await _make_device(db_session, default_host_id, "api-rel-001")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "API Release Run")
@@ -385,7 +385,7 @@ async def test_release_endpoint_rejects_wrong_worker(
     default_host_id: str,
 ) -> None:
     d1 = await _make_device(db_session, default_host_id, "api-rel-owner-001")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "API Release Owner Run")
@@ -422,8 +422,8 @@ async def test_get_run_shows_claim_status(
 ) -> None:
     d1 = await _make_device(db_session, default_host_id, "vis-001")
     d2 = await _make_device(db_session, default_host_id, "vis-002")
-    d1.availability_status = DeviceAvailabilityStatus.available
-    d2.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
+    d2.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "Visibility Run", count=2)
@@ -448,7 +448,7 @@ async def test_claims_cleared_on_run_complete(
     default_host_id: str,
 ) -> None:
     d1 = await _make_device(db_session, default_host_id, "clear-001")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "Clear Claims Run")
@@ -471,7 +471,7 @@ async def test_release_after_run_complete_is_idempotent(
 ) -> None:
     """Release of a device whose claim was already cleared by run completion should succeed."""
     d1 = await _make_device(db_session, default_host_id, "idem-001")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "Idempotent Release Run")
@@ -502,7 +502,7 @@ async def test_release_after_run_cancel_is_idempotent(
 ) -> None:
     """Release of a device whose claim was already cleared by run cancellation should succeed."""
     d1 = await _make_device(db_session, default_host_id, "idem-002")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "Idempotent Cancel Release Run")
@@ -533,7 +533,7 @@ async def test_release_after_run_expire_is_idempotent(
 ) -> None:
     """Release of a device whose claim was already cleared by run expiry should succeed."""
     d1 = await _make_device(db_session, default_host_id, "idem-003")
-    d1.availability_status = DeviceAvailabilityStatus.available
+    d1.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     run_id = await _create_api_run(client, "Idempotent Expire Release Run")

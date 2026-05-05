@@ -167,7 +167,8 @@ class ReleaseWithCooldownRequest(BaseModel):
 class ReleaseWithCooldownResponse(BaseModel):
     status: Literal["cooldown_set"]
     reservation: ReservedDeviceInfo
-    device_availability_status: str
+    device_operational_state: str
+    device_hold: str | None
     retry_after_sec: int
     excluded_until: datetime
 

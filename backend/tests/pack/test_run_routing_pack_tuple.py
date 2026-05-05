@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.schemas.run import DeviceRequirement
 from app.services.run_service import _find_matching_devices
@@ -23,7 +23,7 @@ async def test_find_matching_devices_matches_pack_tuple(db_session: AsyncSession
         name="Android",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=now,
@@ -38,7 +38,7 @@ async def test_find_matching_devices_matches_pack_tuple(db_session: AsyncSession
         name="iPhone",
         os_version="17",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         device_config={"bundle_id": "com.example.app"},

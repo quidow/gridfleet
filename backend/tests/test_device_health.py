@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.services import device_health as svc
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ async def db_with_device(db_session: AsyncSession, db_host: Host) -> AsyncGenera
         name="Health Service Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -104,24 +104,24 @@ async def test_update_session_viability_persists_columns(db_with_device: tuple[A
 @pytest.mark.asyncio
 async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    device.availability_status = DeviceAvailabilityStatus.available
+    device.operational_state = DeviceOperationalState.available
     await db.commit()
     await svc.update_device_checks(db, device, healthy=False, summary="lost")
     await db.commit()
     await db.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_healthy_signal_does_not_restore_busy_device(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    device.availability_status = DeviceAvailabilityStatus.busy
+    device.operational_state = DeviceOperationalState.busy
     await db.commit()
     await svc.update_device_checks(db, device, healthy=True, summary="ok")
     await db.commit()
     await db.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 @pytest.mark.db
@@ -210,7 +210,7 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
     db_with_device: tuple[AsyncSession, Device],
 ) -> None:
     db, device = db_with_device
-    device.availability_status = DeviceAvailabilityStatus.available
+    device.operational_state = DeviceOperationalState.available
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://h", state=NodeState.running)
     db.add(node)
     await db.flush()
@@ -220,7 +220,7 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     assert device.appium_node.state == NodeState.error
 
 

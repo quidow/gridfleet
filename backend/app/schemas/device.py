@@ -9,7 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.appium_node import NodeState
 from app.models.device import (
     ConnectionType,
-    DeviceAvailabilityStatus,
+    DeviceHold,
+    DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
     HardwareHealthStatus,
@@ -217,7 +218,8 @@ class DeviceRead(BaseModel):
     name: str
     os_version: str
     host_id: uuid.UUID
-    availability_status: DeviceAvailabilityStatus
+    operational_state: DeviceOperationalState
+    hold: DeviceHold | None
     tags: DeviceTags | None
     manufacturer: str | None
     model: str | None

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.services.lifecycle_policy_state import write_state
 
 
@@ -19,7 +19,7 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.availability_status = DeviceAvailabilityStatus.available
+    device.operational_state = DeviceOperationalState.available
     device.lifecycle_policy_state = {}
     return device
 

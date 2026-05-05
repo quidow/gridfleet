@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from app.models.device import ConnectionType, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, DeviceOperationalState, DeviceType
 from app.models.host import HostStatus, OSType
 from app.models.session import SessionStatus
 from app.models.test_run import RunState
@@ -95,7 +95,7 @@ async def apply_minimal(ctx: SeedContext) -> None:
     )
     ctx.session.add(active_run)
     await ctx.session.flush()
-    device_b.availability_status = DeviceAvailabilityStatus.busy
+    device_b.operational_state = DeviceOperationalState.busy
     ctx.session.add(make_reservation(ctx, run=active_run, device=device_b, released=False))
     ctx.session.add(
         make_session(

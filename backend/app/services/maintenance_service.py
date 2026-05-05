@@ -3,8 +3,8 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
-from app.services.device_availability import set_device_availability_status
+from app.models.device import Device, DeviceHold, DeviceOperationalState
+from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
 
@@ -19,12 +19,12 @@ async def enter_maintenance(
     commit: bool = True,
     allow_reserved: bool = False,
 ) -> Device:
-    if not allow_reserved and device.availability_status == DeviceAvailabilityStatus.reserved:
+    if not allow_reserved and device.hold == DeviceHold.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
-    await set_device_availability_status(
+    await set_hold(
         device,
-        DeviceAvailabilityStatus.maintenance,
+        DeviceHold.maintenance,
         reason="Operator entered maintenance",
     )
 
@@ -36,9 +36,9 @@ async def enter_maintenance(
             from app.services import device_locking
 
             device = await device_locking.lock_device(db, device.id)
-            await set_device_availability_status(
+            await set_hold(
                 device,
-                DeviceAvailabilityStatus.maintenance,
+                DeviceHold.maintenance,
                 reason="Operator entered maintenance (re-asserted after node stop)",
             )
         except NodeManagerError as exc:
@@ -56,14 +56,11 @@ async def exit_maintenance(
     *,
     commit: bool = True,
 ) -> Device:
-    if device.availability_status != DeviceAvailabilityStatus.maintenance:
-        raise ValueError(f"Device is not in maintenance (status: {device.availability_status.value})")
+    if device.hold != DeviceHold.maintenance:
+        raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
 
-    await set_device_availability_status(
-        device,
-        DeviceAvailabilityStatus.offline,
-        reason="Operator exited maintenance",
-    )
+    await set_hold(device, None, reason="Operator exited maintenance")
+    await set_operational_state(device, DeviceOperationalState.offline, reason="Operator exited maintenance")
     if commit:
         await db.commit()
         await db.refresh(device)

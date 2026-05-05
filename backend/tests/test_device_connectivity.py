@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
 from app.services.device_connectivity import (
     _check_connectivity,
@@ -26,7 +26,8 @@ def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _setup_host_and_device(
     db_session: AsyncSession,
     connection_target: str = "dc-001",
-    device_availability_status: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available,
+    device_operational_state: DeviceOperationalState = DeviceOperationalState.available,
+    device_hold: DeviceHold | None = None,
     with_node: bool = False,
 ) -> tuple[Host, Device, AppiumNode | None]:
     host = Host(hostname="dc-host", ip="10.0.0.10", os_type="linux", agent_port=5100, status=HostStatus.online)
@@ -43,7 +44,8 @@ async def _setup_host_and_device(
         name="Test Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=device_availability_status,
+        operational_state=device_operational_state,
+        hold=device_hold,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -74,7 +76,7 @@ async def test_connected_device_stays_available(db_session: AsyncSession) -> Non
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_endpoint_only_device_stays_available_when_health_passes(db_session: AsyncSession) -> None:
@@ -104,7 +106,7 @@ async def test_endpoint_only_device_stays_available_when_health_passes(db_sessio
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     health.assert_awaited_once()
     mock_stop.assert_not_called()
     assert host.status == HostStatus.online
@@ -114,7 +116,7 @@ async def test_endpoint_only_offline_device_auto_starts_when_health_passes(db_se
     _host, device, _ = await _setup_host_and_device(
         db_session,
         connection_target="192.168.1.50",
-        device_availability_status=DeviceAvailabilityStatus.offline,
+        device_operational_state=DeviceOperationalState.offline,
     )
     device.pack_id = "appium-roku-dlenroc"
     device.platform_id = "roku_network"
@@ -174,7 +176,7 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     mock_stop.assert_not_called()
     assert node is not None
     await db_session.refresh(node)
@@ -208,7 +210,7 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     mock_stop.assert_not_called()
     assert node is not None
     await db_session.refresh(node)
@@ -273,7 +275,7 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     mock_stop.assert_called_once()
     assert node is not None
     await db_session.refresh(node)
@@ -294,7 +296,7 @@ async def test_disconnected_device_keeps_node_error_when_stop_fails(db_session: 
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     mock_stop.assert_awaited_once()
     assert node is not None
     await db_session.refresh(node)
@@ -304,7 +306,7 @@ async def test_disconnected_device_keeps_node_error_when_stop_fails(db_session: 
 async def test_offline_disconnected_device_stops_leftover_node(db_session: AsyncSession) -> None:
     _host, device, node = await _setup_host_and_device(
         db_session,
-        device_availability_status=DeviceAvailabilityStatus.offline,
+        device_operational_state=DeviceOperationalState.offline,
         with_node=True,
     )
 
@@ -318,7 +320,7 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     stop.assert_awaited_once()
     record.assert_not_awaited()
     assert node is not None
@@ -333,13 +335,13 @@ async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available  # unchanged
+    assert device.operational_state == DeviceOperationalState.available  # unchanged
 
 
 async def test_reappeared_device_auto_starts(db_session: AsyncSession) -> None:
     """When a device reappears after being offline, its node should auto-start."""
     _host, _device, _ = await _setup_host_and_device(
-        db_session, device_availability_status=DeviceAvailabilityStatus.offline
+        db_session, device_operational_state=DeviceOperationalState.offline
     )
     # Mark as previously offline so it's recognized as a reappearance
     await track_previously_offline_device(db_session, "dc-001")
@@ -366,7 +368,7 @@ async def test_reappeared_device_auto_starts(db_session: AsyncSession) -> None:
 async def test_offline_device_auto_starts_on_startup_recovery(db_session: AsyncSession) -> None:
     """A connected offline device should auto-start on the first pass after manager startup."""
     _host, _device, _ = await _setup_host_and_device(
-        db_session, device_availability_status=DeviceAvailabilityStatus.offline
+        db_session, device_operational_state=DeviceOperationalState.offline
     )
 
     with (
@@ -390,9 +392,7 @@ async def test_offline_device_auto_starts_on_startup_recovery(db_session: AsyncS
 
 async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) -> None:
     """If auto-start fails for a reappeared device, it stays offline."""
-    _host, device, _ = await _setup_host_and_device(
-        db_session, device_availability_status=DeviceAvailabilityStatus.offline
-    )
+    _host, device, _ = await _setup_host_and_device(db_session, device_operational_state=DeviceOperationalState.offline)
     await track_previously_offline_device(db_session, "dc-001")
 
     with (
@@ -411,24 +411,22 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline  # still offline
+    assert device.operational_state == DeviceOperationalState.offline  # still offline
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)  # still tracked for next attempt
 
 
 async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
     """Maintenance devices should stay in maintenance when disconnected."""
-    _host, device, _ = await _setup_host_and_device(
-        db_session, device_availability_status=DeviceAvailabilityStatus.maintenance
-    )
+    _host, device, _ = await _setup_host_and_device(db_session, device_hold=DeviceHold.maintenance)
 
     with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.maintenance  # unchanged
+    assert device.hold == DeviceHold.maintenance  # unchanged
 
 
-async def test_connectivity_does_not_overwrite_busy_with_offline(
+async def test_connectivity_marks_busy_device_offline(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -440,7 +438,7 @@ async def test_connectivity_does_not_overwrite_busy_with_offline(
         db_session,
         host_id=db_host.id,
         name="busy-on-blip",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         auto_manage=True,
         verified=True,
     )
@@ -454,7 +452,7 @@ async def test_connectivity_does_not_overwrite_busy_with_offline(
     await device_connectivity._check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 async def test_connectivity_does_not_overwrite_reserved_with_offline(
@@ -469,7 +467,7 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
         db_session,
         host_id=db_host.id,
         name="reserved-on-blip",
-        availability_status=DeviceAvailabilityStatus.reserved,
+        hold=DeviceHold.reserved,
         auto_manage=True,
         verified=True,
     )
@@ -483,12 +481,12 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
     await device_connectivity._check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert device.hold == DeviceHold.reserved
 
 
 async def test_unhealthy_connected_device_triggers_policy_stop(db_session: AsyncSession) -> None:
     _host, device, _ = await _setup_host_and_device(
-        db_session, device_availability_status=DeviceAvailabilityStatus.available
+        db_session, device_operational_state=DeviceOperationalState.available
     )
 
     with (
@@ -527,7 +525,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
         db_session,
         host_id=db_host.id,
         name="maintenance-blip",
-        availability_status=DeviceAvailabilityStatus.maintenance,
+        hold=DeviceHold.maintenance,
         auto_manage=True,
         verified=True,
     )
@@ -541,7 +539,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     await device_connectivity._check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.maintenance
+    assert device.hold == DeviceHold.maintenance
 
     # No connectivity_lost event recorded
     events = (

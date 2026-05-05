@@ -35,7 +35,7 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
         identity_value="refresh-001",
         connection_target="refresh-001",
         name="Refresh One",
-        availability_status="available",
+        operational_state="available",
     )
     offline_device = await create_device_record(
         db_session,
@@ -43,7 +43,7 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
         identity_value="refresh-002",
         connection_target="refresh-002",
         name="Refresh Two",
-        availability_status="offline",
+        operational_state="offline",
     )
     offline_host_device = await create_device_record(
         db_session,
@@ -51,7 +51,7 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
         identity_value="refresh-003",
         connection_target="refresh-003",
         name="Refresh Three",
-        availability_status="available",
+        operational_state="available",
     )
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
@@ -87,7 +87,7 @@ async def test_property_refresh_continues_after_device_failure(
         identity_value="refresh-a",
         connection_target="refresh-a",
         name="Refresh A",
-        availability_status="available",
+        operational_state="available",
     )
     second = await create_device_record(
         db_session,
@@ -95,7 +95,7 @@ async def test_property_refresh_continues_after_device_failure(
         identity_value="refresh-b",
         connection_target="refresh-b",
         name="Refresh B",
-        availability_status="available",
+        operational_state="available",
     )
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
@@ -132,7 +132,7 @@ async def test_refresh_device_properties_preserves_discovery_identity_fields(
         platform_id="android_mobile",
         device_type="emulator",
         connection_type="virtual",
-        availability_status="available",
+        operational_state="available",
     )
 
     agent_properties = AsyncMock(

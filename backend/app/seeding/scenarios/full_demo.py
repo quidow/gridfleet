@@ -10,7 +10,8 @@ from app.models.appium_plugin import AppiumPlugin
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import (
     ConnectionType,
-    DeviceAvailabilityStatus,
+    DeviceHold,
+    DeviceOperationalState,
     DeviceType,
     HardwareHealthStatus,
 )
@@ -187,7 +188,7 @@ def _build_linux02_devices(ctx: SeedContext, host: Host) -> list[Device]:
                 manufacturer=mfr,
                 os_version=os_ver,
                 # offline because the host went down
-                availability_status=DeviceAvailabilityStatus.offline,
+                status=DeviceOperationalState.offline,
             )
         )
     return devices
@@ -386,17 +387,17 @@ def _apply_special_device_states(
 
     # 2 devices in maintenance
     for d in all_devices[3:5]:
-        d.availability_status = DeviceAvailabilityStatus.maintenance
+        d.hold = DeviceHold.maintenance
 
     # 1 device offline (device-only fault, host is online)
     offline_device = all_devices[5]
-    offline_device.availability_status = DeviceAvailabilityStatus.offline
+    offline_device.operational_state = DeviceOperationalState.offline
     offline_device.hardware_health_status = HardwareHealthStatus.unknown
     offline_device.hardware_telemetry_reported_at = None
 
     # 1 device reserved — mark availability; caller handles open reservation
     reserved_device = all_devices[6]
-    reserved_device.availability_status = DeviceAvailabilityStatus.reserved
+    reserved_device.hold = DeviceHold.reserved
 
     # 1 flapping device — the connectivity events are added in _build_events
     flapping_device = all_devices[7]
@@ -405,7 +406,7 @@ def _apply_special_device_states(
     # 1 excluded-from-run device — kept reserved and attached to an active run
     # later so the dashboard can surface the Excluded state.
     excluded_device = all_devices[9]
-    excluded_device.availability_status = DeviceAvailabilityStatus.reserved
+    excluded_device.hold = DeviceHold.reserved
 
     # 2 devices reporting a critical hardware health status (e.g. overheating
     # or low battery) so the dashboard shows the warning/critical UI states.
@@ -479,7 +480,7 @@ def _apply_lifecycle_policy_states(
     # Manual Recovery — another offline device with auto_manage disabled, so
     # the operator has to intervene by hand.
     manual_device = all_devices[12]
-    manual_device.availability_status = DeviceAvailabilityStatus.offline
+    manual_device.operational_state = DeviceOperationalState.offline
     manual_device.hardware_health_status = HardwareHealthStatus.unknown
     manual_device.hardware_telemetry_reported_at = None
     manual_device.auto_manage = False
@@ -563,14 +564,15 @@ def _build_runs(
     runnable = [
         d
         for d in all_devices
-        if d.availability_status not in {DeviceAvailabilityStatus.maintenance, DeviceAvailabilityStatus.offline}
+        if d.hold != DeviceHold.maintenance
+        and d.operational_state != DeviceOperationalState.offline
         and d not in {reserved_device, excluded_device}
     ]
     active_busy_candidates = [
         d
         for d in runnable
         if d.platform_id in ANDROID_MOBILE_PLATFORM_IDS
-        and d.availability_status is DeviceAvailabilityStatus.available
+        and d.operational_state is DeviceOperationalState.available
         and d.verified_at is not None
     ]
 
@@ -687,7 +689,7 @@ def _build_reservations_and_sessions(
     terminal_runs = [r for r in runs if r.state is not RunState.active]
 
     # Runnable pool for terminal runs
-    runnable = [d for d in all_devices if d.availability_status is not DeviceAvailabilityStatus.maintenance]
+    runnable = [d for d in all_devices if d.hold is not DeviceHold.maintenance]
 
     # Active runs: open reservations + running sessions. Seed one busy device,
     # one still-reserved device, and one excluded reservation in the live fleet.
@@ -695,7 +697,7 @@ def _build_reservations_and_sessions(
         session.add(make_reservation(ctx, run=run, device=device, released=False))
         run_started = run.started_at
         assert run_started is not None  # make_run always sets started_at
-        device.availability_status = DeviceAvailabilityStatus.busy
+        device.operational_state = DeviceOperationalState.busy
         session.add(
             make_session(
                 ctx,
@@ -1248,7 +1250,7 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
             continue
         if not _has_started_node_setup(device):
             continue
-        if device.availability_status in {DeviceAvailabilityStatus.offline, DeviceAvailabilityStatus.maintenance}:
+        if device.operational_state is DeviceOperationalState.offline or device.hold is DeviceHold.maintenance:
             continue
         nodes.append(
             AppiumNode(
@@ -1269,7 +1271,7 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
         device
         for device in devices
         if host_by_id[device.host_id].status is HostStatus.online
-        and device.availability_status is DeviceAvailabilityStatus.offline
+        and device.operational_state is DeviceOperationalState.offline
     ]
     for device in stopped_candidates[:2]:
         nodes.append(

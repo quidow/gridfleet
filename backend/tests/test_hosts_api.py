@@ -179,7 +179,7 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
         connection_target="dev-runtime-1",
         name="Runtime Phone",
         os_version="14",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1111, state=NodeState.running)
     db_session.add(node)

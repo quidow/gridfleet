@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
@@ -33,7 +33,7 @@ def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _mark_device_available(_db: AsyncSession, device: Device) -> None:
-    device.availability_status = DeviceAvailabilityStatus.available
+    device.operational_state = DeviceOperationalState.available
 
 
 async def _event_types_for_device(db_session: AsyncSession, device_id: object) -> list[DeviceEventType]:
@@ -54,7 +54,7 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
         name="Idle Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -65,7 +65,7 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
 
     await db_session.refresh(device)
     assert result == "stopped"
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["last_failure_reason"] == "ADB not responsive"
     assert policy["last_action"] == "auto_stopped"
@@ -82,7 +82,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
         name="Busy Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -95,7 +95,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
 
     await db_session.refresh(device)
     assert result == "deferred"
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["stop_pending"] is True
     assert policy["recovery_state"] == "waiting_for_session_end"
@@ -113,7 +113,7 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
         name="Reserved Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.reserved,
+        hold=DeviceHold.reserved,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -147,7 +147,7 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     assert run.reserved_devices[0]["exclusion_reason"] == "Health probe failed"
@@ -169,7 +169,7 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
         name="Deferred Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -210,7 +210,7 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     policy = await build_lifecycle_policy(db_session, device)
@@ -232,7 +232,7 @@ async def test_recovery_is_suppressed_when_auto_manage_disabled(
         name="Manual Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         auto_manage=False,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -259,7 +259,7 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
         name="Backoff Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -289,7 +289,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
         name="Recovering Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -340,7 +340,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
     assert recovered is True
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert device.hold == DeviceHold.reserved
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is False
     assert run.device_reservations[0].excluded is False
@@ -374,7 +374,7 @@ async def test_recovery_rejoin_publishes_availability_event(
         name="Recovering Device Event",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -423,10 +423,10 @@ async def test_recovery_rejoin_publishes_availability_event(
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is True
-    availability_events = [payload for name, payload in captured if name == "device.availability_changed"]
-    assert availability_events, "Recovery rejoin must publish availability_changed"
-    rejoin_events = [p for p in availability_events if p.get("new_availability_status") == "reserved"]
-    assert rejoin_events, f"Expected a 'reserved' transition; got: {availability_events}"
+    hold_events = [payload for name, payload in captured if name == "device.hold_changed"]
+    assert hold_events, "Recovery rejoin must publish hold_changed"
+    rejoin_events = [p for p in hold_events if p.get("new_hold") == "reserved"]
+    assert rejoin_events, f"Expected a 'reserved' transition; got: {hold_events}"
     assert "Rejoined run" in str(rejoin_events[0].get("reason"))
 
 
@@ -445,7 +445,7 @@ async def test_recovery_reloads_device_before_starting_node(
         name="Race Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -456,7 +456,7 @@ async def test_recovery_reloads_device_before_starting_node(
     async with db_session_maker() as other_session:
         current = await other_session.get(Device, device.id)
         assert current is not None
-        current.availability_status = DeviceAvailabilityStatus.available
+        current.operational_state = DeviceOperationalState.available
         other_session.add(
             AppiumNode(
                 device_id=device.id,
@@ -491,7 +491,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
         name="Flaky Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -542,7 +542,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
     assert recovered is False
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is True
     assert run.device_reservations[0].excluded is True
@@ -568,7 +568,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
         name="Retry Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.emulator,
         connection_type=ConnectionType.virtual,
@@ -604,7 +604,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
 
     await db_session.refresh(device)
     assert recovered is True
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     assert mock_probe.await_count == 2
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["last_action"] == "auto_recovered"
@@ -622,7 +622,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
         name="Restart Deferred Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -649,7 +649,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
 
     await db_session.refresh(reloaded)
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
-    assert reloaded.availability_status == DeviceAvailabilityStatus.offline
+    assert reloaded.operational_state == DeviceOperationalState.offline
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
 
@@ -668,7 +668,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
         name="Restart Backoff Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -728,7 +728,7 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
         name="Summary Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         lifecycle_policy_state={
             "stop_pending": True,
             "stop_pending_reason": "ADB not responsive",
@@ -794,7 +794,7 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
         name="Clear Pending Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -852,7 +852,7 @@ async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
         name="No Pending Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -892,7 +892,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
         name="Finish Healthy",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -939,10 +939,10 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
-    # handle_session_finished itself does not touch availability_status —
+    # handle_session_finished itself does not touch operational_state —
     # restoration is the caller's responsibility (covered by the integration
     # test test_session_sync_restores_busy_after_healthy_drop).
-    assert reloaded.availability_status == DeviceAvailabilityStatus.busy
+    assert reloaded.operational_state == DeviceOperationalState.busy
 
 
 async def test_handle_session_finished_executes_stop_when_unhealthy(
@@ -959,7 +959,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
         name="Finish Unhealthy",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -995,7 +995,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.availability_status == DeviceAvailabilityStatus.offline  # complete_auto_stop ran
+    assert reloaded.operational_state == DeviceOperationalState.offline  # complete_auto_stop ran
 
 
 async def test_handle_session_finished_executes_stop_when_node_not_running(
@@ -1012,7 +1012,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
         name="Finish Node Stopped",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -1043,7 +1043,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     await db_session.refresh(reloaded)
     assert reloaded.lifecycle_policy_state is not None
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
-    assert reloaded.availability_status == DeviceAvailabilityStatus.offline
+    assert reloaded.operational_state == DeviceOperationalState.offline
 
 
 async def test_handle_session_finished_returns_no_pending_when_intent_absent(
@@ -1060,7 +1060,7 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
         name="No Pending",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
@@ -1094,7 +1094,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
         name="TOCTOU Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={
@@ -1128,7 +1128,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     assert reloaded.lifecycle_policy_state["stop_pending"] is True
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_deferred"
     # Device must still be busy — caller (session_sync) leaves the new session in charge.
-    assert reloaded.availability_status == DeviceAvailabilityStatus.busy
+    assert reloaded.operational_state == DeviceOperationalState.busy
 
 
 async def test_handle_session_finished_clears_intent_on_healthy_projection(
@@ -1151,7 +1151,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         name="Stale Healthy",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={

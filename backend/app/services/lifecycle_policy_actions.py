@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import lifecycle_incident_service, maintenance_service, run_service
-from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
+from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import set_action, write_state
 from app.services.lifecycle_policy_state import state as policy_state
@@ -140,12 +140,9 @@ async def handle_node_crash(
     ``health_check_fail`` in addition to genuine Appium crashes — every
     invocation persists a ``node_crash`` event unconditionally.
 
-    Availability semantics (three distinct paths):
-    - Node running + ``stop_managed_node`` succeeds: availability delegates to
-      ``mark_node_stopped`` → ``_node_stopped_availability_status``, which
-      preserves ``busy/reserved/maintenance`` (operator/run intent precedes node
-      lifecycle, see ``docs/design/01-device-state-model.md`` Axis 2/Axis 5) and
-      otherwise sets ``offline``. This function makes no direct availability write.
+    Operational-state semantics (three distinct paths):
+    - Node running + ``stop_managed_node`` succeeds: operational state delegates
+      to ``mark_node_stopped`` and hold is preserved independently.
     - Node running + ``stop_managed_node`` raises: re-acquires both row locks
       (Device → AppiumNode, documented order) before forcing ``offline`` and
       setting ``node.state = NodeState.error``.
@@ -192,9 +189,9 @@ async def handle_node_crash(
 
             device = await device_locking.lock_device(db, device.id, load_sessions=True)
             locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-            await set_device_availability_status(
+            await set_operational_state(
                 device,
-                DeviceAvailabilityStatus.offline,
+                DeviceOperationalState.offline,
                 reason=f"Node crash recorded ({source}): {reason}",
             )
             if locked_node is not None:
@@ -202,9 +199,9 @@ async def handle_node_crash(
                 locked_node.pid = None
             await db.commit()
     else:
-        await set_device_availability_status(
+        await set_operational_state(
             device,
-            DeviceAvailabilityStatus.offline,
+            DeviceOperationalState.offline,
             reason=f"Node crash recorded ({source}): {reason}",
         )
         if node is not None and node.state == NodeState.running:

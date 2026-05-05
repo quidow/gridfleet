@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services import device_health
 
@@ -25,7 +25,7 @@ async def test_availability_enough_devices(client: AsyncClient, db_session: Asyn
                 name=f"Phone {i}",
                 os_version="14",
                 host_id=db_host.id,
-                availability_status=DeviceAvailabilityStatus.available,
+                operational_state=DeviceOperationalState.available,
                 verified_at=datetime.now(UTC),
                 device_type=DeviceType.real_device,
                 connection_type=ConnectionType.usb,
@@ -58,7 +58,7 @@ async def test_availability_not_enough_devices(
             name="Solo Phone",
             os_version="14",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -75,7 +75,7 @@ async def test_availability_not_enough_devices(
             name="Busy Phone",
             os_version="14",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.busy,
+            operational_state=DeviceOperationalState.busy,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -105,7 +105,7 @@ async def test_availability_excludes_unhealthy_devices(
         name="Unhealthy Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -131,7 +131,7 @@ async def test_availability_excludes_unhealthy_devices(
     device_resp = await client.get(f"/api/devices/{unhealthy.id}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    assert device_data["availability_status"] == DeviceAvailabilityStatus.offline.value
+    assert device_data["operational_state"] == DeviceOperationalState.offline.value
     assert device_data["health_summary"]["healthy"] is False
 
 
@@ -150,7 +150,7 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
         name="Recovered Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -176,7 +176,7 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
         mark_offline=True,
     )
     await db_session.commit()
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
 
     await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await device_health.update_session_viability(db_session, device, status="passed", error=None)
@@ -191,7 +191,7 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     await db_session.commit()
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
     resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
     assert resp.status_code == 200
@@ -212,7 +212,7 @@ async def test_availability_wrong_platform(client: AsyncClient, db_session: Asyn
             name="iPhone",
             os_version="17",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -243,7 +243,7 @@ async def test_device_logs_no_node(client: AsyncClient, db_session: AsyncSession
         name="Log Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -273,7 +273,7 @@ async def test_availability_excludes_unverified_devices(
             name="Verified Phone",
             os_version="14",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -290,7 +290,7 @@ async def test_availability_excludes_unverified_devices(
             name="Unverified Phone",
             os_version="14",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified_at=None,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,

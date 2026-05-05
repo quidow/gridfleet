@@ -8,13 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import grid_service, lifecycle_policy, run_service, session_service
-from app.services.device_availability import set_device_availability_status
-from app.services.device_availability_resolution import restore_post_busy_availability_status
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
 
@@ -164,7 +163,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
         from app.services import device_locking
 
         locked_device = await device_locking.lock_device(db, device.id)
-        await set_device_availability_status(locked_device, DeviceAvailabilityStatus.busy, publish_event=False)
+        await set_operational_state(locked_device, DeviceOperationalState.busy, publish_event=False)
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         session_service.queue_session_started_event(
             db,
@@ -221,11 +220,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
                     # check and the locked check inside the helper; leave the
                     # device busy so the new session keeps it.
                     continue
-            if device and device.availability_status == DeviceAvailabilityStatus.busy:
+            if device and device.operational_state == DeviceOperationalState.busy:
                 from app.services import device_locking
 
                 locked_device = await device_locking.lock_device(db, device.id)
-                if locked_device.availability_status == DeviceAvailabilityStatus.busy:
+                if locked_device.operational_state == DeviceOperationalState.busy:
                     # Authoritative recheck under the row lock. ``handle_session_finished``
                     # only does the locked running-session check when ``stop_pending``
                     # is set; in the common no-deferred-stop path it returns NO_PENDING
@@ -240,7 +239,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
                     )
                     fresh_running = (await db.execute(fresh_running_stmt)).scalar_one_or_none()
                     if fresh_running is None:
-                        await restore_post_busy_availability_status(db, locked_device)
+                        await set_operational_state(
+                            locked_device,
+                            await ready_operational_state(db, locked_device),
+                            reason="Session ended",
+                        )
 
     await _sweep_stale_stop_pending(db)
     await db.commit()

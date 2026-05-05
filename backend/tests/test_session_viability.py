@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services.session_viability import (
     _check_due_devices,
@@ -35,7 +35,7 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
         name="Config Cleanup Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_config={"session_viability": {"status": "failed"}},
         device_type=DeviceType.real_device,
@@ -72,7 +72,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
         name="Probe Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -112,7 +112,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     assert persisted is not None
     assert persisted["status"] == "passed"
     assert persisted["last_succeeded_at"] == persisted["last_attempted_at"]
-    assert loaded_device.availability_status == DeviceAvailabilityStatus.available
+    assert loaded_device.operational_state == DeviceOperationalState.available
 
 
 async def test_recovery_session_viability_probe_allows_offline_device(
@@ -129,7 +129,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
         name="Recovery Probe Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -163,7 +163,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     assert result["status"] == "passed"
     await db_session.refresh(loaded_device)
-    assert loaded_device.availability_status == DeviceAvailabilityStatus.available
+    assert loaded_device.operational_state == DeviceOperationalState.available
 
 
 async def test_run_session_viability_probe_uses_running_avd_active_target(
@@ -180,7 +180,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
         name="Pixel 6 AVD",
         os_version="15",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.emulator,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -232,7 +232,7 @@ async def test_run_session_viability_probe_rejects_non_available_device(
         name="Busy Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -260,7 +260,7 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
         name="Due Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -275,7 +275,7 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
         name="Recent Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,

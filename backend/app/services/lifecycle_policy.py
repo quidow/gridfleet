@@ -6,14 +6,14 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import device_health, lifecycle_incident_service, lifecycle_policy_summary, run_service
-from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
+from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.lifecycle_policy_actions import (
     complete_auto_stop,
     exclude_run_if_needed,
@@ -181,7 +181,7 @@ async def handle_health_failure(
     # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
     write_state(device, current_state)
 
-    if device.availability_status == DeviceAvailabilityStatus.maintenance:
+    if device.hold == DeviceHold.maintenance:
         await record_recovery_suppressed(
             db,
             device,
@@ -328,7 +328,7 @@ async def attempt_auto_recovery(
     if (
         node is not None
         and node.state == NodeState.running
-        and device.availability_status != DeviceAvailabilityStatus.offline
+        and device.operational_state != DeviceOperationalState.offline
         and not run_service.reservation_entry_is_excluded(entry)
     ):
         return False
@@ -353,7 +353,7 @@ async def attempt_auto_recovery(
             suppression_reason="Device setup or verification is incomplete",
             run=run,
         )
-    if device.availability_status == DeviceAvailabilityStatus.maintenance:
+    if device.hold == DeviceHold.maintenance:
         return await record_recovery_suppressed(
             db,
             device,
@@ -538,16 +538,16 @@ async def attempt_auto_recovery(
                 DeviceEventType.node_restart,
                 {"recovered_from": source, "reason": reason},
             )
-            await set_device_availability_status(
+            await set_hold(
                 device,
-                DeviceAvailabilityStatus.reserved,
+                DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
             )
             await db.commit()
         else:
-            await set_device_availability_status(
+            await set_hold(
                 device,
-                DeviceAvailabilityStatus.reserved,
+                DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
             )
             await db.commit()
@@ -558,15 +558,10 @@ async def attempt_auto_recovery(
             DeviceEventType.node_restart,
             {"recovered_from": source, "reason": reason},
         )
-        if device.availability_status != DeviceAvailabilityStatus.available:
-            next_status = (
-                DeviceAvailabilityStatus.available
-                if await is_ready_for_use_async(db, device)
-                else DeviceAvailabilityStatus.offline
-            )
-            await set_device_availability_status(
+        if device.operational_state != DeviceOperationalState.available:
+            await set_operational_state(
                 device,
-                next_status,
+                await ready_operational_state(db, device),
                 reason=f"Connectivity restored ({source}): {reason}",
             )
         await db.commit()

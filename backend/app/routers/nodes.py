@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold
 from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
 from app.services import device_health, run_service
@@ -34,7 +34,7 @@ async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
 
 
 def _assert_startable_outside_maintenance(device: Device) -> None:
-    if device.availability_status == DeviceAvailabilityStatus.maintenance:
+    if device.hold == DeviceHold.maintenance:
         raise HTTPException(status_code=409, detail="Device is in maintenance mode")
 
 

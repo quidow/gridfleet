@@ -40,6 +40,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_EVENT_RENAMES = {
+    "device.availability_changed": ("device.operational_state_changed", "device.hold_changed"),
+}
+
+
+def _migrate_legacy_event_names(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in values:
+        replacements = _LEGACY_EVENT_RENAMES.get(name, (name,))
+        for replacement in replacements:
+            if replacement in seen:
+                continue
+            out.append(replacement)
+            seen.add(replacement)
+    return out
+
 
 def _cross_field_validate(key: str, value: SettingValue) -> str | None:
     """Enforce invariants that span multiple settings or env state.
@@ -132,7 +149,8 @@ class SettingsService:
 
     def _normalize_value(self, key: str, value: SettingValue) -> SettingValue:
         if key == "notifications.toast_events":
-            normalized = normalize_public_event_names(value)
+            migrated = _migrate_legacy_event_names(value if isinstance(value, list) else [])
+            normalized = normalize_public_event_names(migrated)
             if normalized:
                 return normalized
             return list(self._defaults.get(key, DEFAULT_TOAST_EVENT_NAMES))

@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
@@ -49,7 +49,7 @@ async def _create_available_device(
         identity_scheme=identity_scheme,
         identity_scope=identity_scope,
         os_version="14",
-        availability_status="available",
+        operational_state="available",
     )
     return {"id": str(device.id), "name": device.name}
 
@@ -89,7 +89,7 @@ async def test_find_matching_devices_filters_tags_before_readiness(
         identity_value="tag-match",
         connection_target="tag-match",
         name="Tag Match",
-        availability_status="available",
+        operational_state="available",
         tags={"pool": "smoke"},
     )
     nonmatching = await create_device_record(
@@ -98,7 +98,7 @@ async def test_find_matching_devices_filters_tags_before_readiness(
         identity_value="tag-miss",
         connection_target="tag-miss",
         name="Tag Miss",
-        availability_status="available",
+        operational_state="available",
         tags={"pool": "full"},
     )
     readiness_checked: list[uuid.UUID] = []
@@ -228,7 +228,7 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
         connection_target="run-unhealthy-1",
         name="Unhealthy Candidate",
         os_version="14",
-        availability_status="available",
+        operational_state="available",
     )
     await device_health.update_device_checks(
         db_session,
@@ -248,7 +248,7 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
 
     assert resp.status_code == 409
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 async def test_create_run_rejects_removed_wait_field(client: AsyncClient) -> None:
@@ -473,7 +473,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
         identity_value="cancel-live-session",
         connection_target="cancel-live-session",
         name="Cancel Live Session",
-        availability_status="busy",
+        operational_state="busy",
     )
     run_obj = await create_reserved_run(db_session, name="Cancel Live Session Run", devices=[device])
     session = Session(
@@ -503,7 +503,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
     assert session.status == SessionStatus.error
     assert session.error_type == "run_released"
     assert session.ended_at is not None
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
@@ -520,7 +520,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
         identity_value="cancel-delete-fails",
         connection_target="cancel-delete-fails",
         name="Cancel Delete Fails",
-        availability_status="busy",
+        operational_state="busy",
     )
     run_obj = await create_reserved_run(db_session, name="Cancel Delete Fails Run", devices=[device])
     session = Session(
@@ -545,7 +545,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     await db_session.refresh(device)
     assert session.status == SessionStatus.running
     assert session.ended_at is None
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
     reservation = (
         await db_session.execute(
@@ -615,7 +615,7 @@ async def test_force_release(client: AsyncClient, db_session: AsyncSession, defa
     # Verify device is back to available
     device_resp = await client.get("/api/devices")
     devices = device_resp.json()
-    assert any(d["availability_status"] == "available" for d in devices)
+    assert any(d["operational_state"] == "available" for d in devices)
 
     reservation_result = await db_session.execute(
         select(DeviceReservation).where(DeviceReservation.run_id == uuid.UUID(run["id"]))
@@ -646,7 +646,7 @@ async def test_force_release_restores_busy_run_devices(
     )
     device_row = await db_session.get(Device, device_id)
     assert device_row is not None
-    device_row.availability_status = DeviceAvailabilityStatus.busy
+    device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
     async def fake_terminate(_session_id: str) -> bool:
@@ -658,7 +658,7 @@ async def test_force_release_restores_busy_run_devices(
     assert resp.status_code == 200
 
     await db_session.refresh(device_row)
-    assert device_row.availability_status == DeviceAvailabilityStatus.available
+    assert device_row.operational_state == DeviceOperationalState.available
 
     session_result = await db_session.execute(
         select(Session).where(Session.session_id == "force-release-running-session")
@@ -695,7 +695,7 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
     device_resp = await client.get(f"/api/devices/{device_a['id']}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    assert device_data["availability_status"] == DeviceAvailabilityStatus.maintenance.value
+    assert device_data["hold"] == DeviceHold.maintenance.value
     assert device_data["reservation"]["excluded"] is True
     assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
     assert device_data["health_summary"]["healthy"] is False
@@ -720,7 +720,7 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 
     reserved_resp = await client.get(f"/api/devices/{reserved['id']}")
     assert reserved_resp.status_code == 200
-    assert reserved_resp.json()["availability_status"] == DeviceAvailabilityStatus.reserved.value
+    assert reserved_resp.json()["hold"] == DeviceHold.reserved.value
 
 
 async def test_complete_run_releases_reservation_rows(
@@ -803,7 +803,7 @@ async def test_fetch_session_counts_groups_by_status(
         host_id=default_host_id,
         identity_value="fsc-001",
         name="Device FSC1",
-        availability_status="available",
+        operational_state="available",
     )
     run = await run_service.create_run(
         db_session,
@@ -843,7 +843,7 @@ async def test_list_runs_returns_session_counts_per_run(
         host_id=default_host_id,
         identity_value="lsc-001",
         name="Device LSC1",
-        availability_status="available",
+        operational_state="available",
     )
     run = await run_service.create_run(
         db_session,
@@ -881,7 +881,7 @@ async def test_get_run_detail_returns_session_counts(
         host_id=default_host_id,
         identity_value="dsc-001",
         name="Device DSC1",
-        availability_status="available",
+        operational_state="available",
     )
     run = await run_service.create_run(
         db_session,
@@ -916,7 +916,7 @@ async def test_cancel_run_response_includes_session_counts(
         host_id=default_host_id,
         identity_value="csc-001",
         name="Device CSC1",
-        availability_status="available",
+        operational_state="available",
     )
     created = await _create_run(client)
     run_id = uuid.UUID(created["id"])
@@ -989,7 +989,7 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
             db_session,
             host_id=db_host.id,
             name=f"d{i}",
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified=True,
         )
         for i in range(3)

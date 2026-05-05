@@ -1,8 +1,8 @@
 """Row-level locking helper for the Device table.
 
-INVARIANT: Any code path that writes ``Device.availability_status`` or
-``Device.lifecycle_policy_state`` must acquire the row lock via ``lock_device``
-within the same transaction as the write.
+INVARIANT: Any code path that writes ``Device.operational_state``,
+``Device.hold``, or ``Device.lifecycle_policy_state`` must acquire the row lock
+via ``lock_device`` within the same transaction as the write.
 
 DEADLOCK AVOIDANCE: Multi-row callers must use ``lock_devices``, which orders
 ids ascending. Mixing single-row and batch callers stays deadlock-free as long

@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -21,9 +21,9 @@ from app.services.agent_operations import (
 from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
-from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
+from app.services.device_state import legacy_label_for_audit, set_operational_state
 from app.services.node_service import stop_node_via_agent as stop_node_via_agent_helper
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
@@ -32,11 +32,6 @@ from app.services.settings_service import settings_service
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 LOOP_NAME = "device_connectivity"
-ACTIVE_STATES = {
-    DeviceAvailabilityStatus.busy,
-    DeviceAvailabilityStatus.reserved,
-    DeviceAvailabilityStatus.maintenance,
-}
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -275,7 +270,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         summary=summary,
                     )
 
-                if device.availability_status == DeviceAvailabilityStatus.offline:
+                if device.operational_state == DeviceOperationalState.offline:
                     if not await is_ready_for_use_async(db, device):
                         logger.debug("Device %s is connected but still awaiting setup/verification", device.name)
                         await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
@@ -310,7 +305,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     health_result = await _get_device_health(device)
                     if health_result is not None and health_result.get("healthy", False):
                         await device_health.update_device_checks(db, device, healthy=True, summary="Healthy")
-                        if device.availability_status == DeviceAvailabilityStatus.offline:
+                        if device.operational_state == DeviceOperationalState.offline:
                             if not await is_ready_for_use_async(db, device):
                                 logger.debug("Device %s is healthy but still awaiting setup/verification", device.name)
                                 await control_plane_state_store.delete_value(
@@ -358,12 +353,12 @@ async def _check_connectivity(db: AsyncSession) -> None:
                 # Maintenance devices are placed there by operators; transient
                 # disconnects are not actionable — skip silently to match pre-PR
                 # behavior (no connectivity_lost event, no lifecycle write).
-                if device.availability_status == DeviceAvailabilityStatus.maintenance:
+                if device.hold == DeviceHold.maintenance:
                     continue
                 if not device.auto_manage:
                     continue
                 stopped_node = await _stop_disconnected_node(db, device)
-                if device.availability_status == DeviceAvailabilityStatus.offline:
+                if device.operational_state == DeviceOperationalState.offline:
                     if stopped_node is not None:
                         await control_plane_state_store.set_value(
                             db,
@@ -372,30 +367,35 @@ async def _check_connectivity(db: AsyncSession) -> None:
                             True,
                         )
                     continue
-                if device.availability_status in ACTIVE_STATES:
+                if device.operational_state == DeviceOperationalState.busy or device.hold is not None:
                     logger.warning(
-                        "Device %s (%s) appears disconnected on host %s but is %s — leaving status unchanged",
+                        "Device %s (%s) appears disconnected on host %s but is %s",
                         device.name,
                         device.identity_value,
                         host.hostname,
-                        device.availability_status.value,
+                        legacy_label_for_audit(device),
                     )
                     await record_event(
                         db,
                         device.id,
                         DeviceEventType.connectivity_lost,
-                        {"reason": "Device disconnected (kept active state)"},
+                        {"reason": "Device disconnected"},
                     )
                     await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
-                    if locked_device.availability_status in ACTIVE_STATES:
+                    if locked_device.operational_state == DeviceOperationalState.busy or locked_device.hold is not None:
+                        await set_operational_state(
+                            locked_device,
+                            DeviceOperationalState.offline,
+                            reason="Device disconnected",
+                        )
                         await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
                         await control_plane_state_store.set_value(
                             db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
                         )
                     else:
                         logger.info(
-                            "Device %s (%s) left active state before lifecycle write — skipping",
+                            "Device %s (%s) left held/busy state before lifecycle write — skipping",
                             locked_device.name,
                             locked_device.identity_value,
                         )
@@ -414,10 +414,10 @@ async def _check_connectivity(db: AsyncSession) -> None:
                 )
                 await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                 locked_device = await device_locking.lock_device(db, device.id)
-                if locked_device.availability_status not in ACTIVE_STATES:
-                    await set_device_availability_status(
+                if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
+                    await set_operational_state(
                         locked_device,
-                        DeviceAvailabilityStatus.offline,
+                        DeviceOperationalState.offline,
                         reason="Device disconnected",
                     )
                     await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
@@ -429,7 +429,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         "Device %s (%s) transitioned to %s before offline write — skipping",
                         locked_device.name,
                         locked_device.identity_value,
-                        locked_device.availability_status.value,
+                        legacy_label_for_audit(locked_device),
                     )
 
     await db.commit()

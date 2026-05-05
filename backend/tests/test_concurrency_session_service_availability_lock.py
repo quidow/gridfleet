@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.services import device_locking, maintenance_service, session_service
 from tests.helpers import create_device
@@ -45,7 +45,7 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
         db_session,
         host_id=default_host_id,
         name="session-register-maintenance-race",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     device_id = device.id
@@ -53,19 +53,19 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
 
     entered_busy_write = asyncio.Event()
     allow_busy_write = asyncio.Event()
-    original_set = session_service.set_device_availability_status
+    original_set = session_service.set_operational_state
 
     async def gated_set(
         dev: Device,
-        new_status: DeviceAvailabilityStatus,
+        new_status: DeviceOperationalState,
         **kwargs: object,
     ) -> bool:
-        if new_status == DeviceAvailabilityStatus.busy:
+        if new_status == DeviceOperationalState.busy:
             entered_busy_write.set()
             await asyncio.wait_for(allow_busy_write.wait(), timeout=2.0)
         return await original_set(dev, new_status, **kwargs)
 
-    monkeypatch.setattr(session_service, "set_device_availability_status", gated_set)
+    monkeypatch.setattr(session_service, "set_operational_state", gated_set)
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
@@ -88,9 +88,12 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
     )
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final == DeviceAvailabilityStatus.maintenance
+    assert final.operational_state == DeviceOperationalState.busy
+    assert final.hold == DeviceHold.maintenance
 
 
 async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
@@ -103,7 +106,7 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
         db_session,
         host_id=default_host_id,
         name="session-finish-maintenance-race",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified=True,
     )
     device_id = device.id
@@ -113,14 +116,14 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
 
     entered_restore = asyncio.Event()
     allow_restore = asyncio.Event()
-    original_restore = session_service.restore_post_busy_availability_status
+    original_restore = session_service.ready_operational_state
 
-    async def gated_restore(db: AsyncSession, dev: Device, **kwargs: object) -> DeviceAvailabilityStatus:
+    async def gated_restore(db: AsyncSession, dev: Device) -> DeviceOperationalState:
         entered_restore.set()
         await asyncio.wait_for(allow_restore.wait(), timeout=2.0)
-        return await original_restore(db, dev, **kwargs)
+        return await original_restore(db, dev)
 
-    monkeypatch.setattr(session_service, "restore_post_busy_availability_status", gated_restore)
+    monkeypatch.setattr(session_service, "ready_operational_state", gated_restore)
 
     async def finish_session() -> None:
         async with db_session_maker() as session:
@@ -137,6 +140,9 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
     )
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final == DeviceAvailabilityStatus.maintenance
+    assert final.operational_state == DeviceOperationalState.available
+    assert final.hold == DeviceHold.maintenance

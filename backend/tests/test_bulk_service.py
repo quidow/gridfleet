@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import bulk_service
 from app.services.node_service_types import NodeManagerError
@@ -60,14 +60,14 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             db_session,
             host_id=db_host.id,
             name="bulk-manager-ok",
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified=True,
         ),
         await create_device(
             db_session,
             host_id=db_host.id,
             name="bulk-manager-fail",
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified=True,
         ),
     ]

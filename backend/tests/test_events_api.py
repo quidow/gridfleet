@@ -25,19 +25,19 @@ def reset_bus() -> None:
 
 
 async def test_notifications_filters_recent_events(client: AsyncClient) -> None:
-    await event_bus.publish("device.availability_changed", {"device_id": "dev-1"})
+    await event_bus.publish("device.operational_state_changed", {"device_id": "dev-1"})
     await event_bus.publish("session.started", {"device_id": "dev-2"})
-    response = await client.get("/api/notifications", params={"types": "device.availability_changed"})
+    response = await client.get("/api/notifications", params={"types": "device.operational_state_changed"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1
     assert len(body["items"]) == 1
-    assert body["items"][0]["type"] == "device.availability_changed"
+    assert body["items"][0]["type"] == "device.operational_state_changed"
 
 
 async def test_notifications_paginate_newest_first_with_total(client: AsyncClient) -> None:
-    await event_bus.publish("device.availability_changed", {"n": 1})
+    await event_bus.publish("device.operational_state_changed", {"n": 1})
     await event_bus.publish("session.started", {"n": 2})
     await event_bus.publish("run.created", {"n": 3})
 
@@ -48,7 +48,7 @@ async def test_notifications_paginate_newest_first_with_total(client: AsyncClien
     assert body["total"] == 3
     assert body["limit"] == 2
     assert body["offset"] == 1
-    assert [item["type"] for item in body["items"]] == ["session.started", "device.availability_changed"]
+    assert [item["type"] for item in body["items"]] == ["session.started", "device.operational_state_changed"]
 
 
 async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) -> None:
@@ -69,24 +69,24 @@ async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) ->
 async def test_event_stream_filters_types_and_device_ids() -> None:
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
-        types="device.availability_changed",
+        types="device.operational_state_changed",
         device_ids="dev-1",
     )
     iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
 
     task = asyncio.create_task(iterator.__anext__())
     await event_bus.publish("session.started", {"device_id": "dev-1"})
-    await event_bus.publish("device.availability_changed", {"device_id": "dev-2"})
+    await event_bus.publish("device.operational_state_changed", {"device_id": "dev-2"})
     await event_bus.publish(
-        "device.availability_changed",
-        {"device_id": "dev-1", "new_availability_status": "available"},
+        "device.operational_state_changed",
+        {"device_id": "dev-1", "new_operational_state": "available"},
     )
 
     payload = await asyncio.wait_for(task, 1)
-    assert payload["event"] == "device.availability_changed"
+    assert payload["event"] == "device.operational_state_changed"
     data = json.loads(payload["data"])
     assert data["data"]["device_id"] == "dev-1"
-    assert data["data"]["new_availability_status"] == "available"
+    assert data["data"]["new_operational_state"] == "available"
 
     await iterator.aclose()
 
@@ -116,9 +116,9 @@ async def test_event_stream_unsubscribes_after_client_disconnect() -> None:
     iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
     assert event_bus.subscriber_count == 1
 
-    await event_bus.publish("device.availability_changed", {"device_id": "dev-1"})
+    await event_bus.publish("device.operational_state_changed", {"device_id": "dev-1"})
     payload = await asyncio.wait_for(iterator.__anext__(), 1)
-    assert payload["event"] == "device.availability_changed"
+    assert payload["event"] == "device.operational_state_changed"
     with suppress(asyncio.CancelledError, StopAsyncIteration):
         await iterator.athrow(asyncio.CancelledError())
     assert event_bus.subscriber_count == 0

@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceOperationalState
 from app.services import appium_capability_keys, device_health
 from app.services.agent_operations import appium_start, appium_status, appium_stop, response_json_dict
-from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.event_bus import queue_event_for_session
 from app.services.node_service_common import (
     build_appium_driver_caps,
@@ -158,26 +158,6 @@ def upsert_node(
     return node
 
 
-async def _node_started_availability_status(db: AsyncSession, device: Device) -> DeviceAvailabilityStatus:
-    if device.availability_status in {
-        DeviceAvailabilityStatus.busy,
-        DeviceAvailabilityStatus.reserved,
-        DeviceAvailabilityStatus.maintenance,
-    }:
-        return device.availability_status
-    return await ready_device_availability_status(db, device)
-
-
-def _node_stopped_availability_status(device: Device) -> DeviceAvailabilityStatus:
-    if device.availability_status in {
-        DeviceAvailabilityStatus.busy,
-        DeviceAvailabilityStatus.reserved,
-        DeviceAvailabilityStatus.maintenance,
-    }:
-        return device.availability_status
-    return DeviceAvailabilityStatus.offline
-
-
 async def mark_node_started(
     db: AsyncSession,
     device: Device,
@@ -217,8 +197,7 @@ async def mark_node_started(
             capability_key=key,
             value=value,
         )
-    next_status = await _node_started_availability_status(db, device)
-    await set_device_availability_status(device, next_status)
+    await set_operational_state(device, await ready_operational_state(db, device), reason="Node started")
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -250,7 +229,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    await set_device_availability_status(device, _node_stopped_availability_status(device))
+    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped")
     await device_health.apply_node_state_transition(
         db,
         device,

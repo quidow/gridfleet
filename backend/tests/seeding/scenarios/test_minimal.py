@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
@@ -38,9 +38,7 @@ async def test_minimal_scenario_populates_baseline(db_session) -> None:  # noqa:
         if session.run_id in active_run_ids and session.status is SessionStatus.running and session.ended_at is None
     }
     assert active_device_ids
-    assert any(device.availability_status is DeviceAvailabilityStatus.busy for device in devices)
+    assert any(device.operational_state is DeviceOperationalState.busy for device in devices)
     assert all(
-        device.availability_status is DeviceAvailabilityStatus.busy
-        for device in devices
-        if device.id in active_device_ids
+        device.operational_state is DeviceOperationalState.busy for device in devices if device.id in active_device_ids
     )

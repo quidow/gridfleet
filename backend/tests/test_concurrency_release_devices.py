@@ -6,13 +6,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from app.models.test_run import RunState, TestRun
 from app.services import run_service
-from app.services.device_availability import set_device_availability_status
 from app.services.device_readiness import is_ready_for_use_async
+from app.services.device_state import set_operational_state
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -33,7 +33,8 @@ async def test_release_devices_does_not_stomp_offline_writer(
         db_session,
         host_id=db_host.id,
         name="release-target",
-        availability_status=DeviceAvailabilityStatus.reserved,
+        operational_state=DeviceOperationalState.available,
+        hold=DeviceHold.reserved,
         verified=True,
     )
     run = TestRun(
@@ -78,9 +79,9 @@ async def test_release_devices_does_not_stomp_offline_writer(
         async with db_session_maker() as session:
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
-            await set_device_availability_status(
+            await set_operational_state(
                 device_obj,
-                DeviceAvailabilityStatus.offline,
+                DeviceOperationalState.offline,
                 publish_event=False,
             )
             await session.commit()
@@ -95,9 +96,9 @@ async def test_release_devices_does_not_stomp_offline_writer(
         ).scalar_one()
 
     assert reservation_row.released_at is not None
-    assert device_row.availability_status in {
-        DeviceAvailabilityStatus.available,
-        DeviceAvailabilityStatus.offline,
+    assert device_row.operational_state in {
+        DeviceOperationalState.available,
+        DeviceOperationalState.offline,
     }
 
 
@@ -122,7 +123,8 @@ async def test_release_devices_serializes_with_concurrent_writer(
         db_session,
         host_id=db_host.id,
         name="serial-target",
-        availability_status=DeviceAvailabilityStatus.reserved,
+        operational_state=DeviceOperationalState.available,
+        hold=DeviceHold.reserved,
         verified=True,
     )
     run = TestRun(
@@ -150,8 +152,8 @@ async def test_release_devices_serializes_with_concurrent_writer(
     device_id = device.id
     run_id = run.id
 
-    # Set by the patched is_ready_for_use_async when _release_devices has
-    # already read the device row (plain SELECT, no lock today).
+    # Set by the patched readiness helper after _release_devices has locked
+    # and read the device row.
     stomper_can_go = asyncio.Event()
 
     original_is_ready = is_ready_for_use_async
@@ -170,16 +172,16 @@ async def test_release_devices_serializes_with_concurrent_writer(
             assert run_obj is not None
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
-            with patch("app.services.run_service.is_ready_for_use_async", racing_is_ready):
+            with patch("app.services.device_state.is_ready_for_use_async", racing_is_ready):
                 await run_service._release_devices(session, run_obj)
 
     async def stomper() -> None:
         await stomper_can_go.wait()
         async with db_session_maker() as session:
             device_obj = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
-            await set_device_availability_status(
+            await set_operational_state(
                 device_obj,
-                DeviceAvailabilityStatus.offline,
+                DeviceOperationalState.offline,
                 publish_event=False,
             )
             await session.commit()
@@ -201,7 +203,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
     # After Task 6 adds SELECT FOR UPDATE: the releaser holds the row lock,
     # the stomper's UPDATE blocks until the releaser commits, so the final
     # committed state (after both transactions complete) is "offline".
-    assert device_row.availability_status == DeviceAvailabilityStatus.offline, (
-        f"Expected offline but got {device_row.availability_status.value} — "
+    assert device_row.operational_state == DeviceOperationalState.offline, (
+        f"Expected offline but got {device_row.operational_state.value} — "
         "_release_devices stomped the concurrent offline write (missing row lock)"
     )

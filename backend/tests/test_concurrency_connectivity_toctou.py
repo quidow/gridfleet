@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.services import device_connectivity, device_locking
 from tests.helpers import create_device
@@ -29,7 +29,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         host_id=db_host.id,
         name="conn-offline-recheck",
         connection_target="missing-target",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
         auto_manage=True,
     )
@@ -62,16 +62,16 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
-            locked.availability_status = DeviceAvailabilityStatus.busy
+            locked.operational_state = DeviceOperationalState.busy
             await session.commit()
         racer_done.set()
 
     await asyncio.gather(runner(), racer())
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).scalar_one()
 
-    assert final == DeviceAvailabilityStatus.busy, (
+    assert final == DeviceOperationalState.busy, (
         f"Expected busy but got {final.value} - _check_connectivity overwrote "
         "a concurrent active-state transition with stale offline status"
     )
@@ -91,7 +91,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         host_id=db_host.id,
         name="conn-active-recheck",
         connection_target="missing-active-target",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified=True,
         auto_manage=True,
     )
@@ -129,7 +129,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
-            locked.availability_status = DeviceAvailabilityStatus.available
+            locked.operational_state = DeviceOperationalState.available
             await session.commit()
         racer_done.set()
 
@@ -138,6 +138,6 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
     note_connectivity_loss.assert_not_awaited()
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).scalar_one()
 
-    assert final == DeviceAvailabilityStatus.available
+    assert final == DeviceOperationalState.available

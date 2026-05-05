@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus, OSType
 from app.services import control_plane_state_store, device_health
@@ -100,7 +100,7 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
         name="HB Device",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -115,7 +115,7 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     await db_session.refresh(host)
     await db_session.refresh(device)
     assert host.status == HostStatus.offline
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 async def test_host_offline_cascade_publishes_canonical_availability_event(
@@ -148,7 +148,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
         name="Cascade Device",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -160,18 +160,18 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
         await _check_hosts(db_session)
         await _check_hosts(db_session)
 
-    availability_events = [payload for name, payload in captured if name == "device.availability_changed"]
+    availability_events = [payload for name, payload in captured if name == "device.operational_state_changed"]
     cascade_events = [
         e
         for e in availability_events
-        if e.get("device_id") == str(device.id) and e.get("new_availability_status") == "offline"
+        if e.get("device_id") == str(device.id) and e.get("new_operational_state") == "offline"
     ]
     assert len(cascade_events) == 1, (
         f"Expected exactly one cascade event for device, got {len(cascade_events)}: {cascade_events}"
     )
     payload = cascade_events[0]
-    assert payload["old_availability_status"] == "available"
-    assert payload["new_availability_status"] == "offline"
+    assert payload["old_operational_state"] == "available"
+    assert payload["new_operational_state"] == "offline"
     assert payload["reason"] == f"Host {host.hostname} offline"
 
 
@@ -288,7 +288,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
         name="Agent Restart Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -403,7 +403,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         name="Fallback Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -455,7 +455,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     await db_session.refresh(node)
     await db_session.refresh(device)
     assert node.state == NodeState.running
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
     process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
     assert isinstance(process_snapshot, dict)
     assert process_snapshot["running_nodes"] == []
@@ -502,7 +502,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         name="Relay Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -605,7 +605,7 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
         name="Relay Exhausted Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )

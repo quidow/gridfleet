@@ -42,14 +42,16 @@ async def test_get_toast_events_setting_includes_catalog_validation(client: Asyn
     assert data["value"] == [
         "node.crash",
         "host.heartbeat_lost",
-        "device.availability_changed",
+        "device.operational_state_changed",
+        "device.hold_changed",
         "device.hardware_health_changed",
         "run.expired",
     ]
     assert data["default_value"] == [
         "node.crash",
         "host.heartbeat_lost",
-        "device.availability_changed",
+        "device.operational_state_changed",
+        "device.hold_changed",
         "device.hardware_health_changed",
         "run.expired",
     ]

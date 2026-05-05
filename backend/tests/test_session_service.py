@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.device import (
     ConnectionType,
     Device,
-    DeviceAvailabilityStatus,
+    DeviceHold,
+    DeviceOperationalState,
     DeviceType,
 )
 from app.models.host import Host
@@ -30,7 +31,7 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
         connection_target="android-stale-busy",
         name="Android stale-busy",
         os_version="14",
-        availability_status="busy",
+        operational_state="busy",
     )
 
     session = Session(session_id="android-sess-1", device_id=device.id, status=SessionStatus.running)
@@ -45,7 +46,7 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
     assert updated.ended_at is not None
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_update_session_status_preserves_busy_when_another_session_is_running(
@@ -59,7 +60,7 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
         connection_target="busy-multi-session",
         name="Busy Multi Session",
         os_version="14",
-        availability_status="busy",
+        operational_state="busy",
     )
 
     db_session.add_all(
@@ -74,7 +75,7 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
 
     assert updated is not None
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 async def test_update_session_status_restores_reserved_when_active_run_owns_device(
@@ -90,7 +91,7 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
         connection_target="reserved-session-device",
         name="Reserved Session Device",
         os_version="14",
-        availability_status="busy",
+        operational_state="busy",
     )
     device.verified_at = datetime.now(UTC)
     await db_session.commit()
@@ -105,7 +106,7 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
 
     assert updated is not None
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.reserved
+    assert device.hold == DeviceHold.reserved
 
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved-sess"))
     stored = result.scalar_one()
@@ -126,7 +127,7 @@ async def test_update_session_status_clears_stop_pending(
         name="Stuck Deferred Stop Device",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -172,7 +173,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
         name="Stuck Deferred Stop Device 2",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -234,7 +235,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
         name="Stuck Stop Non-Busy",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -254,7 +255,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     # Simulate an operator (or another loop) flipping the device into
     # maintenance while the session row is still ``running``.
     await db_session.refresh(device)
-    device.availability_status = DeviceAvailabilityStatus.maintenance
+    device.hold = DeviceHold.maintenance
     await db_session.commit()
 
     updated = await session_service.update_session_status(db_session, "sess-stuck-stop-non-busy", SessionStatus.passed)

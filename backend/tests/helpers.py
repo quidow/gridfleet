@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus, OSType
 from app.models.test_run import RunState, TestRun
@@ -58,7 +58,8 @@ async def create_device_record(
     identity_scope: str = "host",
     os_version: str = "14",
     connection_target: str | None = None,
-    availability_status: str | DeviceAvailabilityStatus = DeviceAvailabilityStatus.offline,
+    operational_state: str | DeviceOperationalState = DeviceOperationalState.offline,
+    hold: str | DeviceHold | None = None,
     device_type: str = "real_device",
     connection_type: str | None = None,
     verified: bool = True,
@@ -125,11 +126,12 @@ async def create_device_record(
         auto_manage=auto_manage,
         device_config=device_config,
     )
-    device.availability_status = (
-        availability_status
-        if isinstance(availability_status, DeviceAvailabilityStatus)
-        else DeviceAvailabilityStatus(availability_status)
+    device.operational_state = (
+        operational_state
+        if isinstance(operational_state, DeviceOperationalState)
+        else DeviceOperationalState(operational_state)
     )
+    device.hold = hold if isinstance(hold, DeviceHold) or hold is None else DeviceHold(hold)
     if verified:
         device.verified_at = datetime.now(UTC)
 
@@ -174,6 +176,8 @@ async def create_reserved_run(
     claimed_device_ids = claimed_device_ids or {}
     released_at = datetime.now(UTC) if mark_released else None
     for device in devices:
+        if released_at is None:
+            device.hold = DeviceHold.reserved
         reservation = DeviceReservation(
             run=run,
             device_id=device.id,
@@ -209,7 +213,8 @@ async def seed_host_and_device(
     db_session: AsyncSession,
     *,
     identity: str,
-    availability: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available,
+    operational_state: DeviceOperationalState = DeviceOperationalState.available,
+    hold: DeviceHold | None = None,
 ) -> tuple[Host, Device]:
     """Seed a Host + a single Device on it. Used by event-bus contract tests."""
     host = Host(
@@ -226,7 +231,8 @@ async def seed_host_and_device(
         host_id=host.id,
         identity_value=identity,
         name=f"Device {identity}",
-        availability_status=availability,
+        operational_state=operational_state,
+        hold=hold,
     )
     return host, device
 
@@ -277,7 +283,7 @@ async def seed_host_with_devices(
             host_id=host.id,
             identity_value=identity,
             name=f"Device {identity}",
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
         )
         devices.append(device)
     return host, devices

@@ -264,7 +264,7 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
     from app.models.device import (
         ConnectionType,
         Device,
-        DeviceAvailabilityStatus,
+        DeviceOperationalState,
         DeviceType,
         HardwareHealthStatus,
         HardwareTelemetrySupportStatus,
@@ -292,7 +292,7 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         identity_value=f"id-{uuidlib.uuid4().hex[:8]}",
         name="test",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         hardware_health_status=HardwareHealthStatus.unknown,

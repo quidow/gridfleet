@@ -4,12 +4,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 
 from app.database import async_session
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop
 from app.schemas.analytics import FleetCapacityTimeline, FleetCapacityTimelinePoint
@@ -237,7 +237,8 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
         .join(AppiumNode, AppiumNode.device_id == Device.id)
         .where(
             Device.verified_at.is_not(None),
-            Device.availability_status.not_in((DeviceAvailabilityStatus.offline, DeviceAvailabilityStatus.maintenance)),
+            Device.operational_state != DeviceOperationalState.offline,
+            Device.hold.is_(None),
             AppiumNode.state == NodeState.running,
         )
     )
@@ -258,9 +259,13 @@ async def _count_hosts(db: AsyncSession) -> tuple[int, int]:
 async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
     stmt = select(
         func.count().label("total"),
-        func.count().filter(Device.availability_status == DeviceAvailabilityStatus.available).label("available"),
-        func.count().filter(Device.availability_status == DeviceAvailabilityStatus.offline).label("offline"),
-        func.count().filter(Device.availability_status == DeviceAvailabilityStatus.maintenance).label("maintenance"),
+        func.count()
+        .filter(and_(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None)))
+        .label("available"),
+        func.count()
+        .filter(and_(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None)))
+        .label("offline"),
+        func.count().filter(Device.hold == DeviceHold.maintenance).label("maintenance"),
     ).select_from(Device)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.available or 0), int(row.offline or 0), int(row.maintenance or 0)
