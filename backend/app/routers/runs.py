@@ -3,7 +3,9 @@ from datetime import UTC, date, datetime, time
 from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
@@ -47,13 +49,48 @@ def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -
 
 
 @router.post("", response_model=RunCreateResponse, status_code=201)
-async def create_run(data: RunCreate, db: AsyncSession = Depends(get_db)) -> RunCreateResponse:
+async def create_run(
+    data: RunCreate,
+    include: str | None = Query(None, description="Comma-separated: config (capabilities not supported on reserve)"),
+    db: AsyncSession = Depends(get_db),
+) -> RunCreateResponse:
+    includes = run_service.parse_includes(include, allowed={"config", "capabilities"})
+    if "capabilities" in includes:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "reserve_capabilities_unsupported",
+                "message": (
+                    "include=capabilities is not supported on reserve; reserved devices may not be"
+                    " online and capabilities require a live agent probe"
+                ),
+            },
+        )
+
     try:
         run, device_infos = await run_service.create_run(db, data)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+    if includes:
+        from app.models.device import Device
+
+        device_ids = [uuid.UUID(info.device_id) for info in device_infos]
+        devices = (
+            (
+                await db.execute(
+                    select(Device).options(selectinload(Device.appium_node)).where(Device.id.in_(device_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        device_by_id = {str(d.id): d for d in devices}
+        pairs = [(info, device_by_id[info.device_id]) for info in device_infos]
+        await run_service.hydrate_reserved_device_infos(db, pairs, includes=includes)
+
     return RunCreateResponse(
         id=run.id,
         name=run.name,
@@ -220,9 +257,12 @@ async def force_release(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 async def claim_device(
     run_id: uuid.UUID,
     data: ClaimRequest | None = Body(default=None),
+    include: str | None = Query(None, description="Comma-separated: config,capabilities"),
     db: AsyncSession = Depends(get_db),
 ) -> ClaimResponse:
     payload = data or ClaimRequest()
+    includes = run_service.parse_includes(include, allowed={"config", "capabilities"})
+
     try:
         info = await run_service.claim_device(db, run_id, worker_id=payload.worker_id)
     except run_service.NoClaimableDevicesError as e:
@@ -246,6 +286,16 @@ async def claim_device(
             raise HTTPException(status_code=404, detail=msg) from e
         raise HTTPException(status_code=409, detail=msg) from e
 
+    if includes:
+        from app.models.device import Device
+
+        device = (
+            await db.execute(
+                select(Device).options(selectinload(Device.appium_node)).where(Device.id == uuid.UUID(info.device_id))
+            )
+        ).scalar_one()
+        await run_service.hydrate_reserved_device_info(db, info, device, includes=includes)
+
     assert info.claimed_by is not None
     assert info.claimed_at is not None
     return ClaimResponse(
@@ -264,6 +314,9 @@ async def claim_device(
         model=info.model,
         claimed_by=info.claimed_by,
         claimed_at=info.claimed_at,
+        config=info.config,
+        live_capabilities=info.live_capabilities,
+        unavailable_includes=info.unavailable_includes,
     )
 
 

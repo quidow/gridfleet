@@ -340,3 +340,117 @@ async def test_hydrate_reserved_device_infos_batches_sensitive_key_lookup(
     assert len(driver_pack_statements) <= len(distinct_pairs), (
         f"expected ≤{len(distinct_pairs)} driver_packs queries, got {len(driver_pack_statements)}"
     )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_with_include_config_returns_masked_config(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="claim-cfg",
+        operational_state="available",
+    )
+    device.device_config = {"app_username": "alice", "credentials_secret": "shh"}
+    await db_session.commit()
+    run = await create_reserved_run(db_session, name="cfg-run", devices=[device])
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"]["app_username"] == "alice"
+    assert body["config"]["credentials_secret"] == MASK_VALUE
+    assert body["live_capabilities"] is None
+    assert body["unavailable_includes"] is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_with_include_capabilities_returns_capabilities(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="claim-caps",
+        operational_state="available",
+    )
+    run = await create_reserved_run(db_session, name="caps-run", devices=[device])
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=capabilities", json={"worker_id": "w1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["live_capabilities"] is not None
+    assert body["unavailable_includes"] is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_with_unknown_include_returns_wrapped_422(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(db_session, host_id=default_host_id, name="bad-inc", operational_state="available")
+    run = await create_reserved_run(db_session, name="bad-run", devices=[device])
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=garbage", json={"worker_id": "w1"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["details"] == {"code": "unknown_include", "values": ["garbage"]}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reserve_with_include_config_attaches_masked_config_per_device(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    devices = []
+    for i in range(2):
+        d = await create_device(
+            db_session,
+            host_id=default_host_id,
+            name=f"res-cfg-{i}",
+            operational_state="available",
+        )
+        d.device_config = {"k": f"v{i}", "credentials_secret": "shh"}
+        devices.append(d)
+    await db_session.commit()
+
+    payload = {
+        "name": "res-cfg",
+        "requirements": [{"pack_id": d.pack_id, "platform_id": d.platform_id, "count": 1} for d in devices],
+    }
+    response = await client.post("/api/runs?include=config", json=payload)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert len(body["devices"]) == 2
+    for entry in body["devices"]:
+        assert entry["config"] is not None
+        assert entry["config"]["credentials_secret"] == MASK_VALUE
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reserve_with_include_capabilities_returns_wrapped_422(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="res-caps",
+        operational_state="available",
+    )
+    payload = {
+        "name": "res-caps-run",
+        "requirements": [{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
+    }
+    response = await client.post("/api/runs?include=capabilities", json=payload)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["details"]["code"] == "reserve_capabilities_unsupported"
