@@ -416,11 +416,13 @@ class GridFleetClient:
         *,
         worker_id: str,
         max_wait_sec: int = 300,
+        include: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + max_wait_sec
+        include_tuple = _normalize_include(include)
         while True:
             try:
-                return self.claim_device(run_id, worker_id=worker_id)
+                return self.claim_device(run_id, worker_id=worker_id, include=include_tuple)
             except NoClaimableDevicesError as exc:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

@@ -1124,3 +1124,44 @@ def test_claim_device_raises_unknown_include_on_422(monkeypatch):
         client.claim_device("run-1", worker_id="gw0", include=("garbage",))
 
     assert exc_info.value.values == ["garbage"]
+
+
+def test_claim_device_with_retry_forwards_include_on_every_attempt(monkeypatch):
+    seen: list[list[tuple[str, str]] | None] = []
+    responses = iter(
+        [
+            DummyResponse(
+                {
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "No unclaimed devices available in this run",
+                        "details": {"error": "no_claimable_devices", "retry_after_sec": 1, "next_available_at": None},
+                    }
+                },
+                status_code=409,
+            ),
+            DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-05T00:00:00Z"}),
+        ]
+    )
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        seen.append(params)
+        return next(responses)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.time.sleep", lambda _seconds: None)
+
+    client = GridFleetClient("http://manager/api")
+    client.claim_device_with_retry("run-1", worker_id="gw0", max_wait_sec=5, include=("config",))
+
+    assert seen == [
+        [("include", "config")],
+        [("include", "config")],
+    ]
