@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.schemas.run import RunCreate
 from app.services import device_locking, run_service
@@ -23,7 +23,7 @@ async def test_create_run_rechecks_readiness_after_lock(
         db_session,
         host_id=default_host_id,
         name="readiness-race",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     device_id = device.id
@@ -75,4 +75,4 @@ async def test_create_run_rechecks_readiness_after_lock(
         final_device = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     assert reservation is None
-    assert final_device.availability_status == DeviceAvailabilityStatus.available
+    assert final_device.operational_state == DeviceOperationalState.available

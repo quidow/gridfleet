@@ -42,7 +42,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `appium.reservation_ttl_sec` | `grid` | `int` | `900` | none | `180..7200` | TTL for temporary Appium parallel-resource reservations; must exceed `appium.startup_timeout_sec + 5s` |
 | `appium.resource_sweeper_interval_sec` | `grid` | `int` | `300` | none | `30..3600` | Cadence of the leader-only loop that reaps expired temporary Appium resource claims |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
-| `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.availability_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
+| `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hold_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |
 | `notifications.toast_severity_threshold` | `notifications` | `string` | `warning` | none | `info`, `warning`, `error` | Minimum toast severity shown in the UI |
 | `devices.default_auto_manage` | `devices` | `bool` | `true` | none | boolean | Default `auto_manage` value for newly imported or verified devices |

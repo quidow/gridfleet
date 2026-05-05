@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from app.models.test_run import RunState, TestRun
@@ -13,7 +13,9 @@ from app.services.lifecycle_policy_actions import exclude_run_if_needed
 
 
 def _make_device(
-    host: Host, availability_status: DeviceAvailabilityStatus = DeviceAvailabilityStatus.available
+    host: Host,
+    operational_state: DeviceOperationalState = DeviceOperationalState.available,
+    hold: DeviceHold | None = None,
 ) -> Device:
     return Device(
         pack_id="appium-uiautomator2",
@@ -27,7 +29,8 @@ def _make_device(
         host_id=host.id,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
-        availability_status=availability_status,
+        operational_state=operational_state,
+        hold=hold,
         auto_manage=True,
     )
 
@@ -35,7 +38,7 @@ def _make_device(
 @pytest.fixture
 async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tuple[Device, TestRun]:
     """Create a device reserved for an active run."""
-    device = _make_device(db_host, availability_status=DeviceAvailabilityStatus.reserved)
+    device = _make_device(db_host, hold=DeviceHold.reserved)
     db_session.add(device)
     await db_session.flush()
 
@@ -87,14 +90,14 @@ async def test_exclude_run_if_needed_enters_maintenance(
     assert returned_run is not None
     assert entry is not None
     assert entry.excluded is True
-    assert device.availability_status == DeviceAvailabilityStatus.maintenance
+    assert device.hold == DeviceHold.maintenance
 
 
 async def test_exclude_run_if_needed_no_run_skips_maintenance(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = _make_device(db_host, availability_status=DeviceAvailabilityStatus.available)
+    device = _make_device(db_host, operational_state=DeviceOperationalState.available)
     db_session.add(device)
     await db_session.commit()
 
@@ -105,7 +108,7 @@ async def test_exclude_run_if_needed_no_run_skips_maintenance(
     returned_run, _entry = await exclude_run_if_needed(db_session, device, reason="No run", source="test")
 
     assert returned_run is None
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_exclude_run_if_needed_already_excluded_stays_maintenance(
@@ -115,7 +118,7 @@ async def test_exclude_run_if_needed_already_excluded_stays_maintenance(
     device, _run = device_with_active_run
 
     await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.availability_status == DeviceAvailabilityStatus.maintenance
+    assert device.hold == DeviceHold.maintenance
 
     await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.availability_status == DeviceAvailabilityStatus.maintenance
+    assert device.hold == DeviceHold.maintenance

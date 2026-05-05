@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
 from app.models.job import Job
@@ -220,7 +220,7 @@ async def test_verification_job_success_keeps_verified_node_when_auto_manage_ena
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
     assert devices[0]["identity_value"] == DEVICE_PAYLOAD["identity_value"]
-    assert devices[0]["availability_status"] == "available"
+    assert devices[0]["operational_state"] == "available"
 
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
     assert detail["appium_node"] is not None
@@ -368,7 +368,7 @@ async def test_create_verification_marks_cleanup_failed_when_restart_node_raises
 
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
-    assert devices[0]["availability_status"] != "available"
+    assert devices[0]["operational_state"] != "available"
 
 
 async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
@@ -850,7 +850,7 @@ async def test_existing_device_verification_marks_device_verified(
         connection_target=f"discovered-{uuid.uuid4()}",
         name="Discovered Pixel",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         host_id=uuid.UUID(default_host_id),
         verified_at=None,
         device_type=DeviceType.real_device,
@@ -903,7 +903,7 @@ async def test_existing_device_verification_requires_missing_setup_fields(
         connection_target="192.168.1.60",
         name="Roku Discovery",
         os_version="unknown",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_type="real_device",
         connection_type="network",
         ip_address="192.168.1.60",
@@ -940,7 +940,7 @@ async def test_existing_device_verification_can_replace_device_config(
         connection_target="config-verify-target",
         name="Config Verify Device",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_config={"old": True},
         host_id=uuid.UUID(default_host_id),
         verified_at=None,
@@ -998,7 +998,7 @@ async def test_existing_device_verification_preserves_masked_sensitive_config(
         connection_target="192.168.1.55",
         name="Masked Roku",
         os_version="12.5",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         device_config={"roku_password": "super-secret", "label": "den"},
         host_id=uuid.UUID(default_host_id),
         verified_at=None,
@@ -1057,7 +1057,7 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         connection_target="running-verify-target",
         name="Running Verify Device",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_config={"newCommandTimeout": 60},
         host_id=uuid.UUID(default_host_id),
         verified_at=datetime.now(UTC),

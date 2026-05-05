@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
 from app.services.agent_operations import get_pack_device_properties
@@ -24,7 +24,7 @@ async def _refresh_all_properties() -> None:
         for host in hosts:
             device_stmt = (
                 select(Device)
-                .where(Device.host_id == host.id, Device.availability_status != DeviceAvailabilityStatus.offline)
+                .where(Device.host_id == host.id, Device.operational_state != DeviceOperationalState.offline)
                 .options(selectinload(Device.host))
             )
             device_result = await db.execute(device_stmt)

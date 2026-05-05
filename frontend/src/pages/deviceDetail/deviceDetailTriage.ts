@@ -1,9 +1,10 @@
+import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorRunning, isEmulatorStopped } from '../../lib/emulatorState';
 import {
   HARDWARE_HEALTH_STATUS_LABELS,
   HARDWARE_TELEMETRY_STATE_LABELS,
 } from '../../lib/hardwareTelemetry';
-import { DEVICE_AVAILABILITY_LABELS } from '../../lib/labels';
+import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import type { DeviceDetail, DeviceHealth } from '../../types';
 import { formatDateTime } from '../../utils/dateFormatting';
 
@@ -57,7 +58,7 @@ function virtualDeviceStopped(device: DeviceDetail): boolean {
   if (isEmulatorRunning(device.emulator_state)) {
     return false;
   }
-  return isEmulatorStopped(device.emulator_state) || device.availability_status === 'offline';
+  return isEmulatorStopped(device.emulator_state) || device.operational_state === 'offline';
 }
 
 function hardwareTone(device: DeviceDetail): DeviceDetailTriageTone | null {
@@ -91,6 +92,7 @@ export function deriveDeviceDetailTriage(
 ): DeviceDetailTriage {
   const reservation = device.reservation;
   const node = device.appium_node;
+  const status = deviceChipStatus(device);
 
   if (reservation?.excluded) {
     return {
@@ -126,7 +128,7 @@ export function deriveDeviceDetailTriage(
   }
 
   if (!node || node.state !== 'running') {
-    const inMaintenance = device.availability_status === 'maintenance';
+    const inMaintenance = device.hold === 'maintenance';
     const nodeAction = reservation || inMaintenance
       ? { kind: 'open-control' as const, label: 'Review Control', to: `/devices/${device.id}?tab=control` }
       : { kind: 'start-node' as const, label: 'Start Node' };
@@ -151,7 +153,7 @@ export function deriveDeviceDetailTriage(
       detail: 'Start the node to register this device with Selenium Grid.',
       action: nodeAction,
       evidence: [
-        { label: 'Availability', value: DEVICE_AVAILABILITY_LABELS[device.availability_status], tone: 'neutral' },
+        { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'neutral' },
         { label: 'Node state', value: node?.state ?? 'none', tone: node ? 'warn' : 'neutral' },
       ],
     };
@@ -212,7 +214,7 @@ export function deriveDeviceDetailTriage(
       ? { kind: 'test-session', label: 'Test Session' }
       : { kind: 'open-control', label: 'View Control', to: `/devices/${device.id}?tab=control` },
     evidence: [
-      { label: 'Availability', value: DEVICE_AVAILABILITY_LABELS[device.availability_status], tone: 'ok' },
+      { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'ok' },
       ...(telemetryNotReported
         ? [{ label: 'Telemetry', value: HARDWARE_TELEMETRY_STATE_LABELS.unsupported, tone: 'neutral' as const }]
         : []),

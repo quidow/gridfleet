@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, maintenance_service
 from tests.helpers import create_device
@@ -24,7 +24,7 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
         db_session,
         host_id=db_host.id,
         name="maintenance-relock",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     db_session.add(
@@ -61,7 +61,7 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
         node = device.appium_node
         node.state = NodeState.stopped
         node.pid = None
-        device.availability_status = DeviceAvailabilityStatus.offline
+        device.operational_state = DeviceOperationalState.offline
         await db.commit()
         stop_committed.set()
         return node
@@ -84,7 +84,8 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
 
     async with db_session_maker() as verify:
         final_status = (
-            await verify.execute(select(Device.availability_status).where(Device.id == device_id))
-        ).scalar_one()
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final_status == DeviceAvailabilityStatus.maintenance
+    assert final_status.operational_state == DeviceOperationalState.offline
+    assert final_status.hold == DeviceHold.maintenance

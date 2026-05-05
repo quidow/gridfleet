@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_db
 from app.main import app
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from tests.helpers import create_device
@@ -26,7 +26,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
         db_session,
         host_id=db_host.id,
         name="contended",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     await db_session.commit()
@@ -85,13 +85,13 @@ async def test_run_create_and_maintenance_cannot_overlap(
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     if reservation is not None:
-        assert device_row.availability_status == DeviceAvailabilityStatus.reserved, (
-            f"Reservation exists but device row is {device_row.availability_status} — orphaned reservation. "
+        assert device_row.hold == DeviceHold.reserved, (
+            f"Reservation exists but device row is {device_row.operational_state} — orphaned reservation. "
             f"HTTP statuses were {statuses}."
         )
     else:
         if any(s in (200, 201) for s in statuses):
-            assert device_row.availability_status == DeviceAvailabilityStatus.maintenance, (
-                f"No reservation but device row is {device_row.availability_status}; "
+            assert device_row.hold == DeviceHold.maintenance, (
+                f"No reservation but device row is {device_row.operational_state}; "
                 f"expected maintenance because at least one request succeeded. statuses={statuses}"
             )

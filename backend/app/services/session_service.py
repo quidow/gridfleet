@@ -9,12 +9,11 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.session import Session, SessionStatus
 from app.services import lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.device_availability import set_device_availability_status
-from app.services.device_availability_resolution import restore_post_busy_availability_status
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.event_bus import queue_event_for_session
 from app.services.session_filters import exclude_non_test_sessions, exclude_reserved_sessions
 
@@ -372,7 +371,7 @@ async def register_session(
     db.add(session)
     activated_run = None
     if device is not None and status == SessionStatus.running:
-        await set_device_availability_status(device, DeviceAvailabilityStatus.busy, publish_event=False)
+        await set_operational_state(device, DeviceOperationalState.busy, publish_event=False)
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
     queue_session_started_event(
         db,
@@ -454,11 +453,14 @@ async def update_session_status(
         still_running = running_result.scalars().first() is not None
         if not still_running:
             # Restore from busy on the busy-side; lifecycle cleanup must run
-            # for any non-busy availability too (maintenance/offline can host a
-            # stale ``stop_pending``), so the deferred-stop target is captured
-            # regardless of the current availability_status branch.
-            if locked_device.availability_status == DeviceAvailabilityStatus.busy:
-                await restore_post_busy_availability_status(db, locked_device)
+            # for any non-busy state too, so the deferred-stop target is
+            # captured regardless of the current operational_state branch.
+            if locked_device.operational_state == DeviceOperationalState.busy:
+                await set_operational_state(
+                    locked_device,
+                    await ready_operational_state(db, locked_device),
+                    reason="Session ended",
+                )
             deferred_stop_target = locked_device
 
     if should_publish_ended:

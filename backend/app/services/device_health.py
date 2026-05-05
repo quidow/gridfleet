@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import NoResultFound
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.observability import get_logger
+from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -123,13 +124,12 @@ async def _mark_offline_for_failed_signal(
 ) -> None:
     if not failed:
         return
-    if locked.availability_status != DeviceAvailabilityStatus.available:
+    if locked.operational_state != DeviceOperationalState.available:
         return
-    from app.services.device_availability import set_device_availability_status
 
-    await set_device_availability_status(
+    await set_operational_state(
         locked,
-        DeviceAvailabilityStatus.offline,
+        DeviceOperationalState.offline,
         reason=reason,
     )
 
@@ -138,11 +138,10 @@ async def _restore_available_for_healthy_signal(
     db: AsyncSession,
     locked: Device,
 ) -> None:
-    if locked.availability_status != DeviceAvailabilityStatus.offline:
+    if locked.operational_state != DeviceOperationalState.offline:
         return
     if not locked.auto_manage:
         return
-    from app.services.device_availability import set_device_availability_status
     from app.services.device_readiness import is_ready_for_use_async
 
     node = locked.appium_node
@@ -153,9 +152,9 @@ async def _restore_available_for_healthy_signal(
     if not device_allows_allocation(locked):
         return
 
-    await set_device_availability_status(
+    await set_operational_state(
         locked,
-        DeviceAvailabilityStatus.available,
+        DeviceOperationalState.available,
         reason="Health checks recovered",
     )
 

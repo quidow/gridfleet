@@ -1,18 +1,18 @@
 import { Plus, Trash2 } from 'lucide-react';
 import type {
   ConnectionType,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceType,
 } from '../../types';
 import type { DeviceGroupFilterDraft } from '../../lib/deviceGroupFilters';
 import {
-  AVAILABILITY_STATUSES,
+  CHIP_STATUSES,
   CONNECTION_TYPES,
   CONNECTION_TYPE_LABELS,
   DEVICE_TYPES,
   DEVICE_TYPE_LABELS,
 } from './devicePageHelpers';
-import { DEVICE_AVAILABILITY_LABELS, resolvePlatformLabel } from '../../lib/labels';
+import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 
 interface Props {
@@ -105,15 +105,15 @@ export default function FilterBuilder({
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Availability</span>
           <select
-            value={filters.availability_status}
+            value={filters.status}
             onChange={(event) =>
-              updateOptionalField(filters, onChange, 'availability_status', event.target.value as DeviceAvailabilityStatus | '')
+              updateOptionalField(filters, onChange, 'status', event.target.value as DeviceChipStatus | '')
             }
             className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           >
             <option value="">Any availability</option>
-            {AVAILABILITY_STATUSES.map((status) => (
-              <option key={status} value={status}>{DEVICE_AVAILABILITY_LABELS[status]}</option>
+            {CHIP_STATUSES.map((status) => (
+              <option key={status} value={status}>{DEVICE_STATUS_LABELS[status]}</option>
             ))}
           </select>
         </label>

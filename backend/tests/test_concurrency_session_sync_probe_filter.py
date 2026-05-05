@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceOperationalState
 from app.models.session import Session
 from app.services import session_sync
 from app.services.session_viability import PROBE_TEST_NAME
@@ -29,7 +29,7 @@ async def test_session_sync_does_not_persist_probe_sessions(
         db_session,
         host_id=db_host.id,
         name="probe-filter",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     await db_session.commit()
 
@@ -78,7 +78,7 @@ async def test_session_sync_does_persist_real_session(
         db_session,
         host_id=db_host.id,
         name="real-session",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     await db_session.commit()
 
@@ -115,4 +115,4 @@ async def test_session_sync_does_persist_real_session(
     assert sessions[0].test_name == "actual_test"
 
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.busy
+    assert device.operational_state == DeviceOperationalState.busy

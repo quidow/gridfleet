@@ -12,12 +12,13 @@ import { useSessionsDaily } from '../../hooks/useSessionsDaily';
 import PlatformIcon from '../PlatformIcon';
 import StatusBadge from '../StatusBadge';
 import Badge from '../ui/Badge';
-import { DEVICE_AVAILABILITY_LABELS } from '../../lib/labels';
+import { deviceChipStatus } from '../../lib/deviceState';
+import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import Card from '../ui/Card';
 import FetchError from '../ui/FetchError';
 import SectionSkeleton from '../ui/SectionSkeleton';
 import { formatRelativeTime } from '../../utils/dateFormatting';
-import type { DeviceRead, RunRead } from '../../types';
+import type { DeviceChipStatus, DeviceRead, RunRead } from '../../types';
 import { deriveDashboardFleetSummary, isActiveRun } from './dashboardSummary';
 
 function last7DaysParams() {
@@ -71,7 +72,7 @@ function ActiveRunsList({ runs }: { runs: RunRead[] }) {
   );
 }
 
-function availabilityTone(status: DeviceRead['availability_status']) {
+function availabilityTone(status: DeviceChipStatus) {
   switch (status) {
     case 'available': return 'success' as const;
     case 'busy': return 'warning' as const;
@@ -85,15 +86,20 @@ function BusyDevicesList({ devices }: { devices: DeviceRead[] }) {
   return (
     <ul className="divide-y divide-border rounded-lg border border-border bg-surface-1">
       {devices.slice(0, 6).map((device) => (
-        <li key={device.id} className="grid grid-cols-[minmax(0,1fr),7rem,auto] items-center gap-3 px-3 py-2.5 text-sm">
-          <Link to={`/devices/${device.id}`} className="min-w-0 truncate font-medium text-accent hover:text-accent-hover">
-            {device.name}
-          </Link>
-          <PlatformIcon platformId={device.platform_id} platformLabel={device.platform_label} />
-          <Badge tone={availabilityTone(device.availability_status)}>
-            {DEVICE_AVAILABILITY_LABELS[device.availability_status]}
-          </Badge>
-        </li>
+        (() => {
+          const status = deviceChipStatus(device);
+          return (
+            <li key={device.id} className="grid grid-cols-[minmax(0,1fr),7rem,auto] items-center gap-3 px-3 py-2.5 text-sm">
+              <Link to={`/devices/${device.id}`} className="min-w-0 truncate font-medium text-accent hover:text-accent-hover">
+                {device.name}
+              </Link>
+              <PlatformIcon platformId={device.platform_id} platformLabel={device.platform_label} />
+              <Badge tone={availabilityTone(status)}>
+                {DEVICE_STATUS_LABELS[status]}
+              </Badge>
+            </li>
+          );
+        })()
       ))}
     </ul>
   );
@@ -251,7 +257,7 @@ export default function OperationsSection() {
           <div className="p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="heading-label">Busy devices</h3>
-              <Link to="/devices?availability_status=busy" className="text-xs font-medium text-accent hover:text-accent-hover">View busy</Link>
+              <Link to="/devices?status=busy" className="text-xs font-medium text-accent hover:text-accent-hover">View busy</Link>
             </div>
             {busyDevices.length === 0 ? (
               <IdleCell title="No busy devices." />

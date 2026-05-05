@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host, HostStatus, OSType
 from app.models.session import Session, SessionStatus
 from app.services.fleet_capacity import (
@@ -189,21 +189,21 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         host_id=default_host_id,
         identity_value="capacity-schedulable",
         name="Capacity Phone",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     busy = await create_device_record(
         db_session,
         host_id=default_host_id,
         identity_value="capacity-busy",
         name="Busy Phone",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
     )
     unverified = await create_device_record(
         db_session,
         host_id=default_host_id,
         identity_value="capacity-unverified",
         name="Unverified Phone",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=False,
     )
     offline = await create_device_record(
@@ -211,14 +211,14 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         host_id=default_host_id,
         identity_value="capacity-offline",
         name="Offline Phone",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
     )
     stopped = await create_device_record(
         db_session,
         host_id=default_host_id,
         identity_value="capacity-stopped",
         name="Stopped Phone",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     db_session.add_all(
         [
@@ -288,21 +288,21 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
         host_id=online_host.id,
         identity_value="fleet-available",
         name="Fleet Available Phone",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
     )
     await create_device_record(
         db_session,
         host_id=online_host.id,
         identity_value="fleet-offline-1",
         name="Fleet Offline Phone",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
     )
     await create_device_record(
         db_session,
         host_id=online_host.id,
         identity_value="fleet-maintenance",
         name="Fleet Maintenance Phone",
-        availability_status=DeviceAvailabilityStatus.maintenance,
+        hold=DeviceHold.maintenance,
     )
 
     # Count hosts after all seeds — default_host_id fixture adds one more online host,

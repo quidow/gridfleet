@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import run_service
@@ -58,7 +58,7 @@ async def build_lifecycle_policy(
         recovery_state = "backoff"
     elif policy.get("recovery_suppressed_reason"):
         recovery_state = "suppressed"
-    elif policy.get("excluded_from_run") or device.availability_status == DeviceAvailabilityStatus.offline:
+    elif policy.get("excluded_from_run") or device.operational_state == DeviceOperationalState.offline:
         recovery_state = "eligible" if device.auto_manage else "manual"
     else:
         recovery_state = "idle"

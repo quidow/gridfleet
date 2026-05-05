@@ -19,7 +19,7 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     device_type: 'real_device',
     connection_type: 'usb',
     host_id: 'h1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     readiness_state: 'verified',
     auto_manage: true,
@@ -127,7 +127,7 @@ describe('DevicesTable', () => {
     renderTable({
       devices: [
         makeDevice({
-          availability_status: 'offline',
+          operational_state: 'offline', hold: null,
           needs_attention: true,
           lifecycle_policy_summary: {
             state: 'suppressed',

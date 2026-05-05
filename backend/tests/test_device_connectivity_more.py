@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import device_connectivity
 from tests.helpers import create_device_record
@@ -45,7 +45,7 @@ def _device(
         connection_target="demo",
         name="Demo",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=device_type,
         connection_type=ConnectionType.usb,
         host=host,
@@ -164,8 +164,8 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         connection_target="manual-device",
         name="Manual Device",
     )
-    not_ready.availability_status = DeviceAvailabilityStatus.offline
-    auto_manage_off.availability_status = DeviceAvailabilityStatus.offline
+    not_ready.operational_state = DeviceOperationalState.offline
+    auto_manage_off.operational_state = DeviceOperationalState.offline
     auto_manage_off.auto_manage = False
     await db_session.commit()
 
@@ -204,7 +204,7 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
         device_type=DeviceType.emulator.value,
         connection_type=ConnectionType.virtual.value,
     )
-    emulator.availability_status = DeviceAvailabilityStatus.available
+    emulator.operational_state = DeviceOperationalState.available
     manual = await create_device_record(
         db_session,
         host_id=host.id,

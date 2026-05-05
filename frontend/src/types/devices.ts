@@ -6,7 +6,8 @@ import type {
   HardwareTelemetryState,
   DeviceLifecyclePolicySummaryState,
   DeviceReadinessState,
-  DeviceAvailabilityStatus,
+  DeviceHold,
+  DeviceOperationalState,
   DeviceType,
   DeviceVerificationJobStatus,
   DeviceVerificationStageStatus,
@@ -36,7 +37,8 @@ export interface DeviceRead {
   name: string;
   os_version: string;
   host_id: string;
-  availability_status: DeviceAvailabilityStatus;
+  operational_state: DeviceOperationalState;
+  hold: DeviceHold | null;
   needs_attention: boolean;
   tags: Record<string, string> | null;
   manufacturer: string | null;

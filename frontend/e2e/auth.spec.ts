@@ -49,7 +49,7 @@ const DEVICES = [
     id: 'device-1',
     host_id: 'host-1',
     name: 'Pixel Lab',
-    status: 'available',
+    operational_state: 'available', hold: null,
     identity_scheme: 'android_serial',
     identity_scope: 'host',
     identity_value: 'emulator-5554',

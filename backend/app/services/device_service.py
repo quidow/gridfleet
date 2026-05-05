@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import Select, asc, desc, func, or_, select
+from sqlalchemy import Select, asc, case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,7 +12,8 @@ from app.models.appium_node import NodeState
 from app.models.device import (
     ConnectionType,
     Device,
-    DeviceAvailabilityStatus,
+    DeviceHold,
+    DeviceOperationalState,
     DeviceType,
     HardwareHealthStatus,
 )
@@ -23,7 +24,7 @@ from app.schemas.device import (
     DeviceVerificationUpdate,
     HardwareTelemetryState,
 )
-from app.schemas.device_filters import DeviceQueryFilters
+from app.schemas.device_filters import ChipStatus, DeviceQueryFilters
 from app.services import (
     device_attention,
     device_health,
@@ -76,7 +77,7 @@ async def list_devices(
     db: AsyncSession,
     pack_id: str | None = None,
     platform_id: str | None = None,
-    availability_status: DeviceAvailabilityStatus | None = None,
+    status: ChipStatus | None = None,
     host_id: uuid.UUID | None = None,
     identity_value: str | None = None,
     connection_target: str | None = None,
@@ -93,7 +94,7 @@ async def list_devices(
     filters = DeviceQueryFilters(
         pack_id=pack_id,
         platform_id=platform_id,
-        availability_status=availability_status,
+        status=status,
         host_id=host_id,
         identity_value=identity_value,
         connection_target=connection_target,
@@ -115,8 +116,17 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.pack_id == filters.pack_id)
     if filters.platform_id is not None:
         stmt = stmt.where(Device.platform_id == filters.platform_id)
-    if filters.availability_status is not None:
-        stmt = stmt.where(Device.availability_status == filters.availability_status)
+    if filters.status is not None:
+        if filters.status == "available":
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        elif filters.status == "busy":
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.busy, Device.hold.is_(None))
+        elif filters.status == "offline":
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None))
+        elif filters.status == "maintenance":
+            stmt = stmt.where(Device.hold == DeviceHold.maintenance)
+        elif filters.status == "reserved":
+            stmt = stmt.where(Device.hold == DeviceHold.reserved)
     if filters.host_id is not None:
         stmt = stmt.where(Device.host_id == filters.host_id)
     if filters.identity_value is not None:
@@ -148,6 +158,13 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
 
 def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
     direction = asc if filters.sort_dir == "asc" else desc
+    chip_case = case(
+        (Device.hold == DeviceHold.maintenance, 4),
+        (Device.hold == DeviceHold.reserved, 3),
+        (Device.operational_state == DeviceOperationalState.busy, 2),
+        (Device.operational_state == DeviceOperationalState.offline, 1),
+        else_=0,
+    )
     order_map: dict[str, Any] = {
         "name": func.lower(Device.name),
         "platform": Device.platform_id,
@@ -155,7 +172,9 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
         "connection_type": Device.connection_type,
         "os_version": Device.os_version,
         "host": func.lower(func.coalesce(Host.hostname, "")),
-        "availability_status": Device.availability_status,
+        "status": chip_case,
+        "operational_state": Device.operational_state,
+        "hold": Device.hold,
         "created_at": Device.created_at,
     }
     primary = order_map.get(filters.sort_by, Device.created_at)

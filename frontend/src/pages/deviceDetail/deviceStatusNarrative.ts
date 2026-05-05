@@ -1,4 +1,5 @@
 import type { DeviceRead } from '../../types';
+import { deviceChipStatus } from '../../lib/deviceState';
 
 export type StatusActionKind = 'retry' | 'maintenance' | 'setup' | 'verify' | 'exit-maintenance';
 
@@ -23,6 +24,7 @@ function relativeFromNow(iso: string | null | undefined): string {
 
 export function composeDeviceStatusNarrative(device: DeviceRead): DeviceStatusNarrative {
   const lifecycle = device.lifecycle_policy_summary.state;
+  const status = deviceChipStatus(device);
 
   if (device.readiness_state === 'setup_required') {
     const missing = device.missing_setup_fields.length
@@ -41,7 +43,7 @@ export function composeDeviceStatusNarrative(device: DeviceRead): DeviceStatusNa
     };
   }
 
-  if (device.availability_status === 'offline') {
+  if (status === 'offline') {
     if (lifecycle === 'suppressed' || lifecycle === 'manual') {
       const detail = device.lifecycle_policy_summary.detail
         ? ` (${device.lifecycle_policy_summary.detail})`
@@ -70,15 +72,15 @@ export function composeDeviceStatusNarrative(device: DeviceRead): DeviceStatusNa
     };
   }
 
-  if (device.availability_status === 'busy') {
+  if (status === 'busy') {
     return { text: 'Busy. Currently running a session.', actions: [] };
   }
 
-  if (device.availability_status === 'reserved') {
+  if (status === 'reserved') {
     return { text: 'Reserved.', actions: [] };
   }
 
-  if (device.availability_status === 'maintenance') {
+  if (status === 'maintenance') {
     return {
       text: 'In maintenance.',
       actions: [{ kind: 'exit-maintenance', label: 'Take out of maintenance' }],

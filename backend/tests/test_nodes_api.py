@@ -9,7 +9,7 @@ from httpx import AsyncClient, HTTPStatusError, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.services.agent_error_codes import AgentErrorCode
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
@@ -69,7 +69,7 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         identity_scheme=payload["identity_scheme"],
         identity_scope=payload["identity_scope"],
         os_version=payload["os_version"],
-        availability_status=payload.get("availability_status", "offline"),
+        operational_state=payload.get("operational_state", "offline"),
         device_type=payload.get("device_type", "real_device"),
         connection_type=payload.get("connection_type"),
         ip_address=payload.get("ip_address"),
@@ -120,7 +120,7 @@ async def test_start_node(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
-    device = await _create_device(db_session, default_host_id, availability_status="available")
+    device = await _create_device(db_session, default_host_id, operational_state="available")
     device_id = device["id"]
     remote_manager_client.post.return_value = _mock_agent_response(
         {"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}
@@ -136,7 +136,7 @@ async def test_start_node(
 
     # Verify device status updated to available
     device_resp = await client.get(f"/api/devices/{device_id}")
-    assert device_resp.json()["availability_status"] == DeviceAvailabilityStatus.available.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
 
 
 async def test_start_node_already_running(
@@ -187,7 +187,7 @@ async def test_stop_node(
 
     # Verify device status updated to offline
     device_resp = await client.get(f"/api/devices/{device_id}")
-    assert device_resp.json()["availability_status"] == DeviceAvailabilityStatus.offline.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.offline.value
 
 
 async def test_stop_node_not_running(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -301,7 +301,7 @@ async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
-    device = await _create_device(db_session, default_host_id, availability_status="available")
+    device = await _create_device(db_session, default_host_id, operational_state="available")
     remote_manager_client.post.side_effect = [
         _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
         _mock_agent_response({"stopped": True, "port": 4723}),
@@ -323,7 +323,7 @@ async def test_start_node_retries_next_port_when_agent_reports_port_conflict(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
-    device = await _create_device(db_session, default_host_id, availability_status="available")
+    device = await _create_device(db_session, default_host_id, operational_state="available")
     remote_manager_client.post.side_effect = [
         _mock_agent_http_error(PORT_CONFLICT_DETAIL),
         _mock_agent_response({"pid": 12345, "port": 4724, "connection_target": "emulator-5554"}),
@@ -344,7 +344,7 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
-    device = await _create_device(db_session, default_host_id, availability_status="available")
+    device = await _create_device(db_session, default_host_id, operational_state="available")
     remote_manager_client.post.side_effect = [
         _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
         _mock_agent_response({"stopped": True, "port": 4723}),
@@ -370,7 +370,7 @@ async def test_reserved_device_blocks_node_controls(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
-    device = await _create_device(db_session, default_host_id, availability_status="available")
+    device = await _create_device(db_session, default_host_id, operational_state="available")
     remote_manager_client.post.return_value = _mock_agent_response(
         {"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}
     )
@@ -405,7 +405,7 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     await client.post(f"/api/devices/{device_id}/node/start")
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": True})
     assert maintenance_resp.status_code == 200
-    assert maintenance_resp.json()["availability_status"] == DeviceAvailabilityStatus.maintenance.value
+    assert maintenance_resp.json()["hold"] == DeviceHold.maintenance.value
 
     for action in ("start", "restart"):
         resp = await client.post(f"/api/devices/{device_id}/node/{action}")
@@ -431,7 +431,7 @@ async def test_unverified_device_blocks_node_start(
         connection_target=f"unverified-{uuid.uuid4()}",
         name="Needs Verification",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         host_id=uuid.UUID(default_host_id),
         verified_at=None,
         device_type=DeviceType.real_device,

@@ -13,10 +13,10 @@ describe('OperationsAllIdleStrip', () => {
   it('renders the two view-links when hrefs are provided', () => {
     render(
       <MemoryRouter>
-        <OperationsAllIdleStrip runsHref="/runs" devicesHref="/devices?availability_status=busy" />
+        <OperationsAllIdleStrip runsHref="/runs" devicesHref="/devices?status=busy" />
       </MemoryRouter>,
     );
     expect(screen.getByRole('link', { name: /view runs/i })).toHaveAttribute('href', '/runs');
-    expect(screen.getByRole('link', { name: /view busy/i })).toHaveAttribute('href', '/devices?availability_status=busy');
+    expect(screen.getByRole('link', { name: /view busy/i })).toHaveAttribute('href', '/devices?status=busy');
   });
 });

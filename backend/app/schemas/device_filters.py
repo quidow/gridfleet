@@ -3,9 +3,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.device import ConnectionType, DeviceAvailabilityStatus, DeviceType, HardwareHealthStatus
+from app.models.device import ConnectionType, DeviceType, HardwareHealthStatus
 from app.schemas.device import HardwareTelemetryState
 
+ChipStatus = Literal["available", "busy", "offline", "maintenance", "reserved"]
 DeviceSortBy = Literal[
     "name",
     "platform",
@@ -13,7 +14,9 @@ DeviceSortBy = Literal[
     "connection_type",
     "os_version",
     "host",
-    "availability_status",
+    "status",
+    "operational_state",
+    "hold",
     "created_at",
 ]
 DeviceSortDir = Literal["asc", "desc"]
@@ -24,7 +27,7 @@ class DeviceGroupFilters(BaseModel):
 
     pack_id: str | None = None
     platform_id: str | None = None
-    availability_status: DeviceAvailabilityStatus | None = None
+    status: ChipStatus | None = None
     host_id: uuid.UUID | None = None
     identity_value: str | None = None
     connection_target: str | None = None

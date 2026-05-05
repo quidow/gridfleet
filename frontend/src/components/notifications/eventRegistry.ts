@@ -56,12 +56,21 @@ function appendReason(data: EventData): string {
 }
 
 const REGISTRY: Record<string, RegistryEntry> = {
-  'device.availability_changed': {
+  'device.operational_state_changed': {
     render: (data) => {
       const device = firstString(data, ['device_name', 'name'], 'Device');
-      const oldStatus = firstString(data, ['old_availability_status', 'old_status'], 'unknown');
-      const newStatus = firstString(data, ['new_availability_status', 'new_status'], 'unknown');
-      return `${device}: availability ${oldStatus} -> ${newStatus}${appendReason(data)}`;
+      const oldStatus = firstString(data, ['old_operational_state'], 'unknown');
+      const newStatus = firstString(data, ['new_operational_state'], 'unknown');
+      return `${device}: operational state ${oldStatus} -> ${newStatus}${appendReason(data)}`;
+    },
+    severity: 'warning',
+  },
+  'device.hold_changed': {
+    render: (data) => {
+      const device = firstString(data, ['device_name', 'name'], 'Device');
+      const oldHold = firstString(data, ['old_hold'], 'none');
+      const newHold = firstString(data, ['new_hold'], 'none');
+      return `${device}: hold ${oldHold} -> ${newHold}${appendReason(data)}`;
     },
     severity: 'warning',
   },

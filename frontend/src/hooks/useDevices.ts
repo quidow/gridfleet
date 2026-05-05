@@ -30,7 +30,7 @@ import type {
   HardwareHealthStatus,
   HardwareTelemetryState,
   DeviceRead,
-  DeviceAvailabilityStatus,
+  DeviceChipStatus,
   DeviceDetail,
   DeviceType,
   DeviceVerificationCreate,
@@ -148,10 +148,10 @@ function updateAutoManage(autoManage: boolean): DeviceCacheUpdater {
   });
 }
 
-function updateAvailabilityStatus(availabilityStatus: DeviceAvailabilityStatus): DeviceCacheUpdater {
+function updateHold(hold: DeviceRead['hold']): DeviceCacheUpdater {
   return <T extends DeviceRead>(device: T): T => ({
     ...device,
-    availability_status: availabilityStatus,
+    hold,
   });
 }
 
@@ -162,14 +162,14 @@ function updateEmulatorState(state: string): DeviceCacheUpdater {
   });
 }
 
-function updateNodeAvailabilityState(
-  availabilityStatus: DeviceAvailabilityStatus,
+function updateNodeOperationalState(
+  operationalState: DeviceRead['operational_state'],
   nodeState: NodeState,
 ): DeviceCacheUpdater {
   return <T extends DeviceRead>(device: T): T => {
     const nextDevice = {
       ...device,
-      availability_status: availabilityStatus,
+      operational_state: operationalState,
     } as T & Partial<DeviceDetail>;
 
     if (nextDevice.appium_node) {
@@ -187,7 +187,7 @@ function updateNodeAvailabilityState(
 export function useDevices(params?: {
   pack_id?: string;
   platform_id?: string;
-  availability_status?: DeviceAvailabilityStatus;
+  status?: DeviceChipStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -208,7 +208,7 @@ export function useDevices(params?: {
 export function useDevicesPaginated(params: {
   pack_id?: string;
   platform_id?: string;
-  availability_status?: DeviceAvailabilityStatus;
+  status?: DeviceChipStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -309,7 +309,7 @@ export function useStartNode() {
   return useMutation({
     mutationKey: ['devices', 'start-node'],
     mutationFn: (id: string) => startNode(id),
-    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeAvailabilityState('available', 'running')),
+    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeOperationalState('available', 'running')),
     onError: (error, id, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to start node for device ${id}`));
@@ -325,7 +325,7 @@ export function useStopNode() {
   return useMutation({
     mutationKey: ['devices', 'stop-node'],
     mutationFn: (id: string) => stopNode(id),
-    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeAvailabilityState('offline', 'stopped')),
+    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeOperationalState('offline', 'stopped')),
     onError: (error, id, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to stop node for device ${id}`));
@@ -341,7 +341,7 @@ export function useRestartNode() {
   return useMutation({
     mutationKey: ['devices', 'restart-node'],
     mutationFn: (id: string) => restartNode(id),
-    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeAvailabilityState('available', 'running')),
+    onMutate: (id) => patchDeviceQueries(qc, id, updateNodeOperationalState('available', 'running')),
     onError: (error, id, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to restart node for device ${id}`));
@@ -391,7 +391,7 @@ export function useEnterDeviceMaintenance() {
   return useMutation({
     mutationKey: ['devices', 'enter-maintenance'],
     mutationFn: ({ id, drain }: { id: string; drain?: boolean }) => enterDeviceMaintenance(id, drain),
-    onMutate: ({ id }) => patchDeviceQueries(qc, id, updateAvailabilityStatus('maintenance')),
+    onMutate: ({ id }) => patchDeviceQueries(qc, id, updateHold('maintenance')),
     onError: (error, { id }, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to enter maintenance for device ${id}`));
@@ -407,7 +407,7 @@ export function useExitDeviceMaintenance() {
   return useMutation({
     mutationKey: ['devices', 'exit-maintenance'],
     mutationFn: (id: string) => exitDeviceMaintenance(id),
-    onMutate: (id) => patchDeviceQueries(qc, id, updateAvailabilityStatus('offline')),
+    onMutate: (id) => patchDeviceQueries(qc, id, updateHold(null)),
     onError: (error, id, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to exit maintenance for device ${id}`));

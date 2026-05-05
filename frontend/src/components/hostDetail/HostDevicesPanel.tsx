@@ -35,7 +35,7 @@ const HOST_DEVICE_COLUMNS: DataTableColumn<DeviceRead>[] = [
     render: (device) => <span className="text-sm text-text-2">{device.os_version}</span>,
   },
   {
-    key: 'availability_status',
+    key: 'status',
     header: 'Status',
     render: (device) => <AvailabilityCell device={device} />,
   },

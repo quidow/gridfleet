@@ -16,7 +16,7 @@ from app.services.event_bus import event_bus
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:
     """Create a minimal device for FK references."""
-    from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+    from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 
     connection_target = f"test-{uuid.uuid4().hex[:8]}"
     device = Device(
@@ -29,7 +29,7 @@ async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:
         name="test-device",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )

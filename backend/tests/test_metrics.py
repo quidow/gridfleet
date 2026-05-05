@@ -21,7 +21,7 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
         identity_value="metrics-cooldown-active",
         connection_target="metrics-cooldown-active",
         name="Metrics Cooldown Active",
-        availability_status="available",
+        operational_state="available",
     )
     expired_device = await create_device_record(
         db_session,
@@ -29,7 +29,7 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
         identity_value="metrics-cooldown-expired",
         connection_target="metrics-cooldown-expired",
         name="Metrics Cooldown Expired",
-        availability_status="available",
+        operational_state="available",
     )
     run = TestRun(
         name="Metrics Cooldown Run",

@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceOperationalState
 from app.models.host import Host
 from app.services import node_health
 from app.services.agent_probe_result import ProbeResult
@@ -28,7 +28,7 @@ async def test_node_health_failure_path_locks_appium_node(
         db_session,
         host_id=db_host.id,
         name="nh-lock",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified=True,
         auto_manage=False,
     )

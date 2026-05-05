@@ -118,7 +118,7 @@ async def test_grid_status_with_running_node(
         identity_scheme=DEVICE_PAYLOAD["identity_scheme"],
         identity_scope=DEVICE_PAYLOAD["identity_scope"],
         os_version=DEVICE_PAYLOAD["os_version"],
-        availability_status="available",
+        operational_state="available",
     )
 
     mock_client = _mock_agent_client(
@@ -142,4 +142,4 @@ async def test_grid_status_with_running_node(
     assert "platform" not in dev_entry
     assert dev_entry["node_state"] == "running"
     assert dev_entry["node_port"] == 4723
-    assert dev_entry["availability_status"] == "available"
+    assert dev_entry["operational_state"] == "available"

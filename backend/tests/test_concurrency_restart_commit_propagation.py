@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import node_service
 from tests.helpers import create_device
@@ -26,7 +26,7 @@ async def test_restart_mutations_visible_after_caller_commit(
         db_session,
         host_id=db_host.id,
         name="commit-prop",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     node = AppiumNode(

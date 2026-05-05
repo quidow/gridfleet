@@ -9,14 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
 from app.services import capability_service, control_plane_state_store, device_health, lifecycle_policy
 from app.services.agent_operations import appium_probe_session
-from app.services.device_availability import set_device_availability_status
-from app.services.device_availability_resolution import restore_post_busy_availability_status
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.settings_service import settings_service
 
 SESSION_VIABILITY_KEY = "session_viability"
@@ -114,7 +113,7 @@ async def _is_probe_running(db: AsyncSession, device_key: str) -> bool:
 async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval_sec: int) -> bool:
     if interval_sec <= 0:
         return False
-    if device.availability_status != DeviceAvailabilityStatus.available:
+    if device.operational_state != DeviceOperationalState.available or device.hold is not None:
         return False
     if not await is_ready_for_use_async(db, device):
         return False
@@ -245,7 +244,7 @@ async def run_session_viability_probe(
     checked_by: str,
 ) -> dict[str, Any]:
     device_key = str(device.id)
-    previous_status: DeviceAvailabilityStatus | None = None
+    previous_state: DeviceOperationalState | None = None
     acquired = await control_plane_state_store.try_claim_value(
         db,
         SESSION_VIABILITY_RUNNING_NAMESPACE,
@@ -255,8 +254,8 @@ async def run_session_viability_probe(
     if not acquired:
         raise ValueError("Session viability check already in progress for this device")
     await db.commit()
-    can_probe = device.availability_status == DeviceAvailabilityStatus.available or (
-        checked_by == "recovery" and device.availability_status == DeviceAvailabilityStatus.offline
+    can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
+        checked_by == "recovery" and device.operational_state == DeviceOperationalState.offline
     )
     if not can_probe:
         await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -287,10 +286,10 @@ async def run_session_viability_probe(
         from app.services import device_locking
 
         locked = await device_locking.lock_device(db, device.id)
-        previous_status = locked.availability_status
-        await set_device_availability_status(
+        previous_state = locked.operational_state
+        await set_operational_state(
             locked,
-            DeviceAvailabilityStatus.busy,
+            DeviceOperationalState.busy,
             reason="Session viability probe running",
             publish_event=True,
         )
@@ -309,10 +308,10 @@ async def run_session_viability_probe(
         )
 
         relocked = await device_locking.lock_device(db, device.id)
-        if relocked.availability_status == DeviceAvailabilityStatus.busy:
-            await restore_post_busy_availability_status(
-                db,
+        if relocked.operational_state == DeviceOperationalState.busy:
+            await set_operational_state(
                 relocked,
+                await ready_operational_state(db, relocked),
                 reason="Session viability probe finished",
                 publish_event=True,
             )
@@ -321,7 +320,7 @@ async def run_session_viability_probe(
             logger.info(
                 "Device %s availability changed during probe (now %s); skipping restore",
                 device.id,
-                relocked.availability_status.value,
+                relocked.operational_state.value,
             )
             if config_changed:
                 await db.commit()
@@ -334,17 +333,19 @@ async def run_session_viability_probe(
             )
         return state
     except Exception:
-        if previous_status in {DeviceAvailabilityStatus.available, DeviceAvailabilityStatus.offline}:
+        if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
             from app.services import device_locking
 
             relocked = await device_locking.lock_device(db, device.id)
-            if relocked.availability_status == DeviceAvailabilityStatus.busy:
-                if previous_status == DeviceAvailabilityStatus.offline:
-                    await set_device_availability_status(
-                        relocked, DeviceAvailabilityStatus.offline, publish_event=False
-                    )
+            if relocked.operational_state == DeviceOperationalState.busy:
+                if previous_state == DeviceOperationalState.offline:
+                    await set_operational_state(relocked, DeviceOperationalState.offline, publish_event=False)
                 else:
-                    await restore_post_busy_availability_status(db, relocked, publish_event=False)
+                    await set_operational_state(
+                        relocked,
+                        await ready_operational_state(db, relocked),
+                        publish_event=False,
+                    )
                 await db.commit()
         raise
     finally:
@@ -376,7 +377,7 @@ async def _check_due_devices(db: AsyncSession) -> None:
     interval_sec = settings_service.get("general.session_viability_interval_sec")
     stmt = (
         select(Device)
-        .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
         .options(selectinload(Device.host), selectinload(Device.appium_node))
     )
     result = await db.execute(stmt)

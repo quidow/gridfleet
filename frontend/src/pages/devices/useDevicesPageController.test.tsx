@@ -15,7 +15,7 @@ vi.mock('../../context/EventStreamContext', () => ({
 function makeDevice(overrides: Partial<DeviceRead>): DeviceRead {
   return {
     id: overrides.id ?? `d-${Math.random()}`,
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     hardware_health_status: 'healthy',
     hardware_telemetry_state: 'fresh',
@@ -35,7 +35,7 @@ function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/devices?availability_status=available']}>{children}</MemoryRouter>
+      <MemoryRouter initialEntries={['/devices?status=available']}>{children}</MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -47,9 +47,9 @@ describe('useDevicesPageController', () => {
 
   it('summary stats reflect the full triage base, not the paginated page', () => {
     const triage: DeviceRead[] = [
-      makeDevice({ id: 'a', availability_status: 'available' }),
-      makeDevice({ id: 'b', availability_status: 'busy' }),
-      makeDevice({ id: 'c', availability_status: 'offline', needs_attention: true }),
+      makeDevice({ id: 'a', operational_state: 'available', hold: null }),
+      makeDevice({ id: 'b', operational_state: 'busy', hold: null }),
+      makeDevice({ id: 'c', operational_state: 'offline', hold: null, needs_attention: true }),
     ];
     const page = [triage[0]];
 

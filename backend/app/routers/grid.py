@@ -22,7 +22,8 @@ async def grid_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
             "connection_target": device.connection_target,
             "name": device.name,
             "platform_id": device.platform_id,
-            "availability_status": device.availability_status.value,
+            "operational_state": device.operational_state.value,
+            "hold": device.hold.value if device.hold else None,
             "node_state": device.appium_node.state.value if device.appium_node else None,
             "node_port": device.appium_node.port if device.appium_node else None,
         }

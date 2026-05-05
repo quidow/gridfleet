@@ -1,9 +1,9 @@
-"""Verify set_device_availability_status rejects transient device objects."""
+"""Verify device state writers reject transient device objects."""
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
-from app.services.device_availability import set_device_availability_status
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.services.device_state import set_operational_state
 
 pytestmark = pytest.mark.asyncio
 
@@ -21,17 +21,17 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.availability_status = DeviceAvailabilityStatus.available
+    device.operational_state = DeviceOperationalState.available
     return device
 
 
-async def test_set_availability_rejects_transient_device() -> None:
+async def test_set_operational_state_rejects_transient_device() -> None:
     """A Device that is not persistent in a session should trigger an assertion."""
     device = _transient_device()
 
     with pytest.raises(AssertionError, match="must be persistent in a session"):
-        await set_device_availability_status(
+        await set_operational_state(
             device,
-            DeviceAvailabilityStatus.offline,
+            DeviceOperationalState.offline,
             publish_event=False,
         )

@@ -20,7 +20,7 @@ function device(overrides: Partial<DeviceRead>): DeviceRead {
     model: null,
     os_version: '14',
     host_id: 'h',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     tags: null,
     auto_manage: true,
@@ -99,11 +99,11 @@ function makeQueryResult(devices: DeviceRead[]) {
 }
 
 const defaultDevices = () => [
-  device({ id: 'a', availability_status: 'available' }),
-  device({ id: 'b', availability_status: 'busy' }),
-  device({ id: 'r', availability_status: 'reserved' }),
-  device({ id: 'm', availability_status: 'maintenance' }),
-  device({ id: 'o', availability_status: 'offline' }),
+  device({ id: 'a', operational_state: 'available', hold: null }),
+  device({ id: 'b', operational_state: 'busy', hold: null }),
+  device({ id: 'r', operational_state: 'available', hold: 'reserved' }),
+  device({ id: 'm', operational_state: 'available', hold: 'maintenance' }),
+  device({ id: 'o', operational_state: 'offline', hold: null }),
 ];
 
 function renderCard() {
@@ -166,16 +166,16 @@ describe('FleetByPlatformCard palette', () => {
     expect(classMap.get('Offline')).toContain('bg-danger-strong');
   });
 
-  it('segment links use availability_status query param', () => {
+  it('segment links use status query param', () => {
     renderCard();
 
     const links = screen.getAllByRole('link');
     const hrefs = links.map((l) => l.getAttribute('href') ?? '');
-    expect(hrefs).toContain('/devices?availability_status=available');
-    expect(hrefs).toContain('/devices?availability_status=busy');
-    expect(hrefs).toContain('/devices?availability_status=reserved');
-    expect(hrefs).toContain('/devices?availability_status=maintenance');
-    expect(hrefs).toContain('/devices?availability_status=offline');
+    expect(hrefs).toContain('/devices?status=available');
+    expect(hrefs).toContain('/devices?status=busy');
+    expect(hrefs).toContain('/devices?status=reserved');
+    expect(hrefs).toContain('/devices?status=maintenance');
+    expect(hrefs).toContain('/devices?status=offline');
   });
 });
 
@@ -194,8 +194,8 @@ describe('FleetByPlatformCard with fleet health history', () => {
   it('uses the live fleet state for the current health point', async () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'online-1', availability_status: 'available' }),
-        device({ id: 'online-2', availability_status: 'busy' }),
+        device({ id: 'online-1', operational_state: 'available', hold: null }),
+        device({ id: 'online-2', operational_state: 'busy', hold: null }),
       ]),
     );
 
@@ -233,8 +233,8 @@ describe('FleetByPlatformCard Needs attention link', () => {
   it('shows Needs attention link when count > 0', () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'a', availability_status: 'available', needs_attention: true }),
-        device({ id: 'b', availability_status: 'available', needs_attention: false }),
+        device({ id: 'a', operational_state: 'available', hold: null, needs_attention: true }),
+        device({ id: 'b', operational_state: 'available', hold: null, needs_attention: false }),
       ]),
     );
 
@@ -246,8 +246,8 @@ describe('FleetByPlatformCard Needs attention link', () => {
   it('omits Needs attention link when count is 0', () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'a', availability_status: 'available', needs_attention: false }),
-        device({ id: 'b', availability_status: 'busy', needs_attention: false }),
+        device({ id: 'a', operational_state: 'available', hold: null, needs_attention: false }),
+        device({ id: 'b', operational_state: 'busy', hold: null, needs_attention: false }),
       ]),
     );
 

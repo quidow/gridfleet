@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import appium_node_locking, device_locking, lifecycle_policy_actions
 from app.services.node_service_types import NodeManagerError
@@ -16,7 +16,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs"
 
 async def _stop_node_commits_then_raises(db: AsyncSession, device: Device) -> AppiumNode:
     assert device.appium_node is not None
-    device.availability_status = DeviceAvailabilityStatus.offline
+    device.operational_state = DeviceOperationalState.offline
     await db.commit()
     raise NodeManagerError("simulated stop_node failure after commit")
 
@@ -31,7 +31,7 @@ async def test_handle_node_crash_relocks_after_stop_node_commit_in_except_branch
         db_session,
         host_id=db_host.id,
         name="lpa-except-relock",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         verified=True,
     )
     db_session.add(
@@ -89,6 +89,6 @@ async def test_handle_node_crash_relocks_after_stop_node_commit_in_except_branch
         final_device = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
         final_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert final_device.availability_status == DeviceAvailabilityStatus.offline
+    assert final_device.operational_state == DeviceOperationalState.offline
     assert final_node.state == NodeState.error
     assert final_node.pid is None

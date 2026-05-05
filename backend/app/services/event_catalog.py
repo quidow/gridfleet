@@ -21,14 +21,26 @@ EVENT_CATEGORY_DISPLAY_NAMES: dict[str, str] = {
 
 PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
     PublicEventDefinition(
-        name="device.availability_changed",
+        name="device.operational_state_changed",
         category="device_and_node_lifecycle",
-        description="Device availability changed.",
+        description="Device operational state changed.",
         typical_data_fields=(
             "device_id",
             "device_name",
-            "old_availability_status",
-            "new_availability_status",
+            "old_operational_state",
+            "new_operational_state",
+            "reason",
+        ),
+    ),
+    PublicEventDefinition(
+        name="device.hold_changed",
+        category="device_and_node_lifecycle",
+        description="Device hold changed.",
+        typical_data_fields=(
+            "device_id",
+            "device_name",
+            "old_hold",
+            "new_hold",
             "reason",
         ),
     ),
@@ -259,7 +271,8 @@ PUBLIC_EVENT_NAME_SET = frozenset(PUBLIC_EVENT_NAMES)
 DEFAULT_TOAST_EVENT_NAMES: tuple[str, ...] = (
     "node.crash",
     "host.heartbeat_lost",
-    "device.availability_changed",
+    "device.operational_state_changed",
+    "device.hold_changed",
     "device.hardware_health_changed",
     "run.expired",
 )

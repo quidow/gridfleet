@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.config import settings
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.services.config_service import MASK_VALUE
 from app.services.pack_storage_service import PackStorageService
 from app.services.pack_upload_service import upload_pack
@@ -52,7 +52,7 @@ async def _make_roku_device(db: AsyncSession, host: Host) -> Device:
         connection_target=None,
         os_version="12.5",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
         ip_address="192.0.2.44",
@@ -156,7 +156,7 @@ platforms:
         identity_value="pin-123",
         os_version="1",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
         device_config={"pin": "2468", "label": "safe"},

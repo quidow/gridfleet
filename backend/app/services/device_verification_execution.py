@@ -17,9 +17,9 @@ from app.services import (
     session_viability,
 )
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
-from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
+from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification_job_state import enum_value, set_stage
 from app.services.node_service import restart_node, start_temporary_node, stop_node, stop_temporary_node
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
@@ -255,10 +255,10 @@ async def retain_verified_node(
             handle.pid = refreshed_node.pid
             handle.active_connection_target = refreshed_node.active_connection_target
             # mark_node_started inside restart_node already applied
-            # ready_device_availability_status; nothing left to do here.
+            # ready_operational_state; nothing left to do here.
         else:
-            next_status = await ready_device_availability_status(db, device)
-            await set_device_availability_status(device, next_status)
+            next_state = await ready_operational_state(db, device)
+            await set_operational_state(device, next_state)
             await db.commit()
 
         await db.refresh(device)

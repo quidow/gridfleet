@@ -5,7 +5,7 @@ import type { DeviceRead } from '../../types';
 
 function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
   return {
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
     readiness_state: 'verified',
@@ -21,7 +21,7 @@ describe('AvailabilityCell', () => {
   });
 
   it('renders availability label for offline device', () => {
-    render(<AvailabilityCell device={makeDevice({ availability_status: 'offline' })} />);
+    render(<AvailabilityCell device={makeDevice({ operational_state: 'offline', hold: null })} />);
     expect(screen.getByText('Offline')).toBeInTheDocument();
   });
 });

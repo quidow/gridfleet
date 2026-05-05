@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import bulk_service, device_locking
 from tests.helpers import create_device
@@ -21,14 +21,14 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
         db_session,
         host_id=db_host.id,
         name="bulk-relock-a",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     second = await create_device(
         db_session,
         host_id=db_host.id,
         name="bulk-relock-b",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     await db_session.commit()

@@ -3,7 +3,7 @@ import { composeDeviceStatusNarrative } from './deviceStatusNarrative';
 import type { DeviceRead } from '../../types';
 
 const baseDevice = {
-  availability_status: 'available',
+  operational_state: 'available', hold: null,
   lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
   readiness_state: 'verified',
   missing_setup_fields: [],
@@ -21,7 +21,7 @@ describe('composeDeviceStatusNarrative', () => {
   it('offline + suppressed → suggests retry + maintenance', () => {
     const device = {
       ...baseDevice,
-      availability_status: 'offline',
+      operational_state: 'offline', hold: null,
       lifecycle_policy_summary: {
         state: 'suppressed',
         label: 'Suppressed',
@@ -42,7 +42,7 @@ describe('composeDeviceStatusNarrative', () => {
   it('offline + backoff → engine retrying, single retry action', () => {
     const device = {
       ...baseDevice,
-      availability_status: 'offline',
+      operational_state: 'offline', hold: null,
       lifecycle_policy_summary: {
         state: 'backoff',
         label: 'Backing off',
@@ -81,21 +81,21 @@ describe('composeDeviceStatusNarrative', () => {
   });
 
   it('busy → status describes session, no actions', () => {
-    const device = { ...baseDevice, availability_status: 'busy' } as unknown as DeviceRead;
+    const device = { ...baseDevice, operational_state: 'busy', hold: null } as unknown as DeviceRead;
     const result = composeDeviceStatusNarrative(device);
     expect(result.text.toLowerCase()).toContain('busy');
     expect(result.actions).toEqual([]);
   });
 
   it('reserved → no actions', () => {
-    const device = { ...baseDevice, availability_status: 'reserved' } as unknown as DeviceRead;
+    const device = { ...baseDevice, operational_state: 'available', hold: 'reserved' } as unknown as DeviceRead;
     const result = composeDeviceStatusNarrative(device);
     expect(result.text.toLowerCase()).toContain('reserved');
     expect(result.actions).toEqual([]);
   });
 
   it('maintenance → exit-maintenance action', () => {
-    const device = { ...baseDevice, availability_status: 'maintenance' } as unknown as DeviceRead;
+    const device = { ...baseDevice, operational_state: 'available', hold: 'maintenance' } as unknown as DeviceRead;
     const result = composeDeviceStatusNarrative(device);
     expect(result.text.toLowerCase()).toContain('maintenance');
     expect(result.actions.map((a) => a.kind)).toEqual(['exit-maintenance']);
@@ -105,7 +105,7 @@ describe('composeDeviceStatusNarrative', () => {
   it('plain offline (no lifecycle drama) → single retry', () => {
     const device = {
       ...baseDevice,
-      availability_status: 'offline',
+      operational_state: 'offline', hold: null,
     } as unknown as DeviceRead;
     const result = composeDeviceStatusNarrative(device);
     expect(result.text.toLowerCase()).toContain('offline');

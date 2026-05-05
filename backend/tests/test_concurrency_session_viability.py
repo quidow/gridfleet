@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.services import device_locking, session_viability
 from tests.helpers import create_device
 
@@ -43,7 +43,7 @@ async def test_session_viability_restore_handles_external_reservation(
         db_session,
         host_id=db_host.id,
         name="probe-target",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     appium_node = AppiumNode(
@@ -93,7 +93,7 @@ async def test_session_viability_restore_handles_external_reservation(
         await probe_started.wait()
         async with db_session_maker() as session, session.begin():
             locked = await device_locking.lock_device(session, device_id)
-            locked.availability_status = DeviceAvailabilityStatus.reserved
+            locked.hold = DeviceHold.reserved
         external_done.set()
 
     await asyncio.gather(run_probe(), reserve_externally())
@@ -101,6 +101,6 @@ async def test_session_viability_restore_handles_external_reservation(
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
-    assert device_row.availability_status == DeviceAvailabilityStatus.reserved, (
-        f"Probe restored device to {device_row.availability_status} despite external reservation"
+    assert device_row.hold == DeviceHold.reserved, (
+        f"Probe restored device to {device_row.operational_state} despite external reservation"
     )

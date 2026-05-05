@@ -92,7 +92,7 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         ip_address=payload.get("ip_address"),
         roku_password=payload.get("roku_password"),
         verified=bool(payload.get("verified", True)),
-        availability_status=str(payload["availability_status"]) if "availability_status" in payload else "offline",
+        operational_state=str(payload.get("operational_state", "offline")),
     )
 
 
@@ -391,7 +391,7 @@ async def test_list_devices_filter_tags(client: AsyncClient, db_session: AsyncSe
     assert [item["name"] for item in resp.json()] == ["Tagged QA"]
 
 
-async def test_list_devices_filter_availability_status(
+async def test_list_devices_filter_status(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -412,13 +412,13 @@ async def test_list_devices_filter_availability_status(
     )
     offline_id = str(offline_device.id)
 
-    from app.models.device import DeviceAvailabilityStatus
+    from app.models.device import DeviceOperationalState
 
-    offline_device.availability_status = DeviceAvailabilityStatus.offline
-    online_device.availability_status = DeviceAvailabilityStatus.available
+    offline_device.operational_state = DeviceOperationalState.offline
+    online_device.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
-    resp = await client.get("/api/devices", params={"availability_status": "offline"})
+    resp = await client.get("/api/devices", params={"status": "offline"})
     assert resp.status_code == 200
     data = resp.json()
     assert [item["id"] for item in data] == [offline_id]
@@ -559,7 +559,7 @@ async def test_list_devices_filter_needs_attention(
         identity_value="NEED-ATTN-OK",
         connection_target="NEED-ATTN-OK",
         name="Verified Device",
-        availability_status="available",
+        operational_state="available",
         verified=True,
     )
     unverified_device = await _create_device(
@@ -568,7 +568,7 @@ async def test_list_devices_filter_needs_attention(
         identity_value="NEED-ATTN-BAD",
         connection_target="NEED-ATTN-BAD",
         name="Unverified Device",
-        availability_status="offline",
+        operational_state="offline",
         verified=False,
     )
     _ = verified_device
@@ -978,11 +978,11 @@ async def test_enter_device_maintenance_with_drain_false_stops_running_node(
         maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": False})
 
     assert maintenance_resp.status_code == 200
-    assert maintenance_resp.json()["availability_status"] == "maintenance"
+    assert maintenance_resp.json()["hold"] == "maintenance"
 
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.status_code == 200
-    assert device_resp.json()["availability_status"] == "maintenance"
+    assert device_resp.json()["hold"] == "maintenance"
     assert device_resp.json()["appium_node"]["state"] == "stopped"
 
 
@@ -1005,7 +1005,7 @@ async def test_enter_device_maintenance_with_drain_true_keeps_running_node(
         maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": True})
 
     assert maintenance_resp.status_code == 200
-    assert maintenance_resp.json()["availability_status"] == "maintenance"
+    assert maintenance_resp.json()["hold"] == "maintenance"
 
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.status_code == 200
@@ -1022,7 +1022,7 @@ async def test_exit_device_maintenance(client: AsyncClient, db_session: AsyncSes
 
     exit_resp = await client.post(f"/api/devices/{device_id}/maintenance/exit")
     assert exit_resp.status_code == 200
-    assert exit_resp.json()["availability_status"] == "offline"
+    assert exit_resp.json()["operational_state"] == "offline"
 
 
 @pytest.mark.asyncio
@@ -1491,7 +1491,7 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
         identity_value="ok-1",
         connection_target="ok-1",
         name="OK Device",
-        availability_status="available",
+        operational_state="available",
         verified=True,
     )
     unhealthy = await _create_device(
@@ -1500,7 +1500,7 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
         identity_value="bad-1",
         connection_target="bad-1",
         name="Bad Device",
-        availability_status="available",
+        operational_state="available",
         verified=True,
     )
 

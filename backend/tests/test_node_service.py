@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import device_service
 from app.services.node_service import (
@@ -87,7 +87,7 @@ async def test_remote_start_node(client: AsyncClient, db_session: AsyncSession) 
     assert data["pid"] == 9876
 
     device_resp = await client.get(f"/api/devices/{device.id}")
-    assert device_resp.json()["availability_status"] == DeviceAvailabilityStatus.available.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
 
 
 async def test_remote_start_node_attaches_node_to_device_instance(db_session: AsyncSession) -> None:
@@ -112,7 +112,7 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
         os_version="14",
         host_id=host.id,
         host=host,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -138,7 +138,7 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
 
     assert loaded_device.appium_node is node
     assert node.state == NodeState.running
-    assert loaded_device.availability_status == DeviceAvailabilityStatus.available
+    assert loaded_device.operational_state == DeviceOperationalState.available
 
 
 async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -> None:
@@ -162,7 +162,7 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
         name="Remote Android",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -192,7 +192,7 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     assert resp.json()["state"] == NodeState.stopped.value
 
     device_resp = await client.get(f"/api/devices/{device.id}")
-    assert device_resp.json()["availability_status"] == DeviceAvailabilityStatus.offline.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.offline.value
 
 
 async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:
@@ -217,7 +217,7 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
         name="Lock Started",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -263,7 +263,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
         name="Deleted Mid Flight",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -312,7 +312,7 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
         name="Lock Stopped",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -335,17 +335,22 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
 
 
 @pytest.mark.parametrize(
-    "availability_status",
-    [DeviceAvailabilityStatus.busy, DeviceAvailabilityStatus.reserved],
+    ("label", "operational_state", "hold"),
+    [
+        ("busy", DeviceOperationalState.busy, None),
+        ("reserved", DeviceOperationalState.available, DeviceHold.reserved),
+    ],
 )
-async def test_mark_node_stopped_preserves_claimed_availability(
+async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     db_session: AsyncSession,
-    availability_status: DeviceAvailabilityStatus,
+    label: str,
+    operational_state: DeviceOperationalState,
+    hold: DeviceHold | None,
 ) -> None:
     from app.services import node_service
 
     host = Host(
-        hostname=f"claim-host-{availability_status.value}",
+        hostname=f"claim-host-{label}",
         ip="192.168.1.54",
         os_type=OSType.linux,
         agent_port=5100,
@@ -358,12 +363,13 @@ async def test_mark_node_stopped_preserves_claimed_availability(
         platform_id="android_mobile",
         identity_scheme="android_serial",
         identity_scope="host",
-        identity_value=f"claim-stop-{availability_status.value}",
-        connection_target=f"claim-stop-{availability_status.value}",
-        name=f"Claim Stop {availability_status.value}",
+        identity_value=f"claim-stop-{label}",
+        connection_target=f"claim-stop-{label}",
+        name=f"Claim Stop {label}",
         os_version="14",
         host_id=host.id,
-        availability_status=availability_status,
+        operational_state=operational_state,
+        hold=hold,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -378,7 +384,8 @@ async def test_mark_node_stopped_preserves_claimed_availability(
 
     await node_service.mark_node_stopped(db_session, loaded)
 
-    assert loaded.availability_status == availability_status
+    assert loaded.operational_state == DeviceOperationalState.offline
+    assert loaded.hold == hold
 
 
 async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_candidate(
@@ -391,7 +398,7 @@ async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_
         identity_value="restart-port-conflict-001",
         connection_target="restart-port-conflict-001",
         name="Restart Port Conflict",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(
         device_id=device.id,
@@ -445,7 +452,7 @@ async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None
         connection_target="local-dev-001",
         name="Local Android",
         os_version="14",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified_at=datetime.now(UTC),
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
@@ -716,7 +723,7 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
         identity_value="stop-no-ack-001",
         connection_target="stop-no-ack-001",
         name="Stop No Ack",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1, state=NodeState.running)
     db_session.add(node)
@@ -764,7 +771,7 @@ async def test_stop_node_marks_stopped_when_agent_acknowledges(
         identity_value="stop-ack-sync-001",
         connection_target="stop-ack-sync-001",
         name="Stop Ack Sync",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(device_id=device.id, port=4724, grid_url="http://hub:4444", pid=1, state=NodeState.running)
     db_session.add(node)
@@ -803,7 +810,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
         identity_value="mark-started-sync-001",
         connection_target="mark-started-sync-001",
         name="Mark Started Sync",
-        availability_status="available",
+        operational_state="available",
     )
     await db_session.commit()
     loaded = await device_service.get_device(db_session, device.id)
@@ -868,7 +875,7 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
         identity_value="stop-no-ack-alloc-001",
         connection_target="stop-no-ack-alloc-001",
         name="Stop No Ack Allocation",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(
         device_id=device.id,
@@ -928,7 +935,7 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
         identity_value="stop-ack-alloc-001",
         connection_target="stop-ack-alloc-001",
         name="Stop Ack Allocation",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(
         device_id=device.id,
@@ -985,7 +992,7 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
         identity_value="restart-no-ack-001",
         connection_target="restart-no-ack-001",
         name="Restart No Ack",
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(
         device_id=device.id,

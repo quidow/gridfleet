@@ -5,7 +5,7 @@ import type { DeviceRead } from '../../types';
 
 function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
   return {
-    availability_status: 'offline',
+    operational_state: 'offline', hold: null,
     lifecycle_policy_summary: {
       state: 'suppressed',
       label: 'Suppressed',
@@ -45,7 +45,7 @@ describe('DeviceStatusCard', () => {
     render(
       <DeviceStatusCard
         device={makeDevice({
-          availability_status: 'available',
+          operational_state: 'available', hold: null,
           lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
           needs_attention: false,
           health_summary: { healthy: true, summary: 'Healthy', last_checked_at: null },
@@ -67,7 +67,7 @@ describe('DeviceStatusCard', () => {
     render(
       <DeviceStatusCard
         device={makeDevice({
-          availability_status: 'maintenance',
+          operational_state: 'available', hold: 'maintenance',
           lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
           needs_attention: false,
           health_summary: { healthy: true, summary: 'Healthy', last_checked_at: null },

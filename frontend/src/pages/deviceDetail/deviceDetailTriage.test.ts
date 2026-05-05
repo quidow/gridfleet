@@ -18,7 +18,7 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     needs_attention: false,
     os_version: '14',
     host_id: 'host-1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     tags: null,
     auto_manage: true,
     device_type: 'real_device',
@@ -113,7 +113,7 @@ describe('deriveDeviceDetailTriage', () => {
       makeDevice({
         device_type: 'emulator',
         connection_type: 'virtual',
-        availability_status: 'offline',
+        operational_state: 'offline', hold: null,
         emulator_state: 'stopped',
       }),
       { canTestSession: false },
@@ -132,7 +132,7 @@ describe('deriveDeviceDetailTriage', () => {
         platform_id: 'ios',
         device_type: 'simulator',
         connection_type: 'virtual',
-        availability_status: 'offline',
+        operational_state: 'offline', hold: null,
         emulator_state: 'shutdown',
       }),
       { canTestSession: false },
@@ -176,7 +176,7 @@ describe('deriveDeviceDetailTriage', () => {
 
   it('returns neutral tone with Maintenance eyebrow when device is in maintenance', () => {
     const triage = deriveDeviceDetailTriage(
-      makeDevice({ availability_status: 'maintenance', appium_node: null }),
+      makeDevice({ operational_state: 'available', hold: 'maintenance', appium_node: null }),
       { canTestSession: false },
     );
 

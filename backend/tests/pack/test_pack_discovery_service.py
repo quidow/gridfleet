@@ -88,7 +88,7 @@ async def test_refresh_device_properties_updates_pack_device_rows(db_session: As
         ip_address="10.0.0.24",
         name="Refresh Device",
         os_version="14",
-        availability_status="available",
+        operational_state="available",
     )
 
     async def fake_get_properties(host: str, port: int, connection_target: str, pack_id: str) -> dict[str, object]:
@@ -132,7 +132,7 @@ async def test_refresh_device_properties_preserves_registered_identity_and_descr
         manufacturer="Amazon",
         model="AFTMM",
         os_version="7.1.2",
-        availability_status="available",
+        operational_state="available",
     )
 
     async def fake_get_properties(host: str, port: int, connection_target: str, pack_id: str) -> dict[str, object]:

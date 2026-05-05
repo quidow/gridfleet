@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import DeviceAvailabilityStatus
+from app.models.device import DeviceOperationalState
 from app.models.host import Host
 from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.services.device_locking import lock_device, lock_devices
@@ -24,7 +24,7 @@ async def test_lock_device_returns_row_with_for_update(
     locked = await lock_device(db_session, device.id)
 
     assert locked.id == device.id
-    assert locked.availability_status == DeviceAvailabilityStatus.offline
+    assert locked.operational_state == DeviceOperationalState.offline
 
 
 async def test_lock_devices_orders_by_id_to_avoid_deadlock(

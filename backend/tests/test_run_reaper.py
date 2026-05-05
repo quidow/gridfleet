@@ -87,7 +87,7 @@ async def test_expire_run_deletes_active_grid_session(
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.models.device import DeviceAvailabilityStatus
+    from app.models.device import DeviceOperationalState
     from app.models.session import Session, SessionStatus
     from app.services import run_service
     from tests.helpers import create_device_record, create_reserved_run
@@ -98,7 +98,7 @@ async def test_expire_run_deletes_active_grid_session(
         identity_value="expire-live-session",
         connection_target="expire-live-session",
         name="Expire Live Session",
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(
         db_session,

@@ -2,7 +2,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
 from app.models.job import Job
@@ -22,7 +22,7 @@ async def test_chaos_scenario_emits_every_error_signal(db_session) -> None:  # n
     assert any(h.status is HostStatus.offline for h in hosts)
 
     devices = (await db_session.execute(select(Device))).scalars().all()
-    assert any(d.availability_status is DeviceAvailabilityStatus.maintenance for d in devices)
+    assert any(d.hold is DeviceHold.maintenance for d in devices)
 
     events = (await db_session.execute(select(DeviceEvent))).scalars().all()
     assert any(e.event_type is DeviceEventType.connectivity_lost for e in events)
@@ -40,9 +40,9 @@ async def test_chaos_scenario_emits_every_error_signal(db_session) -> None:  # n
     assert active_run_ids
     active_running_device_ids = {session.device_id for session in stuck if session.run_id in active_run_ids}
     assert active_running_device_ids
-    assert any(d.availability_status is DeviceAvailabilityStatus.busy for d in devices)
+    assert any(d.operational_state is DeviceOperationalState.busy for d in devices)
     assert all(
-        device.availability_status is DeviceAvailabilityStatus.busy
+        device.operational_state is DeviceOperationalState.busy
         for device in devices
         if device.id in active_running_device_ids
     )

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
 from app.services import device_health
@@ -47,7 +47,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
         name="Healthy Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -80,7 +80,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
         name="Failing Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -98,7 +98,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
     await db_session.refresh(node)
     assert node.state == NodeState.running  # Not yet at max
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_node_missing_from_grid_increments_failure_count(db_session: AsyncSession, db_host: Host) -> None:
@@ -112,7 +112,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
         name="Missing Grid Relay Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -158,7 +158,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
         name="Fresh Grid Relay Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -201,7 +201,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
         name="Registered Grid Relay Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -258,7 +258,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
         name="Remote Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -303,7 +303,7 @@ async def test_node_restart_failure_marks_offline(db_session: AsyncSession) -> N
         name="Restart Fail Phone",
         os_version="14",
         host_id=host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -325,7 +325,7 @@ async def test_node_restart_failure_marks_offline(db_session: AsyncSession) -> N
     await db_session.refresh(node)
     assert node.state == NodeState.error
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 async def test_missing_runtime_host_invariant_marks_node_offline(db_session: AsyncSession, db_host: Host) -> None:
@@ -339,7 +339,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
         name="Corrupted Runtime Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -365,7 +365,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
     await db_session.refresh(node)
     assert node.state == NodeState.error
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.offline
+    assert device.operational_state == DeviceOperationalState.offline
     assert node_key not in await get_node_health_control_plane_state(db_session)
 
 
@@ -380,7 +380,7 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
         name="Probe-Safe Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -422,7 +422,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
         name="Real iPhone",
         os_version="26.4.2",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -470,7 +470,7 @@ async def test_real_apple_node_health_probe_gate_is_disabled(
         name="Probe Gate Apple Device",
         os_version="26.4.2",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network if platform_id == "tvos" else ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -491,7 +491,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
         name="Busy Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -528,7 +528,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
         name="Pixel 6 Emulator",
         os_version="17",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.emulator,
         connection_type=ConnectionType.virtual,
         verified_at=datetime.now(UTC),
@@ -565,7 +565,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         name="Concurrent Phone 1",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -580,7 +580,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         name="Concurrent Phone 2",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         verified_at=datetime.now(UTC),
@@ -643,7 +643,7 @@ def _build_tristate_device(db_host: Host, identity: str) -> Device:
         name=f"Tristate {identity}",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -790,7 +790,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
         name="Indeterminate Phone",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -827,7 +827,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
 
     # Device still available
     await db_session.refresh(device)
-    assert device.availability_status == DeviceAvailabilityStatus.available
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_host: Host) -> None:
@@ -844,7 +844,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             name=f"Concurrency Phone {index}",
             os_version="14",
             host_id=db_host.id,
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -894,7 +894,7 @@ async def test_node_health_recovery_clears_pending_stop(
         name="Recovery Clears Pending",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         lifecycle_policy_state={

@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_verification_execution
 from app.services.device_verification_job_state import new_job
@@ -26,10 +26,10 @@ async def test_retain_verified_node_locks_appium_node(
     Timeline of the correctly-locked path:
 
       Runner: lock_device() → lock_appium_node_for_device() (FOR UPDATE held)
-      Runner: ready_device_availability_status() → fires event, yields 0.15 s
+      Runner: ready_operational_state() -> fires event, yields 0.15 s
       Stomper: wakes up, issues UPDATE … SET state=error
               → Postgres BLOCKS it (runner holds FOR UPDATE)
-      Runner: set_device_availability_status(), commit → releases lock
+      Runner: set_operational_state(), commit -> releases lock
       Stomper: UPDATE unblocks, commits state=error
       Final:  state == error ✓
 
@@ -43,12 +43,12 @@ async def test_retain_verified_node_locks_appium_node(
     device_id = device.id
 
     stomper_can_go = asyncio.Event()
-    original_ready = device_verification_execution.ready_device_availability_status
+    original_ready = device_verification_execution.ready_operational_state
 
     async def racing_ready(
         *args: object,
         **kwargs: object,
-    ) -> DeviceAvailabilityStatus:
+    ) -> DeviceOperationalState:
         stomper_can_go.set()
         # Yield to the event loop so the stomper can issue its UPDATE to
         # Postgres.  The UPDATE will block at the Postgres level on the FOR
@@ -72,7 +72,7 @@ async def test_retain_verified_node_locks_appium_node(
             with (
                 patch("app.services.device_verification_execution.set_stage", new=_noop_set_stage),
                 patch(
-                    "app.services.device_verification_execution.ready_device_availability_status",
+                    "app.services.device_verification_execution.ready_operational_state",
                     new=racing_ready,
                 ),
             ):

@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import node_health
 from app.services.agent_probe_result import ProbeResult
@@ -30,7 +30,7 @@ async def _seed_running_node_at_failure_threshold(
         db_session,
         host_id=db_host.id,
         name=name,
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
         auto_manage=False,
     )

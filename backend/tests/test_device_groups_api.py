@@ -59,7 +59,7 @@ async def _create_device(
         identity_scheme=str(payload["identity_scheme"]),
         identity_scope=str(payload["identity_scope"]),
         os_version=str(payload["os_version"]),
-        availability_status=payload.get("availability_status", "offline"),
+        operational_state=str(payload.get("operational_state", "offline")),
         device_type=payload.get("device_type", "real_device"),
         connection_type=payload.get("connection_type"),
         ip_address=payload.get("ip_address"),
@@ -323,7 +323,7 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
             "connection_target": "10.10.0.1:5555",
             "device_type": "real_device",
             "connection_type": "network",
-            "availability_status": "offline",
+            "status": "offline",
             "tags": {"team": "qa", "lane": "smoke"},
         },
     )

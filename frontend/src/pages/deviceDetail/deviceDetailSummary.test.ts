@@ -21,7 +21,7 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     needs_attention: false,
     os_version: '14',
     host_id: 'host-1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     tags: null,
     auto_manage: true,
     device_type: 'real_device',
@@ -74,7 +74,7 @@ describe('deviceDetailSummary', () => {
 
   it('builds hardware and connectivity pills (no lifecycle/readiness)', () => {
     const device = makeDevice({
-      availability_status: 'busy',
+      operational_state: 'busy', hold: null,
       hardware_health_status: 'warning',
       health_summary: {
         healthy: false,

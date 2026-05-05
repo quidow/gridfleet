@@ -54,12 +54,25 @@ function createSettingsState(): MockSetting[] {
       category: 'notifications',
       type: 'json',
       description: 'Event names eligible for toast display.',
-      default_value: ['node.crash', 'host.heartbeat_lost', 'device.availability_changed', 'run.expired'],
-      value: ['node.crash', 'host.heartbeat_lost', 'device.availability_changed', 'run.expired'],
+      default_value: [
+        'node.crash',
+        'host.heartbeat_lost',
+        'device.operational_state_changed',
+        'device.hold_changed',
+        'run.expired',
+      ],
+      value: [
+        'node.crash',
+        'host.heartbeat_lost',
+        'device.operational_state_changed',
+        'device.hold_changed',
+        'run.expired',
+      ],
       validation: {
         item_type: 'string',
         item_allowed_values: [
-          'device.availability_changed',
+          'device.operational_state_changed',
+          'device.hold_changed',
           'node.crash',
           'session.started',
           'run.created',
@@ -158,7 +171,7 @@ async function mockSettingsPageApis(page: Page) {
       id: 'wh-1',
       name: 'Slack Alerts',
       url: 'https://hooks.slack.test/services/abc',
-      event_types: ['device.availability_changed', 'session.started'],
+      event_types: ['device.operational_state_changed', 'session.started'],
       enabled: true,
       created_at: '2026-03-30T10:00:00Z',
       updated_at: '2026-03-30T10:00:00Z',
@@ -170,7 +183,7 @@ async function mockSettingsPageApis(page: Page) {
         {
           id: 'delivery-1',
           webhook_id: 'wh-1',
-          event_type: 'device.availability_changed',
+          event_type: 'device.operational_state_changed',
           status: 'exhausted',
           attempts: 3,
           max_attempts: 3,
@@ -187,10 +200,17 @@ async function mockSettingsPageApis(page: Page) {
   };
   const eventCatalog = [
     {
-      name: 'device.availability_changed',
+      name: 'device.operational_state_changed',
       category: 'device_and_node_lifecycle',
       category_display_name: 'Device And Node Lifecycle',
-      description: 'Device availability changed.',
+      description: 'Device operational state changed.',
+      typical_data_fields: ['device_id'],
+    },
+    {
+      name: 'device.hold_changed',
+      category: 'device_and_node_lifecycle',
+      category_display_name: 'Device And Node Lifecycle',
+      description: 'Device hold changed.',
       typical_data_fields: ['device_id'],
     },
     {
@@ -485,7 +505,7 @@ test.describe('Settings Page', () => {
     await page.getByRole('button', { name: 'Webhooks' }).click();
     await page.getByRole('button', { name: 'Recent Deliveries' }).click();
 
-    await expect(page.getByText('device.availability_changed').nth(1)).toBeVisible();
+    await expect(page.getByText('device.operational_state_changed').nth(1)).toBeVisible();
     await expect(page.getByText('500 Internal Server Error')).toBeVisible();
 
     await page.getByRole('button', { name: 'Retry' }).click();

@@ -22,7 +22,7 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     model: null,
     os_version: '14',
     host_id: 'host-1',
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     tags: null,
     auto_manage: true,
@@ -61,11 +61,11 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
 describe('devicesSummary', () => {
   it('counts availability and attention totals', () => {
     const stats = deriveDevicesSummaryStats([
-      makeDevice({ id: 'available', availability_status: 'available' }),
-      makeDevice({ id: 'busy', availability_status: 'busy' }),
-      makeDevice({ id: 'reserved', availability_status: 'reserved' }),
-      makeDevice({ id: 'offline', availability_status: 'offline' }),
-      makeDevice({ id: 'maintenance', availability_status: 'maintenance' }),
+      makeDevice({ id: 'available', operational_state: 'available', hold: null }),
+      makeDevice({ id: 'busy', operational_state: 'busy', hold: null }),
+      makeDevice({ id: 'reserved', operational_state: 'available', hold: 'reserved' }),
+      makeDevice({ id: 'offline', operational_state: 'offline', hold: null }),
+      makeDevice({ id: 'maintenance', operational_state: 'available', hold: 'maintenance' }),
       makeDevice({ id: 'attn', needs_attention: true }),
     ]);
 
@@ -98,9 +98,9 @@ describe('devicesSummary', () => {
     );
   });
 
-  it('emits availability_status URL when option set', () => {
-    const url = buildDevicesSummaryHref(new URLSearchParams(), { availabilityStatus: 'offline' });
-    expect(url).toContain('availability_status=offline');
+  it('emits status URL when option set', () => {
+    const url = buildDevicesSummaryHref(new URLSearchParams(), { status: 'offline' });
+    expect(url).toContain('status=offline');
   });
 
   it('emits needs_attention=true URL when option set', () => {
@@ -111,16 +111,16 @@ describe('devicesSummary', () => {
 
 function fleet(): DeviceRead[] {
   const base = {
-    availability_status: 'available',
+    operational_state: 'available', hold: null,
     needs_attention: false,
     hardware_health_status: 'healthy',
     hardware_telemetry_state: 'fresh',
   } as unknown as DeviceRead;
   return [
     { ...base } as DeviceRead,
-    { ...base, availability_status: 'busy' } as DeviceRead,
-    { ...base, availability_status: 'offline', needs_attention: true } as DeviceRead,
-    { ...base, availability_status: 'offline', needs_attention: true } as DeviceRead,
+    { ...base, operational_state: 'busy', hold: null } as DeviceRead,
+    { ...base, operational_state: 'offline', hold: null, needs_attention: true } as DeviceRead,
+    { ...base, operational_state: 'offline', hold: null, needs_attention: true } as DeviceRead,
   ];
 }
 

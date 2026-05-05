@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.device import (
     ConnectionType,
     Device,
-    DeviceAvailabilityStatus,
+    DeviceOperationalState,
     DeviceType,
 )
 from app.models.device_reservation import DeviceReservation
@@ -33,7 +33,7 @@ async def test_force_release_clears_stop_pending(
         name="Stuck Deferred Stop Device 3",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
@@ -108,7 +108,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         name="Release Commit Boundary",
         os_version="14",
         host_id=db_host.id,
-        availability_status=DeviceAvailabilityStatus.busy,
+        operational_state=DeviceOperationalState.busy,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )

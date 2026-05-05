@@ -296,7 +296,12 @@ async def release_device_with_cooldown(
     db: AsyncSession = Depends(get_db),
 ) -> ReleaseWithCooldownResponse:
     try:
-        reservation, next_status, excluded_until = await run_service.release_claimed_device_with_cooldown(
+        (
+            reservation,
+            next_operational_state,
+            next_hold,
+            excluded_until,
+        ) = await run_service.release_claimed_device_with_cooldown(
             db,
             run_id,
             device_id=device_id,
@@ -315,7 +320,8 @@ async def release_device_with_cooldown(
     return ReleaseWithCooldownResponse(
         status="cooldown_set",
         reservation=reservation,
-        device_availability_status=next_status.value,
+        device_operational_state=next_operational_state.value,
+        device_hold=next_hold.value if next_hold else None,
         retry_after_sec=data.ttl_seconds,
         excluded_until=excluded_until,
     )

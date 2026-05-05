@@ -36,6 +36,6 @@ async def test_host_offline_cascade_queues_all_events(
     types_in_order = [n for n, _ in event_bus_capture]
     assert "host.status_changed" in types_in_order
     assert "host.heartbeat_lost" in types_in_order
-    avail = [p for n, p in event_bus_capture if n == "device.availability_changed"]
+    avail = [p for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert len(avail) == len(devices)
-    assert all(p["new_availability_status"] == "offline" for p in avail)
+    assert all(p["new_operational_state"] == "offline" for p in avail)

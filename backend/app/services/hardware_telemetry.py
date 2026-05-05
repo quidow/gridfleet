@@ -12,7 +12,7 @@ from app.database import async_session
 from app.errors import AgentCallError
 from app.models.device import (
     Device,
-    DeviceAvailabilityStatus,
+    DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
     HardwareHealthStatus,
@@ -277,7 +277,7 @@ async def poll_hardware_telemetry_once(db: AsyncSession) -> None:
         .where(
             Host.status == HostStatus.online,
             Device.device_type == DeviceType.real_device,
-            Device.availability_status != DeviceAvailabilityStatus.offline,
+            Device.operational_state != DeviceOperationalState.offline,
         )
         .options(selectinload(Device.host))
     )

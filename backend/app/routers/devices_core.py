@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.device import ConnectionType, DeviceAvailabilityStatus, DeviceType, HardwareHealthStatus
+from app.models.device import ConnectionType, DeviceType, HardwareHealthStatus
 from app.models.session import Session
 from app.routers.device_route_helpers import get_device_or_404
 from app.schemas.device import (
@@ -16,7 +16,7 @@ from app.schemas.device import (
     SessionOutcomeHeatmapRow,
     SessionRead,
 )
-from app.schemas.device_filters import DeviceQueryFilters, DeviceSortBy, DeviceSortDir
+from app.schemas.device_filters import ChipStatus, DeviceQueryFilters, DeviceSortBy, DeviceSortDir
 from app.services import (
     capability_service,
     device_config_masking,
@@ -45,7 +45,7 @@ def build_device_query_filters(
     request: Request,
     pack_id: str | None = Query(None),
     platform_id: str | None = Query(None),
-    availability_status: DeviceAvailabilityStatus | None = Query(None),
+    status: ChipStatus | None = Query(None),
     host_id: uuid.UUID | None = Query(None),
     identity_value: str | None = Query(None),
     connection_target: str | None = Query(None),
@@ -62,7 +62,7 @@ def build_device_query_filters(
     return DeviceQueryFilters(
         pack_id=pack_id,
         platform_id=platform_id,
-        availability_status=availability_status,
+        status=status,
         host_id=host_id,
         identity_value=identity_value,
         connection_target=connection_target,

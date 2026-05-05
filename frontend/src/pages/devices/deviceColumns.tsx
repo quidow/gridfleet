@@ -6,18 +6,19 @@ import PlatformIcon from '../../components/PlatformIcon';
 import Badge, { type BadgeTone } from '../../components/ui/Badge';
 import Popover from '../../components/ui/Popover';
 import { missingSetupFieldLabel } from '../../components/readiness';
+import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorStopped } from '../../lib/emulatorState';
-import { DEVICE_AVAILABILITY_LABELS } from '../../lib/labels';
+import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import { getPendingDeviceActionLabel, type DevicePendingAction } from '../../lib/devicePendingAction';
 import type { RowActionItem } from '../../components/RowActionsMenu';
 import type { DataTableColumn } from '../../components/ui/DataTable';
-import type { DeviceRead } from '../../types';
+import type { DeviceChipStatus, DeviceRead } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_COLORS, DEVICE_TYPE_LABELS } from './devicePageHelpers';
 import type { DeviceSortKey } from './devicePageHelpers';
 import DeviceHealthCell from './DeviceHealthCell';
 import type { DeviceAction } from './deviceActions';
 
-function availabilityTone(status: DeviceRead['availability_status']): BadgeTone {
+function availabilityTone(status: DeviceChipStatus): BadgeTone {
   switch (status) {
     case 'available': return 'success';
     case 'busy': return 'warning';
@@ -28,9 +29,10 @@ function availabilityTone(status: DeviceRead['availability_status']): BadgeTone 
 }
 
 export function AvailabilityCell({ device }: { device: DeviceRead }) {
+  const status = deviceChipStatus(device);
   return (
-    <Badge tone={availabilityTone(device.availability_status)}>
-      {DEVICE_AVAILABILITY_LABELS[device.availability_status]}
+    <Badge tone={availabilityTone(status)}>
+      {DEVICE_STATUS_LABELS[status]}
     </Badge>
   );
 }
@@ -151,7 +153,7 @@ export function buildDeviceMenuItems(
 ): RowActionItem[] {
   const rowBusy = pendingAction !== null;
   return [
-    device.availability_status === 'maintenance'
+    device.hold === 'maintenance'
       ? {
           key: 'exit-maintenance',
           label: pendingAction === 'exiting-maintenance' ? 'Exiting Maintenance...' : 'Exit Maintenance',
@@ -172,13 +174,13 @@ export function buildDeviceMenuItems(
       icon: <Play size={15} />,
       onSelect: () => onAction({ type: 'start-node', deviceId: device.id }),
       disabled:
-        rowBusy || !!device.reservation || device.availability_status === 'maintenance' ||
+        rowBusy || !!device.reservation || device.hold === 'maintenance' ||
         device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
       title: isEmulatorStopped(device.emulator_state)
         ? 'Emulator/simulator is not running'
         : device.reservation
           ? `Reserved by ${device.reservation.run_name}`
-          : device.availability_status === 'maintenance'
+          : device.hold === 'maintenance'
             ? 'Disabled during maintenance'
             : device.readiness_state !== 'verified'
               ? 'Complete setup and verification first'
@@ -202,13 +204,13 @@ export function buildDeviceMenuItems(
       icon: <RefreshCw size={15} />,
       onSelect: () => onAction({ type: 'restart-node', deviceId: device.id }),
       disabled:
-        rowBusy || !!device.reservation || device.availability_status === 'maintenance' ||
+        rowBusy || !!device.reservation || device.hold === 'maintenance' ||
         device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
       title: isEmulatorStopped(device.emulator_state)
         ? 'Emulator/simulator is not running'
         : device.reservation
           ? `Reserved by ${device.reservation.run_name}`
-          : device.availability_status === 'maintenance'
+          : device.hold === 'maintenance'
             ? 'Disabled during maintenance'
             : device.readiness_state !== 'verified'
               ? 'Complete setup and verification first'
@@ -344,9 +346,9 @@ export function buildDeviceColumns(ctx: DeviceColumnContext): DataTableColumn<De
       },
     },
     {
-      key: 'availability_status',
+      key: 'status',
       header: 'Availability',
-      sortKey: 'availability_status',
+      sortKey: 'status',
       width: '9rem',
       className: 'whitespace-nowrap',
       render: (device) => (

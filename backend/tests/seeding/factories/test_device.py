@@ -4,7 +4,7 @@ import uuid
 
 from app.models.device import (
     ConnectionType,
-    DeviceAvailabilityStatus,
+    DeviceOperationalState,
     DeviceType,
 )
 from app.seeding.context import SeedContext
@@ -32,7 +32,7 @@ def test_make_real_android_device() -> None:
     assert device.manufacturer == "Google"
     assert device.model == "Pixel 7"
     assert device.verified_at == ctx.now
-    assert device.availability_status is DeviceAvailabilityStatus.available
+    assert device.operational_state is DeviceOperationalState.available
 
 
 def test_make_emulator_uses_virtual_connection_type() -> None:

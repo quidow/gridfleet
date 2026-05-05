@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
 from app.models.session import Session, SessionStatus
@@ -25,8 +25,8 @@ from app.services import (
     platform_label_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.device_availability import set_device_availability_status
 from app.services.device_readiness import is_ready_for_use_async
+from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
 from app.services.lifecycle_policy_state import (
     clear_backoff,
@@ -193,7 +193,7 @@ async def _find_matching_devices(
     candidate_stmt = (
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
-        .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
@@ -220,7 +220,7 @@ async def _find_matching_devices(
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .where(Device.id.in_(candidate_ids))
-        .where(Device.availability_status == DeviceAvailabilityStatus.available)
+        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
         .with_for_update(skip_locked=True)
@@ -314,9 +314,9 @@ async def _attempt_create_run(
 
     device_infos: list[ReservedDeviceInfo] = []
     for device in all_matched:
-        await set_device_availability_status(
+        await set_hold(
             device,
-            DeviceAvailabilityStatus.reserved,
+            DeviceHold.reserved,
             reason=f"Reserved for run '{data.name}'",
         )
         device_infos.append(
@@ -879,7 +879,7 @@ async def release_claimed_device_with_cooldown(
     worker_id: str,
     reason: str,
     ttl_seconds: int,
-) -> tuple[ReservedDeviceInfo, DeviceAvailabilityStatus, datetime]:
+) -> tuple[ReservedDeviceInfo, DeviceOperationalState, DeviceHold | None, datetime]:
     max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
     if ttl_seconds > max_ttl:
         raise ValueError(f"ttl_seconds must be <= {max_ttl}")
@@ -925,9 +925,8 @@ async def release_claimed_device_with_cooldown(
         entry.claimed_by = None
         entry.claimed_at = None
 
-        from app.services.device_availability_resolution import restore_post_busy_availability_status
-
-        next_status = await restore_post_busy_availability_status(db, device, reason=f"cooldown:{clean_reason}")
+        next_operational_state = await ready_operational_state(db, device)
+        await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
 
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -945,7 +944,7 @@ async def release_claimed_device_with_cooldown(
         )
 
     logger.info("device.cooldown.set")
-    return _reservation_to_claim_response(entry), next_status, excluded_until
+    return _reservation_to_claim_response(entry), next_operational_state, device.hold, excluded_until
 
 
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
@@ -1159,26 +1158,20 @@ async def _release_devices(
                 reservation.device_id,
             )
             continue
-        if device.availability_status not in {
-            DeviceAvailabilityStatus.reserved,
-            DeviceAvailabilityStatus.busy,
-        }:
-            # Belt-and-suspenders: even when we skip the availability restore,
-            # a deferred stop may have been waiting on this run's session.
+        if device.hold == DeviceHold.maintenance:
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
-        if device.availability_status == DeviceAvailabilityStatus.busy and await _device_has_running_session(
-            db, device.id
-        ):
+        if device.hold != DeviceHold.reserved and device.operational_state != DeviceOperationalState.busy:
+            devices_pending_lifecycle_cleanup.append(device.id)
             continue
-        next_status = (
-            DeviceAvailabilityStatus.available
-            if await is_ready_for_use_async(db, device)
-            else DeviceAvailabilityStatus.offline
-        )
-        await set_device_availability_status(
+        if device.hold == DeviceHold.reserved:
+            await set_hold(device, None, reason=f"Run '{run.name}' ended ({run.state.value})")
+        if device.operational_state == DeviceOperationalState.busy and await _device_has_running_session(db, device.id):
+            devices_pending_lifecycle_cleanup.append(device.id)
+            continue
+        await set_operational_state(
             device,
-            next_status,
+            await ready_operational_state(db, device),
             reason=f"Run '{run.name}' ended ({run.state.value})",
         )
         devices_pending_lifecycle_cleanup.append(device.id)

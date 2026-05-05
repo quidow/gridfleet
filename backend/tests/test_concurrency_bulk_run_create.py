@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_db
 from app.main import app
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from tests.helpers import create_device
 
@@ -27,7 +27,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             db_session,
             host_id=db_host.id,  # type: ignore[union-attr]
             name=f"bulk-{i}",
-            availability_status=DeviceAvailabilityStatus.available,
+            operational_state=DeviceOperationalState.available,
             verified=True,
         )
         for i in range(3)
@@ -90,7 +90,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
     for reservation in reservations:
         device_row = next(d for d in active_devices if d.id == reservation.device_id)
-        assert device_row.availability_status == DeviceAvailabilityStatus.reserved, (
-            f"Device {device_row.id} has active reservation but status is {device_row.availability_status} "
+        assert device_row.hold == DeviceHold.reserved, (
+            f"Device {device_row.id} has active reservation but status is {device_row.operational_state} "
             f"— orphaned reservation. HTTP statuses were {statuses}."
         )

@@ -55,7 +55,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceOperationalState
 from app.services import lifecycle_policy
 from tests.helpers import create_device
 
@@ -90,7 +90,7 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
         db_session,
         host_id=db_host.id,
         name="rmw-target",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
     )
     await db_session.commit()
     device_id = device.id
@@ -170,7 +170,7 @@ async def test_concurrent_health_failure_stale_overwrite(
         db_session,
         host_id=db_host.id,
         name="rmw-stale-target",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
     )
     await db_session.commit()
     device_id = device.id

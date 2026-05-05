@@ -4,6 +4,10 @@ import { fulfillJson } from './helpers/routes';
 
 const DEVICE_ROW_SELECTOR = '[data-testid^="device-row-"]';
 
+function deviceChipStatus(device: { operational_state: string; hold?: string | null }) {
+  return device.hold ?? device.operational_state;
+}
+
 async function expectHeadingStyle(locator: Locator, fontSize: string) {
   const style = await locator.evaluate((node) => {
     const computed = window.getComputedStyle(node);
@@ -65,8 +69,8 @@ const DEFAULT_DEVICE = {
   name: 'Default Device',
   os_version: '14',
   host_id: 'host-1',
-  availability_status: 'available',
   operational_state: 'available',
+  hold: null,
   tags: { team: 'qa' },
   auto_manage: true,
   device_type: 'real_device',
@@ -435,9 +439,9 @@ async function mockAddDeviceVerificationSurface(page: Page) {
     const requestUrl = new URL(route.request().url());
     const params = Object.fromEntries(requestUrl.searchParams.entries());
     deviceRequests.push(params);
-    const availabilityStatusParam = params.availability_status;
-    const filtered = availabilityStatusParam
-      ? devices.filter((device) => device.availability_status === availabilityStatusParam)
+    const statusParam = params.status;
+    const filtered = statusParam
+      ? devices.filter((device) => deviceChipStatus(device) === statusParam)
       : devices;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(devicesResponseBody(filtered, requestUrl)) });
   });
@@ -486,8 +490,8 @@ test.describe('Devices page', () => {
         identity_value: 'available-001',
         connection_target: 'available-001',
         name: 'Available Device',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         hardware_health_status: 'healthy',
         hardware_telemetry_state: 'fresh',
         needs_attention: false,
@@ -500,8 +504,8 @@ test.describe('Devices page', () => {
         identity_value: 'busy-001',
         connection_target: 'busy-001',
         name: 'Busy Device',
-        availability_status: 'busy',
         operational_state: 'busy',
+        hold: null,
         hardware_health_status: 'critical',
         hardware_telemetry_state: 'fresh',
         needs_attention: true,
@@ -514,8 +518,8 @@ test.describe('Devices page', () => {
         identity_value: 'offline-001',
         connection_target: 'offline-001',
         name: 'Offline Device',
-        availability_status: 'offline',
         operational_state: 'offline',
+        hold: null,
         hardware_health_status: 'healthy',
         hardware_telemetry_state: 'stale',
         needs_attention: true,
@@ -530,10 +534,10 @@ test.describe('Devices page', () => {
     await expect(page).toHaveURL(/device_type=real_device/);
     await expect(page).toHaveURL(/search=device/);
     await expect(page).toHaveURL(/needs_attention=true/);
-    await expect(page).not.toHaveURL(/[?&]availability_status=/);
+    await expect(page).not.toHaveURL(/[?&]status=/);
 
     await page.getByLabel('Offline 1').click();
-    await expect(page).toHaveURL(/availability_status=offline/);
+    await expect(page).toHaveURL(/status=offline/);
     await expect(page).toHaveURL(/platform=android_mobile/);
     await expect(page).toHaveURL(/device_type=real_device/);
     await expect(page).toHaveURL(/search=device/);
@@ -648,8 +652,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -681,8 +685,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '15',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -704,9 +708,9 @@ test.describe('Devices page', () => {
       },
     ]);
 
-    // Navigate with availability_status pre-set — the availability dropdown was removed;
-    // filtering by availability_status is now done via the summary pills or URL.
-    await page.goto('/devices?availability_status=available');
+    // Navigate with status pre-set — the availability dropdown was removed;
+    // filtering by status is now done via the summary pills or URL.
+    await page.goto('/devices?status=available');
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
 
     // Primary filters: Driver pack (0), Platform (1), Type (2).
@@ -728,7 +732,7 @@ test.describe('Devices page', () => {
 
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.platform_id ?? null).toBe('android_mobile');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.pack_id ?? null).toBe('appium-uiautomator2');
-    await expect.poll(() => mockApi.getLatestDevicesRequest()?.availability_status ?? null).toBe('available');
+    await expect.poll(() => mockApi.getLatestDevicesRequest()?.status ?? null).toBe('available');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.device_type ?? null).toBe('real_device');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.connection_type ?? null).toBe('network');
     await expect.poll(() => mockApi.getLatestDevicesRequest()?.os_version ?? null).toBe('15');
@@ -738,7 +742,7 @@ test.describe('Devices page', () => {
 
     await expect(page).toHaveURL(/platform_id=android_mobile/);
     await expect(page).toHaveURL(/pack_id=appium-uiautomator2/);
-    await expect(page).toHaveURL(/availability_status=available/);
+    await expect(page).toHaveURL(/status=available/);
     await expect(page).toHaveURL(/device_type=real_device/);
     await expect(page).toHaveURL(/connection_type=network/);
     await expect(page).toHaveURL(/os_version=15/);
@@ -762,8 +766,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -825,8 +829,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'emulator',
@@ -870,8 +874,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -947,8 +951,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -997,8 +1001,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -1057,8 +1061,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -1106,8 +1110,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -1578,7 +1582,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'offline',
+        operational_state: 'offline',
+        hold: null,
         needs_attention: true,
         tags: null,
         auto_manage: true,
@@ -1611,7 +1616,6 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         needs_attention: false,
         tags: null,
         auto_manage: true,
@@ -1994,8 +1998,8 @@ test.describe('Devices page', () => {
           platform_label: 'Android (real device)',
           os_version: '14',
           host_id: 'host-1',
-          availability_status: 'offline',
-          operational_state: 'offline',
+        operational_state: 'available',
+        hold: null,
           tags: null,
           auto_manage: true,
           device_type: 'real_device',
@@ -2067,8 +2071,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'offline',
-        operational_state: 'offline',
+        operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -2111,8 +2115,8 @@ test.describe('Devices page', () => {
           platform_label: 'Android (real device)',
           os_version: '15',
           host_id: 'host-1',
-          availability_status: 'offline',
-          operational_state: 'offline',
+        operational_state: 'available',
+        hold: null,
           tags: null,
           auto_manage: true,
           device_type: 'real_device',
@@ -2186,8 +2190,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'offline',
-        operational_state: 'offline',
+        operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'real_device',
@@ -2269,8 +2273,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'emulator',
@@ -2303,7 +2307,7 @@ test.describe('Devices page', () => {
   });
 
   test('shows availability label from device payload', async ({ page }) => {
-    // The state cell shows an AvailabilityCell (badge with DEVICE_AVAILABILITY_LABELS text).
+    // The state cell shows an AvailabilityCell (badge with DEVICE_STATUS_LABELS text).
     // Attention reasons surface in the Health column popover, not as a separate dot.
     const mockApi = await mockAddDeviceVerificationSurface(page);
     mockApi.setDevices([
@@ -2319,7 +2323,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'offline',
+        operational_state: 'offline',
+        hold: null,
         needs_attention: true,
         tags: null,
         auto_manage: true,
@@ -2345,7 +2350,7 @@ test.describe('Devices page', () => {
     await page.goto('/devices');
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('link', { name: 'Attention Device' })).toBeVisible();
-    // AvailabilityCell shows the availability_status label
+    // AvailabilityCell shows the status label
     await expect(page.getByRole('table').getByText('Offline')).toBeVisible();
   });
 
@@ -2364,8 +2369,8 @@ test.describe('Devices page', () => {
         platform_label: 'Android (real device)',
         os_version: '14',
         host_id: 'host-1',
-        availability_status: 'available',
         operational_state: 'available',
+        hold: null,
         tags: null,
         auto_manage: true,
         device_type: 'emulator',

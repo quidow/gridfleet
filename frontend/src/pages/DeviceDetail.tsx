@@ -33,6 +33,7 @@ import DeviceSessionOutcomeHeatmapPanel from '../components/deviceDetail/DeviceS
 import StateHistoryPanel from '../components/deviceDetail/StateHistoryPanel';
 import DeviceEditModal from './devices/DeviceEditModal';
 import { getVerificationAction } from '../lib/deviceWorkflow';
+import { deviceChipStatus } from '../lib/deviceState';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
@@ -198,7 +199,7 @@ export default function DeviceDetail() {
   const readinessLocked = device ? device.readiness_state !== 'verified' : true;
   const verificationAction = device ? getVerificationAction(device.readiness_state) : null;
   const hostLabel = device ? (hostMap.get(device.host_id) ?? device.host_id) : null;
-  const canTestSession = !!device && !reservationLocked && !readinessLocked && device.availability_status === 'available';
+  const canTestSession = !!device && !reservationLocked && !readinessLocked && deviceChipStatus(device) === 'available';
   const triage = device ? deriveDeviceDetailTriage(device, { health, canTestSession }) : null;
   const triagePending = {
     lifecycleBoot: lifecycleAction.isPending && lifecycleAction.variables?.action === 'boot',

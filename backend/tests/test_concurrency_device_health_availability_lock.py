@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import Device, DeviceAvailabilityStatus
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.services import device_health, device_locking
 from tests.helpers import create_device
 
@@ -28,7 +28,7 @@ async def test_health_failure_offline_write_serializes_with_reservation(
         db_session,
         host_id=db_host.id,
         name="health-offline-race",
-        availability_status=DeviceAvailabilityStatus.available,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
     await db_session.commit()
@@ -49,15 +49,18 @@ async def test_health_failure_offline_write_serializes_with_reservation(
         await asyncio.sleep(0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            locked.availability_status = DeviceAvailabilityStatus.reserved
+            locked.hold = DeviceHold.reserved
             await session.commit()
 
     await asyncio.wait_for(asyncio.gather(health_writer(), reservation_writer()), timeout=5.0)
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final == DeviceAvailabilityStatus.reserved
+    assert final.operational_state == DeviceOperationalState.offline
+    assert final.hold == DeviceHold.reserved
 
 
 async def test_health_recovery_available_write_serializes_with_maintenance(
@@ -69,7 +72,7 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         db_session,
         host_id=db_host.id,
         name="health-recovery-race",
-        availability_status=DeviceAvailabilityStatus.offline,
+        operational_state=DeviceOperationalState.offline,
         verified=True,
         auto_manage=True,
     )
@@ -104,12 +107,15 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         await asyncio.sleep(0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            locked.availability_status = DeviceAvailabilityStatus.maintenance
+            locked.hold = DeviceHold.maintenance
             await session.commit()
 
     await asyncio.wait_for(asyncio.gather(recovery_writer(), maintenance_writer()), timeout=5.0)
 
     async with db_session_maker() as verify:
-        final = (await verify.execute(select(Device.availability_status).where(Device.id == device_id))).scalar_one()
+        final = (
+            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+        ).one()
 
-    assert final == DeviceAvailabilityStatus.maintenance
+    assert final.operational_state == DeviceOperationalState.available
+    assert final.hold == DeviceHold.maintenance

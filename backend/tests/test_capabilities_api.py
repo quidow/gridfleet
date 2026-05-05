@@ -60,7 +60,7 @@ async def test_capabilities_endpoint_returns_live_android_allocations_for_runnin
                 "appium:systemPort": 9999,
             }
         },
-        availability_status="available",
+        operational_state="available",
     )
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
     db_session.add(node)
@@ -111,7 +111,7 @@ async def test_capabilities_endpoint_uses_active_target_for_running_avd(
         name="Pixel 6 AVD",
         platform_id="android_mobile",
         device_type="emulator",
-        availability_status="available",
+        operational_state="available",
     )
     db_session.add(
         AppiumNode(
@@ -147,7 +147,7 @@ async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_runni
         identity_scheme="apple_udid",
         identity_scope="global",
         device_type="real_device",
-        availability_status="available",
+        operational_state="available",
         device_config={
             "appium_caps": {
                 "appium:updatedWDABundleId": "com.example.test",
