@@ -132,12 +132,16 @@ jobs:
 
       - name: Smoke test built wheel
         working-directory: agent
+        env:
+          UV_NO_CACHE: "1"
         run: >
           uv run --isolated --no-project --with dist/*.whl --
           gridfleet-agent --version
 
       - name: Smoke test source distribution
         working-directory: agent
+        env:
+          UV_NO_CACHE: "1"
         run: >
           uv run --isolated --no-project --with dist/*.tar.gz --
           gridfleet-agent --version
@@ -159,7 +163,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-suffix: testkit-${{ matrix.python-version }}
+          cache-suffix: testkit-${{ matrix.python-version }}-v2
           python-version: ${{ matrix.python-version }}
           cache-dependency-glob: |
             testkit/pyproject.toml
@@ -190,12 +194,16 @@ jobs:
 
       - name: Smoke test built wheel
         working-directory: testkit
+        env:
+          UV_NO_CACHE: "1"
         run: >
           uv run --isolated --no-project --with dist/*.whl --
           python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
 
       - name: Smoke test source distribution
         working-directory: testkit
+        env:
+          UV_NO_CACHE: "1"
         run: >
           uv run --isolated --no-project --with dist/*.tar.gz --
           python -c "import gridfleet_testkit; assert gridfleet_testkit.__version__"
