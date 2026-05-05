@@ -837,6 +837,8 @@ async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -
         result = await stop_remote_temporary_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
+            host="10.0.0.1",
+            agent_port=5100,
             http_client_factory=AsyncMock,
         )
     assert result is False
@@ -854,6 +856,8 @@ async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
         result = await stop_remote_temporary_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
+            host="10.0.0.1",
+            agent_port=5100,
             http_client_factory=AsyncMock,
         )
     assert result is True

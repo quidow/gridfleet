@@ -227,6 +227,7 @@ async def test_appium_start_post_request_keeps_json_body() -> None:
     response = await agent_operations.appium_start(
         "http://10.0.0.5:5100",
         host="10.0.0.5",
+        agent_port=5100,
         payload={"platform_id": "android_mobile"},
         http_client_factory=_strict_client_factory(client),
         timeout=15,

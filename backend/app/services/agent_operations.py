@@ -15,6 +15,10 @@ from app.agent_client import (
     request as agent_request,
 )
 from app.errors import AgentResponseError, AgentUnreachableError
+from app.services.agent_http_pool import agent_http_pool
+from app.services.settings_service import settings_service
+
+_DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 
 
 def agent_base_url(host: str, agent_port: int) -> str:
@@ -27,14 +31,24 @@ async def _send_request(
     *,
     endpoint: str,
     host: str,
+    agent_port: int,
     timeout: float | int,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     params: QueryParams = None,
     json_body: JsonBody = None,
 ) -> httpx.Response:
-    client_manager = http_client_factory(timeout=timeout)
-    async with client_manager as client:
-        response = await agent_request(
+    use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled()
+    if use_pool:
+        max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10)
+        idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60)
+        client = await agent_http_pool.get_client(
+            host,
+            agent_port,
+            timeout=timeout,
+            max_keepalive=max_keepalive,
+            keepalive_expiry=idle_seconds,
+        )
+        return await agent_request(
             method,
             url,
             endpoint=endpoint,
@@ -44,7 +58,33 @@ async def _send_request(
             json_body=json_body,
             timeout=timeout,
         )
-    return response
+
+    client_manager = http_client_factory(timeout=timeout)
+    async with client_manager as fresh_client:
+        return await agent_request(
+            method,
+            url,
+            endpoint=endpoint,
+            host=host,
+            client=cast("AgentHttpClient", fresh_client),
+            params=params,
+            json_body=json_body,
+            timeout=timeout,
+        )
+
+
+def _pool_enabled() -> bool:
+    try:
+        return bool(settings_service.get("agent.http_pool_enabled"))
+    except (KeyError, RuntimeError):
+        return False
+
+
+def _settings_int(key: str, *, default: int) -> int:
+    try:
+        return int(settings_service.get(key))
+    except (KeyError, RuntimeError, TypeError, ValueError):
+        return default
 
 
 def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> None:
@@ -103,6 +143,7 @@ async def agent_health(
         f"{agent_base_url(host, agent_port)}/agent/health",
         endpoint="agent_health",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -123,6 +164,7 @@ async def agent_host_telemetry(
         f"{agent_base_url(host, agent_port)}/agent/host/telemetry",
         endpoint="agent_host_telemetry",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -145,6 +187,7 @@ async def appium_logs(
         f"{agent_base_url(host, agent_port)}/agent/appium/{port}/logs",
         endpoint="appium_logs",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         params={"lines": lines},
         timeout=timeout,
@@ -169,6 +212,7 @@ async def appium_status(
         f"{agent_base_url(host, agent_port)}/agent/appium/{port}/status",
         endpoint="appium_status",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -192,6 +236,7 @@ async def appium_probe_session(
         f"{agent_base_url(host, agent_port)}/agent/appium/{port}/probe-session",
         endpoint="appium_probe_session",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body={"capabilities": capabilities, "timeout_sec": timeout_sec},
         timeout=timeout if timeout is not None else timeout_sec,
@@ -209,6 +254,7 @@ async def appium_start(
     agent_base: str,
     *,
     host: str,
+    agent_port: int,
     payload: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int,
@@ -218,6 +264,7 @@ async def appium_start(
         f"{agent_base}/agent/appium/start",
         endpoint="appium_start",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body=payload,
         timeout=timeout,
@@ -228,6 +275,7 @@ async def appium_stop(
     agent_base: str,
     *,
     host: str,
+    agent_port: int,
     port: int,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 10,
@@ -237,6 +285,7 @@ async def appium_stop(
         f"{agent_base}/agent/appium/stop",
         endpoint="appium_stop",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body={"port": port},
         timeout=timeout,
@@ -273,6 +322,7 @@ async def list_plugins(
         f"{agent_base_url(host, agent_port)}/agent/plugins",
         endpoint="plugins_list",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -293,6 +343,7 @@ async def sync_plugins(
         f"{agent_base_url(host, agent_port)}/agent/plugins/sync",
         endpoint="plugins_sync",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body={"plugins": plugins},
         timeout=timeout,
@@ -316,6 +367,7 @@ async def get_tool_status(
         f"{agent_base_url(host, agent_port)}/agent/tools/status",
         endpoint="tools_status",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -340,6 +392,7 @@ async def ensure_tools(
         f"{agent_base_url(host, agent_port)}/agent/tools/ensure",
         endpoint="tools_ensure",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body={
             "appium_version": appium_version,
@@ -366,6 +419,7 @@ async def get_pack_devices(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices",
         endpoint="pack_devices",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
@@ -387,6 +441,7 @@ async def get_pack_device_properties(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/properties",
         endpoint="pack_device_properties",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         params={"pack_id": pack_id},
         timeout=timeout,
@@ -413,6 +468,7 @@ async def normalize_pack_device(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/normalize",
         endpoint="pack_device_normalize",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         json_body={
             "pack_id": pack_id,
@@ -460,6 +516,7 @@ async def pack_device_health(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/health",
         endpoint="pack_device_health",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         params=params,
         timeout=timeout,
@@ -498,6 +555,7 @@ async def pack_device_telemetry(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/telemetry",
         endpoint="pack_device_telemetry",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         params=params,
         timeout=timeout,
@@ -525,6 +583,7 @@ async def pack_device_lifecycle_action(
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/lifecycle/{action}",
         endpoint="pack_device_lifecycle_action",
         host=host,
+        agent_port=agent_port,
         http_client_factory=http_client_factory,
         params={"pack_id": pack_id, "platform_id": platform_id},
         json_body=args or {},

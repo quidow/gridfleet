@@ -171,6 +171,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_service.shutdown()
         await control_plane_leader.release()
         await event_bus.shutdown()
+        from app.services.agent_http_pool import agent_http_pool
+
+        await agent_http_pool.close()
         await engine.dispose()
         for task in list(signal_tasks):
             with contextlib.suppress(asyncio.CancelledError):

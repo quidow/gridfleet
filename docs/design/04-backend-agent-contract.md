@@ -222,13 +222,15 @@ When a backend loop initiates a request (no inbound request id to forward), the 
 
 ## Connection pooling
 
-The wrappers create a fresh `httpx.AsyncClient` per call (`_send_request` in `agent_operations.py:24-47`). This is intentional:
+Backend → agent calls reuse `httpx.AsyncClient` instances pooled by `(host_ip, agent_port)` via `app.services.agent_http_pool.AgentHttpPool`. A pooled client lives for the lifetime of the backend process; on lifespan shutdown the pool drains via `aclose()`.
 
-- Hosts come and go; long-lived clients pin DNS results.
-- Auth context is per-call.
-- Circuit-breaker decisions cannot be deferred behind keep-alive.
+The pool is opt-in via two guards: `agent.http_pool_enabled` (default `true`) **and** the caller using the default `httpx.AsyncClient` factory. Tests that inject a fake `http_client_factory` always go through the legacy per-call path. This is by design — the explicit-factory seam is used by unit tests and special-purpose call sites, and pooling must not surprise them.
 
-The cost is a TCP/TLS handshake per call, which the timeouts above tolerate. For hot-path probes (`/agent/appium/{port}/status` every 30 s) this has not been a bottleneck. If it becomes one, the right fix is per-host pooled clients keyed by `(host, agent_port)`, not module-global `httpx.AsyncClient`.
+`httpx.Limits(max_keepalive_connections=N, keepalive_expiry=S)` is set per client. `agent.http_pool_max_keepalive` controls N (default 10); `agent.http_pool_idle_seconds` controls S in seconds (default 60).
+
+Auth is not part of the pool key today because backend → agent does not pass `httpx.Auth`. When machine credentials are added, extend the key in that change.
+
+Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process — toggling `agent.http_pool_enabled` off only routes new calls through the legacy path; existing pooled clients stay open and resume serving if the toggle is flipped back on. Process restart is the only drain.
 
 ## Versioning
 
