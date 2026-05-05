@@ -145,6 +145,14 @@ export interface ReservedDeviceInfo {
   excluded_at: string | null;
   excluded_until: string | null;
   cooldown_remaining_sec: number | null;
+  name?: string | null;
+  device_type?: string | null;
+  connection_type?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  config?: Record<string, unknown> | null;
+  live_capabilities?: Record<string, unknown> | null;
+  unavailable_includes?: { include: string; reason: string }[] | null;
 }
 
 export interface SessionCounts {
