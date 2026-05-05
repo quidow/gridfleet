@@ -306,8 +306,10 @@ async def test_start_appium_failure(client: AsyncClient) -> None:
             },
         )
 
-    assert resp.status_code == 400
-    assert "appium not found" in resp.json()["detail"]
+    assert resp.status_code == 500
+    detail = resp.json()["detail"]
+    assert detail["code"] == "INTERNAL_ERROR"
+    assert "appium not found" in detail["message"]
 
 
 async def test_stop_appium(client: AsyncClient) -> None:
@@ -425,7 +427,9 @@ async def test_probe_appium_session_returns_gateway_error_on_cleanup_failure(cli
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
     assert resp.status_code == 502
-    assert resp.json()["detail"] == "delete failed"
+    detail = resp.json()["detail"]
+    assert detail["code"] == "PROBE_FAILED"
+    assert detail["message"] == "delete failed"
 
 
 async def test_probe_appium_session_returns_timeout_status(client: AsyncClient) -> None:
@@ -438,7 +442,9 @@ async def test_probe_appium_session_returns_timeout_status(client: AsyncClient) 
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
     assert resp.status_code == 504
-    assert "timed out" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["code"] == "PROBE_FAILED"
+    assert "timed out" in detail["message"]
 
 
 async def test_list_plugins(client: AsyncClient) -> None:

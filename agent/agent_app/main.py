@@ -557,6 +557,17 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
 
 @app.post("/agent/appium/start")
 async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
+    from agent_app.appium_process import (
+        AlreadyRunningError,
+        DeviceNotFoundError,
+        InvalidStartPayloadError,
+        PortOccupiedError,
+        RuntimeMissingError,
+        RuntimeNotInstalledError,
+        StartupTimeoutError,
+    )
+    from agent_app.error_codes import AgentErrorCode, http_exc
+
     try:
         info = await appium_mgr.start(
             connection_target=req.connection_target,
@@ -578,8 +589,22 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
             lifecycle_actions=req.lifecycle_actions,
             connection_behavior=req.connection_behavior,
         )
+    except PortOccupiedError as e:
+        raise http_exc(status_code=409, code=AgentErrorCode.PORT_OCCUPIED, message=str(e)) from e
+    except AlreadyRunningError as e:
+        raise http_exc(status_code=409, code=AgentErrorCode.ALREADY_RUNNING, message=str(e)) from e
+    except StartupTimeoutError as e:
+        raise http_exc(status_code=504, code=AgentErrorCode.STARTUP_TIMEOUT, message=str(e)) from e
+    except (RuntimeMissingError, RuntimeNotInstalledError) as e:
+        raise http_exc(status_code=503, code=AgentErrorCode.RUNTIME_MISSING, message=str(e)) from e
+    except DeviceNotFoundError as e:
+        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(e)) from e
+    except InvalidStartPayloadError as e:
+        raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
     except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
+    except Exception as e:
+        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
 
 
@@ -596,6 +621,8 @@ async def appium_status(port: int) -> dict[str, Any]:
 
 @app.post("/agent/appium/{port}/probe-session")
 async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
+    from agent_app.error_codes import AgentErrorCode, http_exc
+
     base_url = f"http://127.0.0.1:{port}"
     payload = {
         "capabilities": {
@@ -608,38 +635,62 @@ async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, 
         try:
             create_resp = await client.post(f"{base_url}/session", json=payload)
         except httpx.TimeoutException as exc:
-            raise HTTPException(status_code=504, detail=f"Appium probe timed out: {exc}") from exc
+            raise http_exc(
+                status_code=504,
+                code=AgentErrorCode.PROBE_FAILED,
+                message=f"Appium probe timed out: {exc}",
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"Appium probe failed: {exc}") from exc
+            raise http_exc(
+                status_code=502,
+                code=AgentErrorCode.PROBE_FAILED,
+                message=f"Appium probe failed: {exc}",
+            ) from exc
 
         if create_resp.status_code >= 400:
             detail = _probe_failure_detail(create_resp, fallback="Session create failed")
-            raise HTTPException(status_code=502, detail=detail)
+            raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
 
         try:
             data = create_resp.json()
         except ValueError:
-            raise HTTPException(status_code=502, detail="Session create returned invalid JSON") from None
+            raise http_exc(
+                status_code=502,
+                code=AgentErrorCode.PROBE_FAILED,
+                message="Session create returned invalid JSON",
+            ) from None
 
         session_id = data.get("sessionId")
         if not session_id and isinstance(data.get("value"), dict):
             session_id = data["value"].get("sessionId")
         if not isinstance(session_id, str) or not session_id:
-            raise HTTPException(status_code=502, detail="Session create did not return a session id")
+            raise http_exc(
+                status_code=502,
+                code=AgentErrorCode.PROBE_FAILED,
+                message="Session create did not return a session id",
+            )
 
         try:
             delete_resp = await client.delete(f"{base_url}/session/{session_id}")
         except httpx.TimeoutException as exc:
-            raise HTTPException(status_code=504, detail=f"Session cleanup timed out: {exc}") from exc
+            raise http_exc(
+                status_code=504,
+                code=AgentErrorCode.PROBE_FAILED,
+                message=f"Session cleanup timed out: {exc}",
+            ) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"Session created but cleanup failed: {exc}") from exc
+            raise http_exc(
+                status_code=502,
+                code=AgentErrorCode.PROBE_FAILED,
+                message=f"Session created but cleanup failed: {exc}",
+            ) from exc
 
         if delete_resp.status_code >= 400:
             detail = _probe_failure_detail(
                 delete_resp,
                 fallback=f"Session created but cleanup failed ({delete_resp.status_code})",
             )
-            raise HTTPException(status_code=502, detail=detail)
+            raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
 
     return {"ok": True}
 
