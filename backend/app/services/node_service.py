@@ -432,6 +432,7 @@ async def start_remote_temporary_node(
         resp = await appium_start(
             agent_base,
             host=host.ip,
+            agent_port=host.agent_port,
             payload=payload,
             http_client_factory=http_client_factory,
             timeout=_agent_start_timeout(device),
@@ -462,6 +463,8 @@ async def start_remote_temporary_node(
         await stop_remote_temporary_node(
             port=port,
             agent_base=agent_base,
+            host=host.ip,
+            agent_port=host.agent_port,
             http_client_factory=http_client_factory,
         )
         raise
@@ -510,6 +513,8 @@ async def stop_remote_temporary_node(
     *,
     port: int,
     agent_base: str,
+    host: str,
+    agent_port: int,
     http_client_factory: AgentClientFactory,
 ) -> bool:
     """Ask the agent to stop the Appium node on ``port``.
@@ -523,7 +528,8 @@ async def stop_remote_temporary_node(
     try:
         resp = await appium_stop(
             agent_base,
-            host=agent_base,
+            host=host,
+            agent_port=agent_port,
             port=port,
             http_client_factory=http_client_factory,
         )
@@ -547,6 +553,7 @@ async def stop_node_via_agent(
         resp = await appium_stop(
             f"http://{host.ip}:{host.agent_port}",
             host=host.ip,
+            agent_port=host.agent_port,
             port=node.port,
             http_client_factory=http_client_factory,
         )
@@ -583,6 +590,8 @@ async def restart_node_via_agent(
         stopped = await stop_remote_temporary_node(
             port=node.port,
             agent_base=agent_base,
+            host=host.ip,
+            agent_port=host.agent_port,
             http_client_factory=http_client_factory,
         )
         if not stopped:
@@ -629,6 +638,8 @@ async def restart_node_via_agent(
         await stop_remote_temporary_node(
             port=node.port,
             agent_base=agent_base,
+            host=host.ip,
+            agent_port=host.agent_port,
             http_client_factory=http_client_factory,
         )
         return False
@@ -832,9 +843,12 @@ async def stop_temporary_node(
     if handle.reused_existing:
         return True
     agent_base = handle.agent_base or await agent_url(device)
+    host = require_management_host(device, action="stop Appium nodes")
     stopped = await stop_remote_temporary_node(
         port=handle.port,
         agent_base=agent_base,
+        host=host.ip,
+        agent_port=host.agent_port,
         http_client_factory=httpx.AsyncClient,
     )
     # Only release the owner allocation when the agent confirmed the stop.
