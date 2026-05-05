@@ -67,6 +67,18 @@ def _raise_for_status(resp: Any) -> None:
     resp.raise_for_status()
 
 
+def _query_params(values: dict[str, Any]) -> list[tuple[str, str]]:
+    params: list[tuple[str, str]] = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            params.append((key, str(value).lower()))
+        else:
+            params.append((key, str(value)))
+    return params
+
+
 class HeartbeatThread(threading.Thread):
     """Background thread that sends periodic heartbeat pings for an active test run."""
 
@@ -114,6 +126,66 @@ class GridFleetClient:
     ):
         self.base_url = base_url.rstrip("/")
         self._auth = auth if auth is not None else _default_auth()
+
+    def list_devices(
+        self,
+        *,
+        pack_id: str | None = None,
+        platform_id: str | None = None,
+        status: str | None = None,
+        host_id: str | None = None,
+        identity_value: str | None = None,
+        connection_target: str | None = None,
+        device_type: str | None = None,
+        connection_type: str | None = None,
+        os_version: str | None = None,
+        search: str | None = None,
+        hardware_health_status: str | None = None,
+        hardware_telemetry_state: str | None = None,
+        needs_attention: bool | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List devices with backend filter passthrough."""
+        params = _query_params(
+            {
+                "pack_id": pack_id,
+                "platform_id": platform_id,
+                "status": status,
+                "host_id": host_id,
+                "identity_value": identity_value,
+                "connection_target": connection_target,
+                "device_type": device_type,
+                "connection_type": connection_type,
+                "os_version": os_version,
+                "search": search,
+                "hardware_health_status": hardware_health_status,
+                "hardware_telemetry_state": hardware_telemetry_state,
+                "needs_attention": needs_attention,
+            }
+        )
+        if tags:
+            params.extend((f"tags.{key}", value) for key, value in tags.items())
+        resp = httpx.get(
+            f"{self.base_url}/devices",
+            params=params,
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+            return cast("list[dict[str, Any]]", payload["items"])
+        return cast("list[dict[str, Any]]", payload)
+
+    def get_device(self, device_id: str) -> dict[str, Any]:
+        """Fetch one device detail row by backend device id."""
+        resp = httpx.get(
+            f"{self.base_url}/devices/{device_id}",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
     def get_device_config(self, connection_target: str, reveal: bool = True) -> dict[str, Any]:
         """Fetch device config by looking up the current runtime connection target."""

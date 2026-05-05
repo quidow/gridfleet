@@ -83,6 +83,102 @@ def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
     ]
 
 
+def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
+    calls: list[tuple[str, dict[str, Any] | list[tuple[str, str]], int | None]] = []
+
+    def fake_get(
+        url: str,
+        *,
+        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append((url, params or {}, timeout))
+        return DummyResponse([{"id": "dev-1", "operational_state": "available"}])
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+    devices = client.list_devices(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        status="available",
+        host_id="host-1",
+        identity_value="SERIAL123",
+        connection_target="SERIAL123",
+        device_type="real_device",
+        connection_type="usb",
+        os_version="14",
+        search="pixel",
+        hardware_health_status="healthy",
+        hardware_telemetry_state="fresh",
+        needs_attention=False,
+        tags={"team": "qa", "rack": "A1"},
+    )
+
+    assert devices == [{"id": "dev-1", "operational_state": "available"}]
+    assert calls == [
+        (
+            "http://manager/api/devices",
+            [
+                ("pack_id", "appium-uiautomator2"),
+                ("platform_id", "android_mobile"),
+                ("status", "available"),
+                ("host_id", "host-1"),
+                ("identity_value", "SERIAL123"),
+                ("connection_target", "SERIAL123"),
+                ("device_type", "real_device"),
+                ("connection_type", "usb"),
+                ("os_version", "14"),
+                ("search", "pixel"),
+                ("hardware_health_status", "healthy"),
+                ("hardware_telemetry_state", "fresh"),
+                ("needs_attention", "false"),
+                ("tags.team", "qa"),
+                ("tags.rack", "A1"),
+            ],
+            10,
+        )
+    ]
+
+
+def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypatch):
+    def fake_get(
+        url: str,
+        *,
+        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"items": [{"id": "dev-1"}], "total": 1, "limit": 50, "offset": 0})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.list_devices(status="available") == [{"id": "dev-1"}]
+
+
+def test_get_device_fetches_device_detail_by_id(monkeypatch):
+    calls: list[tuple[str, int | None]] = []
+
+    def fake_get(
+        url: str,
+        *,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append((url, timeout))
+        return DummyResponse({"id": "dev-1", "name": "Pixel 6"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.get_device("dev-1") == {"id": "dev-1", "name": "Pixel 6"}
+    assert calls == [("http://manager/api/devices/dev-1", 10)]
+
+
 def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
     calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
 
