@@ -10,7 +10,10 @@ from gridfleet_testkit.client import (
     GridFleetClient,
     HeartbeatThread,
     NoClaimableDevicesError,
+    ReserveCapabilitiesUnsupportedError,
+    UnknownIncludeError,
     _default_auth,
+    _raise_for_status,
     register_run_cleanup,
 )
 
@@ -969,3 +972,44 @@ def test_heartbeat_thread_passes_auth(monkeypatch):
 
     assert captured["url"] == "http://manager/api/runs/run-x/heartbeat"
     assert captured["auth"] is explicit
+
+
+def test_raise_for_status_maps_unknown_include_422_to_typed_exception():
+    resp = DummyResponse(
+        {
+            "error": {
+                "code": "INVALID_INCLUDE",
+                "message": "Unknown include values",
+                "details": {"code": "unknown_include", "values": ["garbage"]},
+            }
+        },
+        status_code=422,
+    )
+
+    with pytest.raises(UnknownIncludeError) as exc_info:
+        _raise_for_status(resp, run_id="run-1")
+
+    assert exc_info.value.values == ["garbage"]
+
+
+def test_raise_for_status_maps_reserve_capabilities_unsupported_422_to_typed_exception():
+    resp = DummyResponse(
+        {
+            "error": {
+                "code": "INVALID_INCLUDE",
+                "message": "include=capabilities not supported on reserve",
+                "details": {"code": "reserve_capabilities_unsupported"},
+            }
+        },
+        status_code=422,
+    )
+
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        _raise_for_status(resp, run_id="")
+
+
+def test_raise_for_status_passes_through_unrelated_422():
+    resp = DummyResponse({"detail": "validation"}, status_code=422)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _raise_for_status(resp, run_id="")

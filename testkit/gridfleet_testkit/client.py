@@ -47,6 +47,21 @@ class NoClaimableDevicesError(RuntimeError):
         super().__init__(message)
 
 
+class UnknownIncludeError(ValueError):
+    """Backend rejected one or more `?include=` keys."""
+
+    def __init__(self, values: list[str]) -> None:
+        super().__init__(f"Backend rejected unknown include values: {values}")
+        self.values = values
+
+
+class ReserveCapabilitiesUnsupportedError(ValueError):
+    """`?include=capabilities` is not supported on reserve."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or "include=capabilities is not supported on reserve; use include on claim_device")
+
+
 def _raise_for_status(resp: Any, *, run_id: str) -> None:
     if resp.status_code == 409:
         try:
@@ -67,6 +82,21 @@ def _raise_for_status(resp: Any, *, run_id: str) -> None:
                     retry_after_sec=retry_after,
                     next_available_at=next_available_at if isinstance(next_available_at, str) else None,
                 )
+    if resp.status_code == 422:
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            details = error.get("details")
+            if isinstance(details, dict):
+                code = details.get("code")
+                if code == "unknown_include":
+                    values = details.get("values")
+                    raise UnknownIncludeError(values if isinstance(values, list) else [])
+                if code == "reserve_capabilities_unsupported":
+                    raise ReserveCapabilitiesUnsupportedError(str(error.get("message") or ""))
     resp.raise_for_status()
 
 
