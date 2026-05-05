@@ -2,13 +2,13 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .allocation import AllocatedDevice, hydrate_allocated_device, hydrate_allocated_device_from_driver
 from .appium import (
     build_appium_options,
     create_appium_driver,
     get_connection_target_from_driver,
     get_device_config_for_driver,
 )
-from .allocation import AllocatedDevice, hydrate_allocated_device, hydrate_allocated_device_from_driver
 from .client import (
     GRID_URL,
     GRIDFLEET_API_URL,
@@ -25,9 +25,9 @@ except PackageNotFoundError:
     __version__ = "0.2.1"
 
 __all__ = [
-    "AllocatedDevice",
     "GRIDFLEET_API_URL",
     "GRID_URL",
+    "AllocatedDevice",
     "GridFleetClient",
     "HeartbeatThread",
     "NoClaimableDevicesError",

@@ -67,8 +67,8 @@ def _raise_for_status(resp: Any) -> None:
     resp.raise_for_status()
 
 
-def _query_params(values: dict[str, Any]) -> list[tuple[str, str]]:
-    params: list[tuple[str, str]] = []
+def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
+    params: list[tuple[str, str | int | float | bool | None]] = []
     for key, value in values.items():
         if value is None:
             continue

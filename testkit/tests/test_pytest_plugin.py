@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from typing import ClassVar
 
 import pytest
 
@@ -56,7 +57,7 @@ class FakeCatalogClient:
 
 
 class RecordingClient(FakeCatalogClient):
-    instances: list["RecordingClient"] = []
+    instances: ClassVar[list[RecordingClient]] = []
 
     def __init__(self) -> None:
         self.registered_drivers: list[tuple[object, str | None, str | None, bool]] = []
