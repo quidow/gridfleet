@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
     hydrate_allocated_device,
@@ -106,6 +108,15 @@ def test_hydrate_allocated_device_fetches_device_detail_when_claim_payload_lacks
     assert allocated.model == "Pixel 6"
     assert client.device_calls == ["dev-1"]
     assert client.config_calls == []
+
+
+def test_hydrate_allocated_device_requires_device_id() -> None:
+    client = FakeClient()
+    payload = claim_payload()
+    del payload["device_id"]
+
+    with pytest.raises(ValueError, match="Allocated device payload is missing device_id"):
+        hydrate_allocated_device(payload, run_id="run-1", client=client)
 
 
 def test_hydrate_allocated_device_fetches_capabilities_when_requested() -> None:

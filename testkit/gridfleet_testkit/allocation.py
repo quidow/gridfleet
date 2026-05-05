@@ -49,6 +49,7 @@ class AllocatedDevice:
 
     @property
     def device_ip(self) -> str | None:
+        """Best-effort address, preferring host IP before live device/config IP fields."""
         if self.host_ip:
             return self.host_ip
         live_value = (self.live_capabilities or {}).get("appium:deviceIP")
