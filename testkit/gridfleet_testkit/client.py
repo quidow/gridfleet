@@ -79,7 +79,7 @@ def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float |
     return params
 
 
-def _raise_or_warn(operation: str, suppress_errors: bool, exc: httpx.HTTPError) -> None:
+def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> None:
     if not suppress_errors:
         raise exc
     logger.warning("Failed to %s with GridFleet: %s", operation, exc)
@@ -393,7 +393,7 @@ class GridFleetClient:
                 auth=self._auth,
             )
             resp.raise_for_status()
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
             _raise_or_warn("register session", suppress_errors, exc)
             return None
         return cast("dict[str, Any]", resp.json())
@@ -414,7 +414,7 @@ class GridFleetClient:
                 auth=self._auth,
             )
             resp.raise_for_status()
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
             _raise_or_warn("report session status", suppress_errors, exc)
             return None
         return cast("dict[str, Any]", resp.json())

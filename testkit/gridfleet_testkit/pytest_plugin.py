@@ -27,7 +27,7 @@ def _normalize_usage_error_message(message: str) -> str:
     return message
 
 
-def _build_driver_options(request: pytest.FixtureRequest) -> Any:
+def _build_driver_options(request: pytest.FixtureRequest, catalog_client: GridFleetClient | None = None) -> Any:
     params = getattr(request, "param", {})
     capabilities = {key: value for key, value in params.items() if key not in {"pack_id", "platform_id"}}
     try:
@@ -36,14 +36,14 @@ def _build_driver_options(request: pytest.FixtureRequest) -> Any:
             platform_id=params.get("platform_id"),
             capabilities=capabilities,
             test_name=request.node.name,
-            catalog_client=GridFleetClient(),
+            catalog_client=catalog_client or GridFleetClient(),
         )
     except ValueError as exc:
         raise pytest.UsageError(_normalize_usage_error_message(str(exc))) from exc
 
 
 @pytest.fixture
-def appium_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
+def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetClient) -> Generator[Any, None, None]:
     """
     Create an Appium Remote driver through the Selenium Grid.
 
@@ -54,10 +54,7 @@ def appium_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
             indirect=True,
         )
     """
-    try:
-        options = _build_driver_options(request)
-    except ValueError as exc:
-        raise pytest.UsageError(_normalize_usage_error_message(str(exc))) from exc
+    options = _build_driver_options(request, gridfleet_client)
     from appium import webdriver
 
     try:
@@ -77,12 +74,12 @@ def appium_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
             pack_id=pack_id if isinstance(pack_id, str) and pack_id else None,
             platform_id=platform_id if isinstance(platform_id, str) and platform_id else None,
         )
-        GridFleetClient().register_session(**payload, suppress_errors=True)
+        gridfleet_client.register_session(**payload, suppress_errors=True)
         raise
     session_id = driver.session_id
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("Created Appium driver did not expose a session ID")
-    GridFleetClient().register_session_from_driver(driver, test_name=request.node.name, suppress_errors=True)
+    gridfleet_client.register_session_from_driver(driver, test_name=request.node.name, suppress_errors=True)
 
     yield driver
 
@@ -99,7 +96,7 @@ def appium_driver(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
         driver.quit()
     finally:
         if status is not None:
-            GridFleetClient().update_session_status(session_id, status, suppress_errors=True)
+            gridfleet_client.update_session_status(session_id, status, suppress_errors=True)
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)

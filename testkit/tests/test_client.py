@@ -611,6 +611,24 @@ def test_register_session_warns_and_returns_none_when_suppressing_http_error(mon
     assert "Failed to register session with GridFleet" in caplog.text
 
 
+def test_register_session_warns_and_returns_none_when_json_encoding_fails(monkeypatch, caplog):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        raise TypeError("Object of type object is not JSON serializable")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.register_session(session_id="sess-1", requested_capabilities={"bad": object()}) is None
+    assert "Failed to register session with GridFleet" in caplog.text
+
+
 def test_register_session_raises_when_not_suppressing_http_error(monkeypatch):
     def fake_post(
         url: str,
@@ -627,6 +645,28 @@ def test_register_session_raises_when_not_suppressing_http_error(monkeypatch):
 
     with pytest.raises(httpx.HTTPStatusError):
         client.register_session(session_id="sess-1", suppress_errors=False)
+
+
+def test_register_session_raises_json_encoding_error_when_not_suppressing(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        raise TypeError("Object of type object is not JSON serializable")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        client.register_session(
+            session_id="sess-1",
+            requested_capabilities={"bad": object()},
+            suppress_errors=False,
+        )
 
 
 def test_update_session_status_patches_status(monkeypatch):

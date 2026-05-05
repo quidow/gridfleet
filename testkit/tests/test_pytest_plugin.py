@@ -126,7 +126,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     created_drivers = []
     install_fake_appium(monkeypatch, created_drivers)
     RecordingClient.instances.clear()
-    monkeypatch.setattr(pytest_plugin, "GridFleetClient", RecordingClient)
+    gridfleet_client = RecordingClient()
     events: list[str] = []
 
     request = FakeRequest(
@@ -139,7 +139,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request)
+    generator = fixture_fn(request, gridfleet_client)
     driver = next(generator)
     original_quit = driver.quit
     original_update_session_status = RecordingClient.update_session_status
@@ -173,8 +173,8 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     assert created_drivers[0][1]["appium:udid"] == "10.0.0.8:5555"
     assert created_drivers[0][1]["gridfleet:testName"] == "test_launch"
     assert created_drivers[0][1]["appium:platform"] == "android_mobile"
-    register_client = RecordingClient.instances[1]
-    assert register_client.registered_drivers == [(driver, "test_launch", None, True)]
+    assert RecordingClient.instances == [gridfleet_client]
+    assert gridfleet_client.registered_drivers == [(driver, "test_launch", None, True)]
 
     request.node.rep_call = report
     with pytest.raises(StopIteration):
@@ -182,8 +182,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
     assert driver.quit_called is True
     assert events == ["quit", "report"]
-    status_client = RecordingClient.instances[2]
-    assert status_client.reported_statuses == [("sess-1", expected_status, True)]
+    assert gridfleet_client.reported_statuses == [("sess-1", expected_status, True)]
 
 
 def test_device_config_uses_runtime_connection_target():
@@ -246,7 +245,7 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
     monkeypatch.setitem(sys.modules, "appium.options", options_module)
     monkeypatch.setitem(sys.modules, "appium.options.common", common_module)
     RecordingClient.instances.clear()
-    monkeypatch.setattr(pytest_plugin, "GridFleetClient", RecordingClient)
+    gridfleet_client = RecordingClient()
 
     request = FakeRequest(
         {
@@ -260,14 +259,14 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
         test_name="test_broken",
     )
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request)
+    generator = fixture_fn(request, gridfleet_client)
 
     with pytest.raises(RuntimeError, match="Session could not be created"):
         next(generator)
 
-    error_client = RecordingClient.instances[1]
-    assert len(error_client.registered_payloads) == 1
-    payload = error_client.registered_payloads[0]
+    assert RecordingClient.instances == [gridfleet_client]
+    assert len(gridfleet_client.registered_payloads) == 1
+    payload = gridfleet_client.registered_payloads[0]
     assert str(payload["session_id"]).startswith("error-")
     assert payload["test_name"] == "test_broken"
     assert payload["status"] == "error"

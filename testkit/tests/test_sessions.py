@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import gridfleet_testkit.sessions as sessions
 from gridfleet_testkit.sessions import build_error_session_payload
 
 
@@ -76,3 +77,12 @@ def test_build_error_session_payload_ignores_unknown_enum_values() -> None:
 
     assert payload["requested_device_type"] is None
     assert payload["requested_connection_type"] is None
+
+
+def test_only_payload_builder_is_public() -> None:
+    assert sessions.__all__ == ["build_error_session_payload"]
+    assert not hasattr(sessions, "raw_attempted_capabilities")
+    assert not hasattr(sessions, "infer_requested_platform_id")
+    assert not hasattr(sessions, "read_enum_capability")
+    assert not hasattr(sessions, "KNOWN_DEVICE_TYPES")
+    assert not hasattr(sessions, "KNOWN_CONNECTION_TYPES")
