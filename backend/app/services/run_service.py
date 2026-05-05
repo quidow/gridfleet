@@ -241,12 +241,17 @@ def _build_device_info(device: Device, *, platform_label: str | None) -> Reserve
     return ReservedDeviceInfo(
         device_id=str(device.id),
         identity_value=device.identity_value,
+        name=device.name,
         connection_target=device.connection_target,
         pack_id=device.pack_id,
         platform_id=device.platform_id,
         platform_label=platform_label,
         os_version=device.os_version,
         host_ip=host_ip,
+        device_type=device.device_type.value if device.device_type is not None else None,
+        connection_type=device.connection_type.value if device.connection_type is not None else None,
+        manufacturer=device.manufacturer,
+        model=device.model,
         excluded=False,
     )
 
