@@ -383,6 +383,7 @@ def test_claim_device_raises_no_claimable_devices_with_retry_metadata(monkeypatc
     with pytest.raises(NoClaimableDevicesError) as exc_info:
         client.claim_device("run-123", worker_id="gw0")
 
+    assert exc_info.value.run_id == "run-123"
     assert exc_info.value.retry_after_sec == 7
     assert exc_info.value.next_available_at == "2026-05-03T20:00:00Z"
 

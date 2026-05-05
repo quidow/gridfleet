@@ -37,15 +37,17 @@ class NoClaimableDevicesError(RuntimeError):
         self,
         message: str,
         *,
+        run_id: str,
         retry_after_sec: int,
         next_available_at: str | None = None,
     ) -> None:
+        self.run_id = run_id
         self.retry_after_sec = retry_after_sec
         self.next_available_at = next_available_at
         super().__init__(message)
 
 
-def _raise_for_status(resp: Any) -> None:
+def _raise_for_status(resp: Any, *, run_id: str) -> None:
     if resp.status_code == 409:
         try:
             payload = resp.json()
@@ -61,6 +63,7 @@ def _raise_for_status(resp: Any) -> None:
                 next_available_at = details.get("next_available_at")
                 raise NoClaimableDevicesError(
                     str(error.get("message") or "No unclaimed devices available in this run"),
+                    run_id=run_id,
                     retry_after_sec=retry_after,
                     next_available_at=next_available_at if isinstance(next_available_at, str) else None,
                 )
@@ -289,7 +292,7 @@ class GridFleetClient:
             timeout=10,
             auth=self._auth,
         )
-        _raise_for_status(resp)
+        _raise_for_status(resp, run_id=run_id)
         return cast("dict[str, Any]", resp.json())
 
     def release_device(self, run_id: str, *, device_id: str, worker_id: str) -> None:
