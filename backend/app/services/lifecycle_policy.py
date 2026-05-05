@@ -10,7 +10,7 @@ from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import device_health_summary, lifecycle_incident_service, lifecycle_policy_summary, run_service
+from app.services import device_health, lifecycle_incident_service, lifecycle_policy_summary, run_service
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
@@ -235,8 +235,7 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
     if await has_running_client_session(db, device.id):
         return DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
-    snapshot = await device_health_summary.get_health_snapshot(db, str(device.id))
-    summary = device_health_summary.build_public_health_summary(snapshot)
+    summary = device_health.build_public_summary(device)
     node = loaded_node(device)
     node_running = node is not None and node.state == NodeState.running
 
@@ -244,10 +243,9 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
         # Defense in depth: ``clear_pending_auto_stop_on_recovery`` should
         # already have cleared the intent when health recovered. If anything
         # slipped the device into a healthy state without going through that
-        # path, the snapshot is treated as the canonical health source — we
-        # do not stop a device the snapshot reports as healthy. Stale-but-
-        # healthy snapshots therefore lean toward leaving the device up; a
-        # subsequent failed probe will re-enter ``handle_health_failure``.
+        # path, the row-derived projection is treated as the canonical health
+        # source. A subsequent failed probe will re-enter
+        # ``handle_health_failure``.
         await clear_pending_auto_stop_on_recovery(
             db,
             device,

@@ -133,10 +133,13 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     result: dict[str, Any] = {"platform": device.platform_id}
 
     node = device.appium_node
+    node_lifecycle_state = node.state.value if node else None
+    node_health_running = getattr(node, "health_running", None) if node is not None else None
+    node_health_state = getattr(node, "health_state", None) if node is not None else None
     node_running = node is not None and (
-        node.health_running if node.health_running is not None else node.state == NodeState.running
+        node_health_running if node_health_running is not None else node_lifecycle_state == NodeState.running.value
     )
-    node_state = node.health_state if node and node.health_state is not None else node.state.value if node else None
+    node_state = node_health_state if node_health_state is not None else node_lifecycle_state
     if node is not None:
         try:
             node_payload = await fetch_appium_status(

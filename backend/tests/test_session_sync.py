@@ -541,7 +541,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     `_on_session_end` falls through to `restore_post_busy_availability_status`.
     The device must end up `available`, not stuck at `busy`."""
     from app.models.appium_node import AppiumNode, NodeState
-    from app.services import device_health_summary
+    from app.services import device_health
 
     device = Device(
         pack_id="appium-uiautomator2",
@@ -570,11 +570,18 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     # Defer a stop (simulates an earlier transient failure during this session).
     await handle_health_failure(db_session, device, source="node_health", reason="Probe failed")
 
-    # Health later recovers — seed snapshot to healthy. (Task 2's recovery wiring
+    # Health later recovers - seed derived health to healthy. Recovery wiring
     # would normally clear stop_pending here, but this test exercises the
     # defense-in-depth path where it didn't, so we leave stop_pending=True.)
-    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
-    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     # Session ends — Grid no longer reports it.

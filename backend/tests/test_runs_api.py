@@ -15,7 +15,7 @@ from app.models.driver_pack import DriverPack
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.schemas.run import DeviceRequirement, RunCreate, SessionCounts
-from app.services import device_health_summary, run_service
+from app.services import device_health, run_service
 from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
@@ -230,7 +230,7 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
         os_version="14",
         availability_status="available",
     )
-    await device_health_summary.update_device_checks(
+    await device_health.update_device_checks(
         db_session,
         device,
         healthy=False,

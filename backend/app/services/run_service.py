@@ -192,7 +192,7 @@ async def _find_matching_devices(
     )
     candidate_stmt = (
         select(Device)
-        .options(selectinload(Device.host))
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
         .where(Device.availability_status == DeviceAvailabilityStatus.available)
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
@@ -218,7 +218,7 @@ async def _find_matching_devices(
     candidate_ids = [device.id for device in ready_candidates]
     locked_stmt = (
         select(Device)
-        .options(selectinload(Device.host))
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
         .where(Device.id.in_(candidate_ids))
         .where(Device.availability_status == DeviceAvailabilityStatus.available)
         .where(~active_reservation_exists)

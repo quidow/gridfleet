@@ -8,7 +8,7 @@ from app.schemas.device import DeviceReservationRead
 from app.services import (
     device_attention,
     device_config_masking,
-    device_health_summary,
+    device_health,
     device_readiness,
     hardware_telemetry,
     lifecycle_policy,
@@ -65,10 +65,7 @@ async def serialize_device(
     policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
     lifecycle_summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
     if health_summary is None:
-        snapshot = await device_health_summary.get_health_snapshot(db, str(device.id))
-        health_summary = device_health_summary.build_public_health_summary(snapshot)
-    else:
-        snapshot = None
+        health_summary = device_health.build_public_summary(device)
     hardware_status = hardware_telemetry.current_hardware_health_status(device)
     needs_attention = device_attention.compute_needs_attention(
         lifecycle_summary["state"],
@@ -78,17 +75,9 @@ async def serialize_device(
     )
 
     emulator_state_value: str | None = None
-    if snapshot is not None:
-        raw = snapshot.get("emulator_state")
-        if isinstance(raw, str) and raw:
-            emulator_state_value = raw
-    elif health_summary is not None:
-        # If we already had a snapshot from a pre-built health_summary, try fetching it
-        fresh_snapshot = await device_health_summary.get_health_snapshot(db, str(device.id))
-        if fresh_snapshot is not None:
-            raw = fresh_snapshot.get("emulator_state")
-            if isinstance(raw, str) and raw:
-                emulator_state_value = raw
+    raw = device.emulator_state
+    if isinstance(raw, str) and raw:
+        emulator_state_value = raw
 
     blocked_reason: str | None = None
     try:

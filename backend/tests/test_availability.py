@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.host import Host
-from app.services import device_health_summary
+from app.services import device_health
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -114,7 +114,7 @@ async def test_availability_excludes_unhealthy_devices(
     await db_session.commit()
     await db_session.refresh(unhealthy)
 
-    await device_health_summary.update_device_checks(
+    await device_health.update_device_checks(
         db_session,
         unhealthy,
         healthy=False,
@@ -168,13 +168,26 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     await db_session.commit()
     await db_session.refresh(device, ["appium_node"])
 
-    await device_health_summary.update_node_state(db_session, device, running=False, state="error")
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        health_running=False,
+        health_state="error",
+        mark_offline=True,
+    )
     await db_session.commit()
     assert device.availability_status == DeviceAvailabilityStatus.offline
 
-    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
-    await device_health_summary.update_session_viability(db_session, device, status="passed", error=None)
-    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_session_viability(db_session, device, status="passed", error=None)
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
     await db_session.commit()
 
     await db_session.refresh(device)
