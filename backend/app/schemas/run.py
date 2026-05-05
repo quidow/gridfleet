@@ -49,6 +49,11 @@ class RunPreparationFailureReport(BaseModel):
     source: str = "ci_preparation"
 
 
+class UnavailableInclude(BaseModel):
+    include: str
+    reason: str
+
+
 class ReservedDeviceInfo(BaseModel):
     device_id: str
     identity_value: str
