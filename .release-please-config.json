@@ -7,12 +7,26 @@
     "backend": {
       "release-type": "python",
       "package-name": "gridfleet-backend",
-      "include-component-in-tag": true
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='gridfleet-backend')].version"
+        }
+      ]
     },
     "agent": {
       "release-type": "python",
       "package-name": "gridfleet-agent",
-      "include-component-in-tag": true
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='gridfleet-agent')].version"
+        }
+      ]
     },
     "frontend": {
       "release-type": "node",
@@ -22,7 +36,14 @@
     "testkit": {
       "release-type": "python",
       "package-name": "gridfleet-testkit",
-      "include-component-in-tag": true
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='gridfleet-testkit')].version"
+        }
+      ]
     }
   }
 }
