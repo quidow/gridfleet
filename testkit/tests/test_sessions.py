@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import gridfleet_testkit.sessions as sessions
-from gridfleet_testkit.sessions import build_error_session_payload
 
 
 class FakeOptions:
@@ -22,7 +21,7 @@ def test_build_error_session_payload_uses_explicit_pack_and_platform() -> None:
         platform_name="Android",
     )
 
-    payload = build_error_session_payload(
+    payload = sessions.build_error_session_payload(
         session_id="error-1",
         test_name="test_login",
         options=options,
@@ -53,7 +52,7 @@ def test_build_error_session_payload_uses_explicit_pack_and_platform() -> None:
 def test_build_error_session_payload_infers_platform_from_capability() -> None:
     options = FakeOptions({"appium:platform": "ios_simulator", "appium:connection_type": "virtual"})
 
-    payload = build_error_session_payload(
+    payload = sessions.build_error_session_payload(
         session_id="error-2",
         test_name="test_ios",
         options=options,
@@ -68,7 +67,7 @@ def test_build_error_session_payload_infers_platform_from_capability() -> None:
 def test_build_error_session_payload_ignores_unknown_enum_values() -> None:
     options = FakeOptions({"device_type": "browser", "connection_type": "serial"})
 
-    payload = build_error_session_payload(
+    payload = sessions.build_error_session_payload(
         session_id="error-3",
         test_name="test_unknown",
         options=options,
