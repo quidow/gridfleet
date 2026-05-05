@@ -83,6 +83,102 @@ def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
     ]
 
 
+def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
+    calls: list[tuple[str, dict[str, Any] | list[tuple[str, str]], int | None]] = []
+
+    def fake_get(
+        url: str,
+        *,
+        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append((url, params or {}, timeout))
+        return DummyResponse([{"id": "dev-1", "operational_state": "available"}])
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+    devices = client.list_devices(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        status="available",
+        host_id="host-1",
+        identity_value="SERIAL123",
+        connection_target="SERIAL123",
+        device_type="real_device",
+        connection_type="usb",
+        os_version="14",
+        search="pixel",
+        hardware_health_status="healthy",
+        hardware_telemetry_state="fresh",
+        needs_attention=False,
+        tags={"team": "qa", "rack": "A1"},
+    )
+
+    assert devices == [{"id": "dev-1", "operational_state": "available"}]
+    assert calls == [
+        (
+            "http://manager/api/devices",
+            [
+                ("pack_id", "appium-uiautomator2"),
+                ("platform_id", "android_mobile"),
+                ("status", "available"),
+                ("host_id", "host-1"),
+                ("identity_value", "SERIAL123"),
+                ("connection_target", "SERIAL123"),
+                ("device_type", "real_device"),
+                ("connection_type", "usb"),
+                ("os_version", "14"),
+                ("search", "pixel"),
+                ("hardware_health_status", "healthy"),
+                ("hardware_telemetry_state", "fresh"),
+                ("needs_attention", "false"),
+                ("tags.team", "qa"),
+                ("tags.rack", "A1"),
+            ],
+            10,
+        )
+    ]
+
+
+def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypatch):
+    def fake_get(
+        url: str,
+        *,
+        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"items": [{"id": "dev-1"}], "total": 1, "limit": 50, "offset": 0})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.list_devices(status="available") == [{"id": "dev-1"}]
+
+
+def test_get_device_fetches_device_detail_by_id(monkeypatch):
+    calls: list[tuple[str, int | None]] = []
+
+    def fake_get(
+        url: str,
+        *,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append((url, timeout))
+        return DummyResponse({"id": "dev-1", "name": "Pixel 6"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.get_device("dev-1") == {"id": "dev-1", "name": "Pixel 6"}
+    assert calls == [("http://manager/api/devices/dev-1", 10)]
+
+
 def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
     calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
 
@@ -441,6 +537,203 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
             "source": "github_actions",
         },
         "timeout": 10,
+    }
+
+
+def test_register_session_posts_full_payload(monkeypatch):
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"session_id": "sess-1", "status": "running"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    result = client.register_session(
+        session_id="sess-1",
+        test_name="test_login",
+        device_id="dev-1",
+        connection_target="SERIAL123",
+        requested_pack_id="appium-uiautomator2",
+        requested_platform_id="android_mobile",
+        requested_device_type="real_device",
+        requested_connection_type="usb",
+        requested_capabilities={"appium:udid": "SERIAL123"},
+        run_id="run-1",
+    )
+
+    assert result == {"session_id": "sess-1", "status": "running"}
+    assert recorded == {
+        "url": "http://manager/api/sessions",
+        "json": {
+            "session_id": "sess-1",
+            "test_name": "test_login",
+            "device_id": "dev-1",
+            "connection_target": "SERIAL123",
+            "status": "running",
+            "requested_pack_id": "appium-uiautomator2",
+            "requested_platform_id": "android_mobile",
+            "requested_device_type": "real_device",
+            "requested_connection_type": "usb",
+            "requested_capabilities": {"appium:udid": "SERIAL123"},
+            "error_type": None,
+            "error_message": None,
+            "run_id": "run-1",
+        },
+        "timeout": 5,
+    }
+
+
+def test_register_session_warns_and_returns_none_when_suppressing_http_error(monkeypatch, caplog):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "bad"}, status_code=500)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.register_session(session_id="sess-1", suppress_errors=True) is None
+    assert "Failed to register session with GridFleet" in caplog.text
+
+
+def test_register_session_warns_and_returns_none_when_json_encoding_fails(monkeypatch, caplog):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        raise TypeError("Object of type object is not JSON serializable")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.register_session(session_id="sess-1", requested_capabilities={"bad": object()}) is None
+    assert "Failed to register session with GridFleet" in caplog.text
+
+
+def test_register_session_raises_when_not_suppressing_http_error(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse({"detail": "bad"}, status_code=500)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.register_session(session_id="sess-1", suppress_errors=False)
+
+
+def test_register_session_raises_json_encoding_error_when_not_suppressing(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        raise TypeError("Object of type object is not JSON serializable")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        client.register_session(
+            session_id="sess-1",
+            requested_capabilities={"bad": object()},
+            suppress_errors=False,
+        )
+
+
+def test_update_session_status_patches_status(monkeypatch):
+    recorded: dict[str, Any] = {}
+
+    def fake_patch(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["json"] = json
+        recorded["timeout"] = timeout
+        return DummyResponse({"session_id": "sess-1", "status": "passed"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.patch", fake_patch)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert client.update_session_status("sess-1", "passed") == {"session_id": "sess-1", "status": "passed"}
+    assert recorded == {
+        "url": "http://manager/api/sessions/sess-1/status",
+        "json": {"status": "passed"},
+        "timeout": 5,
+    }
+
+
+def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_register_session(self: GridFleetClient, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(GridFleetClient, "register_session", fake_register_session)
+
+    driver = type(
+        "Driver",
+        (),
+        {
+            "session_id": "sess-1",
+            "capabilities": {
+                "appium:gridfleet:deviceId": "dev-1",
+                "appium:udid": "SERIAL123",
+                "appium:platform": "android_mobile",
+                "platformName": "Android",
+            },
+        },
+    )()
+    client = GridFleetClient("http://manager/api")
+
+    assert client.register_session_from_driver(driver, test_name="test_login", run_id="run-1") == {"ok": True}
+    assert captured == {
+        "session_id": "sess-1",
+        "test_name": "test_login",
+        "device_id": "dev-1",
+        "connection_target": "SERIAL123",
+        "requested_capabilities": {
+            "appium:gridfleet:deviceId": "dev-1",
+            "appium:udid": "SERIAL123",
+            "appium:platform": "android_mobile",
+            "platformName": "Android",
+        },
+        "run_id": "run-1",
+        "suppress_errors": True,
     }
 
 

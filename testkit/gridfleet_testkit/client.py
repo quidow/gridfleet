@@ -67,6 +67,24 @@ def _raise_for_status(resp: Any) -> None:
     resp.raise_for_status()
 
 
+def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
+    params: list[tuple[str, str | int | float | bool | None]] = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            params.append((key, str(value).lower()))
+        else:
+            params.append((key, str(value)))
+    return params
+
+
+def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> None:
+    if not suppress_errors:
+        raise exc
+    logger.warning("Failed to %s with GridFleet: %s", operation, exc)
+
+
 class HeartbeatThread(threading.Thread):
     """Background thread that sends periodic heartbeat pings for an active test run."""
 
@@ -114,6 +132,66 @@ class GridFleetClient:
     ):
         self.base_url = base_url.rstrip("/")
         self._auth = auth if auth is not None else _default_auth()
+
+    def list_devices(
+        self,
+        *,
+        pack_id: str | None = None,
+        platform_id: str | None = None,
+        status: str | None = None,
+        host_id: str | None = None,
+        identity_value: str | None = None,
+        connection_target: str | None = None,
+        device_type: str | None = None,
+        connection_type: str | None = None,
+        os_version: str | None = None,
+        search: str | None = None,
+        hardware_health_status: str | None = None,
+        hardware_telemetry_state: str | None = None,
+        needs_attention: bool | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List devices with backend filter passthrough."""
+        params = _query_params(
+            {
+                "pack_id": pack_id,
+                "platform_id": platform_id,
+                "status": status,
+                "host_id": host_id,
+                "identity_value": identity_value,
+                "connection_target": connection_target,
+                "device_type": device_type,
+                "connection_type": connection_type,
+                "os_version": os_version,
+                "search": search,
+                "hardware_health_status": hardware_health_status,
+                "hardware_telemetry_state": hardware_telemetry_state,
+                "needs_attention": needs_attention,
+            }
+        )
+        if tags:
+            params.extend((f"tags.{key}", value) for key, value in tags.items())
+        resp = httpx.get(
+            f"{self.base_url}/devices",
+            params=params,
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+            return cast("list[dict[str, Any]]", payload["items"])
+        return cast("list[dict[str, Any]]", payload)
+
+    def get_device(self, device_id: str) -> dict[str, Any]:
+        """Fetch one device detail row by backend device id."""
+        resp = httpx.get(
+            f"{self.base_url}/devices/{device_id}",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
     def get_device_config(self, connection_target: str, reveal: bool = True) -> dict[str, Any]:
         """Fetch device config by looking up the current runtime connection target."""
@@ -273,6 +351,100 @@ class GridFleetClient:
         )
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
+
+    def register_session(
+        self,
+        *,
+        session_id: str,
+        test_name: str | None = None,
+        device_id: str | None = None,
+        connection_target: str | None = None,
+        status: str = "running",
+        requested_pack_id: str | None = None,
+        requested_platform_id: str | None = None,
+        requested_device_type: str | None = None,
+        requested_connection_type: str | None = None,
+        requested_capabilities: dict[str, Any] | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+        run_id: str | None = None,
+        suppress_errors: bool = True,
+    ) -> dict[str, Any] | None:
+        """Register a Grid/Appium session with the manager."""
+        try:
+            resp = httpx.post(
+                f"{self.base_url}/sessions",
+                json={
+                    "session_id": session_id,
+                    "test_name": test_name,
+                    "device_id": device_id,
+                    "connection_target": connection_target,
+                    "status": status,
+                    "requested_pack_id": requested_pack_id,
+                    "requested_platform_id": requested_platform_id,
+                    "requested_device_type": requested_device_type,
+                    "requested_connection_type": requested_connection_type,
+                    "requested_capabilities": requested_capabilities,
+                    "error_type": error_type,
+                    "error_message": error_message,
+                    "run_id": run_id,
+                },
+                timeout=5,
+                auth=self._auth,
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            _raise_or_warn("register session", suppress_errors, exc)
+            return None
+        return cast("dict[str, Any]", resp.json())
+
+    def update_session_status(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        suppress_errors: bool = True,
+    ) -> dict[str, Any] | None:
+        """Update a registered session status."""
+        try:
+            resp = httpx.patch(
+                f"{self.base_url}/sessions/{session_id}/status",
+                json={"status": status},
+                timeout=5,
+                auth=self._auth,
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            _raise_or_warn("report session status", suppress_errors, exc)
+            return None
+        return cast("dict[str, Any]", resp.json())
+
+    def register_session_from_driver(
+        self,
+        driver: Any,
+        *,
+        test_name: str | None = None,
+        run_id: str | None = None,
+        suppress_errors: bool = True,
+    ) -> dict[str, Any] | None:
+        """Extract session metadata from an Appium driver and register it."""
+        capabilities = getattr(driver, "capabilities", {})
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        session_id = getattr(driver, "session_id", None)
+        if not isinstance(session_id, str) or not session_id:
+            raise RuntimeError("Created Appium driver did not expose a session ID")
+        device_id = capabilities.get("appium:gridfleet:deviceId") or capabilities.get("gridfleet:deviceId")
+        connection_target = capabilities.get("appium:udid") or capabilities.get("appium:deviceName")
+        return self.register_session(
+            session_id=session_id,
+            test_name=test_name,
+            device_id=device_id if isinstance(device_id, str) and device_id else None,
+            connection_target=connection_target if isinstance(connection_target, str) and connection_target else None,
+            requested_capabilities=capabilities,
+            run_id=run_id,
+            suppress_errors=suppress_errors,
+        )
 
     def complete_run(self, run_id: str) -> None:
         httpx.post(

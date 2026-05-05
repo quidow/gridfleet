@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from typing import ClassVar
 
 import pytest
 
@@ -55,6 +56,41 @@ class FakeCatalogClient:
         return CATALOG
 
 
+class RecordingClient(FakeCatalogClient):
+    instances: ClassVar[list[RecordingClient]] = []
+
+    def __init__(self) -> None:
+        self.registered_drivers: list[tuple[object, str | None, str | None, bool]] = []
+        self.registered_payloads: list[dict[str, object]] = []
+        self.reported_statuses: list[tuple[str, str, bool]] = []
+        RecordingClient.instances.append(self)
+
+    def register_session_from_driver(
+        self,
+        driver: object,
+        *,
+        test_name: str | None = None,
+        run_id: str | None = None,
+        suppress_errors: bool = True,
+    ) -> dict[str, object]:
+        self.registered_drivers.append((driver, test_name, run_id, suppress_errors))
+        return {"ok": True}
+
+    def register_session(self, **kwargs: object) -> dict[str, object]:
+        self.registered_payloads.append(kwargs)
+        return {"ok": True}
+
+    def update_session_status(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        suppress_errors: bool = True,
+    ) -> dict[str, object]:
+        self.reported_statuses.append((session_id, status, suppress_errors))
+        return {"ok": True}
+
+
 def install_fake_appium(monkeypatch, created_drivers):
     appium_module = types.ModuleType("appium")
     webdriver_module = types.ModuleType("appium.webdriver")
@@ -89,26 +125,9 @@ def install_fake_appium(monkeypatch, created_drivers):
 def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, report, expected_status):
     created_drivers = []
     install_fake_appium(monkeypatch, created_drivers)
-    monkeypatch.setattr(pytest_plugin, "GridFleetClient", FakeCatalogClient)
-
-    registered: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        pytest_plugin,
-        "_register_session",
-        lambda driver, test_name: registered.append((driver.session_id, test_name)),
-    )
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
     events: list[str] = []
-    reported: list[tuple[str, str]] = []
-
-    def record_reported_status(session_id: str, status: str) -> None:
-        events.append("report")
-        reported.append((session_id, status))
-
-    monkeypatch.setattr(
-        pytest_plugin,
-        "_report_session_status",
-        record_reported_status,
-    )
 
     request = FakeRequest(
         {
@@ -120,9 +139,27 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     )
 
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request)
+    generator = fixture_fn(request, gridfleet_client)
     driver = next(generator)
     original_quit = driver.quit
+    original_update_session_status = RecordingClient.update_session_status
+
+    def record_update_session_status(
+        self: RecordingClient,
+        session_id: str,
+        status: str,
+        *,
+        suppress_errors: bool = True,
+    ) -> dict[str, object]:
+        events.append("report")
+        return original_update_session_status(
+            self,
+            session_id,
+            status,
+            suppress_errors=suppress_errors,
+        )
+
+    monkeypatch.setattr(RecordingClient, "update_session_status", record_update_session_status)
 
     def quit_with_event() -> None:
         events.append("quit")
@@ -136,7 +173,8 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     assert created_drivers[0][1]["appium:udid"] == "10.0.0.8:5555"
     assert created_drivers[0][1]["gridfleet:testName"] == "test_launch"
     assert created_drivers[0][1]["appium:platform"] == "android_mobile"
-    assert registered == [("sess-1", "test_launch")]
+    assert RecordingClient.instances == [gridfleet_client]
+    assert gridfleet_client.registered_drivers == [(driver, "test_launch", None, True)]
 
     request.node.rep_call = report
     with pytest.raises(StopIteration):
@@ -144,7 +182,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
     assert driver.quit_called is True
     assert events == ["quit", "report"]
-    assert reported == [("sess-1", expected_status)]
+    assert gridfleet_client.reported_statuses == [("sess-1", expected_status, True)]
 
 
 def test_device_config_uses_runtime_connection_target():
@@ -164,45 +202,6 @@ def test_device_config_skips_when_connection_target_missing():
     fixture_fn = pytest_plugin.device_config.__wrapped__
     with pytest.raises(pytest.skip.Exception):
         fixture_fn(driver, gridfleet_client)
-
-
-def test_register_session_prefers_manager_device_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_post(
-        url: str,
-        *,
-        json: dict[str, object],
-        timeout: int,
-        auth: object = None,
-    ) -> object:
-        captured["url"] = url
-        captured["json"] = json
-        captured["timeout"] = timeout
-        return types.SimpleNamespace(raise_for_status=lambda: None)
-
-    monkeypatch.setattr(pytest_plugin.httpx, "post", fake_post)
-
-    driver = types.SimpleNamespace(
-        session_id="sess-device-id",
-        capabilities={
-            "appium:gridfleet:deviceId": "device-123",
-            "appium:udid": "emulator-5554",
-        },
-    )
-
-    pytest_plugin._register_session(driver, "test_registered")
-
-    assert captured == {
-        "url": f"{pytest_plugin.GRIDFLEET_API_URL}/sessions",
-        "json": {
-            "session_id": "sess-device-id",
-            "test_name": "test_registered",
-            "device_id": "device-123",
-            "connection_target": "emulator-5554",
-        },
-        "timeout": 5,
-    }
 
 
 def test_build_driver_options_requires_platform_or_platform_name(monkeypatch):
@@ -225,13 +224,10 @@ def test_build_driver_options_supports_explicit_platform_name_escape_hatch(monke
 
 
 def test_appium_driver_setup_failure_registers_device_less_error_session(monkeypatch):
-    """When driver creation raises a non-ValueError exception, the fixture must
-    register a synthetic 'error' session so the failure is visible in the Dashboard."""
+    """When driver creation raises before a Grid session exists, the fixture registers a synthetic error session."""
     import sys
     import types as _types
 
-    # Install fake appium whose Remote raises a generic exception (like
-    # SessionNotCreatedException from Selenium).
     appium_module = _types.ModuleType("appium")
     webdriver_module = _types.ModuleType("appium.webdriver")
     options_module = _types.ModuleType("appium.options")
@@ -248,14 +244,8 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
     monkeypatch.setitem(sys.modules, "appium.webdriver", webdriver_module)
     monkeypatch.setitem(sys.modules, "appium.options", options_module)
     monkeypatch.setitem(sys.modules, "appium.options.common", common_module)
-    monkeypatch.setattr(pytest_plugin, "GridFleetClient", FakeCatalogClient)
-
-    error_registered: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        pytest_plugin,
-        "_register_error_session",
-        lambda payload: error_registered.append(payload),
-    )
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
 
     request = FakeRequest(
         {
@@ -269,23 +259,24 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
         test_name="test_broken",
     )
     fixture_fn = pytest_plugin.appium_driver.__wrapped__
-    generator = fixture_fn(request)
+    generator = fixture_fn(request, gridfleet_client)
 
     with pytest.raises(RuntimeError, match="Session could not be created"):
         next(generator)
 
-    # A synthetic terminal error session was registered in one request.
-    assert len(error_registered) == 1
-    payload = error_registered[0]
+    assert RecordingClient.instances == [gridfleet_client]
+    assert len(gridfleet_client.registered_payloads) == 1
+    payload = gridfleet_client.registered_payloads[0]
     assert str(payload["session_id"]).startswith("error-")
     assert payload["test_name"] == "test_broken"
     assert payload["status"] == "error"
+    assert payload["requested_pack_id"] == "appium-uiautomator2"
     assert payload["requested_platform_id"] == "android_mobile"
-    assert "requested_" + "platform" not in payload
     assert payload["requested_device_type"] == "real_device"
     assert payload["requested_connection_type"] == "network"
     assert payload["error_type"] == "RuntimeError"
     assert payload["error_message"] == "Session could not be created"
+    assert payload["suppress_errors"] is True
     assert payload["requested_capabilities"] == {
         "appium:automationName": "UiAutomator2",
         "appium:device_type": "real_device",
@@ -297,22 +288,8 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
     }
 
 
-def test_build_error_session_payload_uses_pack_platform_id(monkeypatch):
-    install_fake_appium(monkeypatch, [])
-    monkeypatch.setattr(pytest_plugin, "GridFleetClient", FakeCatalogClient)
-    request = FakeRequest(
-        {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "appium:device_type": "real_device"},
-        test_name="test_android",
-    )
-    options = pytest_plugin._build_driver_options(request)
-
-    payload = pytest_plugin._build_error_session_payload(
-        request=request,
-        options=options,
-        exc=RuntimeError("boom"),
-        session_id="error-android",
-    )
-
-    assert payload["requested_platform_id"] == "android_mobile"
-    assert "requested_" + "platform" not in payload
-    assert payload["requested_device_type"] == "real_device"
+def test_private_session_helpers_are_not_exported() -> None:
+    assert not hasattr(pytest_plugin, "_register_session")
+    assert not hasattr(pytest_plugin, "_report_session_status")
+    assert not hasattr(pytest_plugin, "_register_error_session")
+    assert not hasattr(pytest_plugin, "_build_error_session_payload")
