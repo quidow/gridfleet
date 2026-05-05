@@ -35,13 +35,13 @@ The CI runner / test client speaks **only** to the Selenium Grid hub for session
 
 ## Auth surface
 
-Both directions use HTTP Basic.
+The two directions are asymmetric today.
 
-- **Backend → agent.** When `GRIDFLEET_AUTH_ENABLED=true`, agents require Basic from machine credentials configured at deploy time. The backend's `agent_request` helper (`backend/app/agent_client.py`) always attaches request-id headers; `httpx.BasicAuth` is supplied at the per-call level when configured.
-- **Agent → backend.** `agent/agent_app/main.py` constructs `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `agent_settings`. Used for `/agent/driver-packs/desired` and `/agent/driver-packs/status`.
+- **Backend → agent.** No HTTP authentication is enforced by the agent HTTP API today. The backend's `agent_request` helper (`backend/app/agent_client.py`) attaches request-id headers and circuit-breaker metrics, but it does not attach Basic auth and the agent does not validate Basic credentials on `/agent/*`.
+- **Agent → backend.** `agent/agent_app/main.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
-There is no HMAC, no message signing. Authn is only "do you know the shared password"; transport security relies on the network boundary documented in `docs/guides/security.md`.
+There is no HMAC, no message signing, and no backend→agent auth. Transport security relies on the network boundary documented in `docs/guides/security.md`.
 
 ## Endpoint catalog (backend → agent)
 
@@ -59,7 +59,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/pack/devices/normalize` | intake/discovery | normalise raw input to canonical device fields | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/features/{feat}/actions/{act}` | feature dispatch | dispatch arbitrary pack feature action | 2xx required |
 | POST | `/agent/appium/start` | `node_service.start_node`, `restart_node_via_agent` | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
-| POST | `/agent/appium/stop` | `node_service.stop_node`, `restart_node_via_agent` | kill an Appium node | 2xx → `True`; transport/5xx → `False` |
+| POST | `/agent/appium/stop` | `node_service.stop_node`, `restart_node_via_agent` | kill an Appium node | wrapper returns `httpx.Response`; `stop_remote_temporary_node` maps 2xx → `True`, transport/HTTP error → `False` |
 | GET | `/agent/appium/{port}/status` | `node_health`, `_wait_for_remote_appium_ready` | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | POST | `/agent/appium/{port}/probe-session` | `node_health`, `session_viability` | full session create+delete probe | 200 → `(True, None)`; 4xx with detail → `(False, detail)`; transport-shaped → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
@@ -88,13 +88,12 @@ Every backend→agent call goes through `request()` in `backend/app/agent_client
 ```text
 1. agent_circuit_breaker.before_request(host)   # may raise CircuitOpenError
 2. attach REQUEST_ID_HEADER (correlation id)    # build_agent_headers
-3. attach Basic auth                            # when manager creds configured
-4. perform httpx call                           # GET or POST
-5. classify result:
+3. perform httpx call                           # GET or POST; no backend→agent auth today
+4. classify result:
      status >= 500                  → record_failure (transport-like)
      transport exception            → record_failure (transport)
      anything else                  → record_success
-6. record_agent_call metric (host, endpoint, outcome, duration)
+5. record_agent_call metric (host, endpoint, outcome, duration)
 ```
 
 The wrapper guarantees:
@@ -188,9 +187,9 @@ The endpoints whose result is a tri-state probe (`/agent/appium/{port}/status`, 
 
 - **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
 
-- **`appium_probe_session`** (`agent_operations.py`). 200 with `ok: True` → `(True, None)`. 200 with no `ok` → `(False, "Probe session returned an invalid payload")`. Non-200 → `(False, "Probe session failed (HTTP <code>)")`. The consumer in `node_health._check_node_health` maps the synthetic HTTP-shaped error string back to `None`.
+- **`appium_probe_session`** (`agent_operations.py`). 200 with `ok: True` → `(True, None)`. 200 with no `ok` → `(False, "Probe session returned an invalid payload")`. Non-200 → `(False, parsed detail)` or the fallback `(False, "Probe session failed (HTTP <code>)")`. The consumer in `agent_probe_result.from_probe_session_response` maps only the HTTP-shaped fallback to `indeterminate`; structured Appium-side probe failures remain definitive `refused`.
 
-- **`appium_stop`**. 2xx → `True`. Anything else → `False`. The caller (`stop_remote_temporary_node`) is what bridges into the DB-flip rule: only `True` allows `mark_node_stopped`.
+- **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The caller (`stop_remote_temporary_node`) bridges into the DB-flip rule: `resp.raise_for_status()` success → `True`; `AgentCallError` or `httpx.HTTPError` → `False`; only `True` allows `mark_node_stopped`.
 
 When you add a new state-changing endpoint, follow this pattern: pick an explicit return type (`bool`, `bool | None`, or a dataclass) and document the projection from HTTP into that type at the wrapper layer. Do not let the lifecycle code do its own HTTP error handling — that is what `agent_operations.py` is for.
 

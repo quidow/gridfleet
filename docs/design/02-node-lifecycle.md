@@ -66,9 +66,9 @@ sequenceDiagram
 
     API->>NM: start_node(device)
     NM->>NM: is_ready_for_use_async — readiness gate
-    NM->>Alloc: reserve(host_id, capability_key, owner_token)
-    Note over Alloc: Reserves a port claim under owner_token; for managed starts the temporary claim is later promoted via transfer_temporary_to_managed.
-    NM->>State: candidate_ports() — excludes "running" rows
+    NM->>Alloc: reserve parallel resources under owner_token
+    Note over Alloc: Reserves pack-declared Appium-side ports/capabilities, not the main Appium port. Temporary claims are promoted via transfer_temporary_to_managed after the node row exists.
+    NM->>State: candidate_ports() — excludes main Appium ports held by "running" rows
     loop until success or all candidates fail
         NM->>Agent: POST /agent/appium/start (port, payload)
         Agent-->>NM: 2xx {pid, connection_target}
@@ -85,10 +85,10 @@ sequenceDiagram
 Key call-outs:
 
 - **Readiness gate** in `_start_with_owner` (`node_service.py`) refuses if `is_ready_for_use_async` says no.
-- **Owner allocation first, port second** — the allocator owns ports because they are part of the host's parallel-resource pool (`appium_node_resource_service.reserve`). On failure during start, the allocation is released by the same try/except in `_start_with_owner` (`node_service.py`).
+- **Parallel-resource allocation first, main Appium port second** — the typed allocator owns pack-declared per-node resources such as `mjpegServerPort`, `chromedriverPort`, and non-port live capabilities. The main Appium port is still selected by `candidate_ports` and persisted on `AppiumNode.port` only after the agent confirms the process is running. On failure during start, temporary typed claims are released by the same try/except in `_start_with_owner` (`node_service.py`).
 - **Port conflict retry** — if the agent rejects with "already in use", the manager continues to the next candidate port (`_start_with_owner` loop in `node_service.py`). Conflicts on the managed range come from external listeners or stale agent state; trying the next port is correct.
 - **Readiness wait** — `_wait_for_remote_appium_ready` (`node_service.py`) polls `/agent/appium/{port}/status` for up to `stabilization_timeout_sec`. If it never returns `running=True`, the start is treated as a failed dispatch and `start_remote_temporary_node` calls `stop_remote_temporary_node` to clean up before raising.
-- **DB write last** — `mark_node_started` only runs after the agent says the process is running. Order is: agent OK → snapshot sync → commit.
+- **DB write last** — `mark_node_started` only runs after the agent says the process is running. Order is: agent OK → temporary resource-claim promotion + node health transition → commit.
 
 Failure modes:
 

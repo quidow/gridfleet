@@ -15,8 +15,8 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 | Readiness | derived from `Device.verified_at` + setup gates | computed | `device_readiness.is_ready_for_use_async` |
 | Operational state + hold | `Device.operational_state`, `Device.hold` | enum + nullable enum | node/session loops + operator/run mutators through `device_state` |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
-| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy.record_control_action` only |
-| Node state | `AppiumNode.state` | enum | `node_service.mark_node_*` only |
+| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` / selected run-preparation paths through `lifecycle_policy_state.write_state` |
+| Node state | `AppiumNode.state` | enum | `node_service` and health/reconciliation paths through `device_health.apply_node_state_transition` |
 | Health | `Device.device_checks_*`, `Device.session_viability_*`, `Device.emulator_state`, `AppiumNode.health_*` | typed columns | `device_health` service |
 
 The DB columns are always authoritative. The public `health_summary` returned by `/api/devices` is derived on read by `app.services.device_health.build_public_summary(device)`.
@@ -120,13 +120,24 @@ Live event surface:
 
 JSON blob on `Device` (`device.py`). Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
 
-- Single writer: `app.services.lifecycle_policy.record_control_action`.
+- Low-level writer: `app.services.lifecycle_policy_state.write_state`.
+- Sanctioned service writers: `app.services.lifecycle_policy`, `app.services.lifecycle_policy_actions`, and the run-preparation path in `run_service` that records `ci_preparation_failed`.
 - Read by: every loop that decides whether to attempt recovery (`node_health`, `device_connectivity`, `session_viability`).
 - Surface: lifecycle summary chip, derived through `DeviceLifecyclePolicySummaryState`.
 
 Operator-facing semantics are documented in `docs/guides/lifecycle-maintenance-and-recovery.md`. The implementation rule that matters here:
 
-> The lifecycle JSON moves only through `record_control_action`. Other code paths must read it (to gate behavior) but never patch it directly.
+> The lifecycle JSON is a read-modify-write field. Any writer must use `lifecycle_policy_state.state(...)` + `write_state(...)` while holding the device row lock for the whole RMW window. Direct assignment to `device.lifecycle_policy_state` in production code is a bug.
+
+Current fields:
+
+| Field | Meaning |
+| --- | --- |
+| `last_failure_source` / `last_failure_reason` | Most recent lifecycle-relevant failure signal |
+| `last_action` / `last_action_at` | Most recent lifecycle policy action |
+| `stop_pending` / `stop_pending_reason` / `stop_pending_since` | Deferred auto-stop intent while a client session is still running |
+| `recovery_suppressed_reason` | Why automatic recovery is currently blocked |
+| `backoff_until` / `recovery_backoff_attempts` | Automatic recovery backoff state |
 
 ## Axis 5 — Node state (`AppiumNode.state`)
 
@@ -143,15 +154,18 @@ Sanctioned writers:
 | `mark_node_started` | `stopped/error → running` | `node_service.py` |
 | `mark_node_stopped` | `running/error → stopped` | `node_service.py` |
 | `_process_node_health` (auto-recover branch) | `running → error`, then `error → running` on auto-restart | `node_health.py` |
+| `_stop_disconnected_node` | `running → stopped/error` after connectivity loss, depending on agent stop ack | `device_connectivity.py` |
+| `_ingest_appium_restart_events` | local agent restart events update node health and can restore `running` | `heartbeat.py` |
 | `restart_node_via_agent` | mutates `port/pid/state` together inside its own lock window | `node_service.py` |
+| `nodes` API router post-service refresh | re-applies the service result to health columns after `start/stop/restart` | `routers/nodes.py` |
 
-Writers outside this list are bugs — they bypass the `device_health.apply_node_state_transition` lock/event path and the device row lock.
+Writers outside this list are bugs unless they route through `device_health.apply_node_state_transition` while holding the documented locks. The API-router refresh rows are current implementation detail; the durable node-state transition is still owned by `node_service`.
 
 Doc 2 covers the full transition graph and the agent-acknowledgement contract that gates `running → stopped`.
 
 ## Axis 6 — Health (derived on read)
 
-After Plan D the KV snapshot is gone. Health-relevant state lives in typed columns:
+The public health snapshot is not stored in KV. Health-relevant state lives in typed columns:
 
 - `Device.device_checks_healthy : bool | null`
 - `Device.device_checks_summary : str | null`
@@ -171,7 +185,7 @@ The public summary returned by `/api/devices` is computed by `app.services.devic
 
 1. **`update_device_checks` and `update_session_viability` take typed values.** `update_device_checks(healthy: bool, ...)` requires a real bool. Indeterminate probe results must short-circuit before the call. See `app.services.agent_probe_result.ProbeResult`.
 2. **Cross-link to operational state is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness, `auto_manage`, and node state allow. Writers use `set_operational_state` for these paths and never touch `hold`.
-3. **No KV.** The legacy health-summary and node-health counter namespaces no longer exist.
+3. **No public health KV.** The legacy health-summary and node-health counter namespaces no longer exist. `control_plane_state_store` still exists for ephemeral loop coordination and diagnostics, such as heartbeat failure counts, appium-process snapshots, connectivity "previously offline" markers, and session-viability in-progress state. Those entries are not the public device health source of truth.
 
 ### Health → operational-state cross-link
 

@@ -19,7 +19,7 @@ A WebDriver session is what consumes a node. A `Session` row is the manager's re
 The split matters because the **reapers are different**:
 
 - `session_sync_loop` reaps `Session` rows whose Grid session no longer exists.
-- `run_reaper_loop` reaps abandoned runs and explicitly calls `grid_service.terminate_grid_session(...)` on each device's Grid session before clearing the reservation.
+- Run release paths that end a run abnormally (`cancel_run`, `force_release`, `expire_run` through `run_reaper_loop`) explicitly call `grid_service.terminate_grid_session(...)` on each running session before clearing the reservation. Normal `complete_run` does not terminate Grid sessions; the test client/operator owns normal WebDriver teardown.
 - Operator stop/restart of a node never touches Grid sessions directly — Appium's own teardown is what cancels them.
 
 This doc focuses on resource ownership across those three.
@@ -78,7 +78,9 @@ Only the first range is the "main" Appium port. The other two come into play aft
 4. preferred port (if free) goes first; the rest follow in numeric order
 ```
 
-The DB row, not the agent, is the authority for "is this port in use by us". External listeners on a port in the managed range are detected only at start time, when the agent rejects with "already in use".
+The DB row, not the agent, is the authority for "is this port in use by us". Current implementation treats main Appium ports as globally used across the manager, even though the listener is host-local. That is conservative and can waste capacity in multi-host labs; see the host-scoped allocation spec under `docs/design/specs/`.
+
+External listeners on a port in the managed range are detected only at start time, when the agent rejects with "already in use".
 
 ### Port conflict recovery
 
@@ -113,8 +115,11 @@ Two consequences for the lifecycle:
 
 `grid_service.terminate_grid_session(session_id)` issues `DELETE /session/{id}` to the hub. A 404 is treated as success (the session was already gone). Used by:
 
-- `run_reaper_loop` — when an abandoned run is being closed out, every active Grid session for the run's devices is terminated explicitly. This is the change from commit `54707d1` that stopped sessions surviving their owning run.
-- `session_sync_loop` — when reconciling DB session state against Grid `/status`, sessions that the DB has marked terminal but Grid still shows are removed.
+- `run_service.cancel_run`
+- `run_service.force_release`
+- `run_service.expire_run` (called by `run_reaper_loop` for heartbeat/TTL expiry)
+
+`session_sync_loop` does not delete Grid sessions. It observes Grid `/status`, creates `Session` rows for new sessions, and marks rows ended when the session disappears from Grid.
 
 ## Reservations and run integration
 
@@ -179,7 +184,7 @@ For new code that touches these resources, follow this order:
 1. **Acquire.** Insert temporary resource claims BEFORE asking the agent to start. Promote only after agent ACK and node-row upsert.
 2. **Verify.** After agent says OK, poll `/agent/appium/{port}/status` until ready. Only then write DB state.
 3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.operational_state`, and node health via `device_health.apply_node_state_transition` in one transaction. The public summary is derived on read.
-4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the snapshot flip.
+4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the node-health transition.
 5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_grid_session` + state restore, not direct DB writes that bypass the helpers.
 
 If a code path skips one of these steps it will eventually leak, and the symptoms will look exactly like the failure-mode rows above.

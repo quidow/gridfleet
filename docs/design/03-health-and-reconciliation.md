@@ -53,7 +53,7 @@ The advisory lock (`pg_try_advisory_lock(6001)`) is the only fact of leadership.
 - Privilege model: `pg_terminate_backend` is allowed when the calling role is a member of the target backend's role, when the calling role has `pg_signal_backend`, or when the caller is a superuser. Same-role replicas, the default in `docker-compose.yml`, can terminate each other without a separate grant. In restricted deployments lacking those privileges, preemption degrades to a no-op and failover falls back to TCP keepalive; this is logged once via `control_plane_leader_preempt_no_op`.
 - Kill switch: `general.leader_keepalive_enabled = false` disables both the keepalive write fail-fast and the watcher's preemption path. While disabled, the watcher short-circuits before reading the heartbeat row. To re-enable after the toggle has been off longer than `general.leader_stale_threshold_sec`, restart the current leader replica first so it rewrites a fresh row, then flip the toggle back on, then bring the rest of the fleet online.
 
-**Trade-off and follow-up:** between the moment another backend wins the lock and the moment the old leader's keepalive task observes `LeadershipLost`, the old leader's other DB sessions can still mutate state. The window is bounded by `leader_keepalive_interval_sec` (default 5 s), but a paused or slow event loop on the old leader can resume any overdue background task during it. Plan F3 closes this window by adding lease-token fencing on every leader-owned write: each loop reads the current `holder_id` and aborts if it does not match its own. F2 ships latency; F3 ships the correctness invariant.
+**Trade-off and follow-up:** between the moment another backend wins the lock and the moment the old leader's keepalive task observes `LeadershipLost`, the old leader's other DB sessions can still mutate state. The window is bounded by `leader_keepalive_interval_sec` (default 5 s), but a paused or slow event loop on the old leader can resume any overdue background task during it. The proposed fix is lease-token fencing on every leader-owned write: each loop reads the current `holder_id` and aborts if it does not match its own. See the leader-fencing spec under `docs/design/specs/`.
 
 ## Loop registry
 
@@ -71,7 +71,7 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
-| `run_reaper_loop` | (internal) | `TestRun`, `DeviceReservation`, Grid `/status` | run state transitions, `grid_service.terminate_grid_session` | abandoned-run reaping |
+| `run_reaper_loop` | (internal) | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, Grid `DELETE /session/{id}` through `grid_service.terminate_grid_session` | abandoned-run reaping |
 | `webhook_delivery_loop` | (queue-driven) | `outbound_webhook_deliveries` | webhook delivery rows | webhook delivery state |
 | `durable_job_worker_loop` | (queue-driven) | `durable_jobs` | durable job state | durable-job state |
 | `pack_drain_loop` | (internal) | pack desired-state | drain progress | pack-drain rows |
@@ -91,11 +91,11 @@ refused       : definitive failure (agent answered with "no" / explicit error)
 indeterminate : transport error, HTTP error response, or open circuit
 ```
 
-Loops that consume probes **must** branch on `None` separately:
+Loops that consume probes **must** branch on `result.status` explicitly:
 
-- `ack` — clear failure counter, clear transient health override, mark recovered.
-- `refused` — increment `AppiumNode.consecutive_health_failures`, write transient health detail, escalate when `count >= max_failures`.
-- `indeterminate` — early-return. Do not change health columns, do not increment the counter, do not flip availability.
+- `result.status == "ack"` — clear failure counter, clear transient health override, mark recovered.
+- `result.status == "refused"` — increment `AppiumNode.consecutive_health_failures`, write transient health detail, escalate when `count >= max_failures`.
+- `result.status == "indeterminate"` — early-return. Do not change health columns, do not increment the counter, do not flip availability.
 
 Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
@@ -113,9 +113,9 @@ Loops can run multiple times against the same device without ill effect, provide
 
 4. **Stale-result detection.** `_process_node_health` records the observed `state/port/pid/active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
 
-## Where State Lives
+## Where Health State Lives
 
-After Plan D every fact has exactly one home:
+Every public health fact has exactly one durable home:
 
 - `Device.device_checks_*` — owned by `device_connectivity_loop` and `heartbeat_loop`
 - `Device.session_viability_*` — owned by `session_viability_loop`
@@ -125,6 +125,19 @@ After Plan D every fact has exactly one home:
 - `AppiumNode.consecutive_health_failures` — owned by `node_health_loop`
 
 `device_health.build_public_summary(device)` is the only consumer projection. Readers call it on demand. There is no eventually consistent health layer to drift.
+
+`control_plane_state_store` still exists, but not as a public health source of truth. Current namespaces are used for ephemeral coordination and diagnostics:
+
+| Namespace | Owner | Purpose |
+| --- | --- | --- |
+| `heartbeat.failure_count` | `heartbeat_loop` | missed-heartbeat counter before marking a host offline |
+| `heartbeat.appium_processes` | `heartbeat_loop` / host diagnostics | latest agent-reported Appium process snapshot |
+| `heartbeat.appium_restart_sequence` | `heartbeat_loop` | last ingested local restart event sequence per host |
+| `connectivity.previously_offline` | `device_connectivity_loop` | remembers why a reconnect is treated as recovery rather than first startup |
+| `hardware_telemetry.state` | `hardware_telemetry_loop` | stale/fresh telemetry bookkeeping |
+| `session_viability.state` / `session_viability.running` | `session_viability_loop` | cadence and in-progress guard for deeper session probes |
+
+These entries can be rebuilt or expire by behavior; they must not be used as canonical device/node state in new code.
 
 ## Cross-loop interactions
 
@@ -136,7 +149,7 @@ Loops are independent in the steady state but must not contradict each other whe
 
 - **`session_viability_loop` and `node_health_loop`.** Both probe Appium sessions, but viability is per-device on a long cadence (default 1h) while node_health is per-node every 30 s. Viability is a deeper probe (real session) and feeds `Device.session_viability_*`; node_health is a fast liveness check and feeds `AppiumNode.health_*` / `AppiumNode.state`. They contribute different facts to the same derived public summary.
 
-- **`run_reaper_loop` and `session_sync_loop`.** Run reaping ends abandoned runs and explicitly calls `grid_service.terminate_grid_session` for each device's Grid session — the change in commit `54707d1` to stop orphaned Grid registrations from outliving the run. `session_sync` then reconciles the now-cleared session list.
+- **`run_reaper_loop` and `session_sync_loop`.** Run reaping expires abandoned runs through `run_service.expire_run`, which calls `grid_service.terminate_grid_session` for each running session before releasing reservations. `session_sync` then observes Grid `/status` and reconciles the now-cleared session list; it does not delete Grid sessions itself.
 
 ## Failure escalation ladder
 
