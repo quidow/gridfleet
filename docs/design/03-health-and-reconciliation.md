@@ -47,11 +47,11 @@ All loops are spawned in `backend/app/main.py:129-145` under the leader gate. Th
 
 | Loop | Default cadence | Reads | Writes | Sole writer of |
 | --- | --- | --- | --- | --- |
-| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Host.status`, host failure counter | `Host.status` (offline/online) |
-| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/probe-session` or `/status`, Grid `/status` | health snapshot, failure counter, `AppiumNode.state=error`, lifecycle JSON | failure counter, auto-restart trigger |
-| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `device_health_summary.update_device_checks`, lifecycle JSON | `device_checks_*` snapshot fields |
+| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.state` (recovery only), `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.availability_status` (cross-link) | `Host.status` (offline/online) |
+| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/probe-session` or `/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.availability_status` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
+| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.availability_status` (cross-link) | `Device.device_checks_*` |
 | `session_sync_loop` | 5 s | Grid `/status` | `Session` rows, `Device.availability_status` (busy↔available) | `Session.state`, run-claim transitions |
-| `session_viability_loop` | 60 s wake / per-device 3600 s | Agent `/agent/appium/{port}/probe-session` | `device_health_summary.update_session_viability` | `session_viability_*` snapshot fields |
+| `session_viability_loop` | 60 s wake / per-device 3600 s | Agent `/agent/appium/{port}/probe-session` | `Device.session_viability_*`, `Device.availability_status` (cross-link) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
@@ -66,21 +66,21 @@ The first four loops (heartbeat, node_health, device_connectivity, session_sync)
 
 ## The tri-state probe pattern
 
-Every probe that talks to the agent or to Selenium Grid returns `bool | None`:
+Every probe that talks to the agent or to Selenium Grid is projected to `ProbeResult`:
 
 ```text
-True  : definite success / definitive yes
-False : definitive failure (agent answered with "no" / explicit error)
-None  : indeterminate — transport error, HTTP error response, or open circuit
+ack           : definite success / definitive yes
+refused       : definitive failure (agent answered with "no" / explicit error)
+indeterminate : transport error, HTTP error response, or open circuit
 ```
 
 Loops that consume probes **must** branch on `None` separately:
 
-- `True` — clear failure counter, sync snapshot, mark recovered.
-- `False` — increment counter, sync snapshot, escalate when `count >= max_failures`.
-- `None` — early-return. Do not change the snapshot, do not increment the counter, do not flip availability.
+- `ack` — clear failure counter, clear transient health override, mark recovered.
+- `refused` — increment `AppiumNode.consecutive_health_failures`, write transient health detail, escalate when `count >= max_failures`.
+- `indeterminate` — early-return. Do not change health columns, do not increment the counter, do not flip availability.
 
-Reference implementation: `node_health._check_node_health` (`node_health.py:99-150`) and the consumer at `_process_node_health` (`node_health.py:229-230`). Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
+Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
 `appium_status` returns `None` for non-2xx responses (`agent_operations.py:171-173`). `appium_probe_session` distinguishes between Appium-side errors ("Probe session returned an invalid payload") and HTTP-shaped errors ("Probe session failed (HTTP 503)"); the consumer maps the HTTP-shaped ones to indeterminate (`node_health.py:127-136`).
 
@@ -88,45 +88,26 @@ Reference implementation: `node_health._check_node_health` (`node_health.py:99-1
 
 Loops can run multiple times against the same device without ill effect, provided they obey:
 
-1. **Conditional writes only.** Writers compare the current value before mutating. `set_device_availability_status` (`device_availability.py:36-39`) early-returns when `old == new`. `patch_health_snapshot` only fires `device.health_changed` when the public summary actually changed (`device_health_summary.py:247-253`).
+1. **Conditional writes only.** Writers compare the current value before mutating. `set_device_availability_status` early-returns when `old == new`. `device_health` only queues `device.health_changed` when the derived public summary's `healthy` value changes.
 
-2. **Snapshot is patched, not replaced.** `patch_value` merges new fields into the existing JSON document (`device_health_summary.py:243`). Loops that only know one signal (e.g. just `device_checks`) leave the others alone.
+2. **Facts have one home.** Device checks, session viability, emulator state, node lifecycle, transient node health detail, and node failure counts live in typed columns. Readers compose them on demand.
 
-3. **Counters live in the control-plane KV store, not in memory.** `node_health` keeps consecutive-failure counts in `NODE_HEALTH_NAMESPACE` (`node_health.py:43`) so a leader handoff (process restart) does not lose history or double-count.
+3. **Counters live on the node row, not in memory.** `node_health` keeps consecutive-failure counts in `AppiumNode.consecutive_health_failures` so a leader handoff does not lose history or double-count.
 
 4. **Stale-result detection.** `_process_node_health` records the observed `state/port/pid/active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py:208-222`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
 
-## Snapshot vs source-of-truth (recap)
+## Where State Lives
 
-```mermaid
-flowchart LR
-    classDef sot fill:#fef9e7,stroke:#a37c00,color:#000
-    classDef proj fill:#e7f0fe,stroke:#1c4ea3,color:#000
-    classDef loop fill:#fbe9e7,stroke:#c0392b,color:#000
+After Plan D every fact has exactly one home:
 
-    classDef ui fill:#e9f7ec,stroke:#1f7a3a,color:#000
+- `Device.device_checks_*` — owned by `device_connectivity_loop` and `heartbeat_loop`
+- `Device.session_viability_*` — owned by `session_viability_loop`
+- `Device.emulator_state` — owned by `device_connectivity_loop`
+- `AppiumNode.state` — owned by `node_service.mark_node_*` and recovery/escalation paths
+- `AppiumNode.health_running` / `AppiumNode.health_state` — transient node-health detail
+- `AppiumNode.consecutive_health_failures` — owned by `node_health_loop`
 
-    nodeRow[(AppiumNode.state)]:::sot
-    devRow[(Device.availability_status)]:::sot
-    snap[(health_summary KV)]:::proj
-    nh[node_health_loop]:::loop
-    dc[device_connectivity_loop]:::loop
-    sv[session_viability_loop]:::loop
-    api[API mutators]:::loop
-    ui[UI / /api/devices]:::ui
-
-    nh -->|update_node_state| snap
-    dc -->|update_device_checks| snap
-    sv -->|update_session_viability| snap
-    api -->|mark_node_started/stopped| nodeRow
-    api -->|mark_node_started/stopped| snap
-    nh -->|escalation| nodeRow
-    nh -->|set_device_availability_status| devRow
-    snap -->|build_public_health_summary| ui
-    devRow --> ui
-```
-
-The arrows that matter: every writer of the columns also writes the snapshot in the same transaction. Consumers (UI, allocation gates) read the snapshot. The recovery from "snapshot stale" is one loop tick — but for the column→snapshot edge the rule is *no stale window allowed*, because `mark_node_*` is exactly the place where a stale snapshot would render "offline + healthy".
+`device_health.build_public_summary(device)` is the only consumer projection. Readers call it on demand. There is no eventually consistent health layer to drift.
 
 ## Cross-loop interactions
 
@@ -134,9 +115,9 @@ Loops are independent in the steady state but must not contradict each other whe
 
 - **`session_sync_loop` and `node_health_loop`.** A device that is in a live session is `availability_status = busy`. `node_health` skips probing devices that are not `available + ready` (`node_health.py:71-83`), so an in-flight session is invisible to it. After the session ends, `session_sync` flips the device back to `available`/`reserved`/`offline`, then the next `node_health` tick can probe.
 
-- **`device_connectivity_loop` and `node_health_loop`.** If the agent is unreachable, both loops see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its snapshot field; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
+- **`device_connectivity_loop` and `node_health_loop`.** If the agent is unreachable, both loops see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
 
-- **`session_viability_loop` and `node_health_loop`.** Both probe Appium sessions, but viability is per-device on a long cadence (default 1h) while node_health is per-node every 30 s. Viability is a deeper probe (real session) and feeds `session_viability_*` fields; node_health is a fast liveness check and feeds `node_running`. They contribute different facts to the same snapshot.
+- **`session_viability_loop` and `node_health_loop`.** Both probe Appium sessions, but viability is per-device on a long cadence (default 1h) while node_health is per-node every 30 s. Viability is a deeper probe (real session) and feeds `Device.session_viability_*`; node_health is a fast liveness check and feeds `AppiumNode.health_*` / `AppiumNode.state`. They contribute different facts to the same derived public summary.
 
 - **`run_reaper_loop` and `session_sync_loop`.** Run reaping ends abandoned runs and explicitly calls `grid_service.terminate_grid_session` for each device's Grid session — the change in commit `54707d1` to stop orphaned Grid registrations from outliving the run. `session_sync` then reconciles the now-cleared session list.
 
@@ -147,16 +128,16 @@ For node health, the ladder looks like:
 ```mermaid
 flowchart TD
     A[probe] --> B{result}
-    B -- True --> C[clear counter, snapshot=running]
-    B -- None --> D[no-op, snapshot unchanged]
-    B -- False --> E[increment counter]
+    B -- ack --> C[clear counter, clear health override]
+    B -- indeterminate --> D[no-op, columns unchanged]
+    B -- refused --> E[increment counter]
     E --> F{count >= max_failures?}
-    F -- no --> G[snapshot=running:false; mark_offline if count == max_failures path]
+    F -- no --> G[health_running=false; keep lifecycle running]
     F -- yes --> H{auto_manage on?}
     H -- no --> I[lifecycle: recovery_suppressed; node.state=error; offline]
     H -- yes --> J[restart_node_via_agent]
     J --> K{restart succeeded?}
-    K -- yes --> L[lifecycle: auto_recovered; snapshot=running]
+    K -- yes --> L[lifecycle: auto_recovered; clear health override]
     K -- no --> M[lifecycle: recovery_failed; node.state=error; offline]
 ```
 
@@ -177,7 +158,7 @@ When adding a new periodic task, copy the `node_health_loop` shape:
 3. Read settings via `settings_service.get(...)`. Add the setting to `settings_registry.py` if it is operator-tunable.
 4. Acquire device row locks via `device_locking.lock_device` for any device-state mutation.
 5. Use the tri-state probe pattern for any agent or Grid call.
-6. Sync `device_health_summary` in the same transaction as any column write.
+6. Route health and node-health writes through `app.services.device_health` so locks, cross-links, and `device.health_changed` events stay centralized.
 7. Add a Prometheus gauge or counter via the metrics module so the loop is visible on the dashboards.
 8. Defer `event_bus.publish` to after-commit when the published change must align with a durable transition (use `_schedule_health_event_after_commit` as the model).
 

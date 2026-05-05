@@ -103,7 +103,7 @@ Each Appium node is paired on the agent host with a Selenium Grid relay process 
 
 Two consequences for the lifecycle:
 
-1. **Started Appium ≠ usable node.** A successful `/agent/appium/start` returns 2xx as soon as Appium is alive, but the Grid relay registration is asynchronous on the agent side. `node_health_loop` gives a "registration grace window" equal to `appium.startup_timeout_sec` before treating "not in Grid status" as a failure (`node_health.py:153-160, 232-247`). Inside that window the snapshot stays at `running=True`.
+1. **Started Appium != usable node.** A successful `/agent/appium/start` returns 2xx as soon as Appium is alive, but the Grid relay registration is asynchronous on the agent side. `node_health_loop` gives a "registration grace window" equal to `appium.startup_timeout_sec` before treating "not in Grid status" as a failure. Inside that window the derived node health stays running.
 
 2. **Stopped Appium ≠ no Grid registration.** Killing the Appium process should also tear down the Grid relay, but only if the agent acknowledged the stop. An orphan Appium plus its still-registered relay means Grid will keep routing sessions to it. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because Grid is still using the slot.
 
@@ -178,7 +178,7 @@ For new code that touches these resources, follow this order:
 
 1. **Acquire.** Insert temporary resource claims BEFORE asking the agent to start. Promote only after agent ACK and node-row upsert.
 2. **Verify.** After agent says OK, poll `/agent/appium/{port}/status` until ready. Only then write DB state.
-3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.availability_status`, and the health snapshot in one transaction.
+3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.availability_status`, and node health via `device_health.apply_node_state_transition` in one transaction. The public summary is derived on read.
 4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the snapshot flip.
 5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_grid_session` + state restore, not direct DB writes that bypass the helpers.
 
