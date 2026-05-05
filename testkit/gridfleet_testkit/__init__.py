@@ -7,8 +7,8 @@ Environment variables read by the client:
 - GRIDFLEET_TESTKIT_USERNAME: optional Basic auth username.
 - GRIDFLEET_TESTKIT_PASSWORD: optional Basic auth password.
 
-Recipe-local variables such as GRIDFLEET_RUN_STATE_PATH are intentionally not
-exported from this package because run-state sharing is consumer policy.
+Recipe-local run-state sharing variables are intentionally not exported from
+this package because run-state sharing is consumer policy.
 """
 
 from importlib.metadata import PackageNotFoundError, version
