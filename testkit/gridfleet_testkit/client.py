@@ -307,8 +307,15 @@ class GridFleetClient:
         ttl_minutes: int = 60,
         heartbeat_timeout_sec: int = 120,
         created_by: str | None = None,
+        *,
+        include: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Reserve devices for a test run and return the manager response."""
+        include_tuple = _normalize_include(include)
+        if include_tuple is not None and "capabilities" in include_tuple:
+            raise ReserveCapabilitiesUnsupportedError(
+                "include='capabilities' is not supported on reserve; use include on claim_device instead"
+            )
         resp = httpx.post(
             f"{self.base_url}/runs",
             json={
@@ -318,10 +325,11 @@ class GridFleetClient:
                 "heartbeat_timeout_sec": heartbeat_timeout_sec,
                 "created_by": created_by,
             },
+            params=_include_param(include_tuple),
             timeout=30,
             auth=self._auth,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, run_id="")
         return cast("dict[str, Any]", resp.json())
 
     def signal_ready(self, run_id: str) -> None:

@@ -214,6 +214,7 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -254,6 +255,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -914,6 +916,7 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         captured["auth"] = auth
@@ -938,6 +941,7 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         captured["auth"] = auth
@@ -1165,3 +1169,87 @@ def test_claim_device_with_retry_forwards_include_on_every_attempt(monkeypatch):
         [("include", "config")],
         [("include", "config")],
     ]
+
+
+def test_reserve_devices_threads_include_query_param(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["url"] = url
+        captured["params"] = params
+        return DummyResponse({"id": "run-1", "devices": []})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.reserve_devices(name="r", requirements=[], include=("config",))
+
+    assert captured["params"] == [("include", "config")]
+
+
+def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypatch):
+    called: list[str] = []
+
+    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+        called.append("post")
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        client.reserve_devices(name="r", requirements=[], include=("config", "capabilities"))
+
+    assert called == []
+
+
+def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
+    called: list[str] = []
+
+    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+        called.append("post")
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(TypeError, match="must be a sequence of strings"):
+        client.reserve_devices(name="r", requirements=[], include="capabilities")
+
+    assert called == []
+
+
+def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse(
+            {
+                "error": {
+                    "code": "INVALID_INCLUDE",
+                    "message": "include=capabilities not supported on reserve",
+                    "details": {"code": "reserve_capabilities_unsupported"},
+                }
+            },
+            status_code=422,
+        )
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    # Use include=("config",) so the client-side guard does not fire.
+    # The 422 then exercises the defense-in-depth path through _raise_for_status.
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        client.reserve_devices(name="r", requirements=[], include=("config",))
