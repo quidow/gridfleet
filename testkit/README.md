@@ -128,6 +128,8 @@ finally:
 
 | Helper | Purpose |
 | --- | --- |
+| `GridFleetClient.list_devices(filters)` | List devices using backend filters such as `status`, `pack_id`, `platform_id`, `host_id`, `connection_target`, and `tags.*` |
+| `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
 | `GridFleetClient.get_device_config(connection_target, reveal=True)` | Look up a device by runtime connection target and fetch its config |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
@@ -139,9 +141,15 @@ finally:
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
+| `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
+| `GridFleetClient.register_session_from_driver(driver, fields)` | Extract session id and capabilities from an Appium driver and register the session |
+| `GridFleetClient.update_session_status(session_id, status)` | Report final session status |
 | `GridFleetClient.complete_run(run_id)` | Complete a run |
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
+| `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
+| `hydrate_allocated_device(claim_response, run_id, client)` | Combine a claim response with optional device config and live capabilities |
+| `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` and signal cleanup that completes or cancels a run |
 
 ### Reservation Flow
@@ -212,6 +220,24 @@ else:
 ```
 
 Cooldowns are scoped to the active run. They prevent the same run from reclaiming the device until `ttl_seconds` expires, but completing or cancelling the run releases the physical device normally.
+
+### Allocated Device Hydration
+
+Use `hydrate_allocated_device(claim_response, run_id=run_id, client=client)` immediately after a worker claim when a custom plugin needs a stable object instead of raw claim JSON.
+
+```python
+from gridfleet_testkit import GridFleetClient, hydrate_allocated_device
+
+client = GridFleetClient("http://manager-ip:8000/api")
+run_id = "run-123"
+claim = client.claim_device_with_retry(run_id, worker_id="gw0", max_wait_sec=300)
+allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
+
+assert allocated.device_id == claim["device_id"]
+assert allocated.platform_name in {"Android", "iOS", "tvOS", "Roku"}
+```
+
+The helper fetches static device config by default when `connection_target` is present. It fetches live capabilities only when `fetch_capabilities=True`.
 
 ## Examples
 
