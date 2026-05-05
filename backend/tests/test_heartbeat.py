@@ -11,8 +11,8 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus, OSType
-from app.services import control_plane_state_store
-from app.services.device_health_summary import get_health_snapshot
+from app.services import control_plane_state_store, device_health
+from app.services.agent_probe_result import ProbeResult
 from app.services.heartbeat import (
     APPIUM_RESTART_SEQUENCE_NAMESPACE,
     _auto_sync_plugins_on_recovery,
@@ -21,7 +21,19 @@ from app.services.heartbeat import (
     shutdown_background_tasks,
 )
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.node_health import _check_nodes, get_node_health_control_plane_state, set_node_health_failure_count
+from app.services.node_health import _check_nodes
+
+
+async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:
+    node = await db_session.get(AppiumNode, uuid.UUID(node_key))
+    assert node is not None
+    node.consecutive_health_failures = count
+    await db_session.commit()
+
+
+async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[str, int]:
+    nodes = (await db_session.execute(select(AppiumNode))).scalars().all()
+    return {str(node.id): node.consecutive_health_failures for node in nodes if node.consecutive_health_failures > 0}
 
 
 async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
@@ -370,10 +382,10 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     assert events[1].details["kind"] == "restart_succeeded"
     assert events[1].details["process"] == "appium"
     assert events[1].details["occurred_at"] == "2026-04-04T10:00:01+00:00"
-    snapshot = await get_health_snapshot(db_session, str(device.id))
-    assert snapshot is not None
-    assert snapshot["node_running"] is True
-    assert snapshot["node_state"] == "running"
+    await db_session.refresh(node)
+    assert node.health_running is None
+    assert node.health_state is None
+    assert device_health.build_public_summary(device)["healthy"] is True
 
 
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
@@ -464,7 +476,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
     with (
-        patch("app.services.node_health._check_node_health", return_value=False),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
         patch("app.services.node_health._restart_node_via_agent", return_value=True),
     ):
         await _check_nodes(db_session)
@@ -570,10 +582,10 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     assert events[1].details is not None
     assert events[1].details["process"] == "grid_relay"
 
-    snapshot = await get_health_snapshot(db_session, str(device.id))
-    assert snapshot is not None
-    assert snapshot["node_running"] is True
-    assert snapshot["node_state"] == "running"
+    await db_session.refresh(node)
+    assert node.health_running is None
+    assert node.health_state is None
+    assert device_health.build_public_summary(device)["healthy"] is True
 
 
 async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
@@ -644,7 +656,6 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
     ):
         await _check_hosts(db_session)
 
-    snapshot = await get_health_snapshot(db_session, str(device.id))
-    assert snapshot is not None
-    assert snapshot["node_running"] is False
-    assert snapshot["node_state"] == "relay_restart_exhausted"
+    await db_session.refresh(node)
+    assert node.health_running is False
+    assert node.health_state == "relay_restart_exhausted"

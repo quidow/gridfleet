@@ -17,7 +17,7 @@ from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import DeviceAvailabilityStatus
-from app.services import appium_capability_keys, device_health_summary
+from app.services import appium_capability_keys, device_health
 from app.services.agent_operations import appium_start, appium_status, appium_stop, response_json_dict
 from app.services.device_availability import ready_device_availability_status, set_device_availability_status
 from app.services.device_identity import appium_connection_target
@@ -144,7 +144,6 @@ def upsert_node(
         node.grid_url = settings_service.get("grid.hub_url")
         node.pid = pid
         node.active_connection_target = active_connection_target
-        node.state = NodeState.running
     else:
         node = AppiumNode(
             device_id=device.id,
@@ -152,7 +151,7 @@ def upsert_node(
             grid_url=settings_service.get("grid.hub_url"),
             pid=pid,
             active_connection_target=active_connection_target,
-            state=NodeState.running,
+            state=NodeState.stopped,
         )
         db.add(node)
     device.appium_node = node
@@ -220,11 +219,12 @@ async def mark_node_started(
         )
     next_status = await _node_started_availability_status(db, device)
     await set_device_availability_status(device, next_status)
-    # Sync the device_health_summary snapshot so `node_running` reflects the
-    # new node state immediately. Without this the snapshot keeps the previous
-    # value until the next `node_health` probe cycle (~30s) and the aggregate
-    # `health_summary.healthy` field drifts from the actual node state.
-    await device_health_summary.update_node_state(db, device, running=True, state=NodeState.running.value)
+    await device_health.apply_node_state_transition(
+        db,
+        device,
+        new_state=NodeState.running,
+        mark_offline=False,
+    )
     queue_event_for_session(
         db,
         "node.state_changed",
@@ -248,19 +248,14 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = device.appium_node
     assert node is not None
-    node.state = NodeState.stopped
     node.pid = None
     node.active_connection_target = None
     await set_device_availability_status(device, _node_stopped_availability_status(device))
-    # Sync the device_health_summary snapshot — see mark_node_started for the
-    # reason; without this the device renders as "offline + healthy" because
-    # the snapshot keeps `node_running=True` from the last successful probe.
-    await device_health_summary.update_node_state(
+    await device_health.apply_node_state_transition(
         db,
         device,
-        running=False,
-        state=NodeState.stopped.value,
-        mark_offline_on_failure=False,
+        new_state=NodeState.stopped,
+        mark_offline=False,
     )
     queue_event_for_session(
         db,

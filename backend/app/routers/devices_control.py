@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.errors import AgentCallError
+from app.models.appium_node import NodeState
 from app.routers.device_route_helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -21,6 +22,9 @@ from app.services import (
     pack_discovery_service,
     session_viability,
 )
+from app.services import (
+    device_health as device_health_service,
+)
 from app.services.agent_operations import (
     appium_logs,
     get_pack_device_properties,
@@ -33,7 +37,6 @@ from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
 from app.services.auth_dependencies import require_admin
-from app.services.device_health_summary import patch_health_snapshot
 from app.services.device_identity import appium_connection_target
 from app.services.node_service import require_management_host
 from app.services.node_service import restart_node as restart_managed_node
@@ -130,8 +133,13 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     result: dict[str, Any] = {"platform": device.platform_id}
 
     node = device.appium_node
-    node_running = node is not None and node.state.value == "running"
-    node_state = node.state.value if node else None
+    node_lifecycle_state = node.state.value if node else None
+    node_health_running = getattr(node, "health_running", None) if node is not None else None
+    node_health_state = getattr(node, "health_state", None) if node is not None else None
+    node_running = node is not None and (
+        node_health_running if node_health_running is not None else node_lifecycle_state == NodeState.running.value
+    )
+    node_state = node_health_state if node_health_state is not None else node_lifecycle_state
     if node is not None:
         try:
             node_payload = await fetch_appium_status(
@@ -288,7 +296,7 @@ async def device_lifecycle_action(
         http_client_factory=httpx.AsyncClient,
     )
     if action == "state" and isinstance(result.get("state"), str):
-        await patch_health_snapshot(db, device, {"emulator_state": result["state"]})
+        await device_health_service.update_emulator_state(db, device, result["state"])
         await db.commit()
     return result
 

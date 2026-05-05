@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -127,6 +127,13 @@ class Device(Base):
     lifecycle_policy_state: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, default=dict, server_default="{}"
     )
+    device_checks_healthy: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    device_checks_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    device_checks_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_viability_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    session_viability_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_viability_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    emulator_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

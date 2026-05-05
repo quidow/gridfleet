@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +42,10 @@ class AppiumNode(Base):
         server_default="{}",
         default=dict,
     )
+    consecutive_health_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    health_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    health_state: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     device: Mapped[Device] = relationship("Device", back_populates="appium_node")
     resource_claims: Mapped[list[AppiumNodeResourceClaim]] = relationship(

@@ -16,13 +16,12 @@ from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import control_plane_state_store, device_health_summary, host_service, plugin_service
+from app.services import control_plane_state_store, device_health, host_service, plugin_service
 from app.services.agent_operations import agent_health
 from app.services.device_availability import set_device_availability_status
 from app.services.device_event_service import record_event
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.node_health import NODE_HEALTH_NAMESPACE
 from app.services.settings_service import settings_service
 from app.type_defs import AsyncTaskFactory
 
@@ -276,9 +275,8 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
         if kind == "restart_succeeded":
             if process == "appium" and pid is not None:
                 locked_node.pid = pid
-            await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, str(locked_node.id))
+            locked_node.consecutive_health_failures = 0
             if process == "appium":
-                locked_node.state = NodeState.running
                 queue_event_for_session(
                     db,
                     "node.state_changed",
@@ -299,7 +297,14 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                     "recovered_from": "agent_auto_restart",
                 },
             )
-            await device_health_summary.update_node_state(db, device, running=True, state=locked_node.state.value)
+            await device_health.apply_node_state_transition(
+                db,
+                device,
+                new_state=NodeState.running if process == "appium" else None,
+                health_running=None,
+                health_state=None,
+                mark_offline=False,
+            )
             continue
 
         error_message = _restart_error_message(kind, process, exit_code)
@@ -336,12 +341,13 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             degraded_state = "relay_restart_exhausted" if kind == "restart_exhausted" else "relay_restarting"
         else:
             degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
-        await device_health_summary.update_node_state(
+        await device_health.apply_node_state_transition(
             db,
-            str(device.id),
-            running=False,
-            state=degraded_state,
-            mark_offline_on_failure=False,
+            device,
+            health_running=False,
+            health_state=degraded_state,
+            mark_offline=False,
+            reason=error_message,
         )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
@@ -431,7 +437,7 @@ async def _check_hosts(db: AsyncSession) -> None:
                         DeviceEventType.connectivity_lost,
                         {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
                     )
-                    await device_health_summary.update_device_checks(
+                    await device_health.update_device_checks(
                         db,
                         device,
                         healthy=False,

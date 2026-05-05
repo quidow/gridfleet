@@ -20,7 +20,7 @@ from app.schemas.device_filters import DeviceQueryFilters, DeviceSortBy, DeviceS
 from app.services import (
     capability_service,
     device_config_masking,
-    device_health_summary,
+    device_health,
     device_presenter,
     device_service,
     platform_label_service,
@@ -94,7 +94,7 @@ async def list_devices(
         total = None
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
-    health_summary_map = await device_health_summary.get_health_summary_map(db, [str(device.id) for device in devices])
+    health_summary_map = {str(device.id): device_health.build_public_summary(device) for device in devices}
     sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(db, devices)
     label_map = await platform_label_service.load_platform_label_map(
         db,
@@ -126,7 +126,6 @@ async def list_devices(
 @router.get("/{device_id}", response_model=DeviceDetail)
 async def get_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
-    health_summary = await device_health_summary.get_health_snapshot(db, str(device.id))
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=device.pack_id,
@@ -135,7 +134,7 @@ async def get_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
     return await device_presenter.serialize_device_detail(
         db,
         device,
-        health_summary=device_health_summary.build_public_health_summary(health_summary),
+        health_summary=device_health.build_public_summary(device),
         platform_label=platform_label,
     )
 

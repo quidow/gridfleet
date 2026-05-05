@@ -12,7 +12,7 @@ from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
-from app.services import device_health_summary
+from app.services import device_health
 from app.services import lifecycle_policy as lifecycle_policy_module
 from app.services.lifecycle_policy import (
     DeferredStopOutcome,
@@ -911,9 +911,15 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     db_session.add(node)
     await db_session.commit()
 
-    # Seed snapshot to healthy
-    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
-    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -970,9 +976,14 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     await db_session.flush()
     await db_session.commit()
 
-    # Snapshot stays unhealthy
-    await device_health_summary.update_node_state(db_session, device, running=False, state="error")
-    await device_health_summary.update_device_checks(db_session, device, healthy=False, summary="Probe failed")
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        health_running=False,
+        health_state="error",
+        mark_offline=False,
+    )
+    await device_health.update_device_checks(db_session, device, healthy=False, summary="Probe failed")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1016,11 +1027,11 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     )
     db_session.add(device)
     await db_session.flush()
-    # Node already stopped — even if snapshot reads healthy, complete_auto_stop must still run.
+    # Node already stopped - even if health checks read healthy, complete_auto_stop must still run.
     node = AppiumNode(device_id=device.id, port=4783, grid_url="http://hub:4444", state=NodeState.stopped)
     db_session.add(node)
     await db_session.commit()
-    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1120,17 +1131,15 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     assert reloaded.availability_status == DeviceAvailabilityStatus.busy
 
 
-async def test_handle_session_finished_clears_intent_on_stale_healthy_snapshot(
+async def test_handle_session_finished_clears_intent_on_healthy_projection(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """When the snapshot reports healthy but ``last_failure_*`` still describes
-    a recent failure, the snapshot is canonical: the intent is cleared.
+    """When derived health is healthy but ``last_failure_*`` still describes
+    a recent failure, the row-derived projection is canonical.
 
-    Rationale: ``device_health_summary`` is the canonical health source. A
-    stale-but-healthy snapshot is preferable to auto-stopping a device that is
-    actually working. If the snapshot is wrong, the next failed probe will
-    re-enter ``handle_health_failure`` and re-arm the deferred stop.
+    If the projection is wrong, the next failed probe will re-enter
+    ``handle_health_failure`` and re-arm the deferred stop.
     """
     device = Device(
         pack_id="appium-uiautomator2",
@@ -1161,10 +1170,17 @@ async def test_handle_session_finished_clears_intent_on_stale_healthy_snapshot(
     db_session.add(node)
     await db_session.commit()
 
-    # Snapshot reads healthy even though last_failure_* still describes a
-    # current failure. The decision is to trust the snapshot.
-    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
-    await device_health_summary.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    # Health reads healthy even though last_failure_* still describes a
+    # current failure. The decision is to trust the derived health projection.
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)

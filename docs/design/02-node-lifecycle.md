@@ -24,10 +24,10 @@ Translating that into rules:
 1. Every state-changing call to the agent returns a definitive `True` (acknowledged), `False` (not acknowledged), or `None` (transport failure / agent unreachable).
 2. `False` and `None` MUST NOT promote to `True`. The DB stays where it was; the caller raises or retries.
 3. `mark_node_started` / `mark_node_stopped` only run after a definitive ack from the agent.
-4. The health snapshot is updated **inside the same transaction** as the DB state flip — never in a separate write.
+4. `device_health.apply_node_state_transition` records node health detail and emits `device.health_changed` inside the same transaction as the DB state flip.
 5. Owner allocations (ports + per-host capabilities) are released only after a confirmed stop. Unconfirmed stops keep the allocation so the orphan cannot collide with a fresh start.
 
-These five rules are what made the recent split-brain fixes possible. They are also why `stop_remote_temporary_node` returns `bool` and `_check_node_health` returns `bool | None` — the contract is encoded in the return types.
+These five rules are what made the recent split-brain fixes possible. They are also why `stop_remote_temporary_node` returns `bool` and `_check_node_health` returns `ProbeResult` — the contract is encoded in the return types.
 
 ## Node state machine
 
@@ -78,7 +78,7 @@ sequenceDiagram
     NM->>State: mark_node_started(port, pid, connection_target)
     State->>Pg: upsert AppiumNode (state=running)
     State->>Pg: set_device_availability_status (preserves busy/reserved/maintenance)
-    State->>Pg: device_health_summary.update_node_state(running=True)
+    State->>Pg: device_health.apply_node_state_transition(running)
     State-->>API: AppiumNode row
 ```
 
@@ -121,7 +121,7 @@ sequenceDiagram
         NM->>Pg: lock_device + lock_appium_node
         NM->>State: mark_node_stopped()
         State->>Pg: AppiumNode.state=stopped, pid=None
-        State->>Pg: device_health_summary.update_node_state(running=False)
+        State->>Pg: device_health.apply_node_state_transition(stopped)
         State-->>API: stopped node
     else Agent does not acknowledge (transport / 5xx / circuit open)
         Agent-->>NM: error
@@ -186,16 +186,15 @@ sequenceDiagram
 
     Loop->>Probe: probe each running AppiumNode
     Probe->>Agent: POST /agent/appium/{port}/probe-session
-    Agent-->>Probe: True / False / None (unreachable)
+    Agent-->>Probe: ack / refused / indeterminate
     Probe-->>Process: result
-    alt result is None
-        Process->>Process: early return — keep snapshot, no counter bump
-    else result True
-        Process->>Pg: clear failure counter
-        Process->>Pg: update_node_state(running=True)
-    else result False
-        Process->>Pg: increment failure counter
-        Process->>Pg: update_node_state(running=False, mark_offline=count>=max)
+    alt result is indeterminate
+        Process->>Process: early return — keep columns, no counter bump
+    else result ack
+        Process->>Pg: clear failure counter and health override
+    else result refused
+        Process->>Pg: increment AppiumNode.consecutive_health_failures
+        Process->>Pg: health_running=False, mark_offline=count>=max
         alt count >= max_failures
             alt auto_manage off
                 Process->>Pg: lifecycle "recovery_suppressed"; node.state=error; offline
@@ -219,9 +218,9 @@ sequenceDiagram
 
 Three things this flow gets right that earlier versions did not:
 
-1. **`None` is not `False`.** A single agent transport blip used to drop the device offline; commit `a58c8e5` made `None` short-circuit `_process_node_health` so transient blips no longer flap the health snapshot or increment the failure counter.
-2. **`device_health_summary` updates always run, even on `None`-skipped paths in `mark_node_started/stopped`.** Commit `9298bad` moved snapshot patching into the same transaction as the node-state write, eliminating the "offline + healthy" rendering window.
-3. **Grid-registration grace.** A node that just started but has not yet appeared in Selenium Grid's `/status` is given a grace window equal to `appium.startup_timeout_sec` (`node_health.py:153-160`). Inside the grace window the loop holds the snapshot at `running=True` instead of penalising a still-warming relay.
+1. **`indeterminate` is not `refused`.** A single agent transport blip used to drop the device offline; commit `a58c8e5` made indeterminate results short-circuit `_process_node_health` so transient blips no longer flap health or increment the failure counter.
+2. **Node state transitions go through `device_health.apply_node_state_transition`.** The helper writes lifecycle state, transient health detail, last-check timestamp, availability cross-link, and the derived `device.health_changed` event under the correct locks.
+3. **Grid-registration grace.** A node that just started but has not yet appeared in Selenium Grid's `/status` is given a grace window equal to `appium.startup_timeout_sec`. Inside the grace window the loop holds the derived node health at running instead of penalising a still-warming relay.
 
 ## The owner_key + port allocation interaction
 
@@ -260,17 +259,14 @@ The `candidate_ports` helper (`node_service.py:98-127`) excludes ports already h
 2. appium_node_locking.lock_appium_node_for_device(db, device.id)
 3. (writes to AppiumNode.state, Device.availability_status,
     Device.lifecycle_policy_state)
-4. device_health_summary.patch_health_snapshot(...)  # acquires its own
-                                                     # device row lock,
-                                                     # which is re-entrant
-                                                     # within the same tx
+4. device_health.apply_node_state_transition(...)
 5. queue_event_for_session(...)
 6. db.commit()
 ```
 
 `mark_node_started` (`node_service.py:178-210`) and `mark_node_stopped` (`node_service.py:214-245`) follow this exact order. New writers must too.
 
-The `event_bus.publish` for `device.health_changed` is **deferred to after-commit** by `_schedule_health_event_after_commit` (`device_health_summary.py:128-174`). Subscribers must never observe a transition that did not become durable. Subscribers for `node.state_changed` are queued with `queue_event_for_session` (`node_service.py:198-208`, `node_service.py:235-244`) and are also dispatched after the writer transaction commits.
+The `event_bus.publish` for `device.health_changed` is **deferred to after-commit** by `queue_event_for_session` inside `device_health`. Subscribers must never observe a transition that did not become durable. Subscribers for `node.state_changed` are queued with `queue_event_for_session` and are also dispatched after the writer transaction commits.
 
 ## Split-brain prevention checklist
 
@@ -279,7 +275,7 @@ For every new code path that touches node state, verify:
 - [ ] The agent call returns a definitive ack (`bool`) — not just an exception/no-exception split.
 - [ ] DB writes are gated on `True`. `False` raises or returns; `None` keeps current state.
 - [ ] `mark_node_started` / `mark_node_stopped` run inside a transaction that holds the device row lock.
-- [ ] `device_health_summary.update_node_state` is called in the same transaction (or `patch_health_snapshot` directly).
+- [ ] `device_health.apply_node_state_transition` is the node-health writer in that transaction.
 - [ ] Owner allocation is released only after confirmed stop.
 - [ ] On port conflict, the next candidate port is tried — *unless* the conflict came from an unconfirmed stop, in which case no retry is allowed.
 - [ ] After any `mark_node_*`, `queue_event_for_session("node.state_changed", ...)` is registered before commit.

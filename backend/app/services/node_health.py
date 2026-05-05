@@ -20,14 +20,13 @@ from app.observability import get_logger, observe_background_loop
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import (
     capability_service,
-    control_plane_state_store,
-    device_health_summary,
+    device_health,
     grid_service,
     lifecycle_policy,
 )
 from app.services.agent_operations import appium_probe_session as fetch_appium_probe_session
 from app.services.agent_operations import appium_status as fetch_appium_status
-from app.services.device_availability import set_device_availability_status
+from app.services.agent_probe_result import ProbeResult, from_probe_session_response, from_status_response
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
@@ -39,7 +38,6 @@ from app.services.session_viability import build_probe_capabilities
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
-NODE_HEALTH_NAMESPACE = "node_health.failure_count"
 LOOP_NAME = "node_health"
 NODE_HEALTH_PROBE_TIMEOUT_SEC = 15
 PROBE_CONCURRENCY_PER_HOST = 2
@@ -51,7 +49,7 @@ async def _bounded_check_node_health(
     device: Device,
     *,
     probe_capabilities: dict[str, Any] | None,
-) -> bool | None:
+) -> ProbeResult:
     async with semaphore:
         return await _check_node_health(node, device, probe_capabilities=probe_capabilities)
 
@@ -100,22 +98,15 @@ async def _check_node_health(
     device: Device,
     *,
     probe_capabilities: dict[str, Any] | None = None,
-) -> bool | None:
-    """Probe Appium node health.
-
-    Returns True/False when the agent answered with a definitive result, None
-    when reachability or the agent's HTTP layer prevented one (transport error,
-    HTTP error response, or open circuit). Indeterminate results must not flip
-    the snapshot or increment the failure counter — see ``_process_node_health``.
-    """
+) -> ProbeResult:
     try:
         host = require_management_host(device, action="monitor Appium node health")
     except NodeManagerError:
-        return False
+        return ProbeResult(status="refused", detail="no management host")
 
     try:
         if probe_capabilities is not None:
-            healthy, error = await fetch_appium_probe_session(
+            result = await fetch_appium_probe_session(
                 host.ip,
                 host.agent_port,
                 node.port,
@@ -123,30 +114,16 @@ async def _check_node_health(
                 timeout_sec=NODE_HEALTH_PROBE_TIMEOUT_SEC,
                 http_client_factory=httpx.AsyncClient,
             )
-            # ``appium_probe_session`` swallows non-2xx responses into ``(False, err)``.
-            # A definitive negative carries an Appium-side reason ("Probe session
-            # returned an invalid payload" / explicit error from agent body); a
-            # transport-shaped HTTP failure surfaces as the synthetic message
-            # "Probe session failed (HTTP <code>)". Map the HTTP-shaped error to
-            # indeterminate so a single transient agent 5xx does not cascade into
-            # a recovery action.
-            if not healthy and isinstance(error, str) and error.startswith("Probe session failed (HTTP "):
-                return None
-            return healthy
+            return from_probe_session_response(result)
         payload = await fetch_appium_status(
             host.ip,
             host.agent_port,
             node.port,
             http_client_factory=httpx.AsyncClient,
         )
-        # ``appium_status`` returns ``None`` for non-2xx responses. Treat that as
-        # indeterminate rather than "not running" so transient HTTP errors do
-        # not flip ``node_running`` to False or trigger a restart.
-        if payload is None:
-            return None
-        return bool(payload.get("running", False))
+        return from_status_response(payload)
     except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
-        return None
+        return ProbeResult(status="indeterminate", detail="agent transport error")
 
 
 def _grid_registration_grace_active(node: AppiumNode) -> bool:
@@ -167,35 +144,18 @@ async def _restart_node_via_agent(db: AsyncSession, device: Device, node: Appium
         return False
 
 
-async def reset_node_health_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespace(db, NODE_HEALTH_NAMESPACE)
-    await db.commit()
-
-
-async def get_node_health_control_plane_state(db: AsyncSession) -> dict[str, int]:
-    values = await control_plane_state_store.get_values(db, NODE_HEALTH_NAMESPACE)
-    return {key: int(value) for key, value in values.items()}
-
-
-async def set_node_health_failure_count(db: AsyncSession, node_key: str, count: int) -> None:
-    await control_plane_state_store.set_value(db, NODE_HEALTH_NAMESPACE, node_key, count)
-    await db.commit()
-
-
 async def _process_node_health(
     db: AsyncSession,
     node: AppiumNode,
     device: Device,
     *,
-    healthy: bool | None,
+    result: ProbeResult,
     grid_device_ids: set[str] | None,
     observed_state: NodeState | None = None,
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
 ) -> None:
-    node_key = str(node.id)
-
     from app.services import appium_node_locking
 
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -225,8 +185,9 @@ async def _process_node_health(
     if locked_node.state != NodeState.running:
         return
 
-    if healthy is None:
+    if result.status == "indeterminate":
         return
+    healthy = result.status == "ack"
 
     if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
         if _grid_registration_grace_active(node):
@@ -235,7 +196,14 @@ async def _process_node_health(
                 device.name,
                 node.port,
             )
-            await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+            await device_health.apply_node_state_transition(
+                db,
+                device,
+                new_state=NodeState.running,
+                health_running=None,
+                health_state=None,
+                mark_offline=False,
+            )
             return
         healthy = False
         logger.warning(
@@ -245,7 +213,7 @@ async def _process_node_health(
         )
 
     if healthy:
-        if await control_plane_state_store.get_value(db, NODE_HEALTH_NAMESPACE, node_key) is not None:
+        if locked_node.consecutive_health_failures > 0:
             logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
             await lifecycle_policy.record_control_action(
                 db,
@@ -291,18 +259,27 @@ async def _process_node_health(
                 detail="The node resumed healthy operation after transient failures",
                 source="node_health",
             )
-        await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
-        await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+        locked_node.consecutive_health_failures = 0
+        await device_health.apply_node_state_transition(
+            db,
+            device,
+            new_state=NodeState.running,
+            health_running=None,
+            health_state=None,
+            mark_offline=False,
+        )
         return
 
-    count = await control_plane_state_store.increment_counter(db, NODE_HEALTH_NAMESPACE, node_key)
+    locked_node.consecutive_health_failures += 1
+    count = locked_node.consecutive_health_failures
     max_failures = settings_service.get("general.node_max_failures")
-    await device_health_summary.update_node_state(
+    await device_health.apply_node_state_transition(
         db,
         device,
-        running=False,
-        state="error",
-        mark_offline_on_failure=count >= max_failures,
+        new_state=None,
+        health_running=False,
+        health_state="error",
+        mark_offline=count >= max_failures,
     )
     logger.warning(
         "Node health check failed for device %s (port %d): %d/%d",
@@ -319,7 +296,7 @@ async def _process_node_health(
     )
 
     if count >= max_failures:
-        await control_plane_state_store.delete_value(db, NODE_HEALTH_NAMESPACE, node_key)
+        locked_node.consecutive_health_failures = 0
 
         if not device.auto_manage:
             logger.info(
@@ -372,9 +349,14 @@ async def _process_node_health(
                 detail="Node restart was suppressed after repeated health check failures",
                 source="node_health",
             )
-            node.state = NodeState.error
-            await device_health_summary.update_node_state(db, device, running=False, state="error")
-            await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
+            await device_health.apply_node_state_transition(
+                db,
+                device,
+                new_state=NodeState.error,
+                health_running=False,
+                health_state="error",
+                mark_offline=True,
+            )
             return
 
         logger.error("Node for device %s reached max failures, attempting restart", device.name)
@@ -413,6 +395,14 @@ async def _process_node_health(
                 reason="Node restarted after health failures",
                 detail="Automatic node restart succeeded after repeated health check failures",
                 source="node_health",
+            )
+            await device_health.apply_node_state_transition(
+                db,
+                device,
+                new_state=NodeState.running,
+                health_running=None,
+                health_state=None,
+                mark_offline=False,
             )
         else:
             logger.error("Restart failed for device %s — marking offline", device.name)
@@ -462,9 +452,14 @@ async def _process_node_health(
                 detail="Automatic node restart failed after repeated health check failures",
                 source="node_health",
             )
-            node.state = NodeState.error
-            await device_health_summary.update_node_state(db, device, running=False, state="error")
-            await set_device_availability_status(device, DeviceAvailabilityStatus.offline, publish_event=False)
+            await device_health.apply_node_state_transition(
+                db,
+                device,
+                new_state=NodeState.error,
+                health_running=False,
+                health_state="error",
+                mark_offline=True,
+            )
 
 
 async def _check_nodes(db: AsyncSession) -> None:
@@ -479,8 +474,8 @@ async def _check_nodes(db: AsyncSession) -> None:
         )
         .order_by(AppiumNode.device_id)
     )
-    result = await db.execute(stmt)
-    nodes = result.scalars().all()
+    node_result = await db.execute(stmt)
+    nodes = node_result.scalars().all()
 
     requests = [
         NodeHealthCheckRequest(
@@ -497,7 +492,7 @@ async def _check_nodes(db: AsyncSession) -> None:
     host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
         lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
     )
-    health_results = await asyncio.gather(
+    results = await asyncio.gather(
         *[
             _bounded_check_node_health(
                 host_semaphores[request.device.host_id],
@@ -510,7 +505,7 @@ async def _check_nodes(db: AsyncSession) -> None:
     )
     grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status())
 
-    for request, healthy in zip(requests, health_results, strict=True):
+    for request, result in zip(requests, results, strict=True):
         try:
             locked_device = await device_locking.lock_device(db, request.device.id, load_sessions=True)
         except NoResultFound:
@@ -525,7 +520,7 @@ async def _check_nodes(db: AsyncSession) -> None:
             db,
             request.node,
             locked_device,
-            healthy=healthy,
+            result=result,
             grid_device_ids=grid_device_ids,
             observed_state=request.observed_state,
             observed_port=request.observed_port,

@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.host import Host
-from app.services import control_plane_state_store, node_health
+from app.services import node_health
+from app.services.agent_probe_result import ProbeResult
 from app.services.settings_service import settings_service
 from tests.helpers import create_device
 
@@ -45,8 +46,7 @@ async def _seed_running_node_at_failure_threshold(
     await db_session.commit()
 
     threshold = int(settings_service.get("general.node_max_failures"))
-    for _ in range(threshold - 1):
-        await control_plane_state_store.increment_counter(db_session, node_health.NODE_HEALTH_NAMESPACE, str(node.id))
+    node.consecutive_health_failures = threshold - 1
     await db_session.commit()
     return device, node
 
@@ -57,10 +57,10 @@ async def _run_node_health_with_gate(
     probe_complete: asyncio.Event,
     allow_processing: asyncio.Event,
 ) -> None:
-    async def unhealthy_probe(*_args: object, **_kwargs: object) -> bool:
+    async def unhealthy_probe(*_args: object, **_kwargs: object) -> ProbeResult:
         probe_complete.set()
         await asyncio.wait_for(allow_processing.wait(), timeout=2.0)
-        return False
+        return ProbeResult(status="refused")
 
     with (
         patch(

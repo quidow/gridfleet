@@ -12,7 +12,7 @@ from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
-from app.services import capability_service, control_plane_state_store, device_health_summary, lifecycle_policy
+from app.services import capability_service, control_plane_state_store, device_health, lifecycle_policy
 from app.services.agent_operations import appium_probe_session
 from app.services.device_availability import set_device_availability_status
 from app.services.device_availability_resolution import restore_post_busy_availability_status
@@ -71,7 +71,7 @@ async def _write_session_viability(
         "checked_by": checked_by,
     }
     await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id), state)
-    await device_health_summary.update_session_viability(db, device, status=status, error=error)
+    await device_health.update_session_viability(db, device, status=status, error=error)
     return state
 
 

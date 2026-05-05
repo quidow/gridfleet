@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.appium_node import AppiumNode
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceAvailabilityStatus
 from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
-from app.services import device_health_summary, run_service
+from app.services import device_health, run_service
 from app.services.device_readiness import assess_device_async
 from app.services.node_service import (
     restart_node as restart_managed_node,
@@ -58,7 +58,7 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
         node = await start_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    await device_health_summary.update_node_state(db, device, running=True, state=node.state.value)
+    await device_health.apply_node_state_transition(db, device, new_state=NodeState.running, mark_offline=False)
     await db.commit()
     return node
 
@@ -71,7 +71,7 @@ async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
         node = await stop_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    await device_health_summary.update_node_state(db, device, running=False, state=node.state.value)
+    await device_health.apply_node_state_transition(db, device, new_state=NodeState.stopped, mark_offline=True)
     await db.commit()
     return node
 
@@ -86,11 +86,11 @@ async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         node = await restart_managed_node(db, device)
     except NodeManagerError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    await device_health_summary.update_node_state(
+    await device_health.apply_node_state_transition(
         db,
         device,
-        running=node.state.value == "running",
-        state=node.state.value,
+        new_state=node.state,
+        mark_offline=node.state != NodeState.running,
     )
     await db.commit()
     return node

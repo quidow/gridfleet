@@ -708,7 +708,7 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
     Selenium Grid traffic while the manager believes it is gone, producing
     the offline+healthy split-brain UI state and blocking subsequent starts
     via port collision."""
-    from app.services import device_health_summary
+    from app.services import device_health
 
     device = await create_device_record(
         db_session,
@@ -724,8 +724,14 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    # Seed snapshot to known-healthy so we can assert it stays untouched.
-    await device_health_summary.update_node_state(db_session, loaded, running=True, state="running")
+    await device_health.apply_node_state_transition(
+        db_session,
+        loaded,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
     await db_session.commit()
 
     with (
@@ -740,20 +746,17 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
     await db_session.refresh(node)
     await db_session.refresh(loaded)
     assert node.state == NodeState.running, "node row must stay running when stop is unconfirmed"
-    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
-    assert snapshot is not None
-    assert snapshot.get("node_running") is True
+    await db_session.refresh(loaded, attribute_names=["appium_node"])
+    assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
-async def test_stop_node_marks_stopped_and_syncs_snapshot_when_agent_acknowledges(
+async def test_stop_node_marks_stopped_when_agent_acknowledges(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """When agent confirms the stop, both the appium_node row AND the
-    device_health_summary snapshot must reflect the new state in the same
-    transaction (the historic bug left the snapshot stale, producing the
-    offline+healthy badge until the next probe cycle)."""
-    from app.services import device_health_summary
+    """When agent confirms the stop, the appium_node row reflects the new
+    state in the same transaction."""
+    from app.services import device_health
 
     device = await create_device_record(
         db_session,
@@ -769,7 +772,14 @@ async def test_stop_node_marks_stopped_and_syncs_snapshot_when_agent_acknowledge
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    await device_health_summary.update_node_state(db_session, loaded, running=True, state="running")
+    await device_health.apply_node_state_transition(
+        db_session,
+        loaded,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
     await db_session.commit()
 
     with patch(
@@ -780,17 +790,12 @@ async def test_stop_node_marks_stopped_and_syncs_snapshot_when_agent_acknowledge
 
     await db_session.refresh(node)
     assert node.state == NodeState.stopped
-    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
-    assert snapshot is not None
-    assert snapshot.get("node_running") is False
-    assert snapshot.get("node_state") == "stopped"
+    await db_session.refresh(loaded, attribute_names=["appium_node"])
+    assert device_health.build_public_summary(loaded)["healthy"] is False
 
 
-async def test_mark_node_started_syncs_snapshot(db_session: AsyncSession, db_host: Host) -> None:
-    """Symmetric to mark_node_stopped — `mark_node_started` must update the
-    snapshot so health badges flip to running immediately, not only after the
-    next probe cycle."""
-    from app.services import device_health_summary, node_service
+async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_host: Host) -> None:
+    from app.services import device_health, node_service
 
     device = await create_device_record(
         db_session,
@@ -804,16 +809,12 @@ async def test_mark_node_started_syncs_snapshot(db_session: AsyncSession, db_hos
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    # Seed snapshot to "node not running" to confirm mark_node_started flips it.
-    await device_health_summary.update_node_state(db_session, loaded, running=False, state="stopped")
-    await db_session.commit()
-
     await node_service.mark_node_started(db_session, loaded, port=4725, pid=999)
 
-    snapshot = await device_health_summary.get_health_snapshot(db_session, str(loaded.id))
-    assert snapshot is not None
-    assert snapshot.get("node_running") is True
-    assert snapshot.get("node_state") == "running"
+    await db_session.refresh(loaded, attribute_names=["appium_node"])
+    assert loaded.appium_node is not None
+    assert loaded.appium_node.state == NodeState.running
+    assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
 async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -> None:

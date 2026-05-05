@@ -43,7 +43,7 @@ from app.routers import (
     webhooks,
 )
 from app.services import auth as auth_service
-from app.services import device_health_summary, device_service, webhook_dispatcher
+from app.services import device_health, device_service, webhook_dispatcher
 from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.data_cleanup import data_cleanup_loop
@@ -245,7 +245,7 @@ async def check_availability(
     matched = 0
     for device in available_devices:
         ready = await is_ready_for_use_async(db, device)
-        health_allows_allocation = await device_health_summary.device_allows_allocation(db, device)
+        health_allows_allocation = device_health.device_allows_allocation(device)
         if ready and health_allows_allocation:
             matched += 1
     return {

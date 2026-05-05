@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -11,17 +12,28 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
-from app.services import device_health_summary
+from app.services import device_health
+from app.services.agent_probe_result import ProbeResult
 from app.services.node_health import (
     _check_node_health,
     _check_nodes,
     _should_probe_node_health,
-    get_node_health_control_plane_state,
-    set_node_health_failure_count,
 )
 from app.services.node_service_types import NodeManagerError
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:
+    node = await db_session.get(AppiumNode, uuid.UUID(node_key))
+    assert node is not None
+    node.consecutive_health_failures = count
+    await db_session.commit()
+
+
+async def get_node_health_control_plane_state(db_session: AsyncSession) -> dict[str, int]:
+    nodes = (await db_session.execute(select(AppiumNode))).scalars().all()
+    return {str(node.id): node.consecutive_health_failures for node in nodes if node.consecutive_health_failures > 0}
 
 
 async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_host: Host) -> None:
@@ -49,7 +61,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
     # Pre-set some failure counts
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
-    with patch("app.services.node_health._check_node_health", return_value=True):
+    with patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")):
         await _check_nodes(db_session)
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -79,7 +91,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
     db_session.add(node)
     await db_session.commit()
 
-    with patch("app.services.node_health._check_node_health", return_value=False):
+    with patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")):
         await _check_nodes(db_session)
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -118,7 +130,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=True),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
             "app.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
@@ -164,7 +176,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=True),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
             "app.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
@@ -202,7 +214,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
     await set_node_health_failure_count(db_session, str(node.id), 1)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=True),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
             "app.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
@@ -260,9 +272,11 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=False),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
         patch(
-            "app.services.node_health._restart_node_via_agent", new_callable=AsyncMock, return_value=True
+            "app.services.node_health._restart_node_via_agent",
+            new_callable=AsyncMock,
+            return_value=True,
         ) as mock_restart,
     ):
         await _check_nodes(db_session)
@@ -303,7 +317,7 @@ async def test_node_restart_failure_marks_offline(db_session: AsyncSession) -> N
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=False),
+        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
         patch("app.services.node_health._restart_node_via_agent", new_callable=AsyncMock, return_value=False),
     ):
         await _check_nodes(db_session)
@@ -593,14 +607,14 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         device: Device,
         *,
         probe_capabilities: dict[str, object] | None = None,
-    ) -> bool:
+    ) -> ProbeResult:
         _ = device, probe_capabilities
         started_ports.add(node.port)
         if len(started_ports) == 2:
             both_started.set()
         await both_started.wait()
         await release_checks.wait()
-        return True
+        return ProbeResult(status="ack")
 
     with (
         patch(
@@ -649,7 +663,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
 
-    assert result is None
+    assert result.status == "indeterminate"
 
 
 async def test_check_node_health_returns_none_on_response_error(db_session: AsyncSession, db_host: Host) -> None:
@@ -664,7 +678,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
 
-    assert result is None
+    assert result.status == "indeterminate"
 
 
 async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncSession, db_host: Host) -> None:
@@ -679,7 +693,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
 
-    assert result is None
+    assert result.status == "indeterminate"
 
 
 async def test_check_node_health_returns_false_when_device_has_no_host(db_session: AsyncSession, db_host: Host) -> None:
@@ -691,7 +705,7 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
     node = AppiumNode(device_id=None, port=4733, grid_url="http://hub:4444", state=NodeState.running)
 
     result = await _check_node_health(node, device, probe_capabilities=None)
-    assert result is False
+    assert result.status == "refused"
 
 
 async def test_check_node_health_returns_true_on_running_status(db_session: AsyncSession, db_host: Host) -> None:
@@ -706,7 +720,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
 
-    assert result is True
+    assert result.status == "ack"
 
 
 async def test_check_node_health_status_path_returns_none_on_http_error(
@@ -725,7 +739,7 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
 
-    assert result is None
+    assert result.status == "indeterminate"
 
 
 async def test_check_node_health_probe_path_returns_none_on_http_error(db_session: AsyncSession, db_host: Host) -> None:
@@ -743,7 +757,7 @@ async def test_check_node_health_probe_path_returns_none_on_http_error(db_sessio
     ):
         result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
 
-    assert result is None
+    assert result.status == "indeterminate"
 
 
 async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
@@ -762,12 +776,10 @@ async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
     ):
         result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
 
-    assert result is False
+    assert result.status == "refused"
 
 
-async def test_indeterminate_probe_does_not_flip_snapshot_or_counter(db_session: AsyncSession, db_host: Host) -> None:
-    from app.services import device_health_summary
-
+async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -789,21 +801,29 @@ async def test_indeterminate_probe_does_not_flip_snapshot_or_counter(db_session:
     db_session.add(node)
     await db_session.commit()
 
-    # Pre-set snapshot to known-healthy
-    await device_health_summary.update_node_state(db_session, device, running=True, state="running")
+    # Pre-set projected node health to known-healthy.
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        new_state=NodeState.running,
+        health_running=None,
+        health_state=None,
+        mark_offline=False,
+    )
     await db_session.commit()
 
-    with patch("app.services.node_health._check_node_health", return_value=None):
+    with patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="indeterminate")):
         await _check_nodes(db_session)
 
     # Counter unchanged (still absent)
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
-    # Snapshot still healthy
-    snapshot = await device_health_summary.get_health_snapshot(db_session, str(device.id))
-    assert snapshot is not None
-    assert snapshot.get("node_running") is True
-    assert snapshot.get("node_state") == "running"
+    # Column projection still healthy.
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.state == NodeState.running
+    assert device.appium_node.health_running is None
+    assert device_health.build_public_summary(device)["healthy"] is True
 
     # Device still available
     await db_session.refresh(device)
@@ -844,13 +864,13 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
     in_flight = 0
     peak = 0
 
-    async def slow_probe(*_args: object, **_kwargs: object) -> bool | None:
+    async def slow_probe(*_args: object, **_kwargs: object) -> ProbeResult:
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
         try:
             await asyncio.sleep(0.05)
-            return True
+            return ProbeResult(status="ack")
         finally:
             in_flight -= 1
 
@@ -895,10 +915,16 @@ async def test_node_health_recovery_clears_pending_stop(
 
     # Seed prior failure state so recovery branch fires.
     await set_node_health_failure_count(db_session, str(node.id), 1)
-    await device_health_summary.update_node_state(db_session, device, running=False, state="error")
+    await device_health.apply_node_state_transition(
+        db_session,
+        device,
+        health_running=False,
+        health_state="error",
+        mark_offline=False,
+    )
     await db_session.commit()
 
-    with patch("app.services.node_health._check_node_health", return_value=True):
+    with patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")):
         await _check_nodes(db_session)
 
     reloaded = await db_session.get(Device, device.id)

@@ -26,7 +26,7 @@ from app.schemas.device import (
 from app.schemas.device_filters import DeviceQueryFilters
 from app.services import (
     device_attention,
-    device_health_summary,
+    device_health,
     device_locking,
     device_readiness,
     device_write,
@@ -190,9 +190,6 @@ async def list_devices_by_filters(
         wanted = filters.needs_attention
         kept: list[Device] = []
         reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
-        health_summary_map = await device_health_summary.get_health_summary_map(
-            db, [str(device.id) for device in devices]
-        )
         for device in devices:
             reservation_context = run_service.get_reservation_context_for_device(
                 reservation_map.get(device.id), device.id
@@ -200,7 +197,7 @@ async def list_devices_by_filters(
             readiness = await device_readiness.assess_device_async(db, device)
             policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
             summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
-            health_summary = health_summary_map.get(str(device.id))
+            health_summary = device_health.build_public_summary(device)
             if (
                 device_attention.compute_needs_attention(
                     summary["state"],
