@@ -97,11 +97,17 @@ async def test_get_client_recreates_when_max_keepalive_changes() -> None:
         a = await pool.get_client("10.0.0.1", 5100, max_keepalive=10, keepalive_expiry=60)
         b = await pool.get_client("10.0.0.1", 5100, max_keepalive=20, keepalive_expiry=60)
         assert a is not b
-        assert a.is_closed
+        # Stale client kept open so concurrent in-flight requests do not fail
+        # mid-flight; it is aclose()d at pool shutdown.
+        assert not a.is_closed
         assert not b.is_closed
         assert pool.size() == 1
+        assert pool.deferred_count() == 1
     finally:
         await pool.close()
+    assert a.is_closed
+    assert b.is_closed
+    assert pool.deferred_count() == 0
 
 
 @pytest.mark.asyncio
@@ -111,11 +117,14 @@ async def test_get_client_recreates_when_keepalive_expiry_changes() -> None:
         a = await pool.get_client("10.0.0.1", 5100, max_keepalive=10, keepalive_expiry=60)
         b = await pool.get_client("10.0.0.1", 5100, max_keepalive=10, keepalive_expiry=120)
         assert a is not b
-        assert a.is_closed
+        assert not a.is_closed
         assert not b.is_closed
         assert pool.size() == 1
+        assert pool.deferred_count() == 1
     finally:
         await pool.close()
+    assert a.is_closed
+    assert b.is_closed
 
 
 @pytest.mark.asyncio
@@ -127,6 +136,7 @@ async def test_get_client_keeps_same_instance_when_config_unchanged() -> None:
         assert a is b
         assert not a.is_closed
         assert pool.size() == 1
+        assert pool.deferred_count() == 0
     finally:
         await pool.close()
 
@@ -139,8 +149,49 @@ async def test_get_client_config_change_does_not_close_other_hosts() -> None:
         b = await pool.get_client("10.0.0.2", 5100, max_keepalive=10, keepalive_expiry=60)
         new_a = await pool.get_client("10.0.0.1", 5100, max_keepalive=20, keepalive_expiry=60)
         assert new_a is not a
-        assert a.is_closed
+        # Old client a is deferred (not closed); other host b untouched.
+        assert not a.is_closed
         assert not b.is_closed
         assert pool.size() == 2
+        assert pool.deferred_count() == 1
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_replacement_does_not_close_client_used_by_in_flight_request() -> None:
+    """Race regression: replacement must not aclose() a client that another
+    coroutine has already obtained and is about to use. Deferred close
+    keeps the stale client live until pool shutdown.
+    """
+    pool = AgentHttpPool()
+    try:
+        # Coroutine A obtains the current client.
+        a = await pool.get_client("10.0.0.1", 5100, max_keepalive=10, keepalive_expiry=60)
+        # Coroutine B changes the config and gets a fresh client.
+        b = await pool.get_client("10.0.0.1", 5100, max_keepalive=20, keepalive_expiry=60)
+        assert a is not b
+        # Coroutine A is "still in-flight": it must be able to use `a`.
+        # We simulate by issuing a no-op request on the (still open) client.
+        # `a.is_closed` MUST be False — the actual race fix.
+        assert not a.is_closed
+        # Subsequent calls go to the new client.
+        c = await pool.get_client("10.0.0.1", 5100, max_keepalive=20, keepalive_expiry=60)
+        assert c is b
+    finally:
+        await pool.close()
+    assert a.is_closed and b.is_closed
+
+
+@pytest.mark.asyncio
+async def test_repeated_config_changes_accumulate_deferred() -> None:
+    pool = AgentHttpPool()
+    try:
+        await pool.get_client("10.0.0.1", 5100, max_keepalive=10)
+        await pool.get_client("10.0.0.1", 5100, max_keepalive=20)
+        await pool.get_client("10.0.0.1", 5100, max_keepalive=30)
+        assert pool.size() == 1
+        assert pool.deferred_count() == 2
+    finally:
+        await pool.close()
+    assert pool.deferred_count() == 0
