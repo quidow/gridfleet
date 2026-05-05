@@ -81,6 +81,10 @@ def _response_error_detail(response: httpx.Response) -> str | None:
         detail = payload.get("detail")
         if isinstance(detail, str) and detail:
             return detail
+        if isinstance(detail, dict):
+            message = detail.get("message")
+            if isinstance(message, str) and message:
+                return message
         message = payload.get("message")
         if isinstance(message, str) and message:
             return message
@@ -237,6 +241,24 @@ async def appium_stop(
         json_body={"port": port},
         timeout=timeout,
     )
+
+
+def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:
+    """Return (code, message) parsed from an agent failure response."""
+    if response is None:
+        return None, "no response"
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, response.text or f"HTTP {response.status_code}"
+    if not isinstance(payload, dict):
+        return None, str(payload)
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        code = detail.get("code") if isinstance(detail.get("code"), str) else None
+        message = detail.get("message")
+        return code, str(message) if message is not None else str(detail)
+    return None, str(detail) if detail is not None else f"HTTP {response.status_code}"
 
 
 async def list_plugins(

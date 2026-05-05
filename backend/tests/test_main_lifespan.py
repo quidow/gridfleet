@@ -95,9 +95,10 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
+    monkeypatch.setattr(main, "appium_resource_sweeper_loop", _forever)
 
     async with main.lifespan(main.app):
-        assert len(created_tasks) == 14
+        assert len(created_tasks) == 15
         loop.callbacks[signal.SIGTERM]()
         await asyncio.sleep(0)
 

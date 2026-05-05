@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.host import Host, HostStatus, OSType
-from app.services import node_service
+from app.services import appium_node_resource_service, node_service
 from app.services.node_service import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
@@ -367,11 +367,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
     monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
     monkeypatch.setattr(node_service.asyncio, "sleep", _noop_sleep)
-    monkeypatch.setattr(
-        node_service.appium_resource_allocator,
-        "get_owner_capabilities",
-        _noop_get_owner_capabilities,
-    )
+    monkeypatch.setattr(appium_node_resource_service, "get_capabilities", _noop_get_owner_capabilities)
     monkeypatch.setattr(
         node_service,
         "build_agent_start_payload",

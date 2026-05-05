@@ -19,7 +19,6 @@ from app.models.device_event import DeviceEventType
 from app.observability import get_logger, observe_background_loop
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import (
-    appium_resource_allocator,
     capability_service,
     control_plane_state_store,
     device_health_summary,
@@ -327,10 +326,10 @@ async def _process_node_health(
                 "Node for device %s reached max failures but auto_manage is off — marking error without restart",
                 device.name,
             )
-            await appium_resource_allocator.release_owner(
-                db,
-                appium_resource_allocator.managed_owner_key(device.id),
-            )
+            # Do not release parallel-resource claims here. A health failure
+            # does not prove the Appium process is gone, so freeing ports here
+            # can race a still-listening process. Confirmed stop paths release;
+            # node deletion cascades managed claims.
             await lifecycle_policy.record_control_action(
                 db,
                 device,
@@ -417,10 +416,10 @@ async def _process_node_health(
             )
         else:
             logger.error("Restart failed for device %s — marking offline", device.name)
-            await appium_resource_allocator.release_owner(
-                db,
-                appium_resource_allocator.managed_owner_key(device.id),
-            )
+            # Do not release parallel-resource claims here. A restart failure
+            # does not prove the Appium process is gone, so freeing ports here
+            # can race a still-listening process. Confirmed stop paths release;
+            # node deletion cascades managed claims.
             await lifecycle_policy.record_control_action(
                 db,
                 device,

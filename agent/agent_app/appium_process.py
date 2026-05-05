@@ -88,8 +88,28 @@ class RuntimeNotInstalledError(RuntimeError):
     """Raised when no runtime is installed for the requested pack."""
 
 
-class AppiumPortOccupiedError(RuntimeError):
+class PortOccupiedError(RuntimeError):
     """Raised when a managed Appium port is now owned by another listener."""
+
+
+class AlreadyRunningError(RuntimeError):
+    """A managed Appium is already running on this port."""
+
+
+class StartupTimeoutError(RuntimeError):
+    """Appium failed to become ready before the timeout."""
+
+
+class RuntimeMissingError(RuntimeError):
+    """Required runtime tools are not installed on the host."""
+
+
+class InvalidStartPayloadError(RuntimeError):
+    """Start payload is missing required fields."""
+
+
+class DeviceNotFoundError(RuntimeError):
+    """Connection target is not visible to the host adapter."""
 
 
 def resolve_appium_invocation_for_pack(
@@ -621,7 +641,7 @@ class AppiumProcessManager:
             )
             try:
                 restarted = await self._restart_from_launch_spec(port)
-            except AppiumPortOccupiedError:
+            except PortOccupiedError:
                 self._record_restart_event(
                     process="appium",
                     kind="port_conflict",
@@ -881,7 +901,7 @@ class AppiumProcessManager:
             appium_cmd.extend(["--allow-insecure", ",".join(spec.insecure_features)])
 
         if await self._can_connect_to_appium(spec.port):
-            raise AppiumPortOccupiedError(
+            raise PortOccupiedError(
                 f"Port {spec.port} is already in use by another Appium listener; "
                 "stop the existing process before starting a new managed node"
             )
@@ -894,7 +914,7 @@ class AppiumProcessManager:
                 env=env,
             )
         except FileNotFoundError:
-            raise RuntimeError(f"appium executable not found (last tried: {appium_bin})") from None
+            raise RuntimeMissingError(f"appium executable not found (last tried: {appium_bin})") from None
 
         self._logs.setdefault(spec.port, collections.deque(maxlen=MAX_LOG_LINES))
         log_tasks = self._track_stream_logs(spec.port, appium_proc, prefix="appium")
@@ -914,7 +934,7 @@ class AppiumProcessManager:
             if clear_logs_on_failure:
                 self._logs.pop(spec.port, None)
             log_snippet = "\n".join(recent_logs) if recent_logs else "(no output captured)"
-            raise RuntimeError(
+            raise StartupTimeoutError(
                 f"Appium on port {spec.port} did not become ready within {READINESS_TIMEOUT}s. Output:\n{log_snippet}"
             )
 
@@ -1036,9 +1056,9 @@ class AppiumProcessManager:
         connection_behavior: dict[str, Any] | None = None,
     ) -> AppiumProcessInfo:
         if port in self._appium_procs and self._appium_procs[port].returncode is None:
-            raise RuntimeError(f"Appium already running on port {port}")
+            raise AlreadyRunningError(f"Appium already running on port {port}")
         if not pack_id or not platform_id:
-            raise RuntimeError("Appium start requires pack_id and platform_id")
+            raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._grid_node_restart_tasks, port)
         resolved_connection_target = connection_target
@@ -1061,7 +1081,7 @@ class AppiumProcessManager:
             if result and result.get("state") and result.get("state") not in {"booting", "booted"}:
                 resolved_connection_target = str(result["state"])
             elif result and result.get("success") is False:
-                raise RuntimeError(str(result.get("detail") or f"{connection_target!r} could not be booted"))
+                raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be booted"))
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if self._adapter_registry is not None:
             adapter = self._adapter_registry.get_current(pack_id)
@@ -1098,14 +1118,14 @@ class AppiumProcessManager:
         )
         async with self._start_lock:
             if port in self._appium_procs and self._appium_procs[port].returncode is None:
-                raise RuntimeError(f"Appium already running on port {port}")
+                raise AlreadyRunningError(f"Appium already running on port {port}")
             duplicate = self._running_info_for_target(
                 connection_target=resolved_connection_target,
                 platform_id=platform_id,
                 exclude_port=port,
             )
             if duplicate is not None:
-                raise RuntimeError(
+                raise AlreadyRunningError(
                     f"Appium already running for target {resolved_connection_target!r} on port {duplicate.port}"
                 )
 

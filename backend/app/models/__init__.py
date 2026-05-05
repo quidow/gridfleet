@@ -1,5 +1,6 @@
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode
+from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.appium_plugin import AppiumPlugin
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
@@ -34,6 +35,7 @@ from app.models.webhook_delivery import WebhookDelivery
 __all__ = [
     "AnalyticsCapacitySnapshot",
     "AppiumNode",
+    "AppiumNodeResourceClaim",
     "AppiumPlugin",
     "ConfigAuditLog",
     "ControlPlaneStateEntry",

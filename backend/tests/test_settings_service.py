@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.config import settings as process_settings
+from app.main import _validate_appium_reservation_settings
 from app.models.setting import Setting
 from app.services.settings_service import settings_service
 
@@ -72,3 +73,17 @@ async def test_bulk_update_rejects_terminal_enable_without_token(
         select(Setting).where(Setting.key.in_(["agent.enable_web_terminal", "agent.web_terminal_allowed_origins"]))
     )
     assert rows.scalars().all() == []
+
+
+def test_appium_reservation_ttl_must_exceed_startup_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = {
+        "appium.startup_timeout_sec": 120,
+        "appium.reservation_ttl_sec": 125,
+    }
+    monkeypatch.setattr(settings_service, "get", lambda key: values[key])
+
+    with pytest.raises(RuntimeError, match="reservation_ttl_sec"):
+        _validate_appium_reservation_settings()
+
+    values["appium.reservation_ttl_sec"] = 126
+    _validate_appium_reservation_settings()

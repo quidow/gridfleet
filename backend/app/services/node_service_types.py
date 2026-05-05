@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncio
@@ -24,4 +24,4 @@ class TemporaryNodeHandle:
     process: asyncio.subprocess.Process | None = None
     agent_base: str | None = None
     owner_key: str | None = None
-    allocated_caps: dict[str, object] | None = None
+    allocated_caps: dict[str, Any] | None = None

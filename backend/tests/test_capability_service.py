@@ -230,6 +230,7 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
 async def test_get_device_capabilities_fetches_driver_and_session_overrides() -> None:
     db = AsyncMock()
     device = _device()
+    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
 
     with (
         patch(
@@ -237,7 +238,7 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
             new=AsyncMock(return_value={"appium:automationName": "UiAutomator2"}),
         ),
         patch(
-            "app.services.capability_service.appium_resource_allocator.get_live_device_capabilities",
+            "app.services.appium_node_resource_service.get_capabilities",
             new=AsyncMock(return_value={"appium:systemPort": 8200}),
         ),
         patch(
@@ -255,7 +256,7 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
                 )
             ),
         ),
-        patch("app.services.capability_service.appium_resource_allocator.sanitize_appium_caps", return_value={}),
+        patch("app.services.capability_service.appium_capability_keys.sanitize_appium_caps", return_value={}),
     ):
         caps = await capability_service.get_device_capabilities(db, device)
 

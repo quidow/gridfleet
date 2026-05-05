@@ -858,7 +858,8 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
     """If the agent never confirms the stop, the owner allocation MUST stay
     intact — releasing it would let the allocator hand the same parallel-resource
     ports to a new owner while the orphan Appium process is still using them."""
-    from app.services import appium_resource_allocator
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import appium_node_resource_service
 
     device = await create_device_record(
         db_session,
@@ -868,19 +869,28 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
         name="Stop No Ack Allocation",
         availability_status="available",
     )
-    owner_key = appium_resource_allocator.managed_owner_key(device.id)
-    await appium_resource_allocator.get_or_create_owner_capabilities(
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=12345,
+        active_connection_target="stop-no-ack-alloc-001",
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.flush()
+    owner_key = f"device:{device.id}"
+    await appium_node_resource_service.reserve(
         db_session,
-        owner_key=owner_key,
         host_id=db_host.id,
-        resource_ports={
-            "appium:systemPort": 8200,
-            "appium:chromedriverPort": 9515,
-            "appium:mjpegServerPort": 9200,
-        },
+        capability_key="appium:mjpegServerPort",
+        start_port=9200,
+        node_id=node.id,
     )
     await db_session.commit()
-    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is not None
+    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
+        "appium:mjpegServerPort": 9200
+    }
 
     handle = TemporaryNodeHandle(
         port=4723,
@@ -897,8 +907,9 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
         stopped = await stop_temporary_node(db_session, device, handle)
 
     assert stopped is False
-    bundle = await appium_resource_allocator.get_owner_bundle(db_session, owner_key)
-    assert bundle is not None, "owner allocation must persist after unacknowledged stop"
+    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
+        "appium:mjpegServerPort": 9200
+    }
 
 
 async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowledges(
@@ -907,7 +918,8 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
 ) -> None:
     """Symmetric to the unacknowledged case: a confirmed stop MUST release the
     owner allocation so the parallel-resource ports become reusable."""
-    from app.services import appium_resource_allocator
+    from app.models.appium_node import AppiumNode, NodeState
+    from app.services import appium_node_resource_service
 
     device = await create_device_record(
         db_session,
@@ -917,19 +929,28 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
         name="Stop Ack Allocation",
         availability_status="available",
     )
-    owner_key = appium_resource_allocator.managed_owner_key(device.id)
-    await appium_resource_allocator.get_or_create_owner_capabilities(
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=12345,
+        active_connection_target="stop-ack-alloc-001",
+        state=NodeState.running,
+    )
+    db_session.add(node)
+    await db_session.flush()
+    owner_key = f"device:{device.id}"
+    await appium_node_resource_service.reserve(
         db_session,
-        owner_key=owner_key,
         host_id=db_host.id,
-        resource_ports={
-            "appium:systemPort": 8200,
-            "appium:chromedriverPort": 9515,
-            "appium:mjpegServerPort": 9200,
-        },
+        capability_key="appium:mjpegServerPort",
+        start_port=9200,
+        node_id=node.id,
     )
     await db_session.commit()
-    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is not None
+    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
+        "appium:mjpegServerPort": 9200
+    }
 
     handle = TemporaryNodeHandle(
         port=4723,
@@ -946,7 +967,7 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
         stopped = await stop_temporary_node(db_session, device, handle)
 
     assert stopped is True
-    assert await appium_resource_allocator.get_owner_bundle(db_session, owner_key) is None
+    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {}
 
 
 async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(

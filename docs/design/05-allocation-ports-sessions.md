@@ -1,8 +1,8 @@
 # Doc 5 — Allocations, Ports, and Sessions
 
-> Cross-cutting reference for the resources a node grabs at start and gives back at stop: owner allocations, Appium ports, Grid sessions, and run/reservation integration.
+> Cross-cutting reference for the resources a node grabs at start and gives back at stop: typed resource claims, Appium ports, Grid sessions, and run/reservation integration.
 
-These resources are easy to leak. Most of the bugs that look like "node won't restart" or "Grid still routes to dead device" are actually leaks here — a port that nobody released, a Grid session that survived its run, or an owner bundle still claiming capabilities for an orphan process. This doc captures the lifecycle for each so we know who frees what, when.
+These resources are easy to leak. Most of the bugs that look like "node won't restart" or "Grid still routes to dead device" are actually leaks here — a port that nobody released, a Grid session that survived its run, or a resource claim still pinned to an orphan process. This doc captures the lifecycle for each so we know who frees what, when.
 
 ## Three things called "session"
 
@@ -24,97 +24,34 @@ The split matters because the **reapers are different**:
 
 This doc focuses on resource ownership across those three.
 
-## The owner-allocation model
+## The typed allocation model
 
-Before a node starts, the manager allocates a **bundle** of resources for the device, keyed by an `owner_key`. The bundle is stored in the control-plane KV namespace `appium.parallel.owner` (`backend/app/services/appium_resource_allocator.py:26`).
+Appium parallel resources live in the table `appium_node_resource_claims`:
 
-```mermaid
-classDiagram
-    class OwnerBundle {
-      string owner_key
-      uuid host_id
-      string allocation_key
-      dict capabilities
-      list[Claim] claims
-      datetime claimed_at
-    }
-    class Claim {
-      string namespace
-      string key  // the claimed numeric port as string
-    }
-    OwnerBundle --> "many" Claim : holds
+```sql
+appium_node_resource_claims(
+    id              uuid primary key,
+    host_id         uuid not null,
+    capability_key  text not null,
+    port            integer not null,
+    node_id         uuid null references appium_nodes(id) on delete cascade,
+    owner_token     text null,
+    claimed_at      timestamptz not null,
+    expires_at      timestamptz null,
+    unique (host_id, capability_key, port)
+);
 ```
 
-Two flavours of `owner_key`:
+Two flavours of row:
 
-| Key shape | When | File |
-| --- | --- | --- |
-| `device:<uuid>` (`managed_owner_key`) | Stable allocation for a managed device — used by `start_node`, `restart_node` | `appium_resource_allocator.py:36-37` |
-| `temp:<host>:<identity>` (`temporary_owner_key`) | Verification probe; transient | `appium_resource_allocator.py:40-45` |
+- **Managed claim** — `node_id` set, `owner_token` null. Lifetime is tied to `AppiumNode`. Drop the node and the claim cascades. Confirmed stop can release early via `appium_node_resource_service.release_managed(node_id)`.
+- **Temporary claim** — `node_id` null, `owner_token` set, `expires_at` set. Used during the start window for managed starts and verification probes. Released by `release_temporary(host_id, owner_token)` on teardown, or reaped by `appium_resource_sweeper_loop` after the TTL.
 
-A bundle holds:
+Every reservation begins as temporary. The token is `device:<uuid>` for first-time managed starts and refresh-of-managed verifications, or `temp:<host>:<identity>` for verification of a not-yet-saved transient device. Once the agent ACKs the start, `mark_node_started` upserts the `AppiumNode` row, then calls `transfer_temporary_to_managed(host_id, owner_token, node_id)` in the same transaction to rebind the claim under the FK.
 
-- **`capabilities`** — the per-host parallel resource ports the pack manifest declares. Each device that the pack supports gets its own port (e.g. `mjpegServerPort`, `chromedriverPort`). Values come from `resolve_pack_platform(...).parallel_resources.ports`. The capabilities are merged into the agent start payload and shipped down with the Appium spawn.
-- **`claims`** — KV records that prove this owner currently holds those ports. Each claim is an entry in `appium.parallel.claim.<host>.<capability>` with `{owner_key, claimed_at}`. Reading the namespace tells the allocator which numeric values are taken.
-- **`allocation_key`** — random hex used for `appium:derivedDataPath` (XCUITest) so two iOS devices don't share a derived-data dir.
+Non-port managed capabilities, such as XCUITest `appium:derivedDataPath`, live in `appium_nodes.live_capabilities` and are merged with port claims by `appium_node_resource_service.get_capabilities(node_id)`.
 
-### Allocate
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Caller as start_node / verification
-    participant Alloc as appium_resource_allocator
-    participant Kv as control_plane_state_store
-
-    Caller->>Alloc: get_or_create_owner_capabilities(owner_key, host_id, resource_ports)
-    Alloc->>Kv: get_value(OWNER_NAMESPACE, owner_key)
-    alt Existing bundle on same host
-        Alloc-->>Caller: existing capabilities
-    else None or different host
-        Alloc->>Kv: release_owner (if existing)
-        loop for each resource port
-            loop offset 0..POOL_SIZE
-                Alloc->>Kv: try_claim_value(claim_ns, candidate)
-                alt claimed
-                    Note over Alloc: record claim, capability=candidate
-                end
-            end
-        end
-        Alloc->>Kv: set_value(OWNER_NAMESPACE, owner_key, bundle)
-        Alloc-->>Caller: capabilities
-    end
-```
-
-`POOL_SIZE = 1000` per port (start at the manifest-declared base, walk up to `+999`). On any failure mid-allocation, all already-acquired claims are rolled back (`appium_resource_allocator.py:186-189`). The bundle never lands in the OWNER namespace until every required port is claimed.
-
-### Reuse
-
-If a caller asks for `get_or_create_owner_capabilities` with the same `owner_key` on the same host, the existing bundle is returned untouched. This is what makes `restart_node` cheap: the same owner key persists across the stop→start, and the second call is a no-op rather than a re-allocation.
-
-### Release
-
-`release_owner(owner_key)`:
-
-1. Read the bundle.
-2. Delete every claim record (`claim_namespace.<host>.<capability>:<value>`).
-3. Delete the bundle itself.
-
-The order is intentional: a partially-released bundle would still be visible while its claims are gone, opening a window where a fresh allocator could reuse the values. Doing it claims-first keeps the invariant "if a bundle exists, its ports are claimed".
-
-### Critical rule — release on confirmed stop only
-
-`stop_temporary_node` (`backend/app/services/node_manager.py:241-271`):
-
-```text
-release_owner(...) is awaited ONLY when the agent acknowledged the stop.
-```
-
-The reason — restating Doc 2's split-brain rule from the allocation angle — is that an unacknowledged stop may leave a real Appium process holding the port at the OS level. If the bundle were released anyway, the allocator would hand the same port to a new owner. The next `start_node` then issues `/agent/appium/start` with that port, the agent sees the orphan listening, and the start fails with "already in use" — but on a port we just told the bundle was free. Commit `bdfae85` enforces this rule in code; `restart_node_via_agent` (`node_manager_remote.py:289-313`) follows the same pattern.
-
-### Transfer
-
-`transfer_owner(source, target)` — re-keys an existing bundle to a new owner without releasing claims. Used when a verification probe (temporary owner) is promoted to a managed node (managed owner) without an intermediate teardown.
+**Why the FK matters.** The previous KV bundle had two correctness rules to remember: "release claims before the bundle" and "only release on confirmed stop". The first is now structural: `ON DELETE CASCADE` is atomic. The second still applies, but to a single DELETE instead of a sequence of namespace writes.
 
 ## Port allocation
 
@@ -124,7 +61,7 @@ Two ranges, two owners:
 | --- | --- | --- | --- |
 | `appium.port_range_start..appium.port_range_end` | manager (DB-tracked via `AppiumNode.port`) | one Appium server per managed node | `4723..4823` |
 | `AGENT_GRID_NODE_PORT_START` upward | agent (host-local) | one Selenium Grid relay per Appium node | per-host setting |
-| Per-device parallel resources (e.g. `mjpegServerPort`, `chromedriverPort`) | owner allocator (KV-tracked) | extra Appium-side ports the pack manifest declares | depends on manifest |
+| Per-device parallel resources (e.g. `mjpegServerPort`, `chromedriverPort`) | typed claim table | extra Appium-side ports the pack manifest declares | depends on manifest |
 
 Only the first range is the "main" Appium port. The other two come into play after `/agent/appium/start` succeeds and Appium spawns its own helpers.
 
@@ -226,23 +163,23 @@ Key facts:
 
 | Symptom | Likely leak | Fix surface |
 | --- | --- | --- |
-| `start_node` keeps failing with "already in use" but the DB row says `stopped` | Released owner allocation while orphan still running; allocator handed the port back | Gate `release_owner` on confirmed stop (commit `bdfae85`) |
+| `start_node` keeps failing with "already in use" but the DB row says `stopped` | Released a claim while orphan still running; allocator handed the port back | Release typed claims only on confirmed stop |
 | Two relays registered for the same device on Grid | Restart issued before stop ack; orphan + new node both alive | Refuse to start during restart unless stop is acknowledged (commit `4171847`) |
 | Device shows `reserved` forever after run abandoned | `run_reaper_loop` did not run (leader down? frozen?) or grid session terminate failed | Inspect leader state; manually `DELETE /session/{id}` via Grid hub or use lifecycle exclusion |
 | `Session` row stays `running` after Grid session ended | `session_sync_loop` skipped a tick | Reaper retries on next cycle; only escalate if persistent |
-| Owner bundle exists but no `AppiumNode` row | `mark_node_started` never ran (start failed after agent OK but before commit) | `release_owner` on next operator action; consider auto-cleaning bundles whose host has no matching node row in `data_cleanup_loop` |
-| Port range exhausted | `release_owner` skipped on stop, slow leak | `candidate_ports` raises `NodeManagerError("No free ports available...")`. Audit the allocator namespace |
+| Temporary claim exists but no `AppiumNode` row | `mark_node_started` never ran (start failed after reserve but before promotion) | `appium_resource_sweeper_loop` reaps after `appium.reservation_ttl_sec`; confirmed cleanup can call `release_temporary` |
+| Port range exhausted | Confirmed stop did not release claims, or old managed rows were not deleted | `candidate_ports` raises `NodeManagerError("No free ports available...")`. Audit `appium_node_resource_claims` |
 
-The recurring pattern: the device row, the `AppiumNode` row, the owner bundle, and the agent process must all agree on "is this device served right now". When they disagree, you have a leak. The split-brain rules in Doc 2 keep them aligned at write time; the reapers in Doc 3 catch what slips through.
+The recurring pattern: the device row, the `AppiumNode` row, typed resource claims, and the agent process must all agree on "is this device served right now". When they disagree, you have a leak. The split-brain rules in Doc 2 keep them aligned at write time; the reapers in Doc 3 catch what slips through.
 
 ## Sequencing rules summary
 
 For new code that touches these resources, follow this order:
 
-1. **Acquire.** Allocate owner bundle BEFORE asking the agent to start. Released only on confirmed stop.
+1. **Acquire.** Insert temporary resource claims BEFORE asking the agent to start. Promote only after agent ACK and node-row upsert.
 2. **Verify.** After agent says OK, poll `/agent/appium/{port}/status` until ready. Only then write DB state.
 3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.availability_status`, and the health snapshot in one transaction.
-4. **Release on stop.** Agent ack required for `release_owner`, `mark_node_stopped`, and the snapshot flip.
+4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the snapshot flip.
 5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_grid_session` + state restore, not direct DB writes that bypass the helpers.
 
 If a code path skips one of these steps it will eventually leak, and the symptoms will look exactly like the failure-mode rows above.

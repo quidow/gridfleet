@@ -240,10 +240,29 @@ When evolving an endpoint:
 - Adding a field to a response — backend wrappers must tolerate missing fields (use `payload.get(...)`).
 - Renaming or removing — needs a version bump in `release-please` and a coordinated rollout. Don't.
 
+## Structured error codes
+
+Agent endpoints return failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. The enum is mirrored on both sides:
+
+- `agent/agent_app/error_codes.py:AgentErrorCode`
+- `backend/app/services/agent_error_codes.py:AgentErrorCode`
+
+`backend/tests/test_agent_error_code_parity.py` enforces drift detection. Backend matches `code` via `agent_operations.parse_agent_error_detail`; substring matching on `detail.message` is forbidden.
+
+| Code | Source | Meaning |
+| --- | --- | --- |
+| `PORT_OCCUPIED` | `appium_process.PortOccupiedError` | External listener already bound the requested port |
+| `ALREADY_RUNNING` | `appium_process.AlreadyRunningError` | Managed Appium already running on this port |
+| `STARTUP_TIMEOUT` | `appium_process.StartupTimeoutError` | Appium did not become ready in `appium.startup_timeout_sec` |
+| `RUNTIME_MISSING` | `appium_process.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
+| `DEVICE_NOT_FOUND` | `appium_process.DeviceNotFoundError` | Connection target not visible to the host adapter |
+| `INVALID_PAYLOAD` | `appium_process.InvalidStartPayloadError` | Start request missing required fields |
+| `PROBE_FAILED` | `/agent/appium/{port}/probe-session` route | Probe session create/delete failed |
+| `INTERNAL_ERROR` | route catch-all | Agent-side state corruption or unclassified adapter failure |
+
 ## Open contract questions / known gaps
 
 - **No agent-initiated state push.** Adding webhooks from agent → backend has been discussed but is intentionally absent: it would create a second authority for "is the node up", and the cost of polling at 30 s is acceptable. If we ever change this, every code path in Docs 2 and 3 needs revisiting.
-- **No structured error codes from agent.** Agent endpoints return string `detail` for 4xx/5xx. The backend's `start_remote_temporary_node` matches substrings ("already in use", "already running on port") to detect the port-conflict branch. A typed error code is on the wishlist but does not block correctness today.
 - **No retry budget at the wrapper level.** Loops do their own retry/backoff (`RESTART_MAX_RETRIES`). The wrapper does not retry — that prevents accidental amplification when the agent is degraded.
 
 ## What this doc does NOT cover

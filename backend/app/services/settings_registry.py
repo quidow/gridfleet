@@ -310,6 +310,26 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=120,
     ),
     SettingDefinition(
+        key="appium.reservation_ttl_sec",
+        category="grid",
+        setting_type="int",
+        default=900,
+        description=(
+            "TTL for temporary Appium parallel-resource reservations. Must exceed appium.startup_timeout_sec + 5s."
+        ),
+        min_value=180,
+        max_value=7200,
+    ),
+    SettingDefinition(
+        key="appium.resource_sweeper_interval_sec",
+        category="grid",
+        setting_type="int",
+        default=300,
+        description="How often expired Appium resource claims are reaped",
+        min_value=30,
+        max_value=3600,
+    ),
+    SettingDefinition(
         key="appium.session_override",
         category="grid",
         setting_type="bool",

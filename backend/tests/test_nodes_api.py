@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import ConnectionType, Device, DeviceAvailabilityStatus, DeviceType
+from app.services.agent_error_codes import AgentErrorCode
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -98,11 +99,17 @@ def _mock_agent_response(json_data: dict[str, Any], status_code: int = 200) -> M
 
 
 def _mock_agent_http_error(detail: str, *, status_code: int = 400) -> MagicMock:
-    response = _mock_agent_response({"detail": detail}, status_code=status_code)
+    payload = {
+        "detail": {
+            "code": AgentErrorCode.PORT_OCCUPIED.value,
+            "message": detail,
+        }
+    }
+    response = _mock_agent_response(payload, status_code=status_code)
     response.raise_for_status.side_effect = HTTPStatusError(
         f"{status_code} Server Error",
         request=Request("POST", "http://10.0.0.40:5100/agent/appium/start"),
-        response=Response(status_code, json={"detail": detail}),
+        response=Response(status_code, json=payload),
     )
     return response
 
