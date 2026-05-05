@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import os
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,6 +9,7 @@ from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import freeze_background_loops_enabled
 from app.database import engine, get_db
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
@@ -78,8 +78,7 @@ def _freeze_background_loops() -> bool:
     a frozen state — no heartbeat/health/reaper mutations marking hosts and
     devices offline.
     """
-    raw = os.getenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return freeze_background_loops_enabled()
 
 
 def _validate_appium_reservation_settings() -> None:
