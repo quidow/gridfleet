@@ -101,7 +101,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-suffix: agent
+          cache-suffix: agent-v2
           python-version: "3.12"
           cache-dependency-glob: |
             agent/pyproject.toml
