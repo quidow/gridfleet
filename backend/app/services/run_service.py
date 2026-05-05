@@ -149,15 +149,23 @@ def _generated_worker_id() -> str:
 
 
 def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
+    device = entry.device
     return ReservedDeviceInfo(
         device_id=str(entry.device_id),
         identity_value=entry.identity_value,
+        name=device.name if device is not None else None,
         connection_target=entry.connection_target,
         pack_id=entry.pack_id,
         platform_id=entry.platform_id,
         platform_label=entry.platform_label,
         os_version=entry.os_version,
         host_ip=entry.host_ip,
+        device_type=(device.device_type.value if device is not None and device.device_type is not None else None),
+        connection_type=(
+            device.connection_type.value if device is not None and device.connection_type is not None else None
+        ),
+        manufacturer=device.manufacturer if device is not None else None,
+        model=device.model if device is not None else None,
         excluded=entry.excluded,
         exclusion_reason=entry.exclusion_reason,
         excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
@@ -797,6 +805,7 @@ async def claim_device(
 
     candidate_result = await db.execute(
         select(DeviceReservation)
+        .options(selectinload(DeviceReservation.device))
         .where(DeviceReservation.run_id == run_id)
         .where(DeviceReservation.released_at.is_(None))
         .where(_reservation_claimable_expr(now))

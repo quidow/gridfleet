@@ -1,6 +1,7 @@
 from typing import get_type_hints
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models.device import Device
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
 from app.services.run_service import _build_device_info
-from tests.helpers import create_device
+from tests.helpers import create_device, create_reserved_run
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -89,3 +90,31 @@ async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession
     assert info.connection_type == "virtual"
     assert info.manufacturer == "Google"
     assert info.model == "Pixel 7"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_response_includes_tier1_fields(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="real-iphone-15",
+        device_type="real_device",
+        connection_type="usb",
+        manufacturer="Apple",
+        model="iPhone 15",
+        operational_state="available",
+    )
+    run = await create_reserved_run(db_session, name="tier1-claim", devices=[device])
+
+    response = await client.post(f"/api/runs/{run.id}/claim", json={"worker_id": "w1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == "real-iphone-15"
+    assert body["device_type"] == "real_device"
+    assert body["connection_type"] == "usb"
+    assert body["manufacturer"] == "Apple"
+    assert body["model"] == "iPhone 15"

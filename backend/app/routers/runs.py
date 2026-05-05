@@ -251,12 +251,17 @@ async def claim_device(
     return ClaimResponse(
         device_id=info.device_id,
         identity_value=info.identity_value,
+        name=info.name,
         connection_target=info.connection_target,
         pack_id=info.pack_id,
         platform_id=info.platform_id,
         platform_label=info.platform_label,
         os_version=info.os_version,
         host_ip=info.host_ip,
+        device_type=info.device_type,
+        connection_type=info.connection_type,
+        manufacturer=info.manufacturer,
+        model=info.model,
         claimed_by=info.claimed_by,
         claimed_at=info.claimed_at,
     )
