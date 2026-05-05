@@ -1,3 +1,5 @@
+import contextlib
+from collections.abc import Iterator
 from typing import get_type_hints
 
 import pytest
@@ -14,6 +16,30 @@ from app.services import run_service
 from app.services.config_service import MASK_VALUE
 from app.services.run_service import _build_device_info
 from tests.helpers import create_device, create_reserved_run
+
+
+@contextlib.contextmanager
+def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
+
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -316,25 +342,8 @@ async def test_hydrate_reserved_device_infos_batches_sensitive_key_lookup(
         for d in reloaded
     ]
 
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = db_session.bind
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
+    with _capture_statements(db_session) as statements:
         await run_service.hydrate_reserved_device_infos(db_session, pairs, includes={"config"})
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
 
     distinct_pairs = {(d.pack_id, d.platform_id) for d in reloaded}
     driver_pack_statements = [s for s in statements if "driver_packs" in s]
@@ -473,3 +482,46 @@ async def test_claim_increments_run_claims_counter_with_boolean_include_labels(
 
     after = labels._value.get()  # type: ignore[attr-defined]
     assert after == before + 1
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reserve_with_include_config_adds_o1_sensitive_key_queries(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    devices: list[Device] = []
+    for i in range(10):
+        d = await create_device(
+            db_session,
+            host_id=default_host_id,
+            name=f"perf-{i}",
+            operational_state="available",
+        )
+        d.device_config = {"app_username": f"u{i}"}
+        devices.append(d)
+    await db_session.commit()
+
+    requirements = [{"pack_id": d.pack_id, "platform_id": d.platform_id, "count": 1} for d in devices]
+
+    payload_baseline = {"name": "perf-base", "requirements": requirements}
+    with _capture_statements(db_session) as baseline_statements:
+        baseline = await client.post("/api/runs", json=payload_baseline)
+    assert baseline.status_code == 201, baseline.text
+    baseline_driver_pack_count = sum(1 for s in baseline_statements if "driver_packs" in s)
+
+    run_id = baseline.json()["id"]
+    await client.post(f"/api/runs/{run_id}/force-release")
+
+    payload_include = {"name": "perf-inc", "requirements": requirements}
+    with _capture_statements(db_session) as include_statements:
+        included = await client.post("/api/runs?include=config", json=payload_include)
+    assert included.status_code == 201, included.text
+    include_driver_pack_count = sum(1 for s in include_statements if "driver_packs" in s)
+
+    distinct_pairs = {(d.pack_id, d.platform_id) for d in devices}
+    delta = include_driver_pack_count - baseline_driver_pack_count
+    assert delta <= len(distinct_pairs), (
+        f"include=config added {delta} driver_packs queries beyond baseline "
+        f"({baseline_driver_pack_count} → {include_driver_pack_count}); "
+        f"expected ≤{len(distinct_pairs)} (one per distinct pack/platform pair)"
+    )
