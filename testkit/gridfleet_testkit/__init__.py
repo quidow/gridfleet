@@ -1,4 +1,15 @@
-"""Supported Python integration helpers for GridFleet."""
+"""Supported Python integration helpers for GridFleet.
+
+Environment variables read by the client:
+
+- GRID_URL: Selenium Grid URL used by Appium helper defaults.
+- GRIDFLEET_API_URL: GridFleet manager API base URL.
+- GRIDFLEET_TESTKIT_USERNAME: optional Basic auth username.
+- GRIDFLEET_TESTKIT_PASSWORD: optional Basic auth password.
+
+Recipe-local variables such as GRIDFLEET_RUN_STATE_PATH are intentionally not
+exported from this package because run-state sharing is consumer policy.
+"""
 
 from importlib.metadata import PackageNotFoundError, version
 
