@@ -89,7 +89,17 @@ async def create_run(
             .all()
         )
         device_by_id = {str(d.id): d for d in devices}
-        pairs = [(info, device_by_id[info.device_id]) for info in device_infos]
+        pairs = []
+        for info in device_infos:
+            device = device_by_id.get(info.device_id)
+            if device is None:
+                run_service.mark_reserved_device_info_includes_unavailable(
+                    info,
+                    includes=includes,
+                    reason="device_not_found",
+                )
+                continue
+            pairs.append((info, device))
         await run_service.hydrate_reserved_device_infos(db, pairs, includes=includes)
 
     return RunCreateResponse(
@@ -294,8 +304,15 @@ async def claim_device(
             await db.execute(
                 select(Device).options(selectinload(Device.appium_node)).where(Device.id == uuid.UUID(info.device_id))
             )
-        ).scalar_one()
-        await run_service.hydrate_reserved_device_info(db, info, device, includes=includes)
+        ).scalar_one_or_none()
+        if device is None:
+            run_service.mark_reserved_device_info_includes_unavailable(
+                info,
+                includes=includes,
+                reason="device_not_found",
+            )
+        else:
+            await run_service.hydrate_reserved_device_info(db, info, device, includes=includes)
 
     assert info.claimed_by is not None
     assert info.claimed_at is not None

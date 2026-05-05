@@ -1,10 +1,12 @@
 import contextlib
+import uuid
 from collections.abc import Iterator
 from typing import get_type_hints
 
 import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,7 +14,8 @@ from sqlalchemy.orm import selectinload
 from app.metrics import RUN_CLAIMS_TOTAL
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device
-from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
+from app.models.test_run import TestRun
+from app.schemas.run import ClaimResponse, ReservedDeviceInfo, RunCreate, UnavailableInclude
 from app.services import appium_node_resource_service, run_service
 from app.services.config_service import MASK_VALUE
 from app.services.run_service import _build_device_info
@@ -355,6 +358,49 @@ async def test_hydrate_reserved_device_infos_batches_sensitive_key_lookup(
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_reserve_include_config_marks_missing_device_unavailable_after_commit(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="deleted-before-reserve-hydration",
+        operational_state="available",
+    )
+    device.device_config = {"credentials_secret": "shh"}
+    await db_session.commit()
+
+    original_create_run = run_service.create_run
+
+    async def create_run_then_delete_device(
+        db: AsyncSession, data: RunCreate
+    ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
+        run, infos = await original_create_run(db, data)
+        await db.execute(sa_delete(Device).where(Device.id == uuid.UUID(infos[0].device_id)))
+        await db.commit()
+        return run, infos
+
+    monkeypatch.setattr(run_service, "create_run", create_run_then_delete_device)
+
+    response = await client.post(
+        "/api/runs?include=config",
+        json={
+            "name": "missing-device-reserve",
+            "requirements": [{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    entry = response.json()["devices"][0]
+    assert entry["config"] is None
+    assert entry["unavailable_includes"] == [{"include": "config", "reason": "device_not_found"}]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_claim_with_include_config_returns_masked_config(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
@@ -397,6 +443,46 @@ async def test_claim_with_include_capabilities_returns_capabilities(
     body = response.json()
     assert body["live_capabilities"] is not None
     assert body["unavailable_includes"] is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_claim_include_config_marks_missing_device_unavailable_after_commit(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="deleted-before-claim-hydration",
+        operational_state="available",
+    )
+    device.device_config = {"credentials_secret": "shh"}
+    await db_session.commit()
+    run = await create_reserved_run(db_session, name="missing-device-claim", devices=[device])
+    original_claim_device = run_service.claim_device
+
+    async def claim_then_delete_device(
+        db: AsyncSession,
+        run_id: uuid.UUID,
+        *,
+        worker_id: str | None = None,
+    ) -> ReservedDeviceInfo:
+        info = await original_claim_device(db, run_id, worker_id=worker_id)
+        await db.execute(sa_delete(Device).where(Device.id == uuid.UUID(info.device_id)))
+        await db.commit()
+        return info
+
+    monkeypatch.setattr(run_service, "claim_device", claim_then_delete_device)
+
+    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"] is None
+    assert body["unavailable_includes"] == [{"include": "config", "reason": "device_not_found"}]
 
 
 @pytest.mark.db
@@ -483,6 +569,31 @@ async def test_claim_increments_run_claims_counter_with_boolean_include_labels(
 
     after = labels._value.get()  # type: ignore[attr-defined]
     assert after == before + 1
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reservation_context_lookup_does_not_load_reserved_device_rows(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    devices = [
+        await create_device(
+            db_session,
+            host_id=default_host_id,
+            name=f"context-{index}",
+            operational_state="available",
+        )
+        for index in range(3)
+    ]
+    await create_reserved_run(db_session, name="context-run", devices=devices)
+
+    with _capture_statements(db_session) as statements:
+        run, entry = await run_service.get_device_reservation_with_entry(db_session, devices[0].id)
+
+    assert run is not None
+    assert entry is not None
+    device_selects = [statement for statement in statements if "FROM devices" in statement]
+    assert device_selects == []
 
 
 @pytest.mark.db

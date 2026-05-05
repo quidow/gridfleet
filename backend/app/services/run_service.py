@@ -226,6 +226,25 @@ async def hydrate_reserved_device_infos(
         await hydrate_reserved_device_info(db, info, device, includes=includes, sensitive_key_map=sensitive_key_map)
 
 
+def mark_reserved_device_info_includes_unavailable(
+    info: ReservedDeviceInfo,
+    *,
+    includes: set[str],
+    reason: str,
+) -> None:
+    if "config" in includes:
+        info.config = None
+    if "capabilities" in includes:
+        info.live_capabilities = None
+
+    unavailable = list(info.unavailable_includes or [])
+    existing = {item.include for item in unavailable}
+    for include in ("config", "capabilities"):
+        if include in includes and include not in existing:
+            unavailable.append(UnavailableInclude(include=include, reason=reason))
+    info.unavailable_includes = unavailable or None
+
+
 def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
     device = entry.device
     return ReservedDeviceInfo(
@@ -525,11 +544,7 @@ async def get_device_reservation_with_entry(
     stmt = (
         select(DeviceReservation)
         .where(DeviceReservation.device_id == device_id, DeviceReservation.released_at.is_(None))
-        .options(
-            selectinload(DeviceReservation.run)
-            .selectinload(TestRun.device_reservations)
-            .selectinload(DeviceReservation.device)
-        )
+        .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
         .order_by(DeviceReservation.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -546,11 +561,7 @@ async def get_device_reservation_map(db: AsyncSession, device_ids: list[uuid.UUI
     stmt = (
         select(DeviceReservation)
         .where(DeviceReservation.device_id.in_(device_ids), DeviceReservation.released_at.is_(None))
-        .options(
-            selectinload(DeviceReservation.run)
-            .selectinload(TestRun.device_reservations)
-            .selectinload(DeviceReservation.device)
-        )
+        .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
     )
     result = await db.execute(stmt)
     reservation_map: dict[uuid.UUID, TestRun] = {}
