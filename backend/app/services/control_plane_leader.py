@@ -49,22 +49,28 @@ class ControlPlaneLeader:
             {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
         )
         if bool(result.scalar()):
-            self._connection = connection
-            await self._claim_heartbeat_row()
+            await self._adopt_acquired_connection(connection)
             logger.info("control_plane_leader_acquired", holder_id=str(self._holder_id))
             return True
 
         if stale_threshold_sec is not None:
             preempted = await self._try_preempt(connection, stale_threshold_sec)
             if preempted:
-                self._connection = connection
-                await self._claim_heartbeat_row()
+                await self._adopt_acquired_connection(connection)
                 logger.warning("control_plane_leader_preempted_stale", holder_id=str(self._holder_id))
                 return True
 
         await connection.close()
         logger.info("control_plane_leader_not_acquired")
         return False
+
+    async def _adopt_acquired_connection(self, connection: AsyncConnection) -> None:
+        self._connection = connection
+        try:
+            await self._claim_heartbeat_row()
+        except Exception:
+            await self.release()
+            raise
 
     async def _try_preempt(
         self,

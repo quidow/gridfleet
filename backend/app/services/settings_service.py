@@ -75,6 +75,18 @@ def _cross_field_validate(key: str, value: SettingValue) -> str | None:
     return None
 
 
+def validate_leader_keepalive_settings(*, keepalive_interval_sec: int, stale_threshold_sec: int) -> str | None:
+    """Validate leader heartbeat timing leaves room for a missed keepalive."""
+    minimum_stale_threshold = keepalive_interval_sec * 2
+    if stale_threshold_sec < minimum_stale_threshold:
+        return (
+            "general.leader_stale_threshold_sec must be at least 2x "
+            "general.leader_keepalive_interval_sec "
+            f"({minimum_stale_threshold}s for the current keepalive interval)"
+        )
+    return None
+
+
 class SettingsService:
     def __init__(self) -> None:
         self._cache: dict[str, SettingValue] = {}
@@ -218,6 +230,12 @@ class SettingsService:
 
         return None
 
+    def _validate_leader_keepalive_candidate(self, candidate: dict[str, SettingValue]) -> str | None:
+        return validate_leader_keepalive_settings(
+            keepalive_interval_sec=int(candidate["general.leader_keepalive_interval_sec"]),
+            stale_threshold_sec=int(candidate["general.leader_stale_threshold_sec"]),
+        )
+
     async def update(self, db: AsyncSession, key: str, value: SettingValue) -> dict[str, Any]:
         """Update a single setting. Validates, persists, updates cache, publishes SSE."""
         if key not in SETTINGS_REGISTRY:
@@ -229,6 +247,11 @@ class SettingsService:
         cross_error = _cross_field_validate(key, value)
         if cross_error:
             raise ValueError(cross_error)
+        candidate = dict(self._cache)
+        candidate[key] = value
+        leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)
+        if leader_keepalive_error:
+            raise ValueError(leader_keepalive_error)
         normalized_value = self._normalize_value(key, value)
 
         defn = SETTINGS_REGISTRY[key]
@@ -264,6 +287,11 @@ class SettingsService:
             cross_error = _cross_field_validate(key, value)
             if cross_error:
                 raise ValueError(cross_error)
+        candidate = dict(self._cache)
+        candidate.update(updates)
+        leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)
+        if leader_keepalive_error:
+            raise ValueError(leader_keepalive_error)
 
         await self._cancel_refresh_task()
 

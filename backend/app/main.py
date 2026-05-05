@@ -96,6 +96,19 @@ def _validate_appium_reservation_settings() -> None:
         )
 
 
+def _validate_leader_keepalive_settings() -> None:
+    from app.services.settings_service import settings_service, validate_leader_keepalive_settings
+
+    keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
+    stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
+    error = validate_leader_keepalive_settings(
+        keepalive_interval_sec=keepalive_interval_sec,
+        stale_threshold_sec=stale_threshold_sec,
+    )
+    if error:
+        raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.database import async_session as session_factory
@@ -118,6 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as db:
         await settings_service.initialize(db)
     _validate_appium_reservation_settings()
+    _validate_leader_keepalive_settings()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()

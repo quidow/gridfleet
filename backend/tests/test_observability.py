@@ -139,3 +139,7 @@ def test_structured_logs_include_request_and_loop_context(capsys: pytest.Capture
     assert payload["loop_name"] == "heartbeat"
     assert payload["loop_owner"] == "owner-1"
     assert payload["device"] == "demo"
+
+
+def test_leader_keepalive_is_required_for_readiness() -> None:
+    assert "control_plane_leader_keepalive" in BACKGROUND_LOOP_NAMES

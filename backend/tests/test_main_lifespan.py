@@ -48,6 +48,8 @@ def _setting_value(key: str) -> int:
     values = {
         "appium.reservation_ttl_sec": 120,
         "appium.startup_timeout_sec": 30,
+        "general.leader_keepalive_interval_sec": 5,
+        "general.leader_stale_threshold_sec": 30,
     }
     return values[key]
 

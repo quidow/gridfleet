@@ -130,12 +130,13 @@ Typical flow:
 
 `scripts/demo-mode.sh on` starts the backend against `gridfleet_demo` with
 `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1`. In frozen mode the backend serves API reads
-normally but skips all 14 leader-owned background loops (heartbeat, session
-sync, node health, device connectivity, property refresh, hardware telemetry,
-host resource telemetry, durable job worker, webhook delivery, run reaper,
-data cleanup, session viability, fleet capacity, pack drain). The seeded fleet stays
-"healthy" in the dashboard for as long as the container runs — nothing drifts
-to offline because there is no real fleet to poll.
+normally but skips all 15 leader-owned background loops (leader keepalive,
+heartbeat, session sync, node health, device connectivity, property refresh,
+hardware telemetry, host resource telemetry, durable job worker, webhook
+delivery, run reaper, data cleanup, session viability, fleet capacity, pack
+drain). The seeded fleet stays "healthy" in the dashboard for as long as the
+container runs — nothing drifts to offline because there is no real fleet to
+poll.
 
 `scripts/demo-mode.sh status` prints `background loops: frozen | running`
 alongside the mode.

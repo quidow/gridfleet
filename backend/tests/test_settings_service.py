@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
+from app import main
 from app.config import settings as process_settings
-from app.main import _validate_appium_reservation_settings
 from app.models.setting import Setting
 from app.services.settings_service import settings_service
 
@@ -83,7 +83,46 @@ def test_appium_reservation_ttl_must_exceed_startup_timeout(monkeypatch: pytest.
     monkeypatch.setattr(settings_service, "get", lambda key: values[key])
 
     with pytest.raises(RuntimeError, match="reservation_ttl_sec"):
-        _validate_appium_reservation_settings()
+        main._validate_appium_reservation_settings()
 
     values["appium.reservation_ttl_sec"] = 126
-    _validate_appium_reservation_settings()
+    main._validate_appium_reservation_settings()
+
+
+async def test_leader_keepalive_interval_must_leave_stale_threshold_margin(db_session: AsyncSession) -> None:
+    with pytest.raises(ValueError, match="leader_stale_threshold_sec"):
+        await settings_service.update(db_session, "general.leader_keepalive_interval_sec", 60)
+
+    assert settings_service.get("general.leader_keepalive_interval_sec") == 5
+
+
+async def test_bulk_update_rejects_leader_keepalive_without_stale_threshold_margin(
+    db_session: AsyncSession,
+) -> None:
+    with pytest.raises(ValueError, match="leader_stale_threshold_sec"):
+        await settings_service.bulk_update(
+            db_session,
+            {
+                "general.leader_keepalive_interval_sec": 20,
+                "general.leader_stale_threshold_sec": 30,
+            },
+        )
+
+    assert settings_service.get("general.leader_keepalive_interval_sec") == 5
+    assert settings_service.get("general.leader_stale_threshold_sec") == 30
+
+
+def test_startup_rejects_leader_keepalive_without_stale_threshold_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "general.leader_keepalive_interval_sec": 60,
+        "general.leader_stale_threshold_sec": 30,
+    }
+    monkeypatch.setattr(settings_service, "get", lambda key: values[key])
+
+    with pytest.raises(RuntimeError, match="leader_stale_threshold_sec"):
+        main._validate_leader_keepalive_settings()
+
+    values["general.leader_stale_threshold_sec"] = 120
+    main._validate_leader_keepalive_settings()
