@@ -33,7 +33,8 @@ curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://loca
 
 Focus on:
 
-- `availability_status`
+- `operational_state`
+- `hold`
 - `lifecycle_policy_summary.state` — should be `deferred_stop` for this scenario
 - `lifecycle_policy_state.stop_pending`, `stop_pending_reason`, `stop_pending_since`
 - recent `events` for the device

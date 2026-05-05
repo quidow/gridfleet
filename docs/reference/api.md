@@ -38,7 +38,7 @@ Current auth behavior:
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `availability_status`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `operational_state`, `hardware_health_status`, `hardware_telemetry_state`, `tags.<key>` | `DeviceRead[]` |
+| `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, `tags.<key>` | `DeviceRead[]` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
@@ -299,7 +299,9 @@ For CI jobs that should consume the currently available matching fleet slice, us
 | `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
 | `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic `webhook.test` event | path `webhook_id` | status object |
 
-`DeviceRead` / `DeviceDetail` now also return the latest hardware telemetry snapshot fields:
+`DeviceRead` / `DeviceDetail` expose device state as `operational_state` (`available`, `busy`, `offline`) plus nullable `hold` (`maintenance`, `reserved`, or `null`). UI clients derive the legacy status chip from `hold ?? operational_state`.
+
+They also return the latest hardware telemetry snapshot fields:
 
 - `battery_level_percent`
 - `battery_temperature_c`
@@ -333,14 +335,16 @@ Dynamic group request bodies now use `filters`, not `filter_rules`.
 Supported dynamic group filters:
 
 - `platform`
-- `availability_status`
+- `status`
 - `host_id`
 - `identity_value`
 - `connection_target`
 - `device_type`
 - `connection_type`
 - `os_version`
-- `operational_state`
+- `hardware_health_status`
+- `hardware_telemetry_state`
+- `needs_attention`
 - `tags` as a key/value object
 
 ## Grid, Analytics, And Lifecycle

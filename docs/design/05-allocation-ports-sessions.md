@@ -130,34 +130,34 @@ sequenceDiagram
 
     Client->>Run: POST /api/runs (capabilities, count)
     Run->>Pg: insert TestRun + DeviceReservation rows
-    Run->>Pg: lock_devices + set_device_availability_status(reserved)
-    Note over Pg: Devices flip available → reserved
+    Run->>Pg: lock_devices + set_hold(reserved)
+    Note over Pg: Devices gain reservation hold
     Client->>Grid: WebDriver POST /session against reserved device
     Grid-->>Client: session id
     Sync->>Grid: GET /status
     Grid-->>Sync: list of active sessions
-    Sync->>Pg: insert Session row, link to run, flip reserved → busy
+    Sync->>Pg: insert Session row, link to run, set operational_state=busy
     Client->>Grid: DELETE /session/{id}
     Sync->>Grid: GET /status
     Grid-->>Sync: empty
-    Sync->>Pg: mark Session ended, restore_post_busy_availability_status
-    Note over Pg: Devices flip busy → reserved (run still active) or available
+    Sync->>Pg: mark Session ended, set operational_state=available/offline
+    Note over Pg: Reservation hold remains while run is active
 
     alt Run completes normally
       Run->>Pg: TestRun.state=completed
-      Run->>Pg: clear DeviceReservation rows + flip reserved → available
+      Run->>Pg: clear DeviceReservation rows + clear hold
     else Run abandoned (no signal in time)
       Reaper->>Grid: terminate_grid_session for each device's open session
-      Reaper->>Pg: TestRun.state=expired/failed, clear reservations, flip reserved → available
+      Reaper->>Pg: TestRun.state=expired/failed, clear reservations, clear hold
     end
 ```
 
 Key facts:
 
-- `availability_status = reserved` is the **run's** hold on a device, separate from any active session. Stays `reserved` between sessions while the run is alive.
-- `available → reserved` flips happen when the run is created. `reserved → available` flips happen when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
-- `reserved → busy` is the per-session flip done by `session_sync_loop`. The reverse is the `restore_post_busy_availability_status` helper (`device_availability.py:66-75`) which respects an active reservation.
-- `node_health_loop` skips `reserved` and `busy` devices (`_should_probe_node_health` only allows `available`, `node_health.py:83`). So a device under a run is invisible to auto-restart while it is being driven.
+- `hold = reserved` is the **run's** hold on a device, separate from any active session. It stays `reserved` between sessions while the run is alive.
+- `hold: null → reserved` happens when the run is created. `reserved → null` happens when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
+- `operational_state: available → busy` is the per-session flip done by `session_sync_loop`. The reverse sets operational state back to `available` or `offline` and leaves any reservation hold untouched.
+- `node_health_loop` skips reserved and busy devices: it only probes devices whose chip status is allocatable and whose operational state is `available` (`node_health.py:83`). So a device under a run is invisible to auto-restart while it is being driven.
 
 ## Failure-mode glossary (resource leaks)
 
@@ -178,7 +178,7 @@ For new code that touches these resources, follow this order:
 
 1. **Acquire.** Insert temporary resource claims BEFORE asking the agent to start. Promote only after agent ACK and node-row upsert.
 2. **Verify.** After agent says OK, poll `/agent/appium/{port}/status` until ready. Only then write DB state.
-3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.availability_status`, and node health via `device_health.apply_node_state_transition` in one transaction. The public summary is derived on read.
+3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.operational_state`, and node health via `device_health.apply_node_state_transition` in one transaction. The public summary is derived on read.
 4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the snapshot flip.
 5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_grid_session` + state restore, not direct DB writes that bypass the helpers.
 

@@ -77,7 +77,7 @@ sequenceDiagram
     NM->>Pg: lock_device + lock_appium_node
     NM->>State: mark_node_started(port, pid, connection_target)
     State->>Pg: upsert AppiumNode (state=running)
-    State->>Pg: set_device_availability_status (preserves busy/reserved/maintenance)
+    State->>Pg: set_operational_state(available/offline)
     State->>Pg: device_health.apply_node_state_transition(running)
     State-->>API: AppiumNode row
 ```
@@ -257,7 +257,7 @@ The `candidate_ports` helper (`node_service.py:98-127`) excludes ports already h
 ```text
 1. device_locking.lock_device(db, device.id)
 2. appium_node_locking.lock_appium_node_for_device(db, device.id)
-3. (writes to AppiumNode.state, Device.availability_status,
+3. (writes to AppiumNode.state, Device.operational_state,
     Device.lifecycle_policy_state)
 4. device_health.apply_node_state_transition(...)
 5. queue_event_for_session(...)

@@ -47,11 +47,11 @@ All loops are spawned in `backend/app/main.py:129-145` under the leader gate. Th
 
 | Loop | Default cadence | Reads | Writes | Sole writer of |
 | --- | --- | --- | --- | --- |
-| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.state` (recovery only), `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.availability_status` (cross-link) | `Host.status` (offline/online) |
-| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/probe-session` or `/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.availability_status` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
-| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.availability_status` (cross-link) | `Device.device_checks_*` |
-| `session_sync_loop` | 5 s | Grid `/status` | `Session` rows, `Device.availability_status` (busy↔available) | `Session.state`, run-claim transitions |
-| `session_viability_loop` | 60 s wake / per-device 3600 s | Agent `/agent/appium/{port}/probe-session` | `Device.session_viability_*`, `Device.availability_status` (cross-link) | `Device.session_viability_*` |
+| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.state` (recovery only), `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.operational_state` (cross-link) | `Host.status` (offline/online) |
+| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/probe-session` or `/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
+| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link) | `Device.device_checks_*` |
+| `session_sync_loop` | 5 s | Grid `/status` | `Session` rows, `Device.operational_state` (busy↔available) | `Session.state`, run-claim transitions |
+| `session_viability_loop` | 60 s wake / per-device 3600 s | Agent `/agent/appium/{port}/probe-session` | `Device.session_viability_*`, `Device.operational_state` (cross-link) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
@@ -88,7 +88,7 @@ Reference implementation: `node_health._check_node_health`, `app.services.agent_
 
 Loops can run multiple times against the same device without ill effect, provided they obey:
 
-1. **Conditional writes only.** Writers compare the current value before mutating. `set_device_availability_status` early-returns when `old == new`. `device_health` only queues `device.health_changed` when the derived public summary's `healthy` value changes.
+1. **Conditional writes only.** Writers compare the current value before mutating. `set_operational_state` and `set_hold` early-return when `old == new`. `device_health` only queues `device.health_changed` when the derived public summary's `healthy` value changes.
 
 2. **Facts have one home.** Device checks, session viability, emulator state, node lifecycle, transient node health detail, and node failure counts live in typed columns. Readers compose them on demand.
 
@@ -113,7 +113,7 @@ After Plan D every fact has exactly one home:
 
 Loops are independent in the steady state but must not contradict each other when state transitions race:
 
-- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session is `availability_status = busy`. `node_health` skips probing devices that are not `available + ready` (`node_health.py:71-83`), so an in-flight session is invisible to it. After the session ends, `session_sync` flips the device back to `available`/`reserved`/`offline`, then the next `node_health` tick can probe.
+- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session has `operational_state = busy`. `node_health` skips probing devices that are not `available + ready` (`node_health.py:71-83`), so an in-flight session is invisible to it. After the session ends, `session_sync` flips operational state back to `available` or `offline` while preserving any reservation hold, then the next `node_health` tick can probe.
 
 - **`device_connectivity_loop` and `node_health_loop`.** If the agent is unreachable, both loops see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
 

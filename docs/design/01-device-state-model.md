@@ -13,7 +13,7 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 | Axis | Source of truth | Type | Writers |
 | --- | --- | --- | --- |
 | Readiness | derived from `Device.verified_at` + setup gates | computed | `device_readiness.is_ready_for_use_async` |
-| Availability | `Device.availability_status` | enum | API mutators + `node_manager_state` + `device_availability` |
+| Operational state + hold | `Device.operational_state`, `Device.hold` | enum + nullable enum | node/session loops + operator/run mutators through `device_state` |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
 | Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy.record_control_action` only |
 | Node state | `AppiumNode.state` | enum | `node_manager_state.mark_node_*` only |
@@ -33,60 +33,74 @@ Readiness is the **first gate** on every state-changing API call. `RemoteNodeMan
 
 Readiness changes only when an operator-driven flow updates `verified_at` or readiness-impacting fields. There is no background loop that flips it.
 
-## Axis 2 — Availability (`Device.availability_status`)
+## Axis 2 — Operational state + hold
 
-```
-available · busy · offline · reserved · maintenance
+Two orthogonal columns replace the legacy availability enum:
+
+```text
+Device.operational_state : available | busy | offline   (NOT NULL)
+Device.hold              : maintenance | reserved | null
 ```
 
-Defined in `backend/app/models/device.py:34-39` (`DeviceAvailabilityStatus`).
+Defined in `backend/app/models/device.py` as `DeviceOperationalState` and `DeviceHold`.
 
 Semantics:
 
-- `available` — verified, idle, no node-health failure, no run hold.
-- `busy` — Appium session is live against this device.
-- `reserved` — held by a run/reservation, even if no session is active yet.
-- `offline` — node missing, agent unreachable, health failed, or never started.
-- `maintenance` — explicit operator hold; takes precedence over the others.
+- **operational_state** — what the device is doing right now. Owned by node lifecycle (`available`/`offline`) and `session_sync_loop` (`busy`).
+- **hold** — what is blocking use, regardless of operational state. Owned by operator actions (`maintenance`) and run/reservation logic (`reserved`).
 
-### Who is allowed to write `availability_status`
+The combinations make sense in any pairing. `operational_state=offline, hold=reserved` means the agent died but the reservation is still live; the operator sees "Reserved (offline)" and the run keeps the device. `operational_state=available, hold=maintenance` means the node is up but the operator put the device on hold; the chip reads "Maintenance".
 
-There is exactly **one** sanctioned writer:
+### Sanctioned writers
+
+Two helpers in `backend/app/services/device_state.py` own writes:
 
 ```text
-app.services.device_availability.set_device_availability_status
+set_operational_state(device, new_state, *, reason=None)
+set_hold(device, new_hold, *, reason=None)
 ```
 
-`backend/app/services/device_availability.py:23-51`. It asserts the device is loaded in the current session — i.e. that the row was acquired through `device_locking.lock_device` first — and publishes `device.availability_changed` to the event bus on every transition. Bypassing it (assigning `device.availability_status = ...` directly) is now blocked by `backend/tests/test_no_direct_availability_writes.py`.
+Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition, and early-return when the value is unchanged. The row lock from `device_locking.lock_device` is required before calling them. `backend/tests/test_no_direct_state_writes.py` enforces the single-writer rule.
 
-The `device.availability_changed` event is queued on the writer's SQLAlchemy session and dispatched **after** the outer transaction commits, via `app.services.event_bus.queue_event_for_session`. If the outer transaction rolls back, the queued event is dropped — webhook and SSE subscribers never see a transition that was not actually persisted. Contract test: `backend/tests/test_availability_event_after_commit.py`. Transactional peer events such as `node.state_changed`, `host.heartbeat_lost`, and run/session state events follow the same after-commit dispatch rule; non-transactional broadcasters are explicitly allowlisted in `backend/tests/test_event_bus_publish_allowlist.py`.
+Seeding scripts under `backend/app/seeding/` are exempt because fixture builders run in a single short-lived transaction with no event consumers attached.
 
-Seeding scripts under `backend/app/seeding/` are exempt from the rule because fixture builders run in a single short-lived transaction with no event consumers attached.
+### UI projection
+
+The legacy chip, one of `available|busy|offline|maintenance|reserved`, is computed:
+
+```text
+chip = hold if hold else operational_state
+```
+
+Frontend implements this in `frontend/src/lib/deviceState.ts`. Backend exposes the audit-only legacy label via `device_state.legacy_label_for_audit(device)` for log messages.
 
 ### Transition rules
 
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> offline: row created
-    offline --> available: readiness Verified AND node running AND health OK
-    available --> reserved: run reserves device
-    reserved --> busy: client opens Grid session
-    busy --> reserved: session ends, run still active
-    reserved --> available: run completes / cancelled
-    available --> busy: standalone Grid session (no reservation)
-    busy --> available: session ends
-    available --> offline: node stops / health fails
-    available --> maintenance: operator action
-    reserved --> maintenance: operator action (force)
-    busy --> maintenance: operator action (force)
-    maintenance --> offline: operator exits maintenance, node not running
-    maintenance --> available: operator exits maintenance, node running, health OK
+    [*] --> opOffline
+    state operational {
+        opOffline: offline
+        opAvailable: available
+        opBusy: busy
+        opOffline --> opAvailable: node started + ready
+        opAvailable --> opOffline: node stopped / health failed
+        opAvailable --> opBusy: client opens session
+        opBusy --> opAvailable: session ends
+    }
+    state hold {
+        noHold: null
+        holdMaintenance: maintenance
+        holdReserved: reserved
+        noHold --> holdMaintenance: operator
+        holdMaintenance --> noHold: operator
+        noHold --> holdReserved: run created
+        holdReserved --> noHold: run completes / cancelled
+    }
 ```
 
-Computed transitions live in `node_manager_state._node_started_availability_status` and `_node_stopped_availability_status` (`backend/app/services/node_manager_state.py:103-120`). They preserve `busy / reserved / maintenance` across node start/stop — the node lifecycle never overrides operator or run intent.
-
-After a `busy` session ends, the next state is computed by `resolve_post_busy_availability_status` (`device_availability.py:54-63`), which checks for an open reservation before falling back to readiness-based status.
+The two state machines run independently. Node lifecycle never touches `hold`; operator and run logic never touch `operational_state` except when a stop transition flips operational state to `offline` as a side effect of entering maintenance without drain.
 
 ## Axis 3 — Hardware health (`Device.hardware_health_status`)
 
@@ -156,22 +170,22 @@ The public summary returned by `/api/devices` is computed by `app.services.devic
 ### Three rules the writers must obey
 
 1. **`update_device_checks` and `update_session_viability` take typed values.** `update_device_checks(healthy: bool, ...)` requires a real bool. Indeterminate probe results must short-circuit before the call. See `app.services.agent_probe_result.ProbeResult`.
-2. **Cross-link to availability is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness, `auto_manage`, and node state allow. Writers do not call `set_device_availability_status` directly for these paths.
+2. **Cross-link to operational state is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness, `auto_manage`, and node state allow. Writers use `set_operational_state` for these paths and never touch `hold`.
 3. **No KV.** The legacy health-summary and node-health counter namespaces no longer exist.
 
-### Health → availability cross-link
+### Health → operational-state cross-link
 
 Two cross-links exist intentionally:
 
 - `_mark_offline_for_failed_signal` — when a definitive failure arrives and the device is currently `available`, drop it to `offline` so the UI does not advertise an unhealthy device for allocation.
 - `_restore_available_for_healthy_signal` — when the derived health projection recovers (node running + checks healthy + readiness OK + auto_manage on) and the device is `offline`, lift it back to `available`.
 
-Both run under the device row lock and only act when the *current* `availability_status` would not stomp on operator/run intent (`available` only ↔ `offline`; never `busy/reserved/maintenance`).
+Both run under the device row lock and only act on `operational_state` (`available` only ↔ `offline`). They do not change `hold`, so operator/run intent is preserved.
 
 ## The locking invariant
 
 ```text
-Any write to Device.availability_status or Device.lifecycle_policy_state
+Any write to Device.operational_state, Device.hold, or Device.lifecycle_policy_state
 MUST hold the row-level lock from device_locking.lock_device(),
 acquired in the same transaction as the write.
 ```
@@ -192,7 +206,7 @@ flowchart LR
 
     subgraph Sources of truth
       ready[device_readiness derived]:::col
-      avail[Device.availability_status]:::col
+      state[Device.operational_state + Device.hold]:::col
       lc[Device.lifecycle_policy_state]:::col
       hw[Device.hardware_health_status]:::col
       node[AppiumNode.state]:::col
@@ -210,11 +224,11 @@ flowchart LR
     end
 
     ready --> readyBadge
-    avail --> statusChip
+    state --> statusChip
     lc --> lcChip
     hw --> healthChip
     node --> derived
-    avail --> derived
+    state --> derived
     derived --> healthChip
 ```
 
@@ -227,8 +241,8 @@ The UI health chip reads the derived public summary, not a stored health documen
 | "Offline + healthy" rendered together | Derived health writer bypassed `apply_node_state_transition` | Route node health/lifecycle transitions through `device_health` |
 | Device flaps `available -> offline -> available` every minute | Loop coerced indeterminate probe result to refused | Use `ProbeResult` and short-circuit `indeterminate` (commit `a58c8e5`) |
 | Device shows `stopped` in DB but Grid still routes to it | `mark_node_stopped` ran without agent ack | Gate node-state flip on agent ack returning `True` (commits `4171847`, `bdfae85`) |
-| Operator sets `maintenance` and a loop reverts it to `available` | Loop bypassed `set_device_availability_status` and stomped operator intent | Loop must call the helper, which respects operator-precedent ordering |
-| Two workers race on the same device | Mutator skipped `lock_device` | Acquire row lock before any availability/lifecycle write |
+| Operator sets `maintenance` and a loop reverts it to `available` | Loop wrote `hold` or derived chip state instead of only updating `operational_state` | Loop must call `set_operational_state` and leave `hold` untouched |
+| Two workers race on the same device | Mutator skipped `lock_device` | Acquire row lock before any device-state/lifecycle write |
 
 ## What this doc does NOT cover
 

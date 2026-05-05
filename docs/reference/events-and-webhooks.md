@@ -2,6 +2,9 @@
 
 This page documents the shipped live-event contract used by SSE subscribers, recent-notification polling, and webhook delivery.
 
+> [!IMPORTANT]
+> `device.availability_changed` was removed with the device-state split. Subscribe to `device.operational_state_changed` and `device.hold_changed` instead.
+
 ## Endpoints
 
 | Method | Path | Purpose | Query/body | Response |
@@ -22,14 +25,14 @@ The manager publishes one shared event object shape:
 
 ```json
 {
-  "type": "device.availability_changed",
+  "type": "device.operational_state_changed",
   "id": "0d5f0af1-7c2b-4ec4-98c3-90cf7b0d52ef",
   "timestamp": "2026-04-01T12:34:56.789012+00:00",
   "data": {
     "device_id": "uuid",
     "device_name": "Lab Fire TV",
-    "old_availability_status": "offline",
-    "new_availability_status": "available"
+    "old_operational_state": "offline",
+    "new_operational_state": "available"
   }
 }
 ```
@@ -59,7 +62,8 @@ The manager publishes one shared event object shape:
 
 | Event | Typical `data` fields | Source |
 | --- | --- | --- |
-| `device.availability_changed` | `device_id`, `device_name`, `old_availability_status`, `new_availability_status`, optional `reason` | maintenance, availability changes, host-loss/run-end flows |
+| `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state`, optional `reason` | node lifecycle, health recovery/failure, session-sync busy/idle flows |
+| `device.hold_changed` | `device_id`, `device_name`, `old_hold`, `new_hold`, optional `reason` | maintenance and run/reservation flows |
 | `device.verification.updated` | full verification job snapshot | verification pipeline |
 | `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | node start/stop/recovery paths |
@@ -69,7 +73,7 @@ The manager publishes one shared event object shape:
 
 ### `device.crashed`
 
-Per-device crash signal. Fires whenever a `DeviceEvent` row of type `node_crash` is persisted. Distinct from `node.crash` (per-Appium-process): `device.crashed` is the device-granularity counterpart and aligns semantically with `device.availability_changed` and `device.health_changed`.
+Per-device crash signal. Fires whenever a `DeviceEvent` row of type `node_crash` is persisted. Distinct from `node.crash` (per-Appium-process): `device.crashed` is the device-granularity counterpart and aligns semantically with `device.operational_state_changed` and `device.health_changed`.
 
 **Sources:** `lifecycle_policy_actions.handle_node_crash`, `heartbeat._ingest_appium_restart_events`, and `node_health._process_node_health`.
 

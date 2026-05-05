@@ -9,7 +9,7 @@ Operators see three different concepts on a device:
 | Concept | Main Question |
 | --- | --- |
 | Readiness | Is the saved configuration verified and safe to use? |
-| Status | Is the device currently available, busy, offline, reserved, or in maintenance? |
+| Operational state + Hold | Is the device available, busy, or offline, and is it blocked by a reservation or maintenance hold? |
 | Lifecycle Summary | Is the manager actively recovering, deferring, suppressing, or excluding the device after device failures? |
 
 Those signals overlap, but they are not interchangeable.
@@ -193,6 +193,6 @@ That is expected for the current shipped contract. When CI calls the run-scoped 
 
 - excludes the device from the run
 - records the exact CI failure reason
-- marks the device unhealthy and `offline`
+- marks the device unhealthy and sets operational state to `offline`
 
 This keeps operator-visible device state aligned with reservation truth instead of leaving the device silently reserved.
