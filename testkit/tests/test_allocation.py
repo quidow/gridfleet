@@ -214,6 +214,32 @@ def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_ab
     assert client.config_calls == [("SERIAL123", True)]
 
 
+def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
+    client = FakeClient()
+    payload = claim_payload(live_capabilities={"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"})
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"}
+    assert client.capability_calls == []
+
+
+def test_hydrate_allocated_device_uses_inline_live_capabilities_even_when_fetch_capabilities_false() -> None:
+    client = FakeClient()
+    payload = claim_payload(live_capabilities={"appium:udid": "INLINE-CAP"})
+
+    allocated = hydrate_allocated_device(
+        payload,
+        run_id="run-1",
+        client=client,
+        fetch_config=False,
+        fetch_capabilities=False,
+    )
+
+    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP"}
+    assert client.capability_calls == []
+
+
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)

@@ -124,7 +124,13 @@ def hydrate_allocated_device(
     else:
         config = None
         config_is_masked = False
-    live_capabilities = client.get_device_capabilities(device_id) if fetch_capabilities else None
+    inline_capabilities = payload.get("live_capabilities")
+    if isinstance(inline_capabilities, dict):
+        live_capabilities: dict[str, Any] | None = inline_capabilities
+    elif fetch_capabilities:
+        live_capabilities = client.get_device_capabilities(device_id)
+    else:
+        live_capabilities = None
 
     return AllocatedDevice(
         run_id=run_id,
