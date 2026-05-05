@@ -60,14 +60,14 @@ sequenceDiagram
     participant API as API router
     participant NM as node_service.start_node
     participant State as node_service
-    participant Alloc as appium_resource_allocator
+    participant Alloc as appium_node_resource_service
     participant Agent as Host agent
     participant Pg as Postgres
 
     API->>NM: start_node(device)
     NM->>NM: is_ready_for_use_async — readiness gate
-    NM->>Alloc: get_or_create_owner_capabilities(owner_key)
-    Note over Alloc: Reserves ports + UI caps under the owner_key.
+    NM->>Alloc: reserve(host_id, capability_key, owner_token)
+    Note over Alloc: Reserves a port claim under owner_token; for managed starts the temporary claim is later promoted via transfer_temporary_to_managed.
     NM->>State: candidate_ports() — excludes "running" rows
     loop until success or all candidates fail
         NM->>Agent: POST /agent/appium/start (port, payload)
@@ -84,10 +84,10 @@ sequenceDiagram
 
 Key call-outs:
 
-- **Readiness gate** (`node_service.py:694-698`) refuses if `is_ready_for_use_async` says no.
-- **Owner allocation first, port second** — the allocator owns ports because they are part of the host's parallel-resource pool (`appium_resource_allocator.get_or_create_owner_capabilities`). On failure during start, the allocation is released by the same try/except in `_start_with_owner` (`node_service.py:653-688`).
-- **Port conflict retry** — if the agent rejects with "already in use", the manager continues to the next candidate port (`node_service.py:661-683`). Conflicts on the managed range come from external listeners or stale agent state; trying the next port is correct.
-- **Readiness wait** — `_wait_for_remote_appium_ready` (`node_service.py:268-291`) polls `/agent/appium/{port}/status` for up to `stabilization_timeout_sec`. If it never returns `running=True`, the start is treated as a failed dispatch and `start_remote_temporary_node` calls `stop_remote_temporary_node` to clean up before raising.
+- **Readiness gate** in `_start_with_owner` (`node_service.py`) refuses if `is_ready_for_use_async` says no.
+- **Owner allocation first, port second** — the allocator owns ports because they are part of the host's parallel-resource pool (`appium_node_resource_service.reserve`). On failure during start, the allocation is released by the same try/except in `_start_with_owner` (`node_service.py`).
+- **Port conflict retry** — if the agent rejects with "already in use", the manager continues to the next candidate port (`_start_with_owner` loop in `node_service.py`). Conflicts on the managed range come from external listeners or stale agent state; trying the next port is correct.
+- **Readiness wait** — `_wait_for_remote_appium_ready` (`node_service.py`) polls `/agent/appium/{port}/status` for up to `stabilization_timeout_sec`. If it never returns `running=True`, the start is treated as a failed dispatch and `start_remote_temporary_node` calls `stop_remote_temporary_node` to clean up before raising.
 - **DB write last** — `mark_node_started` only runs after the agent says the process is running. Order is: agent OK → snapshot sync → commit.
 
 Failure modes:
@@ -109,7 +109,7 @@ sequenceDiagram
     participant NM as node_service.stop_node
     participant Agent as Host agent
     participant State as node_service
-    participant Alloc as appium_resource_allocator
+    participant Alloc as appium_node_resource_service
     participant Pg as Postgres
 
     API->>NM: stop_node(device)
@@ -170,7 +170,7 @@ Why "do not retry on a different port" when the stop is unacknowledged:
 
 So `restart_node` **must** see a confirmed stop before it considers the start side. Same rule applies to the loop-driven path below.
 
-`RESTART_BACKOFF_BASE = 2`, `RESTART_MAX_RETRIES = 3` (`node_service.py:50-51`). After 3 failures the owner allocation is released and `NodeManagerError` propagates.
+`RESTART_BACKOFF_BASE = 2`, `RESTART_MAX_RETRIES = 3` (`node_service.py`). After 3 failures the owner allocation is released and `NodeManagerError` propagates.
 
 ## Flow D — Auto-restart from `node_health_loop`
 
@@ -224,16 +224,16 @@ Three things this flow gets right that earlier versions did not:
 
 ## The owner_key + port allocation interaction
 
-`appium_resource_allocator` reserves ports and per-host parallel-resource capabilities under an `owner_key`. The key shape:
+`appium_node_resource_service` reserves ports and per-host parallel-resource capabilities under an owner token. The token shape (built by `_build_device_owner_key` in `node_service.py`):
 
-- Managed device → `managed_owner_key(device.id)` (stable across restarts of the *same* device)
-- Verification probe → `temporary_owner_key(device)` (transient)
+- Managed device → `device:<device_uuid>` (stable across restarts of the *same* device)
+- Verification probe / transient start → `temp:<host_id>:<identity>` (transient)
 
 Why this matters for the lifecycle:
 
-- `start_node` allocates under `managed_owner_key` and only releases it on confirmed stop.
-- `restart_node` keeps the same `owner_key` across the stop→start sequence (`node_service.py:801-808`) so allocation does not flap and the agent can recognise the same owner across the restart.
-- `restart_node_via_agent` (the loop-driven path) reads the existing allocation rather than creating a new one (`node_service.py:569-573`).
+- `start_node` reserves under the managed owner token, then promotes the temporary claim into a managed claim attached to the AppiumNode row, and only releases it on confirmed stop.
+- `restart_node` keeps the same owner token across the stop→start sequence (`node_service.py`) so allocation does not flap and the agent can recognise the same owner across the restart.
+- `restart_node_via_agent` (the loop-driven path) reads the existing managed claim rather than creating a new one (`node_service.py`).
 
 If a stop is unacknowledged the allocation persists. The next operator-driven start for that device finds the existing allocation, which is correct: we want the same owner to retake its ports when the agent comes back, not for a different owner to grab them while the orphan is still alive.
 
@@ -245,12 +245,12 @@ There are two distinct kinds of conflict:
 
 | Kind | Surface | Behavior |
 | --- | --- | --- |
-| External listener on a managed port | Agent rejects start with "already in use" | Mapped to `NodePortConflictError`, manager tries next candidate port (`node_service.py:432-438`) |
+| External listener on a managed port | Agent rejects start with "already in use" | Mapped to `NodePortConflictError`, manager tries next candidate port (`_start_with_owner` in `node_service.py`) |
 | Stale agent-side state for a managed port | Agent rejects start with "already running on port" | Same `NodePortConflictError` mapping; agent has its own cleanup via the bootstrap fix (commit `54707d1`) |
 
-The `candidate_ports` helper (`node_service.py:98-127`) excludes ports already held by `state=running` rows in the DB. After an unmanaged-listener conflict, the manager moves to the next free managed port. After a managed conflict that the agent could not clean up, the same retry loop applies — eventually one port wins or the manager raises `NodeManagerError("No free ports available in the configured range")`.
+The `candidate_ports` helper (`node_service.py`) excludes ports already held by `state=running` rows in the DB. After an unmanaged-listener conflict, the manager moves to the next free managed port. After a managed conflict that the agent could not clean up, the same retry loop applies — eventually one port wins or the manager raises `NodeManagerError("No free ports available in the configured range")`.
 
-`restart_node_via_agent` (the loop-driven path) does **not** call `mark_node_stopped` between the agent stop and the next start; it rewrites `node.port/pid/state` in place after a successful start (`node_service.py:613-617`). Because the DB row stays `state=running` across that window, `candidate_ports` intentionally **excludes** the old `node.port` from the candidate set — the next attempt lands on a different free port. That is the desired behaviour after an unmanaged-listener conflict on the old port: rebind elsewhere, do not retry the same one (`node_service.py:590-593`).
+`restart_node_via_agent` (the loop-driven path) does **not** call `mark_node_stopped` between the agent stop and the next start; it rewrites `node.port/pid/state` in place after a successful start (`node_service.py`). Because the DB row stays `state=running` across that window, `candidate_ports` intentionally **excludes** the old `node.port` from the candidate set — the next attempt lands on a different free port. That is the desired behaviour after an unmanaged-listener conflict on the old port: rebind elsewhere, do not retry the same one (`node_service.py`).
 
 ## Lock acquisition order (deadlock avoidance)
 
@@ -264,7 +264,7 @@ The `candidate_ports` helper (`node_service.py:98-127`) excludes ports already h
 6. db.commit()
 ```
 
-`mark_node_started` (`node_service.py:178-210`) and `mark_node_stopped` (`node_service.py:214-245`) follow this exact order. New writers must too.
+`mark_node_started` and `mark_node_stopped` (`node_service.py`) follow this exact order. New writers must too.
 
 The `event_bus.publish` for `device.health_changed` is **deferred to after-commit** by `queue_event_for_session` inside `device_health`. Subscribers must never observe a transition that did not become durable. Subscribers for `node.state_changed` are queued with `queue_event_for_session` and are also dispatched after the writer transaction commits.
 

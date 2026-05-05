@@ -77,6 +77,7 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `pack_drain_loop` | (internal) | pack desired-state | drain progress | pack-drain rows |
 | `data_cleanup_loop` | (internal) | various retention windows | deletes old rows | data-retention deletions |
 | `fleet_capacity_collector_loop` | 60 s | aggregate device counts | `fleet_capacity_snapshots` | capacity snapshot rows |
+| `appium_resource_sweeper_loop` | `reservations.reaper_interval_sec` | `appium_node_resource_claims` | deletes expired temporary claims | TTL-based reaping of unfinalised reservations |
 
 The first four loops (heartbeat, node_health, device_connectivity, session_sync) are the lifecycle-critical ones. The rest are telemetry, queue workers, and housekeeping — they cannot cause split-brain on their own.
 
@@ -98,7 +99,7 @@ Loops that consume probes **must** branch on `None` separately:
 
 Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
-`appium_status` returns `None` for non-2xx responses (`agent_operations.py:171-173`). `appium_probe_session` distinguishes between Appium-side errors ("Probe session returned an invalid payload") and HTTP-shaped errors ("Probe session failed (HTTP 503)"); the consumer maps the HTTP-shaped ones to indeterminate (`node_health.py:127-136`).
+`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). `appium_probe_session` distinguishes between Appium-side errors ("Probe session returned an invalid payload") and HTTP-shaped errors ("Probe session failed (HTTP 503)"); the consumer maps the HTTP-shaped ones to indeterminate via `agent_probe_result.from_probe_session_response` (`node_health.py`).
 
 ## Idempotency rules
 
@@ -110,7 +111,7 @@ Loops can run multiple times against the same device without ill effect, provide
 
 3. **Counters live on the node row, not in memory.** `node_health` keeps consecutive-failure counts in `AppiumNode.consecutive_health_failures` so a leader handoff does not lose history or double-count.
 
-4. **Stale-result detection.** `_process_node_health` records the observed `state/port/pid/active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py:208-222`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
+4. **Stale-result detection.** `_process_node_health` records the observed `state/port/pid/active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
 
 ## Where State Lives
 
@@ -129,7 +130,7 @@ After Plan D every fact has exactly one home:
 
 Loops are independent in the steady state but must not contradict each other when state transitions race:
 
-- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session has `operational_state = busy`. `node_health` skips probing devices that are not `available + ready` (`node_health.py:71-83`), so an in-flight session is invisible to it. After the session ends, `session_sync` flips operational state back to `available` or `offline` while preserving any reservation hold, then the next `node_health` tick can probe.
+- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session has `operational_state = busy`. `node_health` skips probing devices that are not `available + ready` (`_should_probe_node_health` in `node_health.py`), so an in-flight session is invisible to it. After the session ends, `session_sync` flips operational state back to `available` or `offline` while preserving any reservation hold, then the next `node_health` tick can probe.
 
 - **`device_connectivity_loop` and `node_health_loop`.** If the agent is unreachable, both loops see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
 
@@ -157,7 +158,7 @@ flowchart TD
     K -- no --> M[lifecycle: recovery_failed; node.state=error; offline]
 ```
 
-Defined in `_process_node_health` (`node_health.py:186-435`). `max_failures` is `general.node_max_failures`, default `3`. Each rung records a lifecycle action via `lifecycle_policy.record_control_action` so the operator-facing summary reflects the escalation.
+Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general.node_max_failures`, default `3`. Each rung records a lifecycle action via `lifecycle_policy.record_control_action` so the operator-facing summary reflects the escalation.
 
 ## When loops do NOT run
 

@@ -16,7 +16,7 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 | Operational state + hold | `Device.operational_state`, `Device.hold` | enum + nullable enum | node/session loops + operator/run mutators through `device_state` |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
 | Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy.record_control_action` only |
-| Node state | `AppiumNode.state` | enum | `node_manager_state.mark_node_*` only |
+| Node state | `AppiumNode.state` | enum | `node_service.mark_node_*` only |
 | Health | `Device.device_checks_*`, `Device.session_viability_*`, `Device.emulator_state`, `AppiumNode.health_*` | typed columns | `device_health` service |
 
 The DB columns are always authoritative. The public `health_summary` returned by `/api/devices` is derived on read by `app.services.device_health.build_public_summary(device)`.
@@ -29,7 +29,7 @@ Readiness answers "is the saved configuration safe to start a node against?". It
 - Computed by `app.services.device_readiness.is_ready_for_use_async`.
 - Surfaces as the readiness badge (`Setup Required` / `Needs Verification` / `Verified`).
 
-Readiness is the **first gate** on every state-changing API call. `RemoteNodeManager.start_node` (`backend/app/services/node_manager.py:174`) refuses to start a node when readiness fails. The lifecycle loop (`node_health.py:83`) uses it to decide whether a device should be probed at all.
+Readiness is the **first gate** on every state-changing API call. `node_service.start_node` (`backend/app/services/node_service.py`) refuses to start a node when readiness fails. The lifecycle loop (`node_health._should_probe_node_health` in `node_health.py`) uses it to decide whether a device should be probed at all.
 
 Readiness changes only when an operator-driven flow updates `verified_at` or readiness-impacting fields. There is no background loop that flips it.
 
@@ -60,7 +60,7 @@ set_operational_state(device, new_state, *, reason=None)
 set_hold(device, new_hold, *, reason=None)
 ```
 
-Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition, and early-return when the value is unchanged. The row lock from `device_locking.lock_device` is required before calling them. `backend/tests/test_no_direct_state_writes.py` enforces the single-writer rule.
+Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition, and early-return when the value is unchanged. The row lock from `device_locking.lock_device` is required before calling them. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
 
 Seeding scripts under `backend/app/seeding/` are exempt because fixture builders run in a single short-lived transaction with no event consumers attached.
 
@@ -108,7 +108,7 @@ The two state machines run independently. Node lifecycle never touches `hold`; o
 unknown · healthy · warning · critical
 ```
 
-Defined in `device.py:50-54`. Written exclusively by `hardware_telemetry_loop` from agent battery/temperature reports. Never read or written by node-lifecycle code; it feeds the operator dashboard only. Treat it as out-of-band telemetry.
+Defined in `device.py` (`HardwareHealthStatus`). Written exclusively by `hardware_telemetry_loop` from agent battery/temperature reports. Never read or written by node-lifecycle code; it feeds the operator dashboard only. Treat it as out-of-band telemetry.
 
 Live event surface:
 
@@ -118,7 +118,7 @@ Live event surface:
 
 ## Axis 4 — Lifecycle policy (`Device.lifecycle_policy_state`)
 
-JSON blob in `device.py:127-129`. Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
+JSON blob on `Device` (`device.py`). Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
 
 - Single writer: `app.services.lifecycle_policy.record_control_action`.
 - Read by: every loop that decides whether to attempt recovery (`node_health`, `device_connectivity`, `session_viability`).
@@ -134,16 +134,16 @@ Operator-facing semantics are documented in `docs/guides/lifecycle-maintenance-a
 running · stopped · error
 ```
 
-`backend/app/models/appium_node.py:18-21`. The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
+`backend/app/models/appium_node.py` (`NodeState`). The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
 
 Sanctioned writers:
 
 | Writer | Transition | File |
 | --- | --- | --- |
-| `mark_node_started` | `stopped/error → running` | `node_manager_state.py:123-155` |
-| `mark_node_stopped` | `running/error → stopped` | `node_manager_state.py:158-190` |
-| `_process_node_health` (auto-recover branch) | `running → error`, then `error → running` on auto-restart | `node_health.py:354,408,433` |
-| `restart_node_via_agent` | mutates `port/pid/state` together inside its own lock window | `node_manager_remote.py:404-408` |
+| `mark_node_started` | `stopped/error → running` | `node_service.py` |
+| `mark_node_stopped` | `running/error → stopped` | `node_service.py` |
+| `_process_node_health` (auto-recover branch) | `running → error`, then `error → running` on auto-restart | `node_health.py` |
+| `restart_node_via_agent` | mutates `port/pid/state` together inside its own lock window | `node_service.py` |
 
 Writers outside this list are bugs — they bypass the `device_health.apply_node_state_transition` lock/event path and the device row lock.
 
@@ -190,9 +190,9 @@ MUST hold the row-level lock from device_locking.lock_device(),
 acquired in the same transaction as the write.
 ```
 
-`backend/app/services/device_locking.py:1-15`. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
+`backend/app/services/device_locking.py`. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
 
-`AppiumNode.state` writes additionally hold the `appium_node_locking.lock_appium_node_for_device` row lock — both `mark_node_started` and `mark_node_stopped` acquire it after the device lock (`node_manager_state.py:131-134, 159-162`).
+`AppiumNode.state` writes additionally hold the `appium_node_locking.lock_appium_node_for_device` row lock — both `mark_node_started` and `mark_node_stopped` acquire it after the device lock (`node_service.py`).
 
 Multi-row mutators (group actions, bulk reconnect) must use `lock_devices` which sorts ids ascending. Mixing single-row and batch callers stays deadlock-free as long as the batch order matches.
 

@@ -24,7 +24,7 @@ Read in order. Each doc assumes the previous ones; a forward reference is always
 
 ## Citation baseline
 
-`file:line` references in these docs target `origin/main` at sha `0dc6ed5`. They drift as code moves; treat the function names and section paragraphs as authoritative and the line numbers as hints. The first authoring pass read a feature worktree by mistake — known shifted citations were corrected, but if you find one that no longer matches, search by function name and update the doc in place.
+References in these docs cite **file paths and function/class names**, not line numbers. Lines drift as code moves; functions are renamed less often. If a citation no longer points to a real symbol (e.g. a file was consolidated, a function renamed), search by symbol name in the current tree and update the doc in place. Last citation refresh: 2026-05-06.
 
 ## Known semantic gap (stop_pending)
 

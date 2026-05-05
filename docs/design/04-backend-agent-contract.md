@@ -38,7 +38,7 @@ The CI runner / test client speaks **only** to the Selenium Grid hub for session
 Both directions use HTTP Basic.
 
 - **Backend → agent.** When `GRIDFLEET_AUTH_ENABLED=true`, agents require Basic from machine credentials configured at deploy time. The backend's `agent_request` helper (`backend/app/agent_client.py`) always attaches request-id headers; `httpx.BasicAuth` is supplied at the per-call level when configured.
-- **Agent → backend.** `agent/agent_app/main.py:54-59` constructs `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `agent_settings`. Used for `/agent/driver-packs/desired` and `/agent/driver-packs/status`.
+- **Agent → backend.** `agent/agent_app/main.py` constructs `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `agent_settings`. Used for `/agent/driver-packs/desired` and `/agent/driver-packs/status`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
 There is no HMAC, no message signing. Authn is only "do you know the shared password"; transport security relies on the network boundary documented in `docs/guides/security.md`.
@@ -58,8 +58,8 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/pack/devices/{ct}/lifecycle/{action}` | lifecycle/operator actions | run a pack-defined lifecycle action (e.g. boot, shutdown) | 2xx required |
 | POST | `/agent/pack/devices/normalize` | intake/discovery | normalise raw input to canonical device fields | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/features/{feat}/actions/{act}` | feature dispatch | dispatch arbitrary pack feature action | 2xx required |
-| POST | `/agent/appium/start` | `RemoteNodeManager.start_node`, `restart_node_via_agent` | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
-| POST | `/agent/appium/stop` | `RemoteNodeManager.stop_node`, `restart_node_via_agent` | kill an Appium node | 2xx → `True`; transport/5xx → `False` |
+| POST | `/agent/appium/start` | `node_service.start_node`, `restart_node_via_agent` | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
+| POST | `/agent/appium/stop` | `node_service.stop_node`, `restart_node_via_agent` | kill an Appium node | 2xx → `True`; transport/5xx → `False` |
 | GET | `/agent/appium/{port}/status` | `node_health`, `_wait_for_remote_appium_ready` | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | POST | `/agent/appium/{port}/probe-session` | `node_health`, `session_viability` | full session create+delete probe | 200 → `(True, None)`; 4xx with detail → `(False, detail)`; transport-shaped → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
@@ -118,7 +118,7 @@ flowchart TD
     q3 -- 5xx --> r5[AgentResponseError]
 ```
 
-Loop callers map all three terminal errors to `None` (indeterminate). API mutators map them to user-visible 502/503 via the FastAPI exception handlers in `backend/app/errors.py:177-194`.
+Loop callers map all three terminal errors to `None` (indeterminate). API mutators map them to user-visible 502/503 via the FastAPI exception handlers in `backend/app/errors.py`.
 
 ## Circuit breaker
 
@@ -186,9 +186,9 @@ sequenceDiagram
 
 The endpoints whose result is a tri-state probe (`/agent/appium/{port}/status`, `/agent/appium/{port}/probe-session`) project HTTP shapes into `bool | None`:
 
-- **`appium_status`** (`agent_operations.py:155-173`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
+- **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
 
-- **`appium_probe_session`** (`agent_operations.py:176-201`). 200 with `ok: True` → `(True, None)`. 200 with no `ok` → `(False, "Probe session returned an invalid payload")`. Non-200 → `(False, "Probe session failed (HTTP <code>)")`. The consumer in `node_health._check_node_health` maps the synthetic HTTP-shaped error string back to `None`.
+- **`appium_probe_session`** (`agent_operations.py`). 200 with `ok: True` → `(True, None)`. 200 with no `ok` → `(False, "Probe session returned an invalid payload")`. Non-200 → `(False, "Probe session failed (HTTP <code>)")`. The consumer in `node_health._check_node_health` maps the synthetic HTTP-shaped error string back to `None`.
 
 - **`appium_stop`**. 2xx → `True`. Anything else → `False`. The caller (`stop_remote_temporary_node`) is what bridges into the DB-flip rule: only `True` allows `mark_node_stopped`.
 

@@ -67,7 +67,7 @@ Only the first range is the "main" Appium port. The other two come into play aft
 
 ### `candidate_ports`
 
-`backend/app/services/node_manager_state.py:41-72`:
+`candidate_ports` in `backend/app/services/node_service.py`:
 
 ```text
 1. used = ports of AppiumNode rows where state = running
@@ -93,13 +93,13 @@ flowchart LR
     F -->|no| G[raise NodePortConflictError]
 ```
 
-`_start_with_owner` (`node_manager.py:107-169`) iterates candidates until one succeeds or the pool is exhausted. The rule from commit `54707d1` — agent drops stale node state on a managed-port conflict — is what makes this loop converge: an agent that was bouncing requests on the same port should accept the next attempt instead of permanently rejecting.
+`_start_with_owner` (`node_service.py`) iterates candidates until one succeeds or the pool is exhausted. The rule from commit `54707d1` — agent drops stale node state on a managed-port conflict — is what makes this loop converge: an agent that was bouncing requests on the same port should accept the next attempt instead of permanently rejecting.
 
-The `restart_node_via_agent` path uses the same loop but starts from the **previous port** as the preferred candidate (`node_manager_remote.py:384`). This minimises Grid registration churn: usually we restart on the same port and Grid does not need to re-discover the relay.
+The `restart_node_via_agent` path uses the same loop but starts from the **previous port** as the preferred candidate (`node_service.py`). This minimises Grid registration churn: usually we restart on the same port and Grid does not need to re-discover the relay.
 
 ## Grid sessions and Selenium Grid registration
 
-Each Appium node is paired on the agent host with a Selenium Grid relay process — a Java sidecar that registers the Appium server with the central hub. The backend sees this only indirectly via `grid_service.get_grid_status()` (`backend/app/services/grid_service.py:11`), which fetches `/status` from the hub.
+Each Appium node is paired on the agent host with a Selenium Grid relay process — a Java sidecar that registers the Appium server with the central hub. The backend sees this only indirectly via `grid_service.get_grid_status()` (`backend/app/services/grid_service.py`), which fetches `/status` from the hub.
 
 Two consequences for the lifecycle:
 
@@ -107,7 +107,7 @@ Two consequences for the lifecycle:
 
 2. **Stopped Appium ≠ no Grid registration.** Killing the Appium process should also tear down the Grid relay, but only if the agent acknowledged the stop. An orphan Appium plus its still-registered relay means Grid will keep routing sessions to it. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because Grid is still using the slot.
 
-`available_node_device_ids` (`grid_service.py:44-73`) extracts the set of GridFleet-tagged device IDs from `/status` so loops can see "what does Grid think is available right now" without scraping HTML.
+`available_node_device_ids` (`grid_service.py`) extracts the set of GridFleet-tagged device IDs from `/status` so loops can see "what does Grid think is available right now" without scraping HTML.
 
 ### Reaping a Grid session
 
@@ -157,7 +157,7 @@ Key facts:
 - `hold = reserved` is the **run's** hold on a device, separate from any active session. It stays `reserved` between sessions while the run is alive.
 - `hold: null → reserved` happens when the run is created. `reserved → null` happens when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
 - `operational_state: available → busy` is the per-session flip done by `session_sync_loop`. The reverse sets operational state back to `available` or `offline` and leaves any reservation hold untouched.
-- `node_health_loop` skips reserved and busy devices: it only probes devices whose chip status is allocatable and whose operational state is `available` (`node_health.py:83`). So a device under a run is invisible to auto-restart while it is being driven.
+- `node_health_loop` skips reserved and busy devices: it only probes devices whose chip status is allocatable and whose operational state is `available` (`_should_probe_node_health` in `node_health.py`). So a device under a run is invisible to auto-restart while it is being driven.
 
 ## Failure-mode glossary (resource leaks)
 
