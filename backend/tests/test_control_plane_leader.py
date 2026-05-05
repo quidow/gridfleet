@@ -3,8 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
-
 from app.services.control_plane_leader import ControlPlaneLeader
 
 
@@ -50,14 +48,13 @@ async def test_release_noops_without_connection() -> None:
     await leader.release()
 
 
-async def test_release_closes_connection_even_if_unlock_fails() -> None:
+async def test_release_swallows_unlock_failure_and_closes_connection() -> None:
     leader = ControlPlaneLeader()
     connection = AsyncMock()
     connection.execute.side_effect = RuntimeError("unlock failed")
     leader._connection = connection
 
-    with pytest.raises(RuntimeError, match="unlock failed"):
-        await leader.release()
+    await leader.release()
 
     connection.close.assert_awaited_once()
     assert leader._connection is None

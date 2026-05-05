@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -14,26 +15,173 @@ logger = get_logger(__name__)
 CONTROL_PLANE_LEADER_LOCK_ID = 6001
 
 
+class LeadershipLost(RuntimeError):  # noqa: N818 - domain term used by keepalive/watcher tests and docs.
+    """Raised when the leader's keepalive write does not match its holder_id.
+
+    The process holding this exception MUST exit; another backend has stolen
+    the advisory lock and is about to start its leader-only loops. Continuing
+    to run our own loops would create split-brain.
+    """
+
+
 class ControlPlaneLeader:
     def __init__(self) -> None:
         self._connection: AsyncConnection | None = None
+        self._holder_id: uuid.UUID = uuid.uuid4()
+        self._privilege_warned: bool = False
 
-    async def try_acquire(self, engine: AsyncEngine) -> bool:
+    @property
+    def holder_id(self) -> uuid.UUID:
+        return self._holder_id
+
+    async def try_acquire(
+        self,
+        engine: AsyncEngine,
+        *,
+        stale_threshold_sec: int | None = None,
+    ) -> bool:
         if self._connection is not None:
             return True
+
         connection = await engine.connect()
         result = await connection.execute(
             text("SELECT pg_try_advisory_lock(:lock_id)"),
             {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
         )
-        acquired = bool(result.scalar())
-        if acquired:
+        if bool(result.scalar()):
             self._connection = connection
-            logger.info("Control-plane leader lock acquired")
+            await self._claim_heartbeat_row()
+            logger.info("control_plane_leader_acquired", holder_id=str(self._holder_id))
             return True
+
+        if stale_threshold_sec is not None:
+            preempted = await self._try_preempt(connection, stale_threshold_sec)
+            if preempted:
+                self._connection = connection
+                await self._claim_heartbeat_row()
+                logger.warning("control_plane_leader_preempted_stale", holder_id=str(self._holder_id))
+                return True
+
         await connection.close()
-        logger.info("Control-plane leader lock not acquired in this process")
+        logger.info("control_plane_leader_not_acquired")
         return False
+
+    async def _try_preempt(
+        self,
+        connection: AsyncConnection,
+        stale_threshold_sec: int,
+    ) -> bool:
+        result = await connection.execute(
+            text(
+                "SELECT holder_id, lock_backend_pid, "
+                "  EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::INT AS age "
+                "FROM control_plane_leader_heartbeats WHERE id = 1"
+            )
+        )
+        row = result.first()
+        if row is None or row.age < stale_threshold_sec:
+            await connection.commit()
+            return False
+        if row.lock_backend_pid is None:
+            await connection.commit()
+            logger.info(
+                "control_plane_leader_preempt_skipped_no_pid",
+                reason="heartbeat row stale but lock_backend_pid not yet recorded",
+            )
+            return False
+
+        stale_holder_id = row.holder_id
+        stale_pid = int(row.lock_backend_pid)
+        logger.warning(
+            "control_plane_leader_heartbeat_stale",
+            stale_age_sec=int(row.age),
+            threshold_sec=stale_threshold_sec,
+            stale_pid=stale_pid,
+        )
+
+        await connection.commit()
+        async with connection.begin():
+            recheck = await connection.execute(
+                text(
+                    "SELECT 1 FROM control_plane_leader_heartbeats "
+                    "WHERE id = 1 "
+                    "  AND holder_id = :h "
+                    "  AND lock_backend_pid = :pid "
+                    "  AND last_heartbeat_at < NOW() - make_interval(secs => :sec) "
+                    "FOR UPDATE"
+                ),
+                {"h": str(stale_holder_id), "pid": stale_pid, "sec": stale_threshold_sec},
+            )
+            if recheck.first() is None:
+                return False
+            term_result = await connection.execute(
+                text("SELECT pg_terminate_backend(:pid) AS terminated"),
+                {"pid": stale_pid},
+            )
+            terminated = bool(term_result.scalar())
+
+        if not terminated and not self._privilege_warned:
+            logger.warning(
+                "control_plane_leader_preempt_no_op",
+                reason=(
+                    "pg_terminate_backend returned false; either pid already "
+                    "exited or role lacks pg_signal_backend / same-role membership"
+                ),
+                stale_pid=stale_pid,
+            )
+            self._privilege_warned = True
+
+        retry = await connection.execute(
+            text("SELECT pg_try_advisory_lock(:lock_id)"),
+            {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
+        )
+        return bool(retry.scalar())
+
+    async def _claim_heartbeat_row(self) -> None:
+        """Stamp the row with my holder_id, my backend pid, and fresh timestamps.
+
+        Called immediately after acquisition so a watcher reading the row
+        cannot see a stale heartbeat that still names a previous holder.
+        Uses the lock-holding connection so it commits with the lock.
+        """
+        assert self._connection is not None
+        await self._connection.execute(
+            text(
+                "INSERT INTO control_plane_leader_heartbeats "
+                "    (id, holder_id, lock_backend_pid, acquired_at, last_heartbeat_at) "
+                "VALUES (1, :h, pg_backend_pid(), NOW(), NOW()) "
+                "ON CONFLICT (id) DO UPDATE SET "
+                "  holder_id = EXCLUDED.holder_id, "
+                "  lock_backend_pid = EXCLUDED.lock_backend_pid, "
+                "  acquired_at = EXCLUDED.acquired_at, "
+                "  last_heartbeat_at = EXCLUDED.last_heartbeat_at"
+            ),
+            {"h": str(self._holder_id)},
+        )
+        await self._connection.commit()
+
+    async def write_heartbeat(self) -> None:
+        """Renew the heartbeat on the lock-holding connection itself."""
+        if self._connection is None:
+            raise LeadershipLost("write_heartbeat called without a held lock connection")
+        try:
+            result = await self._connection.execute(
+                text(
+                    "UPDATE control_plane_leader_heartbeats "
+                    "SET last_heartbeat_at = NOW() "
+                    "WHERE id = 1 AND holder_id = :h "
+                    "RETURNING last_heartbeat_at"
+                ),
+                {"h": str(self._holder_id)},
+            )
+        except Exception as exc:
+            raise LeadershipLost("advisory-lock connection failed during heartbeat write") from exc
+        row = result.first()
+        await self._connection.commit()
+        if row is None:
+            raise LeadershipLost(
+                f"Heartbeat row no longer holds holder_id={self._holder_id}; another backend has taken leadership"
+            )
 
     async def release(self) -> None:
         if self._connection is None:
@@ -43,9 +191,15 @@ class ControlPlaneLeader:
                 text("SELECT pg_advisory_unlock(:lock_id)"),
                 {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
             )
+        except Exception:
+            logger.debug("control_plane_leader_release_unlock_failed", exc_info=True)
         finally:
-            await self._connection.close()
+            try:
+                await self._connection.close()
+            except Exception:
+                logger.debug("control_plane_leader_release_close_failed", exc_info=True)
             self._connection = None
+            self._holder_id = uuid.uuid4()
 
 
 control_plane_leader = ControlPlaneLeader()
