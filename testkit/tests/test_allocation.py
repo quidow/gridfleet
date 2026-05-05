@@ -192,6 +192,28 @@ def test_allocated_device_defaults_unavailable_includes_and_config_is_masked() -
     assert allocated.config_is_masked is False
 
 
+def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
+    client = FakeClient()
+    payload = claim_payload(config={"ip": "10.0.0.8", "username": "operator", "password": "********"})
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
+
+    assert allocated.config == {"ip": "10.0.0.8", "username": "operator", "password": "********"}
+    assert allocated.config_is_masked is True
+    assert client.config_calls == []
+    assert client.device_calls == []
+
+
+def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_absent() -> None:
+    client = FakeClient()
+
+    allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client)
+
+    assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
+    assert allocated.config_is_masked is False
+    assert client.config_calls == [("SERIAL123", True)]
+
+
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)

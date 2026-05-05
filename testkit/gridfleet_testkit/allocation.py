@@ -114,7 +114,16 @@ def hydrate_allocated_device(
         payload = _merge_device_detail(payload, client.get_device(device_id))
 
     connection_target = _optional_string_value(payload, "connection_target")
-    config = client.get_device_config(connection_target) if fetch_config and connection_target else None
+    inline_config = payload.get("config")
+    if isinstance(inline_config, dict):
+        config: dict[str, Any] | None = inline_config
+        config_is_masked = True
+    elif fetch_config and connection_target:
+        config = client.get_device_config(connection_target)
+        config_is_masked = False
+    else:
+        config = None
+        config_is_masked = False
     live_capabilities = client.get_device_capabilities(device_id) if fetch_capabilities else None
 
     return AllocatedDevice(
@@ -135,6 +144,7 @@ def hydrate_allocated_device(
         claimed_by=_string_value(payload, "claimed_by"),
         claimed_at=_string_value(payload, "claimed_at"),
         config=config,
+        config_is_masked=config_is_masked,
         live_capabilities=live_capabilities,
     )
 
