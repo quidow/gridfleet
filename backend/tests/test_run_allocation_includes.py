@@ -3,13 +3,14 @@ from typing import get_type_hints
 import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.device import Device
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, UnavailableInclude
 from app.services import run_service
+from app.services.config_service import MASK_VALUE
 from app.services.run_service import _build_device_info
 from tests.helpers import create_device, create_reserved_run
 
@@ -223,3 +224,119 @@ def test_parse_includes_rejects_unknown_token_with_machine_readable_detail() -> 
         "code": "unknown_include",
         "values": ["garbage"],
     }
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_hydrate_reserved_device_info_attaches_masked_config(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="cfg-device",
+    )
+    device.device_config = {"app_username": "alice", "credentials_secret": "shh"}
+    await db_session.flush()
+    device = (
+        await db_session.execute(select(Device).options(selectinload(Device.appium_node)).where(Device.id == device.id))
+    ).scalar_one()
+
+    info = ReservedDeviceInfo(
+        device_id=str(device.id),
+        identity_value=device.identity_value,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+    )
+    await run_service.hydrate_reserved_device_info(db_session, info, device, includes={"config"})
+
+    assert info.config is not None
+    assert info.config["app_username"] == "alice"
+    assert info.config["credentials_secret"] == MASK_VALUE
+    assert info.live_capabilities is None
+    assert info.unavailable_includes is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_hydrate_reserved_device_info_capabilities_uses_capability_service(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await create_device(db_session, host_id=default_host_id, name="cap-device")
+    device = (
+        await db_session.execute(select(Device).options(selectinload(Device.appium_node)).where(Device.id == device.id))
+    ).scalar_one()
+
+    info = ReservedDeviceInfo(
+        device_id=str(device.id),
+        identity_value=device.identity_value,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+    )
+    await run_service.hydrate_reserved_device_info(db_session, info, device, includes={"capabilities"})
+
+    assert info.live_capabilities is not None
+    assert info.unavailable_includes is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_hydrate_reserved_device_infos_batches_sensitive_key_lookup(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    devices: list[Device] = []
+    for i in range(5):
+        d = await create_device(db_session, host_id=default_host_id, name=f"batch-{i}")
+        d.device_config = {"app_username": f"u{i}"}
+        devices.append(d)
+    await db_session.flush()
+    reloaded = (
+        (
+            await db_session.execute(
+                select(Device).options(selectinload(Device.appium_node)).where(Device.id.in_([d.id for d in devices]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pairs: list[tuple[ReservedDeviceInfo, Device]] = [
+        (
+            ReservedDeviceInfo(
+                device_id=str(d.id),
+                identity_value=d.identity_value,
+                pack_id=d.pack_id,
+                platform_id=d.platform_id,
+                os_version=d.os_version,
+            ),
+            d,
+        )
+        for d in reloaded
+    ]
+
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = db_session.bind
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        await run_service.hydrate_reserved_device_infos(db_session, pairs, includes={"config"})
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
+
+    distinct_pairs = {(d.pack_id, d.platform_id) for d in reloaded}
+    driver_pack_statements = [s for s in statements if "driver_packs" in s]
+    assert len(driver_pack_statements) <= len(distinct_pairs), (
+        f"expected ≤{len(distinct_pairs)} driver_packs queries, got {len(driver_pack_statements)}"
+    )

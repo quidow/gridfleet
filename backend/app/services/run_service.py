@@ -15,7 +15,7 @@ from app.models.device_reservation import DeviceReservation
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts
+from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts, UnavailableInclude
 from app.services import (
     device_health,
     device_locking,
@@ -161,6 +161,69 @@ def parse_includes(value: str | None, *, allowed: set[str]) -> set[str]:
             detail={"code": "unknown_include", "values": unknown},
         )
     return set(tokens)
+
+
+async def hydrate_reserved_device_info(
+    db: AsyncSession,
+    info: ReservedDeviceInfo,
+    device: Device,
+    *,
+    includes: set[str],
+    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None,
+) -> None:
+    """Attach optional config + live capabilities to a single ReservedDeviceInfo.
+
+    Mutates ``info.config``/``live_capabilities``/``unavailable_includes`` in place.
+    Caller must pass a ``Device`` with the ``appium_node`` relationship loaded.
+    Never raises on missing data — sets ``None`` and records the reason.
+    """
+    from app.services import capability_service, config_service, device_config_masking
+
+    unavailable: list[UnavailableInclude] = []
+
+    if "config" in includes:
+        try:
+            if sensitive_key_map is not None:
+                info.config = await device_config_masking.mask_device_config(
+                    db,
+                    device,
+                    device.device_config or {},
+                    sensitive_key_map=sensitive_key_map,
+                )
+            else:
+                info.config = await config_service.get_device_config(db, device, keys=None, reveal=False)
+        except Exception as exc:
+            info.config = None
+            unavailable.append(UnavailableInclude(include="config", reason=type(exc).__name__))
+
+    if "capabilities" in includes:
+        try:
+            info.live_capabilities = await capability_service.get_device_capabilities(db, device)
+        except Exception as exc:
+            info.live_capabilities = None
+            unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))
+
+    info.unavailable_includes = unavailable or None
+
+
+async def hydrate_reserved_device_infos(
+    db: AsyncSession,
+    pairs: list[tuple[ReservedDeviceInfo, Device]],
+    *,
+    includes: set[str],
+) -> None:
+    """Batched variant for reserve. Loads sensitive-key map once for all devices."""
+    if not includes or not pairs:
+        return
+    from app.services import device_config_masking
+
+    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None
+    if "config" in includes:
+        sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(
+            db, [device for _, device in pairs]
+        )
+    for info, device in pairs:
+        await hydrate_reserved_device_info(db, info, device, includes=includes, sensitive_key_map=sensitive_key_map)
 
 
 def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
