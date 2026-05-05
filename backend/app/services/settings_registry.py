@@ -54,6 +54,35 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=300,
     ),
     SettingDefinition(
+        key="general.leader_keepalive_enabled",
+        category="general",
+        setting_type="bool",
+        default=True,
+        description=(
+            "When true, the elected leader writes a heartbeat row every keepalive_interval_sec "
+            "and non-leaders preempt on staleness. Disable to fall back to "
+            "kernel-TCP-keepalive-driven failover."
+        ),
+    ),
+    SettingDefinition(
+        key="general.leader_keepalive_interval_sec",
+        category="general",
+        setting_type="int",
+        default=5,
+        description="How often (seconds) the elected leader writes a heartbeat row",
+        min_value=1,
+        max_value=60,
+    ),
+    SettingDefinition(
+        key="general.leader_stale_threshold_sec",
+        category="general",
+        setting_type="int",
+        default=30,
+        description="Heartbeat older than this many seconds allows non-leader preemption",
+        min_value=10,
+        max_value=600,
+    ),
+    SettingDefinition(
         key="general.max_missed_heartbeats",
         category="general",
         setting_type="int",
