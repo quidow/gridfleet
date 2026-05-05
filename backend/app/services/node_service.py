@@ -425,10 +425,12 @@ async def start_remote_temporary_node(
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        detail = exc.response.json().get("detail", str(exc)) if exc.response else str(exc)
-        message = f"Agent failed to start node: {detail}"
-        lowered = detail.lower()
-        if "already in use" in lowered or "already running on port" in lowered:
+        from app.services.agent_error_codes import AgentErrorCode
+        from app.services.agent_operations import parse_agent_error_detail
+
+        code, message_text = parse_agent_error_detail(exc.response)
+        message = f"Agent failed to start node: {message_text}"
+        if code in {AgentErrorCode.PORT_OCCUPIED.value, AgentErrorCode.ALREADY_RUNNING.value}:
             raise NodePortConflictError(message) from exc
         raise NodeManagerError(message) from exc
     except AgentCallError:
