@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.3.0...gridfleet-testkit-v0.4.0) (2026-05-06)
+
+
+### Features
+
+* **testkit:** wire ?include=config,capabilities through claim/reserve and hydrate inline ([#95](https://github.com/quidow/gridfleet/issues/95)) ([20ed20d](https://github.com/quidow/gridfleet/commit/20ed20d9ee362890923146e771ad8805b45e5bfa))
+
 ## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.2.1...gridfleet-testkit-v0.3.0) (2026-05-05)
 
 
