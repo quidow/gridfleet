@@ -1,4 +1,3 @@
-import logging
 import uuid
 from typing import Any
 
@@ -14,8 +13,6 @@ from app.services.job_kind_constants import JOB_KIND_DEVICE_VERIFICATION
 from app.services.job_queue import create_job, delete_jobs_by_kind
 from app.services.pack_platform_resolver import assert_runnable
 from app.type_defs import SessionFactory
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "run_persisted_verification_job",

@@ -255,7 +255,7 @@ export default function DeviceConfigEditor({ device }: Props) {
 
       {pendingVerificationConfig && (
         <SetupVerificationModal
-          isOpen={pendingVerificationConfig !== null}
+          isOpen
           onClose={() => setPendingVerificationConfig(null)}
           onCompleted={() => {
             setPendingVerificationConfig(null);

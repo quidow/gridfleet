@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -26,8 +25,7 @@ async def _wait_for_queue_event(queue: asyncio.Queue[Event], *, timeout: float |
     finally:
         if not get_task.done():
             get_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await get_task
+            _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
 @router.get("/events/catalog", response_model=EventCatalogRead)

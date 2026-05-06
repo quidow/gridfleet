@@ -125,5 +125,6 @@ def device_config(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict
     """
     try:
         return get_device_config_for_driver(appium_driver, gridfleet_client=gridfleet_client)
-    except ValueError:
+    except ValueError as exc:
         pytest.skip("Could not determine device connection target from session capabilities")
+        raise RuntimeError("unreachable: pytest.skip did not raise") from exc

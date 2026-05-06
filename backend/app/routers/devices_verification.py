@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import json
 import uuid
 from collections.abc import AsyncGenerator
@@ -30,8 +29,7 @@ async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
     finally:
         if not get_task.done():
             get_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await get_task
+            _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
 @router.post("/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)

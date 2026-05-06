@@ -74,7 +74,7 @@ async def handle_terminal(ws: WebSocket) -> None:
                 if receive_task not in done:
                     receive_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await receive_task
+                        _ = await receive_task
                 receive_task = None
                 exit_code = waiter_task.result()
                 outgoing.put_nowait({"type": "exit", "exit_code": exit_code})
@@ -117,19 +117,18 @@ async def handle_terminal(ws: WebSocket) -> None:
         if receive_task is not None and not receive_task.done():
             receive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await receive_task
+                _ = await receive_task
         await shell.close(reason=close_reason)
         if close_reason == "shell_exit":
             # Wait for the pump to drain the exit frame before cancelling
             with contextlib.suppress(TimeoutError, Exception):
                 await asyncio.wait_for(reader_task, timeout=2.0)
         reader_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await reader_task
+        _ = await asyncio.gather(reader_task, return_exceptions=True)
         if not waiter_task.done():
             waiter_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await waiter_task
+                _ = await waiter_task
         with contextlib.suppress(Exception):
             await ws.close()
 

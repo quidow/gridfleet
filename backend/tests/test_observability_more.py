@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from app import observability
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_request_context_helpers_round_trip() -> None:
@@ -94,10 +96,15 @@ async def test_observe_background_loop_records_success_and_errors() -> None:
         async with observability.observe_background_loop("heartbeat", 30.0).cycle():
             pass
 
-        with pytest.raises(RuntimeError, match="boom"):
+        raised = False
+        try:
             async with observability.observe_background_loop("heartbeat", 30.0).cycle():
                 raise RuntimeError("boom")
+        except RuntimeError as exc:
+            assert str(exc) == "boom"
+            raised = True
 
-    assert writer.await_count == 4
-    record_run.assert_called_once()
-    record_error.assert_called_once()
+        assert raised
+        assert writer.await_count == 4
+        record_run.assert_called_once()
+        record_error.assert_called_once()

@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,8 @@ from app.services.pack_capability_service import (
 )
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.pack_start_shim import resolve_pack_for_device
+
+logger = logging.getLogger(__name__)
 
 
 def _is_running_emulator(device: Device) -> bool:
@@ -127,7 +130,7 @@ async def get_device_capabilities(
             automation_name = stereotype.get("appium:automationName")
             appium_platform_name = stereotype.get("platformName")
         except LookupError:
-            pass
+            logger.debug("Stereotype not found for pack=%s platform=%s", pack_id, platform_id, exc_info=True)
         try:
             resolved_plat = await resolve_pack_platform(
                 db,

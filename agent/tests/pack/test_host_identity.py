@@ -15,7 +15,7 @@ async def test_wait_returns_host_id_once_set() -> None:
 
     task = asyncio.create_task(_set_later())
     host_id = await identity.wait()
-    await task  # ensure clean completion
+    _ = await task  # ensure clean completion
     assert host_id == "00000000-0000-0000-0000-000000000001"
 
 

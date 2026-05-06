@@ -80,8 +80,6 @@ Root-Is-Purelib: true
 Tag: py3-none-any
 """
 
-_WHEEL_RECORD = ""  # contents written dynamically below
-
 
 def _adapter_module_names() -> list[str]:
     return [name for name in sys.modules if name == "adapter" or name.startswith("adapter.")]

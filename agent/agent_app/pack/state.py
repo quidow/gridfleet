@@ -21,26 +21,31 @@ logger = logging.getLogger(__name__)
 
 
 class PackStateClient(Protocol):
-    async def fetch_desired(self) -> dict[str, Any]: ...
-    async def post_status(self, payload: dict[str, Any]) -> None: ...
+    async def fetch_desired(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def post_status(self, payload: dict[str, Any]) -> None:
+        raise NotImplementedError
 
 
 class RuntimeMgr(Protocol):
-    async def reconcile(
-        self, desired_by_pack: dict[str, RuntimeSpec]
-    ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]: ...
+    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
+        raise NotImplementedError
 
 
 class AdapterLoaderFn(Protocol):
-    async def __call__(self, pack: DesiredPack, env: RuntimeEnv) -> None: ...
+    async def __call__(self, pack: DesiredPack, env: RuntimeEnv) -> None:
+        raise NotImplementedError
 
 
 class VersionCatalog(Protocol):
-    async def versions(self, package: str) -> list[str]: ...
+    async def versions(self, package: str) -> list[str]:
+        raise NotImplementedError
 
 
 class DriverDoctorRunner(Protocol):
-    async def __call__(self, driver_name: str, env: RuntimeEnv) -> dict[str, object]: ...
+    async def __call__(self, driver_name: str, env: RuntimeEnv) -> dict[str, object]:
+        raise NotImplementedError
 
 
 @dataclass

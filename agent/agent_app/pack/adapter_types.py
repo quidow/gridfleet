@@ -148,22 +148,28 @@ class DriverPackAdapter(Protocol):
     pack_id: str
     pack_release: str
 
-    async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]: ...
+    async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
+        raise NotImplementedError
 
-    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]: ...
+    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
+        raise NotImplementedError
 
-    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]: ...
+    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
+        raise NotImplementedError
 
     async def lifecycle_action(
         self,
         action_id: Literal["reconnect", "boot", "shutdown", "state"],
         args: dict[str, Any],
         ctx: LifecycleContext,
-    ) -> LifecycleActionResult: ...
+    ) -> LifecycleActionResult:
+        raise NotImplementedError
 
-    async def pre_session(self, spec: SessionSpec) -> dict[str, Any]: ...
+    async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
+        raise NotImplementedError
 
-    async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None: ...
+    async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
+        raise NotImplementedError
 
     async def feature_action(
         self,
@@ -171,14 +177,18 @@ class DriverPackAdapter(Protocol):
         action_id: str,
         args: dict[str, Any],
         ctx: LifecycleContext,
-    ) -> FeatureActionResult: ...
+    ) -> FeatureActionResult:
+        raise NotImplementedError
 
     async def sidecar_lifecycle(
         self,
         feature_id: str,
         action: Literal["start", "stop", "status"],
-    ) -> SidecarStatus: ...
+    ) -> SidecarStatus:
+        raise NotImplementedError
 
-    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice: ...
+    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
+        raise NotImplementedError
 
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry: ...
+    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
+        raise NotImplementedError
