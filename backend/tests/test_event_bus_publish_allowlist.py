@@ -13,7 +13,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 
 
 ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
-    "app/routers/hosts.py:68": (
+    "app/routers/hosts.py:85": (
         "_auto_discover calls pack_discovery_service.discover_devices, which is read-only. "
         "No writer transaction exists to bind this notification to."
     ),
