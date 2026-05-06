@@ -438,7 +438,9 @@ async def attempt_auto_recovery(
             await db.commit()
             return False
 
-    from app.services import session_viability
+    # session_viability calls back into lifecycle_policy.handle_health_failure,
+    # so a top-level import would form a mutual cycle.
+    from app.services import session_viability  # noqa: PLC0415
 
     result: dict[str, Any] = {}
     for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):
