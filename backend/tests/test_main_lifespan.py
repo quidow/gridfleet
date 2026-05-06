@@ -170,6 +170,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -216,6 +217,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
