@@ -53,7 +53,7 @@ def _request_kwargs(
     headers: dict[str, str],
     params: QueryParams,
     timeout: float | int | None,
-    auth: httpx.Auth | None,
+    auth: httpx.Auth | None = None,
     json_body: JsonBody,
 ) -> dict[str, object]:
     kwargs: dict[str, object] = {"headers": headers}
