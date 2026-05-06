@@ -16,6 +16,7 @@ from app.services import (
     lifecycle_incident_service,
     lifecycle_policy_summary,
     run_service,
+    session_viability,
 )
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
@@ -438,10 +439,6 @@ async def attempt_auto_recovery(
             await db.commit()
             return False
 
-    # session_viability calls back into lifecycle_policy.handle_health_failure,
-    # so a top-level import would form a mutual cycle.
-    from app.services import session_viability  # noqa: PLC0415
-
     result: dict[str, Any] = {}
     for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):
         device = await _reload_device(db, device)
@@ -599,3 +596,6 @@ async def attempt_auto_recovery(
     )
     await db.commit()
     return True
+
+
+session_viability.configure_health_failure_handler(handle_health_failure)

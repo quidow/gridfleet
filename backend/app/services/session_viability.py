@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from sqlalchemy import select
@@ -17,7 +17,6 @@ from app.services import (
     control_plane_state_store,
     device_health,
     device_locking,
-    lifecycle_policy,
 )
 from app.services.agent_operations import appium_probe_session
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
@@ -32,6 +31,25 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
+
+
+class HealthFailureHandler(Protocol):
+    async def __call__(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        source: str,
+        reason: str,
+    ) -> object: ...
+
+
+_health_failure_handler: HealthFailureHandler | None = None
+
+
+def configure_health_failure_handler(handler: HealthFailureHandler | None) -> None:
+    global _health_failure_handler
+    _health_failure_handler = handler
 
 
 def _now_iso() -> str:
@@ -330,8 +348,8 @@ async def run_session_viability_probe(
             )
             if config_changed:
                 await db.commit()
-        if not ok and checked_by != "recovery":
-            await lifecycle_policy.handle_health_failure(
+        if not ok and checked_by != "recovery" and _health_failure_handler is not None:
+            await _health_failure_handler(
                 db,
                 device,
                 source="session_viability",

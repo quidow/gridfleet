@@ -14,7 +14,14 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.device import Device
     from app.models.host_terminal_session import HostTerminalSession
-    from app.services.host_versioning import AgentVersionStatus
+
+from app.services.host_versioning import (
+    AgentVersionStatus,
+    get_agent_version_status,
+    get_recommended_agent_version,
+    get_required_agent_version,
+    is_agent_update_available,
+)
 
 
 class OSType(enum.StrEnum):
@@ -47,30 +54,20 @@ class Host(Base):
         "HostTerminalSession", back_populates="host", cascade="all, delete-orphan"
     )
 
-    # host_versioning imports settings_service which imports models, so a
-    # top-level import here would form a cycle through models/__init__.
     @property
     def required_agent_version(self) -> str | None:
-        from app.services.host_versioning import get_required_agent_version  # noqa: PLC0415
-
         return get_required_agent_version()
 
     @property
     def agent_version_status(self) -> AgentVersionStatus:
-        from app.services.host_versioning import get_agent_version_status  # noqa: PLC0415
-
         return get_agent_version_status(self)
 
     @property
     def recommended_agent_version(self) -> str | None:
-        from app.services.host_versioning import get_recommended_agent_version  # noqa: PLC0415
-
         return get_recommended_agent_version()
 
     @property
     def agent_update_available(self) -> bool:
-        from app.services.host_versioning import is_agent_update_available  # noqa: PLC0415
-
         return is_agent_update_available(self.agent_version)
 
     @property
