@@ -225,5 +225,7 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
 
     monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
 
-    await agent_operations.agent_health("agent.local", agent_port=5100)
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100)
+    assert payload == {"status": "ok"}, "pool branch did not call .get"
+    assert "kwargs" in captured
     assert "auth" not in captured["kwargs"]  # type: ignore[operator]

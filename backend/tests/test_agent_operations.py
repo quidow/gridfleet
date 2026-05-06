@@ -10,6 +10,8 @@ from app.services import agent_operations
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from app.agent_client import AgentClientFactory, QueryParams, RequestHeaders
 
 
@@ -399,27 +401,39 @@ async def test_agent_request_passes_auth() -> None:
     assert kwargs["auth"] is auth
 
 
+def _make_capturing_factory(captured: list[httpx.Auth | None]) -> Callable[..., StrictAgentClient]:
+    class CapturingClient(StrictAgentClient):
+        async def get(
+            self,
+            url: str,
+            *,
+            params: QueryParams = None,
+            headers: RequestHeaders = None,
+            timeout: float | int | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.Response:
+            captured.append(auth)
+            return await super().get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=timeout,
+                auth=auth,
+            )
+
+    def factory(**_kwargs: object) -> StrictAgentClient:
+        return CapturingClient()
+
+    return factory
+
+
 async def test_send_request_supplies_basic_auth_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected_auth = httpx.BasicAuth("ops", "secret")
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: expected_auth)
     captured: list[httpx.Auth | None] = []
-
-    class CapturingClient(StrictAgentClient):
-        async def get(
-            self,
-            url: str,
-            *,
-            params: object = None,
-            headers: object = None,
-            timeout: object = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.Response:  # type: ignore[override]
-            captured.append(auth)
-            return await super().get(url, params=params, headers=headers, timeout=timeout, auth=auth)  # type: ignore[arg-type]
-
-    factory = lambda **_kwargs: CapturingClient()  # noqa: E731
+    factory = _make_capturing_factory(captured)
     await agent_operations.agent_health(
         "host.test",
         agent_port=5100,
@@ -431,20 +445,6 @@ async def test_send_request_supplies_basic_auth_when_configured(
 async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     captured: list[httpx.Auth | None] = []
-
-    class CapturingClient(StrictAgentClient):
-        async def get(
-            self,
-            url: str,
-            *,
-            params: object = None,
-            headers: object = None,
-            timeout: object = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.Response:  # type: ignore[override]
-            captured.append(auth)
-            return await super().get(url, params=params, headers=headers, timeout=timeout, auth=auth)  # type: ignore[arg-type]
-
-    factory = lambda **_kwargs: CapturingClient()  # noqa: E731
+    factory = _make_capturing_factory(captured)
     await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory)
     assert captured == [None]
