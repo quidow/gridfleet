@@ -76,7 +76,7 @@ def _parse_node_version(path: str) -> tuple[int, ...]:
             if part.startswith("v") and "." in part:
                 return tuple(int(x) for x in part.lstrip("v").split("."))
     except (ValueError, IndexError):
-        pass
+        logger.debug("Failed to parse node version from %r", path, exc_info=True)
     return (0,)
 
 
@@ -159,7 +159,7 @@ def _find_java() -> str:
                 if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                     return candidate
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+            logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
     search_paths = [
         os.path.expanduser("~/.sdkman/candidates/java/current/bin"),
         "/usr/local/bin",
@@ -187,7 +187,7 @@ def _find_java() -> str:
                 if jh:
                     search_paths.append(os.path.join(jh, "bin"))
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+            logger.debug("/usr/libexec/java_home search probe failed", exc_info=True)
     for search_dir in search_paths:
         candidate = os.path.join(search_dir, "java")
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
@@ -925,7 +925,7 @@ class AppiumProcessManager:
                 appium_proc.kill()
                 await appium_proc.wait()
             except ProcessLookupError:
-                pass
+                logger.debug("Appium process on port %d already exited before kill", spec.port, exc_info=True)
             for task in log_tasks:
                 task.cancel()
             self._remove_log_tasks(spec.port, log_tasks)

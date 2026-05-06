@@ -68,7 +68,7 @@ def _read_avd_config(avd_name: str) -> dict[str, str]:
                     key, _, value = line.partition("=")
                     config[key.strip()] = value.strip()
     except OSError:
-        pass
+        logger.debug("Failed to read AVD config at %s", config_path, exc_info=True)
     return config
 
 

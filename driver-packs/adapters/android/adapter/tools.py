@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from agent_app.pack.adapter_utils import find_tool, run_cmd
+
+logger = logging.getLogger(__name__)
 
 _ANDROID_SDK_PATHS = [
     os.path.expanduser("~/Library/Android/sdk"),
@@ -55,7 +58,7 @@ def read_avd_config(avd_name: str) -> dict[str, str]:
                     key, _, value = stripped.partition("=")
                     config[key.strip()] = value.strip()
     except OSError:
-        pass
+        logger.debug("Failed to read AVD config at %s", config_path, exc_info=True)
     return config
 
 

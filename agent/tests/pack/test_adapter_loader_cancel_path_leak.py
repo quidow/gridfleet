@@ -60,7 +60,7 @@ async def test_cancelled_adapter_call_does_not_leak_import_state(tmp_path: Path)
         assert sys.path[0] == str(pack_a_dir)
         assert task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            _ = await task
 
         assert str(pack_a_dir) not in sys.path, (
             f"cancelled adapter call leaked its install dir into sys.path: {sys.path!r}"

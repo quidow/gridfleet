@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import shutil
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_node_version(path: str) -> tuple[int, ...]:
@@ -15,7 +18,7 @@ def _parse_node_version(path: str) -> tuple[int, ...]:
             if part.startswith("v") and "." in part:
                 return tuple(int(x) for x in part.lstrip("v").split("."))
     except (ValueError, IndexError):
-        pass
+        logger.debug("Failed to parse node version from %r", path, exc_info=True)
     return (0,)
 
 

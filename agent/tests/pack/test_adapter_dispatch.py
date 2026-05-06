@@ -427,7 +427,7 @@ async def test_dispatch_post_session_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_discover_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -439,7 +439,7 @@ async def test_dispatch_discover_timeout(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.mark.asyncio
 async def test_dispatch_doctor_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -450,7 +450,7 @@ async def test_dispatch_doctor_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_health_check_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -461,7 +461,7 @@ async def test_dispatch_health_check_timeout(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_dispatch_lifecycle_action_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -472,7 +472,7 @@ async def test_dispatch_lifecycle_action_timeout(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.asyncio
 async def test_dispatch_pre_session_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -488,7 +488,7 @@ async def test_dispatch_pre_session_timeout(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.asyncio
 async def test_dispatch_post_session_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -628,7 +628,7 @@ async def test_dispatch_pre_session_contract_error() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_error_attributes() -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     adapter = _TimeoutAdapter()
     # Use a very short timeout
@@ -680,7 +680,7 @@ async def test_dispatch_feature_action_returns_result() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_feature_action_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -759,7 +759,7 @@ async def test_dispatch_sidecar_lifecycle_status_action() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_sidecar_lifecycle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -810,7 +810,7 @@ async def test_dispatch_telemetry_returns_telemetry() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_normalize_device_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
@@ -821,7 +821,7 @@ async def test_dispatch_normalize_device_timeout(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.asyncio
 async def test_dispatch_telemetry_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_app.pack.adapter_dispatch as mod
+    from agent_app.pack import adapter_dispatch as mod
 
     monkeypatch.setattr(mod, "ADAPTER_HOOK_TIMEOUT_SECONDS", 0.01)
     adapter = _TimeoutAdapter()
