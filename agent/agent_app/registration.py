@@ -6,13 +6,14 @@ import asyncio
 import logging
 import platform
 import socket
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from agent_app import __version__
 from agent_app.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.config import agent_settings
+from agent_app.grid_url import get_local_ip
 from agent_app.version_guidance import update_version_guidance
 
 if TYPE_CHECKING:
@@ -20,23 +21,9 @@ if TYPE_CHECKING:
 
     from agent_app.pack.host_identity import HostIdentity
 
+__all__ = ["get_local_ip", "register_with_manager", "registration_loop"]
+
 logger = logging.getLogger(__name__)
-
-
-def get_local_ip() -> str:
-    """Detect the local IP address reachable by the manager."""
-    if agent_settings.advertise_ip:
-        return agent_settings.advertise_ip
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            sockname = cast("tuple[str, int]", s.getsockname())
-            return sockname[0]
-        finally:
-            s.close()
-    except OSError:
-        return socket.gethostbyname(socket.gethostname())
 
 
 def _map_os_type() -> str:

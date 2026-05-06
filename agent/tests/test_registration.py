@@ -19,8 +19,8 @@ def test_get_local_ip_uses_udp_socket_address() -> None:
     socket_obj.getsockname.return_value = ("10.0.0.10", 54321)
 
     with (
-        patch("agent_app.registration.agent_settings.advertise_ip", None),
-        patch("agent_app.registration.socket.socket", return_value=socket_obj),
+        patch("agent_app.grid_url.agent_settings.advertise_ip", None),
+        patch("agent_app.grid_url.socket.socket", return_value=socket_obj),
     ):
         assert get_local_ip() == "10.0.0.10"
 
@@ -30,10 +30,10 @@ def test_get_local_ip_uses_udp_socket_address() -> None:
 
 def test_get_local_ip_falls_back_to_hostname_lookup() -> None:
     with (
-        patch("agent_app.registration.agent_settings.advertise_ip", None),
-        patch("agent_app.registration.socket.socket", side_effect=OSError),
-        patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
-        patch("agent_app.registration.socket.gethostbyname", return_value="127.0.0.1"),
+        patch("agent_app.grid_url.agent_settings.advertise_ip", None),
+        patch("agent_app.grid_url.socket.socket", side_effect=OSError),
+        patch("agent_app.grid_url.socket.gethostname", return_value="agent-host"),
+        patch("agent_app.grid_url.socket.gethostbyname", return_value="127.0.0.1"),
     ):
         assert get_local_ip() == "127.0.0.1"
 

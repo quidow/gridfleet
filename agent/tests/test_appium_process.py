@@ -96,8 +96,8 @@ def test_build_env_adds_paths() -> None:
         patch("agent_app.appium_process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium_process.os.path.isfile", return_value=True),
         patch("agent_app.appium_process.os.access", return_value=True),
-        patch("agent_app.tool_utils._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.tool_utils.find_android_home", return_value="/opt/android"),
+        patch("agent_app.appium_process._find_adb", return_value="/opt/android/platform-tools/adb"),
+        patch("agent_app.appium_process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
         env = _build_env(
@@ -119,8 +119,8 @@ def test_build_env_applies_workaround_env() -> None:
         patch("agent_app.appium_process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium_process.os.path.isfile", return_value=True),
         patch("agent_app.appium_process.os.access", return_value=True),
-        patch("agent_app.tool_utils._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.tool_utils.find_android_home", return_value="/opt/android"),
+        patch("agent_app.appium_process._find_adb", return_value="/opt/android/platform-tools/adb"),
+        patch("agent_app.appium_process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
         env = _build_env(
@@ -139,8 +139,8 @@ def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> 
         patch("agent_app.appium_process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium_process.os.path.isfile", return_value=True),
         patch("agent_app.appium_process.os.access", return_value=True),
-        patch("agent_app.tool_utils._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.tool_utils.find_android_home", return_value="/opt/android"),
+        patch("agent_app.appium_process._find_adb", return_value="/opt/android/platform-tools/adb"),
+        patch("agent_app.appium_process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
         env = _build_env(
@@ -156,8 +156,8 @@ def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> 
 def test_build_env_does_not_derive_java_home_from_fallback_command() -> None:
     with (
         patch("agent_app.appium_process._find_java", return_value="java"),
-        patch("agent_app.tool_utils._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.tool_utils.find_android_home", return_value="/opt/android"),
+        patch("agent_app.appium_process._find_adb", return_value="/opt/android/platform-tools/adb"),
+        patch("agent_app.appium_process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
         env = _build_env(appium_bin="/usr/local/bin/appium")

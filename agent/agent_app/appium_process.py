@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from agent_app.config import agent_settings
+from agent_app.grid_url import get_local_ip
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
@@ -479,8 +480,6 @@ class AppiumProcessManager:
 
     def _grid_external_url(self, node_port: int) -> str:
         if self._grid_advertise_ip is None:
-            from agent_app.registration import get_local_ip
-
             self._grid_advertise_ip = get_local_ip()
         return f"http://{self._grid_advertise_ip}:{node_port}"
 
