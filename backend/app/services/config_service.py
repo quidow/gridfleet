@@ -8,8 +8,11 @@ from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import Device
 from app.services import device_readiness
 from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
-from app.services.device_config_masking_primitives import MASK_VALUE, deep_merge  # noqa: F401
+from app.services.device_config_masking_primitives import MASK_VALUE as _MASK_VALUE
+from app.services.device_config_masking_primitives import deep_merge
 from app.services.event_bus import queue_event_for_session
+
+MASK_VALUE = _MASK_VALUE
 
 
 def _filter_keys(config: dict[str, Any], keys: list[str]) -> dict[str, Any]:

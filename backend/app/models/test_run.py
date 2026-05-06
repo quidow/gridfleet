@@ -3,14 +3,16 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-from app.models.device_reservation import DeviceReservation
+
+if TYPE_CHECKING:
+    from app.models.device_reservation import DeviceReservation
 
 
 class RunState(enum.StrEnum):
@@ -59,6 +61,10 @@ class TestRun(Base):
 
     @reserved_devices.setter
     def reserved_devices(self, value: list[dict[str, Any]] | None) -> None:
+        # DeviceReservation imports TestRun for its relationship type, so this
+        # stays local to avoid a model import cycle under static analysis.
+        from app.models.device_reservation import DeviceReservation  # noqa: PLC0415
+
         self.device_reservations = []
         if not value:
             return

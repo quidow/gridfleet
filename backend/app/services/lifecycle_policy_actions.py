@@ -15,7 +15,6 @@ from app.services import (
     device_locking,
     lifecycle_incident_service,
     maintenance_service,
-    run_service,
 )
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
@@ -77,6 +76,11 @@ async def exclude_run_if_needed(
     reason: str,
     source: str,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
+    # run_service imports lifecycle_policy, which imports this module. Keep this
+    # import local to avoid a module-load cycle when lifecycle_policy_actions is
+    # imported directly.
+    from app.services import run_service  # noqa: PLC0415
+
     run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
     if run is None:
         return None, entry
@@ -111,6 +115,11 @@ async def restore_run_if_needed(
     reason: str,
     source: str,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
+    # run_service imports lifecycle_policy, which imports this module. Keep this
+    # import local to avoid a module-load cycle when lifecycle_policy_actions is
+    # imported directly.
+    from app.services import run_service  # noqa: PLC0415
+
     if run is None or run.state in TERMINAL_STATES or not run_service.reservation_entry_is_excluded(entry):
         return run, entry
 
