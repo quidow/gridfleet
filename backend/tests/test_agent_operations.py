@@ -379,7 +379,7 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
     assert exc_info.value.host == "10.0.0.1"
 
 
-async def test_agent_request_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_agent_request_passes_auth() -> None:
     from app.agent_client import request as agent_request
 
     client = StrictAgentClient()

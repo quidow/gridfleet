@@ -52,9 +52,9 @@ def _request_kwargs(
     *,
     headers: dict[str, str],
     params: QueryParams,
-    json_body: JsonBody,
     timeout: float | int | None,
     auth: httpx.Auth | None,
+    json_body: JsonBody,
 ) -> dict[str, object]:
     kwargs: dict[str, object] = {"headers": headers}
     if params is not None:
@@ -95,9 +95,9 @@ async def request(
         method.lower(),
         headers=request_headers,
         params=params,
-        json_body=json_body,
         timeout=timeout,
         auth=auth,
+        json_body=json_body,
     )
     started = perf_counter()
     outcome = "success"
