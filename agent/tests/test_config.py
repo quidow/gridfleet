@@ -23,3 +23,29 @@ def test_agent_settings_rejects_whitespace_token(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("AGENT_TERMINAL_TOKEN", "   ")
     with pytest.raises(ValueError, match="AGENT_TERMINAL_TOKEN"):
         AgentSettings()
+
+
+def test_agent_settings_rejects_api_auth_username_without_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_API_AUTH_USERNAME", "ops")
+    monkeypatch.delenv("AGENT_API_AUTH_PASSWORD", raising=False)
+    with pytest.raises(ValueError, match="AGENT_API_AUTH"):
+        AgentSettings()
+
+
+def test_agent_settings_rejects_api_auth_password_without_username(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_API_AUTH_USERNAME", raising=False)
+    monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "secret")
+    with pytest.raises(ValueError, match="AGENT_API_AUTH"):
+        AgentSettings()
+
+
+def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_API_AUTH_USERNAME", "ops")
+    monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "secret")
+    settings = AgentSettings()
+    assert settings.api_auth_username == "ops"
+    assert settings.api_auth_password == "secret"

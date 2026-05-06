@@ -6,6 +6,8 @@ class AgentSettings(BaseSettings):
     manager_url: str = "http://localhost:8000"
     manager_auth_username: str | None = None
     manager_auth_password: str | None = None
+    api_auth_username: str | None = None
+    api_auth_password: str | None = None
     registration_refresh_interval_sec: int = 30
     agent_port: int = 5100
     grid_hub_url: str = "http://selenium-hub:4444"
@@ -30,6 +32,14 @@ class AgentSettings(BaseSettings):
         has_password = bool(self.manager_auth_password)
         if has_username != has_password:
             raise ValueError("AGENT_MANAGER_AUTH_USERNAME and AGENT_MANAGER_AUTH_PASSWORD must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def validate_api_auth(self) -> "AgentSettings":
+        has_username = bool(self.api_auth_username)
+        has_password = bool(self.api_auth_password)
+        if has_username != has_password:
+            raise ValueError("AGENT_API_AUTH_USERNAME and AGENT_API_AUTH_PASSWORD must be set together")
         return self
 
     @model_validator(mode="after")
