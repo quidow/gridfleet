@@ -89,12 +89,12 @@ class EventBus:
             await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
-        for task in (self._listener_task, self._poller_task):
-            if task is None:
-                continue
+        cancellable_tasks = [task for task in (self._listener_task, self._poller_task) if task is not None]
+        for task in cancellable_tasks:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        if cancellable_tasks:
+            cancelled_results = await asyncio.gather(*cancellable_tasks, return_exceptions=True)
+            del cancelled_results
         await self._shutdown_handler_tasks()
         self._listener_task = None
         self._poller_task = None

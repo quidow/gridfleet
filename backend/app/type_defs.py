@@ -16,10 +16,13 @@ type ProbeSessionFn = Callable[[JsonObject, int], Awaitable[tuple[bool, str | No
 
 
 class AsyncSessionContextManager(Protocol):
-    async def __aenter__(self) -> AsyncSession: ...
+    async def __aenter__(self) -> AsyncSession:
+        pass
 
-    async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool | None: ...
+    async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool | None:
+        pass
 
 
 class SessionFactory(Protocol):
-    def __call__(self) -> AsyncSessionContextManager: ...
+    def __call__(self) -> AsyncSessionContextManager:
+        pass

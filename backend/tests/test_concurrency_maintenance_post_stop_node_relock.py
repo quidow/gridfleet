@@ -80,7 +80,8 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
     except TimeoutError as exc:
         raise AssertionError("enter_maintenance did not re-lock Device after stop_node committed") from exc
     finally:
-        await runner_task
+        runner_results = await asyncio.gather(runner_task)
+        del runner_results
 
     async with db_session_maker() as verify:
         final_status = (

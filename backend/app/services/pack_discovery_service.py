@@ -44,7 +44,8 @@ class PackDiscoveryResult:
 
 
 class AgentClient(Protocol):
-    async def get_pack_devices(self, host: str, port: int) -> dict[str, Any]: ...
+    async def get_pack_devices(self, host: str, port: int) -> dict[str, Any]:
+        pass
 
 
 IdentityKey = tuple[str, str, str]

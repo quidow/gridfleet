@@ -140,11 +140,14 @@ class DriverPackAdapter(Protocol):
     pack_id: str
     pack_release: str
 
-    async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]: ...
+    async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
+        pass
 
-    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]: ...
+    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
+        pass
 
-    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]: ...
+    async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
+        pass
 
     async def feature_action(
         self,
@@ -152,21 +155,28 @@ class DriverPackAdapter(Protocol):
         action_id: str,
         args: dict[str, Any],
         ctx: LifecycleContext,
-    ) -> FeatureActionResult: ...
+    ) -> FeatureActionResult:
+        pass
 
     async def lifecycle_action(
         self,
         action_id: Literal["reconnect", "boot", "shutdown", "state"],
         args: dict[str, Any],
         ctx: LifecycleContext,
-    ) -> LifecycleActionResult: ...
+    ) -> LifecycleActionResult:
+        pass
 
-    async def pre_session(self, spec: SessionSpec) -> dict[str, Any]: ...
+    async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
+        pass
 
-    async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None: ...
+    async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
+        pass
 
-    async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus: ...
+    async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus:
+        pass
 
-    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice: ...
+    async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
+        pass
 
-    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry: ...
+    async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
+        pass

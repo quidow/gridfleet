@@ -14,7 +14,9 @@ def test_seed_context_now_is_frozen() -> None:
     assert ctx.now.tzinfo is UTC
     assert isinstance(ctx.now, datetime)
     # Same instance exposed each access — the context freezes the clock.
-    assert ctx.now is ctx.now
+    first = ctx.now
+    second = ctx.now
+    assert first is second
 
 
 def test_seed_context_requires_session_to_persist(monkeypatch) -> None:  # noqa: ANN001

@@ -6,9 +6,6 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-_IDENTITY_SCHEME_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
-_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-
 ALLOWED_TEMPLATE_VARS: frozenset[str] = frozenset(
     {
         "device.ip_address",

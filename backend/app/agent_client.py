@@ -19,9 +19,11 @@ type RequestHeaders = HeaderTypes | None
 
 
 class AgentHttpClient(Protocol):
-    async def __aenter__(self) -> Self: ...
+    async def __aenter__(self) -> Self:
+        raise NotImplementedError
 
-    async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool: ...
+    async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+        raise NotImplementedError
 
     async def get(
         self,
@@ -31,7 +33,8 @@ class AgentHttpClient(Protocol):
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
         auth: httpx.Auth | None = None,
-    ) -> httpx.Response: ...
+    ) -> httpx.Response:
+        raise NotImplementedError
 
     async def post(
         self,
@@ -42,7 +45,8 @@ class AgentHttpClient(Protocol):
         json: JsonBody = None,
         timeout: float | int | None = None,
         auth: httpx.Auth | None = None,
-    ) -> httpx.Response: ...
+    ) -> httpx.Response:
+        raise NotImplementedError
 
 
 type AgentClientFactory = Callable[..., AgentHttpClient] | type[httpx.AsyncClient]

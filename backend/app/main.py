@@ -187,21 +187,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await shutdown_coordinator.wait_for_drain(SHUTDOWN_DRAIN_TIMEOUT_SEC)
         for t in tasks:
             t.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await t
+        if tasks:
+            cancelled_task_results = await asyncio.gather(*tasks, return_exceptions=True)
+            del cancelled_task_results
         if watcher_task is not None:
             watcher_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher_task
+            cancelled_watcher_results = await asyncio.gather(watcher_task, return_exceptions=True)
+            del cancelled_watcher_results
         await shutdown_background_tasks()
         await settings_service.shutdown()
         await control_plane_leader.release()
         await event_bus.shutdown()
         await agent_http_pool.close()
         await engine.dispose()
-        for task in list(signal_tasks):
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        pending_signal_tasks = list(signal_tasks)
+        if pending_signal_tasks:
+            cancelled_signal_results = await asyncio.gather(*pending_signal_tasks, return_exceptions=True)
+            del cancelled_signal_results
         for signum in registered_signals:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signum)
