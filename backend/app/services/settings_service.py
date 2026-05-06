@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 
 from app.config import settings as process_settings
 from app.models.setting import Setting
+from app.services.event_bus import queue_event_for_session
 from app.services.event_catalog import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
 
 if TYPE_CHECKING:
@@ -26,13 +27,6 @@ from app.services.settings_registry import (
 
 
 def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any]) -> None:
-    """Defer the import of ``queue_event_for_session`` so static analyzers do
-    not flag the top-level ``settings_service → event_bus`` import as part of
-    a cyclic chain (`py/unsafe-cyclic-import`). The runtime cycle is benign —
-    both module bodies finish loading before any service method runs — but the
-    inline import keeps the static graph acyclic."""
-    from app.services.event_bus import queue_event_for_session
-
     queue_event_for_session(db, "settings.changed", payload)
 
 

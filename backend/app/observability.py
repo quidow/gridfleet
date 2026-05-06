@@ -13,6 +13,7 @@ from uuid import uuid4
 import structlog
 
 from app.database import async_session
+from app.metrics_recorders import record_background_loop_error, record_background_loop_run
 from app.services import control_plane_state_store
 
 if TYPE_CHECKING:
@@ -263,8 +264,6 @@ class BackgroundLoopObservation:
             try:
                 yield
             except Exception as exc:
-                from app.metrics import record_background_loop_error
-
                 finished_at = _now()
                 duration = perf_counter() - started_monotonic
                 await _write_background_loop_state(
@@ -278,8 +277,6 @@ class BackgroundLoopObservation:
                 record_background_loop_error(self.loop_name, duration)
                 raise
             else:
-                from app.metrics import record_background_loop_run
-
                 finished_at = _now()
                 duration = perf_counter() - started_monotonic
                 await _write_background_loop_state(
