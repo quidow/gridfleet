@@ -294,3 +294,61 @@ def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
     output = capsys.readouterr().out
     assert "Drain: no active local nodes" in output
     assert "GridFleet agent updated" in output
+
+
+def test_install_parser_accepts_api_auth_flags() -> None:
+    from agent_app.cli import _build_parser
+
+    ns = _build_parser().parse_args(
+        [
+            "install",
+            "--no-start",
+            "--api-auth-username",
+            "ops",
+            "--api-auth-password",
+            "secret",
+        ]
+    )
+    assert ns.api_auth_username == "ops"
+    assert ns.api_auth_password == "secret"
+
+
+def test_install_main_threads_api_auth_into_install_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cli.main` must construct an `InstallConfig` carrying the API auth fields."""
+    from agent_app import cli
+    from agent_app.installer.plan import ToolDiscovery
+
+    captured: dict[str, InstallConfig] = {}
+
+    def _fake_install_no_start(config: InstallConfig, _discovery: ToolDiscovery, **_kwargs: object) -> object:
+        captured["config"] = config
+        return type(
+            "Result",
+            (),
+            {
+                "started": False,
+                "config_env": "",
+                "service_file": "",
+                "selenium_jar": "",
+                "health": None,
+                "registration": None,
+            },
+        )()
+
+    monkeypatch.setattr(cli, "install_no_start", _fake_install_no_start)
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery())
+
+    rc = cli.main(
+        [
+            "install",
+            "--no-start",
+            "--api-auth-username",
+            "ops",
+            "--api-auth-password",
+            "secret",
+        ]
+    )
+    assert rc == 0
+    cfg = captured["config"]
+    assert cfg.api_auth_username == "ops"
+    assert cfg.api_auth_password == "secret"

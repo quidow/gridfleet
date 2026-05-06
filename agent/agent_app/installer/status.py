@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from agent_app.installer.plan import InstallConfig
 
 
-SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_TERMINAL_TOKEN"}
+SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_TERMINAL_TOKEN", "AGENT_API_AUTH_PASSWORD"}
 
 
 @dataclass(frozen=True)
@@ -76,8 +76,8 @@ def _service_state(os_name: str, *, run_command: Callable[[list[str]], str]) -> 
     return (f"unsupported OS: {os_name}", "unknown")
 
 
-def _status_health_check(url: str) -> HealthCheckResult:
-    return poll_agent_health(url, timeout_sec=2.0, interval_sec=2.0)
+def _status_health_check(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+    return poll_agent_health(url, timeout_sec=2.0, interval_sec=2.0, auth=auth)
 
 
 def collect_status(
@@ -86,7 +86,7 @@ def collect_status(
     os_name: str | None = None,
     env: Mapping[str, str] | None = None,
     run_command: Callable[[list[str]], str] = _run_status_command,
-    health_check: Callable[[str], HealthCheckResult] = _status_health_check,
+    health_check: Callable[..., HealthCheckResult] = _status_health_check,
 ) -> AgentStatus:
     resolved_os = os_name or platform.system()
     config_env = Path(config.config_env_path)
@@ -98,6 +98,10 @@ def collect_status(
     service_file = _service_file_path(config, resolved_os)
     service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
 
+    api_auth_username = parsed_env.get("AGENT_API_AUTH_USERNAME") or config.api_auth_username
+    api_auth_password = parsed_env.get("AGENT_API_AUTH_PASSWORD") or config.api_auth_password
+    api_auth = (api_auth_username, api_auth_password) if api_auth_username and api_auth_password else None
+
     if config_error:
         health = HealthCheckResult(ok=False, message="config.env unreadable; health check skipped")
     elif config_env.exists() or env is not None:
@@ -106,7 +110,8 @@ def collect_status(
             port = int(raw_port)
         except ValueError:
             port = config.port
-        health = health_check(f"http://localhost:{port}/agent/health")
+        url = f"http://localhost:{port}/agent/health"
+        health = health_check(url, auth=api_auth) if api_auth else health_check(url)
     else:
         health = HealthCheckResult(ok=False, message="config.env missing; health check skipped")
 

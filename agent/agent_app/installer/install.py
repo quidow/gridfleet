@@ -228,12 +228,13 @@ def poll_agent_health(
     timeout_sec: float = 30.0,
     interval_sec: float = 1.0,
     get: Callable[..., object] = httpx.get,
+    auth: tuple[str, str] | None = None,
 ) -> HealthCheckResult:
     deadline = time.monotonic() + timeout_sec
     last_error = "no response"
     while time.monotonic() <= deadline:
         try:
-            response = get(url, timeout=2.0)
+            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
             status_code = getattr(response, "status_code", None)
             if status_code == 200:
                 json_body = getattr(response, "json", None)
@@ -243,7 +244,7 @@ def poll_agent_health(
                     message="agent health check passed",
                     details=details if isinstance(details, dict) else {},
                 )
-            last_error = f"unexpected status {status_code}"
+            last_error = "agent rejected credentials" if status_code == 401 else f"unexpected status {status_code}"
         except Exception as exc:
             last_error = str(exc)
         time.sleep(interval_sec)
@@ -313,7 +314,7 @@ def install_with_start(
     executable: Path | None = None,
     download: Callable[[str, Path], None] = _download_selenium,
     run_command: Callable[[list[str]], None] = _run_command,
-    health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
+    health_check: Callable[..., HealthCheckResult] = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
     uid: int | None = None,
 ) -> InstallResult:
@@ -326,7 +327,15 @@ def install_with_start(
         download=download,
     )
     _start_service(resolved_os, result.service_file, run_command=run_command, uid=uid)
-    health = health_check(f"http://localhost:{config.port}/agent/health")
+
+    api_auth = (
+        (config.api_auth_username, config.api_auth_password)
+        if config.api_auth_username and config.api_auth_password
+        else None
+    )
+
+    health_url = f"http://localhost:{config.port}/agent/health"
+    health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
     registration = registration_check(config) if health.ok else None
     return InstallResult(
         config_env=result.config_env,

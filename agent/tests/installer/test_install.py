@@ -476,3 +476,95 @@ def test_download_selenium_cleans_up_temp_file_on_failure(tmp_path: Path) -> Non
 
     assert not dest.exists()
     assert not list(tmp_path.glob("*.download"))
+
+
+def test_poll_agent_health_passes_basic_auth() -> None:
+    from agent_app.installer.install import HealthCheckResult, poll_agent_health
+
+    captured: dict[str, object] = {}
+
+    class _StubResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {}
+
+    def _fake_get(
+        url: str,
+        *,
+        timeout: float,
+        auth: tuple[str, str] | None = None,
+        **_kwargs: object,
+    ) -> _StubResponse:
+        captured["url"] = url
+        captured["auth"] = auth
+        return _StubResponse()
+
+    result = poll_agent_health(
+        "http://localhost:5100/agent/health",
+        timeout_sec=1.0,
+        interval_sec=0.1,
+        get=_fake_get,
+        auth=("ops", "secret"),
+    )
+    assert isinstance(result, HealthCheckResult)
+    assert result.ok is True
+    assert captured["auth"] == ("ops", "secret")
+
+
+def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) -> None:
+    from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery
+
+    captured: dict[str, object] = {}
+
+    def _hc(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+        captured["url"] = url
+        captured["auth"] = auth
+        return HealthCheckResult(ok=True, message="ok", details={})
+
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "agent"),
+        config_dir=str(tmp_path / "etc"),
+        api_auth_username="ops",
+        api_auth_password="secret",
+    )
+    install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        download=lambda _url, _dest: None,
+        run_command=lambda _cmd: None,
+        health_check=_hc,
+        registration_check=lambda _c: RegistrationCheckResult(ok=True, message="ok"),
+    )
+
+    assert captured["auth"] == ("ops", "secret")
+
+
+def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
+    from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery
+
+    captured: dict[str, object] = {}
+
+    def _hc(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+        captured["url"] = url
+        captured["auth"] = auth
+        return HealthCheckResult(ok=True, message="ok", details={})
+
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "agent"),
+        config_dir=str(tmp_path / "etc"),
+    )
+    install_with_start(
+        config,
+        ToolDiscovery(),
+        os_name="Linux",
+        download=lambda _url, _dest: None,
+        run_command=lambda _cmd: None,
+        health_check=_hc,
+        registration_check=lambda _c: RegistrationCheckResult(ok=True, message="ok"),
+    )
+
+    assert captured["auth"] is None
