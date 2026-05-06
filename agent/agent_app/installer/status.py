@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_app.installer.install import HealthCheckResult, _service_file_path, poll_agent_health
+from agent_app.installer.install import HealthCheckCallable, HealthCheckResult, _service_file_path, poll_agent_health
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -86,7 +86,7 @@ def collect_status(
     os_name: str | None = None,
     env: Mapping[str, str] | None = None,
     run_command: Callable[[list[str]], str] = _run_status_command,
-    health_check: Callable[..., HealthCheckResult] = _status_health_check,
+    health_check: HealthCheckCallable = _status_health_check,
 ) -> AgentStatus:
     resolved_os = os_name or platform.system()
     config_env = Path(config.config_env_path)

@@ -14,7 +14,7 @@ import time
 import urllib.request
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -41,6 +41,10 @@ class HealthCheckResult:
 class RegistrationCheckResult:
     ok: bool
     message: str
+
+
+class HealthCheckCallable(Protocol):
+    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult: ...
 
 
 @dataclass(frozen=True)
@@ -314,7 +318,7 @@ def install_with_start(
     executable: Path | None = None,
     download: Callable[[str, Path], None] = _download_selenium,
     run_command: Callable[[list[str]], None] = _run_command,
-    health_check: Callable[..., HealthCheckResult] = poll_agent_health,
+    health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
     uid: int | None = None,
 ) -> InstallResult:
