@@ -397,3 +397,54 @@ async def test_agent_request_passes_auth() -> None:
     assert client.get_calls, "expected one GET call"
     _, kwargs = client.get_calls[0]
     assert kwargs["auth"] is auth
+
+
+async def test_send_request_supplies_basic_auth_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_auth = httpx.BasicAuth("ops", "secret")
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: expected_auth)
+    captured: list[httpx.Auth | None] = []
+
+    class CapturingClient(StrictAgentClient):
+        async def get(
+            self,
+            url: str,
+            *,
+            params: object = None,
+            headers: object = None,
+            timeout: object = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.Response:  # type: ignore[override]
+            captured.append(auth)
+            return await super().get(url, params=params, headers=headers, timeout=timeout, auth=auth)  # type: ignore[arg-type]
+
+    factory = lambda **_kwargs: CapturingClient()  # noqa: E731
+    await agent_operations.agent_health(
+        "host.test",
+        agent_port=5100,
+        http_client_factory=factory,
+    )
+    assert captured == [expected_auth]
+
+
+async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
+    captured: list[httpx.Auth | None] = []
+
+    class CapturingClient(StrictAgentClient):
+        async def get(
+            self,
+            url: str,
+            *,
+            params: object = None,
+            headers: object = None,
+            timeout: object = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.Response:  # type: ignore[override]
+            captured.append(auth)
+            return await super().get(url, params=params, headers=headers, timeout=timeout, auth=auth)  # type: ignore[arg-type]
+
+    factory = lambda **_kwargs: CapturingClient()  # noqa: E731
+    await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory)
+    assert captured == [None]
