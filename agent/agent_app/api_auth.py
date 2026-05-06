@@ -60,7 +60,9 @@ def _credentials_match(scope: Scope, expected_username: str, expected_password: 
     username, separator, password = decoded.partition(":")
     if not separator:
         return False
-    return hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)
+    user_ok = hmac.compare_digest(username, expected_username)
+    pass_ok = hmac.compare_digest(password, expected_password)
+    return user_ok and pass_ok
 
 
 async def _send_unauthorized(send: Send) -> None:
