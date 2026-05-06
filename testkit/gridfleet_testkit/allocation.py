@@ -135,12 +135,15 @@ def hydrate_allocated_device(
     if _needs_device_detail(payload):
         payload = _merge_device_detail(payload, client.get_device(device_id))
 
+    unavailable_includes = _parse_unavailable_includes(payload)
+    unavailable_set = {entry.include for entry in unavailable_includes}
+
     connection_target = _optional_string_value(payload, "connection_target")
     inline_config = payload.get("config")
     if isinstance(inline_config, dict):
         config: dict[str, Any] | None = inline_config
         config_is_masked = True
-    elif fetch_config and connection_target:
+    elif fetch_config and connection_target and "config" not in unavailable_set:
         config = client.get_device_config(connection_target)
         config_is_masked = False
     else:
@@ -149,12 +152,10 @@ def hydrate_allocated_device(
     inline_capabilities = payload.get("live_capabilities")
     if isinstance(inline_capabilities, dict):
         live_capabilities: dict[str, Any] | None = inline_capabilities
-    elif fetch_capabilities:
+    elif fetch_capabilities and "capabilities" not in unavailable_set:
         live_capabilities = client.get_device_capabilities(device_id)
     else:
         live_capabilities = None
-
-    unavailable_includes = _parse_unavailable_includes(payload)
 
     return AllocatedDevice(
         run_id=run_id,

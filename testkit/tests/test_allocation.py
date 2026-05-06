@@ -275,6 +275,39 @@ def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() 
     assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
 
 
+def test_hydrate_allocated_device_skips_config_fetch_when_marked_unavailable() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "config", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
+
+    assert allocated.config is None
+    assert allocated.config_is_masked is False
+    assert client.config_calls == []
+    assert allocated.unavailable_includes == (UnavailableInclude(include="config", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_skips_capabilities_fetch_when_marked_unavailable() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(
+        payload,
+        run_id="run-1",
+        client=client,
+        fetch_config=False,
+        fetch_capabilities=True,
+    )
+
+    assert allocated.live_capabilities is None
+    assert client.capability_calls == []
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
 def test_hydrate_allocated_device_rejects_reserve_shaped_payload_without_claim_metadata() -> None:
     client = FakeClient()
     reserve_shaped = claim_payload()
