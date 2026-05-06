@@ -86,8 +86,8 @@ async def test_write_background_loop_state_merges_previous_snapshot_and_truncate
 async def test_observe_background_loop_records_success_and_errors() -> None:
     with (
         patch("app.observability._write_background_loop_state", new=AsyncMock()) as writer,
-        patch("app.metrics.record_background_loop_run") as record_run,
-        patch("app.metrics.record_background_loop_error") as record_error,
+        patch("app.observability.record_background_loop_run") as record_run,
+        patch("app.observability.record_background_loop_error") as record_error,
         patch("app.observability.perf_counter", side_effect=[1.0, 2.5, 10.0, 12.0]),
         patch("app.observability._now", side_effect=[datetime.now(UTC)] * 4),
     ):

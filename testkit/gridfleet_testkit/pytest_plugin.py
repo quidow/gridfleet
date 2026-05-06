@@ -55,7 +55,9 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
         )
     """
     options = _build_driver_options(request, gridfleet_client)
-    from appium import webdriver
+    # appium is an optional dep (extra "appium"); imported lazily so consumers
+    # without the extra can still use the rest of testkit.
+    from appium import webdriver  # noqa: PLC0415
 
     try:
         driver = webdriver.Remote(GRID_URL, options=options)

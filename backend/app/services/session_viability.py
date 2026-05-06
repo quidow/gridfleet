@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from sqlalchemy import select
@@ -12,18 +12,44 @@ from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
-from app.services import capability_service, control_plane_state_store, device_health, lifecycle_policy
+from app.services import (
+    capability_service,
+    control_plane_state_store,
+    device_health,
+    device_locking,
+)
 from app.services.agent_operations import appium_probe_session
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
+from app.services.session_probe_constants import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
+
+__all__ = ["PROBE_TEST_NAME"]
 
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 logger = get_logger(__name__)
-PROBE_TEST_NAME = "__gridfleet_probe__"
 LOOP_NAME = "session_viability"
+
+
+class HealthFailureHandler(Protocol):
+    async def __call__(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        source: str,
+        reason: str,
+    ) -> object: ...
+
+
+_health_failure_handler: HealthFailureHandler | None = None
+
+
+def configure_health_failure_handler(handler: HealthFailureHandler | None) -> None:
+    global _health_failure_handler
+    _health_failure_handler = handler
 
 
 def _now_iso() -> str:
@@ -283,8 +309,6 @@ async def run_session_viability_probe(
                 await db.commit()
             return state
 
-        from app.services import device_locking
-
         locked = await device_locking.lock_device(db, device.id)
         previous_state = locked.operational_state
         await set_operational_state(
@@ -324,8 +348,8 @@ async def run_session_viability_probe(
             )
             if config_changed:
                 await db.commit()
-        if not ok and checked_by != "recovery":
-            await lifecycle_policy.handle_health_failure(
+        if not ok and checked_by != "recovery" and _health_failure_handler is not None:
+            await _health_failure_handler(
                 db,
                 device,
                 source="session_viability",
@@ -334,8 +358,6 @@ async def run_session_viability_probe(
         return state
     except Exception:
         if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
-            from app.services import device_locking
-
             relocked = await device_locking.lock_device(db, device.id)
             if relocked.operational_state == DeviceOperationalState.busy:
                 if previous_state == DeviceOperationalState.offline:

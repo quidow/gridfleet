@@ -31,6 +31,7 @@ from app.services import (
     host_resource_telemetry,
     host_service,
     host_tools,
+    host_versioning,
     pack_discovery_service,
     platform_label_service,
     plugin_service,
@@ -54,6 +55,22 @@ def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object) -> None:
     task = asyncio.create_task(task_fn(*args))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+
+def _serialize_host(host: Host) -> dict[str, Any]:
+    required_version = host_versioning.normalize_agent_version_setting(settings_service.get("agent.min_version"))
+    recommended_version = host_versioning.normalize_agent_version_setting(
+        settings_service.get("agent.recommended_version")
+    )
+    payload = HostRead.model_validate(host).model_dump()
+    payload["required_agent_version"] = required_version
+    payload["recommended_agent_version"] = recommended_version
+    payload["agent_version_status"] = host_versioning.get_agent_version_status(host.agent_version, required_version)
+    payload["agent_update_available"] = host_versioning.is_agent_update_available(
+        host.agent_version,
+        recommended_version,
+    )
+    return payload
 
 
 async def _auto_discover(host_id: uuid.UUID) -> None:
@@ -96,7 +113,7 @@ async def _auto_prepare_host_diagnostics(host_id: uuid.UUID) -> None:
 
 
 @router.post("/register", response_model=HostRead)
-async def register_host(data: HostRegister, response: Response, db: AsyncSession = Depends(get_db)) -> Host:
+async def register_host(data: HostRegister, response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     try:
         host, is_new = await host_service.register_host(db, data)
     except IntegrityError:
@@ -108,17 +125,17 @@ async def register_host(data: HostRegister, response: Response, db: AsyncSession
             _fire_and_forget(_auto_discover, host.id)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
 
-    return host
+    return _serialize_host(host)
 
 
 @router.post("/{host_id}/approve", response_model=HostRead)
-async def approve_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Host:
+async def approve_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     host = await host_service.approve_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
     _fire_and_forget(_auto_discover, host.id)
     _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
-    return host
+    return _serialize_host(host)
 
 
 @router.post("/{host_id}/reject", status_code=204)
@@ -129,17 +146,17 @@ async def reject_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("", response_model=HostRead, status_code=201)
-async def create_host(data: HostCreate, db: AsyncSession = Depends(get_db)) -> Host:
+async def create_host(data: HostCreate, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     try:
         host = await host_service.create_host(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
-    return host
+    return _serialize_host(host)
 
 
 @router.get("", response_model=list[HostRead])
-async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[Host]:
-    return await host_service.list_hosts(db)
+async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
+    return [_serialize_host(host) for host in await host_service.list_hosts(db)]
 
 
 @router.get("/capabilities")
@@ -153,7 +170,7 @@ async def get_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> di
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
 
-    payload = HostRead.model_validate(host).model_dump()
+    payload = _serialize_host(host)
     label_map = await platform_label_service.load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in host.devices),

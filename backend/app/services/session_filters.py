@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from sqlalchemy.sql import Select
 
 from app.models.session import Session
-from app.services.session_viability import PROBE_TEST_NAME
+from app.services.session_probe_constants import PROBE_TEST_NAME
 
 RESERVED_SESSION_ID = "reserved"
 

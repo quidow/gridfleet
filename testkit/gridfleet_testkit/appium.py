@@ -8,15 +8,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from .client import GridFleetClient
-
-from .client import GRID_URL
+from .client import GRID_URL, GridFleetClient
 
 
 def _catalog_payload(catalog_client: Any | None) -> dict[str, Any]:
     if catalog_client is None:
-        from .client import GridFleetClient
-
         catalog_client = GridFleetClient()
     if hasattr(catalog_client, "get_driver_pack_catalog"):
         payload = catalog_client.get_driver_pack_catalog()
@@ -97,7 +93,9 @@ def build_appium_options(
     catalog_client: Any | None = None,
 ) -> Any:
     """Build Appium options from driver-pack catalog platform metadata."""
-    from appium.options.common import AppiumOptions
+    # appium is an optional dep (extra "appium"); imported lazily so consumers
+    # without the extra can still use the rest of testkit.
+    from appium.options.common import AppiumOptions  # noqa: PLC0415
 
     params = dict(capabilities or {})
     explicit_platform_name = params.get("platformName")
@@ -133,7 +131,9 @@ def create_appium_driver(
     catalog_client: Any | None = None,
 ) -> Any:
     """Create an Appium remote driver through Selenium Grid."""
-    from appium import webdriver
+    # appium is an optional dep (extra "appium"); imported lazily so consumers
+    # without the extra can still use the rest of testkit.
+    from appium import webdriver  # noqa: PLC0415
 
     options = build_appium_options(
         pack_id=pack_id,
@@ -161,7 +161,5 @@ def get_device_config_for_driver(
     reveal: bool = True,
 ) -> dict[str, Any]:
     """Fetch device config for a live Appium driver using its runtime connection target."""
-    from .client import GridFleetClient
-
     client = gridfleet_client or GridFleetClient()
     return client.get_device_config(get_connection_target_from_driver(driver), reveal=reveal)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random as _random_module
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -617,8 +618,6 @@ def _build_runs(
 
 def _assign_terminal_states(rng: object, n: int) -> list[RunState]:
     """Distribute n terminal runs across states per spec ratios."""
-    import random as _random_module
-
     assert isinstance(rng, _random_module.Random)
 
     # 72 / 15 / 8 / 3 split (sums to 98; remainder goes to completed)
@@ -642,8 +641,6 @@ def _assign_terminal_states(rng: object, n: int) -> list[RunState]:
 
 
 def _random_requirements(rng: object) -> list[dict[str, object]]:
-    import random as _random_module
-
     assert isinstance(rng, _random_module.Random)
 
     roll = rng.random()
@@ -778,8 +775,6 @@ def _build_reservations_and_sessions(
 
 
 def _random_session_status(rng: object) -> SessionStatus:
-    import random as _random_module
-
     assert isinstance(rng, _random_module.Random)
     r = rng.random()
     if r < 0.75:

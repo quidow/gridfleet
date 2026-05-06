@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
@@ -61,13 +61,15 @@ class TestRun(Base):
 
     @reserved_devices.setter
     def reserved_devices(self, value: list[dict[str, Any]] | None) -> None:
-        from app.models.device_reservation import DeviceReservation
-
         self.device_reservations = []
         if not value:
             return
+        reservation_cls = cast(
+            "type[DeviceReservation]",
+            self.__mapper__.relationships["device_reservations"].mapper.class_,
+        )
         self.device_reservations = [
-            DeviceReservation(
+            reservation_cls(
                 device_id=uuid.UUID(str(entry["device_id"])),
                 identity_value=entry["identity_value"],
                 connection_target=entry.get("connection_target"),

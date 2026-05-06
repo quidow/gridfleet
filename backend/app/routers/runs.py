@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.metrics import RUN_CLAIMS_TOTAL
+from app.models.device import Device
 from app.models.test_run import RunState
 from app.schemas.run import (
     ClaimRequest,
@@ -76,8 +77,6 @@ async def create_run(
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     if includes:
-        from app.models.device import Device
-
         device_ids = [uuid.UUID(info.device_id) for info in device_infos]
         devices = (
             (
@@ -298,8 +297,6 @@ async def claim_device(
         raise HTTPException(status_code=409, detail=msg) from e
 
     if includes:
-        from app.models.device import Device
-
         device = (
             await db.execute(
                 select(Device).options(selectinload(Device.appium_node)).where(Device.id == uuid.UUID(info.device_id))

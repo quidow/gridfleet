@@ -10,6 +10,8 @@ from sqlalchemy.exc import NoResultFound
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.observability import get_logger
+from app.services import appium_node_locking, device_locking
+from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_event_for_session
 
@@ -89,8 +91,6 @@ def device_allows_allocation(device: Device) -> bool:
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
-    from app.services import device_locking
-
     try:
         return await device_locking.lock_device(db, device.id)
     except NoResultFound:
@@ -142,8 +142,6 @@ async def _restore_available_for_healthy_signal(
         return
     if not locked.auto_manage:
         return
-    from app.services.device_readiness import is_ready_for_use_async
-
     node = locked.appium_node
     if node is None or node.state != NodeState.running:
         return
@@ -211,8 +209,6 @@ async def apply_node_state_transition(
     mark_offline: bool = True,
     reason: str | None = None,
 ) -> None:
-    from app.services import appium_node_locking
-
     locked = await _lock(db, device)
     if locked is None:
         return

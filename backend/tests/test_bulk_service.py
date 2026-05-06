@@ -164,7 +164,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
     monkeypatch.setattr("app.services.bulk_service.queue_event_for_session", Mock())
     monkeypatch.setattr(
-        "app.services.device_service.delete_device",
+        "app.services.bulk_service.delete_device",
         AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),
     )
     monkeypatch.setattr(

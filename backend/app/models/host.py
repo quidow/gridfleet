@@ -14,7 +14,6 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.device import Device
     from app.models.host_terminal_session import HostTerminalSession
-    from app.services.host_versioning import AgentVersionStatus
 
 
 class OSType(enum.StrEnum):
@@ -46,30 +45,6 @@ class Host(Base):
     terminal_sessions: Mapped[list[HostTerminalSession]] = relationship(
         "HostTerminalSession", back_populates="host", cascade="all, delete-orphan"
     )
-
-    @property
-    def required_agent_version(self) -> str | None:
-        from app.services.host_versioning import get_required_agent_version
-
-        return get_required_agent_version()
-
-    @property
-    def agent_version_status(self) -> AgentVersionStatus:
-        from app.services.host_versioning import get_agent_version_status
-
-        return get_agent_version_status(self)
-
-    @property
-    def recommended_agent_version(self) -> str | None:
-        from app.services.host_versioning import get_recommended_agent_version
-
-        return get_recommended_agent_version()
-
-    @property
-    def agent_update_available(self) -> bool:
-        from app.services.host_versioning import is_agent_update_available
-
-        return is_agent_update_available(self.agent_version)
 
     @property
     def missing_prerequisites(self) -> list[str]:

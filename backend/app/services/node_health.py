@@ -19,8 +19,10 @@ from app.models.device_event import DeviceEventType
 from app.observability import get_logger, observe_background_loop
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.services import (
+    appium_node_locking,
     capability_service,
     device_health,
+    device_locking,
     grid_service,
     lifecycle_policy,
 )
@@ -160,8 +162,6 @@ async def _process_node_health(
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
 ) -> None:
-    from app.services import appium_node_locking
-
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None:
         # Node was deleted between the caller's lock_device and here. Bail out
@@ -467,8 +467,6 @@ async def _process_node_health(
 
 
 async def _check_nodes(db: AsyncSession) -> None:
-    from app.services import device_locking
-
     stmt = (
         select(AppiumNode)
         .where(AppiumNode.state == NodeState.running)

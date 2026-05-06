@@ -225,13 +225,10 @@ def test_build_driver_options_supports_explicit_platform_name_escape_hatch(monke
 
 def test_appium_driver_setup_failure_registers_device_less_error_session(monkeypatch):
     """When driver creation raises before a Grid session exists, the fixture registers a synthetic error session."""
-    import sys
-    import types as _types
-
-    appium_module = _types.ModuleType("appium")
-    webdriver_module = _types.ModuleType("appium.webdriver")
-    options_module = _types.ModuleType("appium.options")
-    common_module = _types.ModuleType("appium.options.common")
+    appium_module = types.ModuleType("appium")
+    webdriver_module = types.ModuleType("appium.webdriver")
+    options_module = types.ModuleType("appium.options")
+    common_module = types.ModuleType("appium.options.common")
 
     def remote_raises(url, *, options):
         raise RuntimeError("Session could not be created")

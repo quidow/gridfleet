@@ -14,6 +14,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session  # noqa: TC002
 
+from app.metrics_recorders import record_event_published
 from app.models.system_event import SystemEvent
 from app.observability import get_logger
 
@@ -113,8 +114,6 @@ class EventBus:
         logger.info("SSE client unsubscribed (total: %d)", len(self._subscribers))
 
     async def publish(self, event_type: str, data: dict[str, Any]) -> None:
-        from app.metrics import record_event_published
-
         event = Event(type=event_type, data=data)
         record_event_published(event_type)
         if self._session_factory is not None:

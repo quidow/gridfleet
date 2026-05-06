@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.models.driver_pack import DriverPack, DriverPackRelease
 from app.schemas.driver_pack import PackOut
@@ -86,8 +87,6 @@ async def fork(
         info.uname = ""
         info.gname = ""
         tar.addfile(info, io.BytesIO(manifest_bytes))
-
-    from app.config import settings
 
     storage = PackStorageService(settings.driver_pack_storage_dir)
     try:

@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from agent_app.config import agent_settings
+
 
 @dataclass(frozen=True)
 class RuntimeSpec:
@@ -212,8 +214,6 @@ class AppiumRuntimeManager:
         if root_dir is not None:
             self._root = root_dir
         else:
-            from agent_app.config import agent_settings
-
             self._root = Path(agent_settings.runtime_root)
         self._refcounts: dict[str, int] = {}
         self._installed: dict[str, RuntimeEnv] = {}

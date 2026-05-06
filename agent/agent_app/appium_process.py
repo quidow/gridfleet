@@ -16,9 +16,11 @@ from typing import Any
 import httpx
 
 from agent_app.config import agent_settings
+from agent_app.grid_url import get_local_ip
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
+from agent_app.tool_utils import _find_adb, find_android_home
 
 logger = logging.getLogger(__name__)
 
@@ -209,8 +211,6 @@ def _build_env(
         bin_dir = os.path.dirname(appium_bin)
         if bin_dir and bin_dir not in env.get("PATH", ""):
             extra_paths.append(bin_dir)
-
-    from agent_app.tool_utils import _find_adb, find_android_home
 
     adb_dir = os.path.dirname(_find_adb())
     if adb_dir and adb_dir not in env.get("PATH", ""):
@@ -480,8 +480,6 @@ class AppiumProcessManager:
 
     def _grid_external_url(self, node_port: int) -> str:
         if self._grid_advertise_ip is None:
-            from agent_app.registration import get_local_ip
-
             self._grid_advertise_ip = get_local_ip()
         return f"http://{self._grid_advertise_ip}:{node_port}"
 

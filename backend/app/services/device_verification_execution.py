@@ -11,6 +11,8 @@ from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
+    appium_node_locking,
+    appium_node_resource_service,
     capability_service,
     device_locking,
     device_service,
@@ -191,8 +193,6 @@ async def retain_verified_node(
         device = await device_locking.lock_device(db, device.id)
         if device.host_id is None:
             raise NodeManagerError(f"Verification device {device.identity_value} has no host assigned")
-
-        from app.services import appium_node_locking, appium_node_resource_service
 
         node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if node is None:

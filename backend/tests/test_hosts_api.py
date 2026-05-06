@@ -426,7 +426,7 @@ async def test_host_tool_ensure_job_runs_in_worker(client: AsyncClient, db_sessi
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
     with patch(
-        "app.services.host_tools.ensure_agent_tools",
+        "app.services.host_tools_execution.ensure_agent_tools",
         new=AsyncMock(return_value={"appium": {"success": True, "action": "none", "version": "3.3.0"}}),
     ) as ensure_mock:
         worked = await run_pending_jobs_once(session_factory)

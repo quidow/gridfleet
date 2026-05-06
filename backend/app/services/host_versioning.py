@@ -2,12 +2,6 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING
-
-from app.services.settings_service import settings_service
-
-if TYPE_CHECKING:
-    from app.models.host import Host
 
 
 class AgentVersionStatus(StrEnum):
@@ -20,27 +14,17 @@ class AgentVersionStatus(StrEnum):
 _VERSION_PARTS_RE = re.compile(r"\d+")
 
 
-def _normalized_setting(key: str) -> str | None:
-    value = settings_service.get(key)
+def normalize_agent_version_setting(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip()
     return normalized or None
 
 
-def get_required_agent_version() -> str | None:
-    return _normalized_setting("agent.min_version")
-
-
-def get_recommended_agent_version() -> str | None:
-    return _normalized_setting("agent.recommended_version")
-
-
-def is_agent_update_available(agent_version: str | None) -> bool:
-    recommended = get_recommended_agent_version()
-    if recommended is None:
+def is_agent_update_available(agent_version: str | None, recommended_version: str | None) -> bool:
+    if recommended_version is None:
         return False
-    recommended_parts = _parse_version_parts(recommended)
+    recommended_parts = _parse_version_parts(recommended_version)
     agent_parts = _parse_version_parts(agent_version)
     if recommended_parts is None or agent_parts is None:
         return False
@@ -57,13 +41,12 @@ def _parse_version_parts(value: str | None) -> tuple[int, ...] | None:
     return parts or None
 
 
-def get_agent_version_status(host: Host) -> AgentVersionStatus:
-    required = get_required_agent_version()
-    if required is None:
+def get_agent_version_status(agent_version: str | None, required_version: str | None) -> AgentVersionStatus:
+    if required_version is None:
         return AgentVersionStatus.disabled
 
-    required_parts = _parse_version_parts(required)
-    host_parts = _parse_version_parts(host.agent_version)
+    required_parts = _parse_version_parts(required_version)
+    host_parts = _parse_version_parts(agent_version)
     if required_parts is None or host_parts is None:
         return AgentVersionStatus.unknown
 

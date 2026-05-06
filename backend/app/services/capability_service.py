@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceType
-from app.services import appium_capability_keys, control_plane_state_store
+from app.services import (
+    appium_capability_keys,
+    appium_node_locking,
+    appium_node_resource_service,
+    control_plane_state_store,
+    device_locking,
+)
 from app.services.device_identity import appium_connection_target
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.pack_capability_service import (
@@ -92,8 +98,6 @@ async def _get_live_active_connection_target(db: AsyncSession, device: Device) -
     # fetch it from the host snapshot and persist it.  Acquire Device + AppiumNode
     # row locks BEFORE the slow host-snapshot call so that concurrent writers
     # (mark_node_started / mark_node_stopped) cannot race the same column.
-    from app.services import appium_node_locking, device_locking
-
     await device_locking.lock_device(db, device.id)
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
 
@@ -150,8 +154,6 @@ async def get_device_capabilities(
         (device.device_config or {}).get("appium_caps"),
         manager_owned=manager_owned,
     )
-    from app.services import appium_node_resource_service
-
     if device.appium_node is None or device.appium_node.state != NodeState.running:
         live_caps = {}
     else:

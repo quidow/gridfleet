@@ -181,8 +181,11 @@ async def test_reconcile_different_specs_install_separately(tmp_path: object) ->
 def test_runtime_manager_honors_agent_runtime_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_RUNTIME_ROOT", "/tmp/runtime-root-from-env")
     from agent_app import config as agent_config
+    from agent_app.pack import runtime as pack_runtime
 
-    agent_config.agent_settings = agent_config.AgentSettings()
+    new_settings = agent_config.AgentSettings()
+    monkeypatch.setattr(agent_config, "agent_settings", new_settings)
+    monkeypatch.setattr(pack_runtime, "agent_settings", new_settings)
 
     mgr = AppiumRuntimeManager()
     assert str(mgr._root) == "/tmp/runtime-root-from-env"
@@ -191,8 +194,11 @@ def test_runtime_manager_honors_agent_runtime_root(monkeypatch: pytest.MonkeyPat
 def test_runtime_manager_default_root_is_owned_agent_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_RUNTIME_ROOT", raising=False)
     from agent_app import config as agent_config
+    from agent_app.pack import runtime as pack_runtime
 
-    agent_config.agent_settings = agent_config.AgentSettings()
+    new_settings = agent_config.AgentSettings()
+    monkeypatch.setattr(agent_config, "agent_settings", new_settings)
+    monkeypatch.setattr(pack_runtime, "agent_settings", new_settings)
 
     mgr = AppiumRuntimeManager()
     assert str(mgr._root) == "/opt/gridfleet-agent/runtimes"
