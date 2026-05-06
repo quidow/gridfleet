@@ -520,7 +520,7 @@ async def prepare_device_update_payload_async(
         resolved_scheme = resolved_plat.identity_scheme
     except LookupError:
         logger.debug(
-            "Pack platform not resolvable for pack=%s platform=%s",
+            "Pack platform not resolvable for pack=%r platform=%r",
             next_pack_id,
             next_platform_id,
             exc_info=True,

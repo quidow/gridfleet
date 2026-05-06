@@ -25,8 +25,7 @@ async def _wait_for_queue_event(queue: asyncio.Queue[Event], *, timeout: float |
     finally:
         if not get_task.done():
             get_task.cancel()
-            cancelled_results = await asyncio.gather(get_task, return_exceptions=True)
-            del cancelled_results
+            _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
 @router.get("/events/catalog", response_model=EventCatalogRead)
