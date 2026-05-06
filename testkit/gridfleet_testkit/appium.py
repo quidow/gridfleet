@@ -93,7 +93,9 @@ def build_appium_options(
     catalog_client: Any | None = None,
 ) -> Any:
     """Build Appium options from driver-pack catalog platform metadata."""
-    from appium.options.common import AppiumOptions
+    # appium is an optional dep (extra "appium"); imported lazily so consumers
+    # without the extra can still use the rest of testkit.
+    from appium.options.common import AppiumOptions  # noqa: PLC0415
 
     params = dict(capabilities or {})
     explicit_platform_name = params.get("platformName")
@@ -129,7 +131,9 @@ def create_appium_driver(
     catalog_client: Any | None = None,
 ) -> Any:
     """Create an Appium remote driver through Selenium Grid."""
-    from appium import webdriver
+    # appium is an optional dep (extra "appium"); imported lazily so consumers
+    # without the extra can still use the rest of testkit.
+    from appium import webdriver  # noqa: PLC0415
 
     options = build_appium_options(
         pack_id=pack_id,
