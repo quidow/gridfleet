@@ -62,7 +62,7 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
         return_value=datetime.now(UTC),
     ):
         with patch(
-            "app.services.device_verification_job_state.reset_snapshot_for_retry",
+            "app.services.job_queue.reset_snapshot_for_retry",
             return_value={"status": job_queue.JOB_STATUS_PENDING, "retried": True},
         ):
             count_verification = await job_queue.reset_stale_running_jobs(
@@ -133,7 +133,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     await db_session.commit()
 
     with patch(
-        "app.services.device_verification.run_persisted_verification_job",
+        "app.services.job_queue.run_persisted_verification_job",
         new=AsyncMock(),
     ) as verification_runner:
         assert (
@@ -146,7 +146,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     verification_runner.assert_awaited_once()
 
     with patch(
-        "app.services.host_tools.run_persisted_host_tool_ensure_job",
+        "app.services.job_queue.run_persisted_host_tool_ensure_job",
         new=AsyncMock(),
     ) as tools_runner:
         assert (

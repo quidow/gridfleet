@@ -11,18 +11,19 @@ from sqlalchemy import or_, select
 from app.models.job import Job
 from app.observability import get_logger, observe_background_loop
 from app.services.device_verification_job_state import reset_snapshot_for_retry
+from app.services.device_verification_runner import run_persisted_verification_job
+from app.services.host_tools_runner import run_persisted_host_tool_ensure_job
+from app.services.job_kind_constants import JOB_KIND_DEVICE_VERIFICATION, JOB_KIND_HOST_TOOLS_ENSURE
+from app.services.job_status_constants import (
+    JOB_STATUS_FAILED,
+    JOB_STATUS_PENDING,
+    JOB_STATUS_RUNNING,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = get_logger(__name__)
-
-JOB_KIND_DEVICE_VERIFICATION = "device_verification"
-JOB_KIND_HOST_TOOLS_ENSURE = "host_tools_ensure"
-JOB_STATUS_PENDING = "pending"
-JOB_STATUS_RUNNING = "running"
-JOB_STATUS_COMPLETED = "completed"
-JOB_STATUS_FAILED = "failed"
 JOB_POLL_INTERVAL_SEC = 1
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
 LOOP_NAME = "durable_job_worker"
@@ -146,9 +147,7 @@ async def run_pending_jobs_once(
         return False
 
     if row.kind == JOB_KIND_DEVICE_VERIFICATION:
-        from app.services import device_verification
-
-        await device_verification.run_persisted_verification_job(
+        await run_persisted_verification_job(
             str(row.id),
             row.payload,
             session_factory=session_factory,
@@ -156,9 +155,7 @@ async def run_pending_jobs_once(
         return True
 
     if row.kind == JOB_KIND_HOST_TOOLS_ENSURE:
-        from app.services import host_tools
-
-        await host_tools.run_persisted_host_tool_ensure_job(
+        await run_persisted_host_tool_ensure_job(
             str(row.id),
             row.payload,
             session_factory=session_factory,
