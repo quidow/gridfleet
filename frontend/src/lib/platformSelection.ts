@@ -8,8 +8,11 @@ export function makePlatformKey(packId: string, platformId: string): PlatformSel
 
 export function parsePlatformKey(key: string): { packId: string; platformId: string } | null {
   const separator = key.indexOf('::');
-  if (separator <= 0 || separator === key.length - 2) return null;
-  return { packId: key.slice(0, separator), platformId: key.slice(separator + 2) };
+  if (separator <= 0) return null;
+  const packId = key.slice(0, separator);
+  const platformId = key.slice(separator + 2);
+  if (!platformId) return null;
+  return { packId, platformId };
 }
 
 export function platformDescriptorFromPack(

@@ -55,8 +55,8 @@ function toChartPoints(
   }));
 }
 
-function formatPercent(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`;
+function formatPercent(value: number | null): string {
+  return value === null ? '—' : `${value.toFixed(1)}%`;
 }
 
 function formatTick(value: string): string {

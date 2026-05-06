@@ -431,7 +431,7 @@ export default function DeviceDetail() {
 
       {setupRequest && verificationAction ? (
         <SetupVerificationModal
-          isOpen={setupRequest !== null}
+          isOpen
           onClose={() => setSetupRequest(null)}
           existingDevice={device}
           initialExistingForm={setupRequest.initialExistingForm}
@@ -442,7 +442,7 @@ export default function DeviceDetail() {
       ) : null}
 
       <DeviceEditModal
-        device={editOpen ? device ?? null : null}
+        device={editOpen ? device : null}
         hostMap={hostMap}
         onClose={() => setEditOpen(false)}
         onRequestVerification={(req) => {
