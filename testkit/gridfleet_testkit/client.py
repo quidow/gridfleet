@@ -9,7 +9,10 @@ import os
 import signal
 import threading
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 import httpx
 
@@ -47,6 +50,21 @@ class NoClaimableDevicesError(RuntimeError):
         super().__init__(message)
 
 
+class UnknownIncludeError(ValueError):
+    """Backend rejected one or more `?include=` keys."""
+
+    def __init__(self, values: list[str]) -> None:
+        super().__init__(f"Backend rejected unknown include values: {values}")
+        self.values = values
+
+
+class ReserveCapabilitiesUnsupportedError(ValueError):
+    """`?include=capabilities` is not supported on reserve."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or "include=capabilities is not supported on reserve; use include on claim_device")
+
+
 def _raise_for_status(resp: Any, *, run_id: str) -> None:
     if resp.status_code == 409:
         try:
@@ -67,6 +85,21 @@ def _raise_for_status(resp: Any, *, run_id: str) -> None:
                     retry_after_sec=retry_after,
                     next_available_at=next_available_at if isinstance(next_available_at, str) else None,
                 )
+    if resp.status_code == 422:
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            details = error.get("details")
+            if isinstance(details, dict):
+                code = details.get("code")
+                if code == "unknown_include":
+                    values = details.get("values")
+                    raise UnknownIncludeError(values if isinstance(values, list) else [])
+                if code == "reserve_capabilities_unsupported":
+                    raise ReserveCapabilitiesUnsupportedError(str(error.get("message") or ""))
     resp.raise_for_status()
 
 
@@ -89,6 +122,26 @@ def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float |
         else:
             params.append((key, str(value)))
     return params
+
+
+def _normalize_include(include: Sequence[str] | None) -> tuple[str, ...] | None:
+    if include is None:
+        return None
+    if isinstance(include, (str, bytes)):
+        raise TypeError(
+            "include must be a sequence of strings, not a string itself "
+            "(e.g. include=('config',), not include='config')"
+        )
+    return tuple(include)
+
+
+def _include_param(include: tuple[str, ...] | None) -> list[tuple[str, str | int | float | bool | None]] | None:
+    if include is None:
+        return None
+    values = [v for v in include if v]
+    if not values:
+        return None
+    return [("include", ",".join(values))]
 
 
 def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> None:
@@ -254,8 +307,15 @@ class GridFleetClient:
         ttl_minutes: int = 60,
         heartbeat_timeout_sec: int = 120,
         created_by: str | None = None,
+        *,
+        include: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Reserve devices for a test run and return the manager response."""
+        include_tuple = _normalize_include(include)
+        if include_tuple is not None and "capabilities" in include_tuple:
+            raise ReserveCapabilitiesUnsupportedError(
+                "include='capabilities' is not supported on reserve; use include on claim_device instead"
+            )
         resp = httpx.post(
             f"{self.base_url}/runs",
             json={
@@ -265,10 +325,11 @@ class GridFleetClient:
                 "heartbeat_timeout_sec": heartbeat_timeout_sec,
                 "created_by": created_by,
             },
+            params=_include_param(include_tuple),
             timeout=30,
             auth=self._auth,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, run_id="")
         return cast("dict[str, Any]", resp.json())
 
     def signal_ready(self, run_id: str) -> None:
@@ -294,10 +355,18 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
-    def claim_device(self, run_id: str, *, worker_id: str) -> dict[str, Any]:
+    def claim_device(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        include: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        include_tuple = _normalize_include(include)
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/claim",
             json={"worker_id": worker_id},
+            params=_include_param(include_tuple),
             timeout=10,
             auth=self._auth,
         )
@@ -355,11 +424,13 @@ class GridFleetClient:
         *,
         worker_id: str,
         max_wait_sec: int = 300,
+        include: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + max_wait_sec
+        include_tuple = _normalize_include(include)
         while True:
             try:
-                return self.claim_device(run_id, worker_id=worker_id)
+                return self.claim_device(run_id, worker_id=worker_id, include=include_tuple)
             except NoClaimableDevicesError as exc:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

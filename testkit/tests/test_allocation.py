@@ -6,6 +6,7 @@ import pytest
 
 from gridfleet_testkit.allocation import (
     AllocatedDevice,
+    UnavailableInclude,
     hydrate_allocated_device,
     hydrate_allocated_device_from_driver,
 )
@@ -161,6 +162,160 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.udid == "emulator-5554"
     assert allocated.device_ip == "10.0.0.9"
     assert allocated.platform_name == "Android"
+
+
+def test_allocated_device_defaults_unavailable_includes_and_config_is_masked() -> None:
+    allocated = AllocatedDevice(
+        run_id="run-1",
+        device_id="dev-1",
+        identity_value="SERIAL123",
+        name="Pixel 6",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        platform_label="Android",
+        os_version="14",
+        connection_target="SERIAL123",
+        host_ip="192.168.1.10",
+        device_type="real_device",
+        connection_type="usb",
+        manufacturer="Google",
+        model="Pixel 6",
+        claimed_by="gw0",
+        claimed_at="2026-05-05T10:00:00Z",
+        config=None,
+        live_capabilities=None,
+    )
+
+    assert allocated.unavailable_includes == ()
+    assert isinstance(allocated.unavailable_includes, tuple)
+    assert all(isinstance(u, UnavailableInclude) for u in allocated.unavailable_includes)
+    assert allocated.config_is_masked is False
+
+
+def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
+    client = FakeClient()
+    payload = claim_payload(config={"ip": "10.0.0.8", "username": "operator", "password": "********"})
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
+
+    assert allocated.config == {"ip": "10.0.0.8", "username": "operator", "password": "********"}
+    assert allocated.config_is_masked is True
+    assert client.config_calls == []
+    assert client.device_calls == []
+
+
+def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_absent() -> None:
+    client = FakeClient()
+
+    allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client)
+
+    assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
+    assert allocated.config_is_masked is False
+    assert client.config_calls == [("SERIAL123", True)]
+
+
+def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
+    client = FakeClient()
+    payload = claim_payload(live_capabilities={"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"})
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP", "appium:deviceIP": "10.0.0.99"}
+    assert client.capability_calls == []
+
+
+def test_hydrate_allocated_device_uses_inline_live_capabilities_even_when_fetch_capabilities_false() -> None:
+    client = FakeClient()
+    payload = claim_payload(live_capabilities={"appium:udid": "INLINE-CAP"})
+
+    allocated = hydrate_allocated_device(
+        payload,
+        run_id="run-1",
+        client=client,
+        fetch_config=False,
+        fetch_capabilities=False,
+    )
+
+    assert allocated.live_capabilities == {"appium:udid": "INLINE-CAP"}
+    assert client.capability_calls == []
+
+
+def test_hydrate_allocated_device_surfaces_unavailable_includes() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_unavailable_includes_defaults_to_empty_tuple() -> None:
+    client = FakeClient()
+
+    allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == ()
+
+
+def test_hydrate_allocated_device_skips_malformed_unavailable_include_entries() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[
+            {"include": "capabilities", "reason": "device_offline"},
+            {"include": "config"},
+            "not-a-dict",
+            {"reason": "missing_include_key"},
+        ],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client, fetch_config=False)
+
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_skips_config_fetch_when_marked_unavailable() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "config", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
+
+    assert allocated.config is None
+    assert allocated.config_is_masked is False
+    assert client.config_calls == []
+    assert allocated.unavailable_includes == (UnavailableInclude(include="config", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_skips_capabilities_fetch_when_marked_unavailable() -> None:
+    client = FakeClient()
+    payload = claim_payload(
+        unavailable_includes=[{"include": "capabilities", "reason": "device_offline"}],
+    )
+
+    allocated = hydrate_allocated_device(
+        payload,
+        run_id="run-1",
+        client=client,
+        fetch_config=False,
+        fetch_capabilities=True,
+    )
+
+    assert allocated.live_capabilities is None
+    assert client.capability_calls == []
+    assert allocated.unavailable_includes == (UnavailableInclude(include="capabilities", reason="device_offline"),)
+
+
+def test_hydrate_allocated_device_rejects_reserve_shaped_payload_without_claim_metadata() -> None:
+    client = FakeClient()
+    reserve_shaped = claim_payload()
+    del reserve_shaped["claimed_by"]
+    del reserve_shaped["claimed_at"]
+
+    with pytest.raises(ValueError, match="missing claimed_by"):
+        hydrate_allocated_device(reserve_shaped, run_id="run-1", client=client, fetch_config=False)
 
 
 def test_hydrate_allocated_device_from_driver_returns_new_frozen_instance() -> None:

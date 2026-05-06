@@ -10,7 +10,10 @@ from gridfleet_testkit.client import (
     GridFleetClient,
     HeartbeatThread,
     NoClaimableDevicesError,
+    ReserveCapabilitiesUnsupportedError,
+    UnknownIncludeError,
     _default_auth,
+    _raise_for_status,
     register_run_cleanup,
 )
 
@@ -211,6 +214,7 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -251,6 +255,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -332,6 +337,7 @@ def test_claim_device_calls_api(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         recorded["url"] = url
@@ -359,6 +365,7 @@ def test_claim_device_raises_no_claimable_devices_with_retry_metadata(monkeypatc
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         return DummyResponse(
@@ -420,6 +427,7 @@ def test_claim_device_with_retry_sleeps_and_retries(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         calls.append(url)
@@ -908,6 +916,7 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         captured["auth"] = auth
@@ -932,6 +941,7 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
         *,
         json: dict[str, Any],
         timeout: int,
+        params: list[tuple[str, str]] | None = None,
         auth: Any = None,
     ) -> DummyResponse:
         captured["auth"] = auth
@@ -969,3 +979,277 @@ def test_heartbeat_thread_passes_auth(monkeypatch):
 
     assert captured["url"] == "http://manager/api/runs/run-x/heartbeat"
     assert captured["auth"] is explicit
+
+
+def test_raise_for_status_maps_unknown_include_422_to_typed_exception():
+    resp = DummyResponse(
+        {
+            "error": {
+                "code": "INVALID_INCLUDE",
+                "message": "Unknown include values",
+                "details": {"code": "unknown_include", "values": ["garbage"]},
+            }
+        },
+        status_code=422,
+    )
+
+    with pytest.raises(UnknownIncludeError) as exc_info:
+        _raise_for_status(resp, run_id="run-1")
+
+    assert exc_info.value.values == ["garbage"]
+
+
+def test_raise_for_status_maps_reserve_capabilities_unsupported_422_to_typed_exception():
+    resp = DummyResponse(
+        {
+            "error": {
+                "code": "INVALID_INCLUDE",
+                "message": "include=capabilities not supported on reserve",
+                "details": {"code": "reserve_capabilities_unsupported"},
+            }
+        },
+        status_code=422,
+    )
+
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        _raise_for_status(resp, run_id="")
+
+
+def test_raise_for_status_passes_through_unrelated_422():
+    resp = DummyResponse({"detail": "validation"}, status_code=422)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _raise_for_status(resp, run_id="")
+
+
+def test_claim_device_threads_include_query_param(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["url"] = url
+        captured["params"] = params
+        return DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-05T00:00:00Z"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.claim_device("run-1", worker_id="gw0", include=("config", "capabilities"))
+
+    assert captured["params"] == [("include", "config,capabilities")]
+
+
+def test_claim_device_omits_include_param_when_unset(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["params"] = params
+        return DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-05T00:00:00Z"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.claim_device("run-1", worker_id="gw0")
+
+    assert captured["params"] is None or captured["params"] == []
+
+
+def test_claim_device_accepts_arbitrary_iterable_for_include(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["params"] = params
+        return DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-05T00:00:00Z"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.claim_device("run-1", worker_id="gw0", include=["config"])
+
+    assert captured["params"] == [("include", "config")]
+
+
+def test_claim_device_rejects_string_include_to_avoid_character_split():
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(TypeError, match="must be a sequence of strings"):
+        client.claim_device("run-1", worker_id="gw0", include="config")
+
+
+def test_claim_device_rejects_bytes_include():
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(TypeError, match="must be a sequence of strings"):
+        client.claim_device("run-1", worker_id="gw0", include=b"config")
+
+
+def test_claim_device_raises_unknown_include_on_422(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse(
+            {
+                "error": {
+                    "code": "INVALID_INCLUDE",
+                    "message": "Unknown include values",
+                    "details": {"code": "unknown_include", "values": ["garbage"]},
+                }
+            },
+            status_code=422,
+        )
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(UnknownIncludeError) as exc_info:
+        client.claim_device("run-1", worker_id="gw0", include=("garbage",))
+
+    assert exc_info.value.values == ["garbage"]
+
+
+def test_claim_device_with_retry_forwards_include_on_every_attempt(monkeypatch):
+    seen: list[list[tuple[str, str]] | None] = []
+    responses = iter(
+        [
+            DummyResponse(
+                {
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "No unclaimed devices available in this run",
+                        "details": {"error": "no_claimable_devices", "retry_after_sec": 1, "next_available_at": None},
+                    }
+                },
+                status_code=409,
+            ),
+            DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-05T00:00:00Z"}),
+        ]
+    )
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        seen.append(params)
+        return next(responses)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.time.sleep", lambda _seconds: None)
+
+    client = GridFleetClient("http://manager/api")
+    client.claim_device_with_retry("run-1", worker_id="gw0", max_wait_sec=5, include=("config",))
+
+    assert seen == [
+        [("include", "config")],
+        [("include", "config")],
+    ]
+
+
+def test_reserve_devices_threads_include_query_param(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        captured["url"] = url
+        captured["params"] = params
+        return DummyResponse({"id": "run-1", "devices": []})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    client.reserve_devices(name="r", requirements=[], include=("config",))
+
+    assert captured["params"] == [("include", "config")]
+
+
+def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypatch):
+    called: list[str] = []
+
+    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+        called.append("post")
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        client.reserve_devices(name="r", requirements=[], include=("config", "capabilities"))
+
+    assert called == []
+
+
+def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
+    called: list[str] = []
+
+    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+        called.append("post")
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    with pytest.raises(TypeError, match="must be a sequence of strings"):
+        client.reserve_devices(name="r", requirements=[], include="capabilities")
+
+    assert called == []
+
+
+def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypatch):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse(
+            {
+                "error": {
+                    "code": "INVALID_INCLUDE",
+                    "message": "include=capabilities not supported on reserve",
+                    "details": {"code": "reserve_capabilities_unsupported"},
+                }
+            },
+            status_code=422,
+        )
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+    # Use include=("config",) so the client-side guard does not fire.
+    # The 422 then exercises the defense-in-depth path through _raise_for_status.
+    with pytest.raises(ReserveCapabilitiesUnsupportedError):
+        client.reserve_devices(name="r", requirements=[], include=("config",))

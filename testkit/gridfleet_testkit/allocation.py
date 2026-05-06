@@ -10,6 +10,14 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class UnavailableInclude:
+    """One include key the backend could not satisfy on this allocation."""
+
+    include: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class AllocatedDevice:
     """Combined view of a claimed device, ready for driver creation."""
 
@@ -31,6 +39,8 @@ class AllocatedDevice:
     claimed_at: str
     config: dict[str, Any] | None
     live_capabilities: dict[str, Any] | None
+    unavailable_includes: tuple[UnavailableInclude, ...] = ()
+    config_is_masked: bool = False
 
     @property
     def is_real_device(self) -> bool:
@@ -89,6 +99,21 @@ def _merge_device_detail(payload: dict[str, Any], detail: dict[str, Any]) -> dic
     return merged
 
 
+def _parse_unavailable_includes(payload: dict[str, Any]) -> tuple[UnavailableInclude, ...]:
+    raw = payload.get("unavailable_includes")
+    if not isinstance(raw, list):
+        return ()
+    parsed: list[UnavailableInclude] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        include = entry.get("include")
+        reason = entry.get("reason")
+        if isinstance(include, str) and include and isinstance(reason, str) and reason:
+            parsed.append(UnavailableInclude(include=include, reason=reason))
+    return tuple(parsed)
+
+
 def hydrate_allocated_device(
     claim_response: dict[str, Any],
     *,
@@ -97,15 +122,40 @@ def hydrate_allocated_device(
     fetch_config: bool = True,
     fetch_capabilities: bool = False,
 ) -> AllocatedDevice:
-    """Combine a claim response with optional static config and live capabilities."""
+    """Combine a claim response with optional static config and live capabilities.
+
+    Accepts a ``ClaimResponse`` payload from ``GridFleetClient.claim_device`` only.
+    Reserve responses (``RunCreateResponse.devices`` entries before any worker
+    has claimed) lack ``claimed_by`` / ``claimed_at`` and will raise
+    ``ValueError``. Iterate ``reserve_response['devices']`` and call
+    ``claim_device`` per worker before hydrating.
+    """
     payload = dict(claim_response)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
         payload = _merge_device_detail(payload, client.get_device(device_id))
 
+    unavailable_includes = _parse_unavailable_includes(payload)
+    unavailable_set = {entry.include for entry in unavailable_includes}
+
     connection_target = _optional_string_value(payload, "connection_target")
-    config = client.get_device_config(connection_target) if fetch_config and connection_target else None
-    live_capabilities = client.get_device_capabilities(device_id) if fetch_capabilities else None
+    inline_config = payload.get("config")
+    if isinstance(inline_config, dict):
+        config: dict[str, Any] | None = inline_config
+        config_is_masked = True
+    elif fetch_config and connection_target and "config" not in unavailable_set:
+        config = client.get_device_config(connection_target)
+        config_is_masked = False
+    else:
+        config = None
+        config_is_masked = False
+    inline_capabilities = payload.get("live_capabilities")
+    if isinstance(inline_capabilities, dict):
+        live_capabilities: dict[str, Any] | None = inline_capabilities
+    elif fetch_capabilities and "capabilities" not in unavailable_set:
+        live_capabilities = client.get_device_capabilities(device_id)
+    else:
+        live_capabilities = None
 
     return AllocatedDevice(
         run_id=run_id,
@@ -125,7 +175,9 @@ def hydrate_allocated_device(
         claimed_by=_string_value(payload, "claimed_by"),
         claimed_at=_string_value(payload, "claimed_at"),
         config=config,
+        config_is_masked=config_is_masked,
         live_capabilities=live_capabilities,
+        unavailable_includes=unavailable_includes,
     )
 
 

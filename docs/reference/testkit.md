@@ -186,6 +186,27 @@ client.signal_active(run_id)
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
 
+## Reduced HTTP round-trips on claim
+
+`gridfleet-testkit` 0.4.0 lets the manager inline the device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
+
+```python
+from gridfleet_testkit import GridFleetClient, hydrate_allocated_device
+
+client = GridFleetClient()
+claim = client.claim_device(run_id, worker_id="w0", include=("config", "capabilities"))
+allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
+# zero follow-up GETs; allocated.config / allocated.live_capabilities populated inline
+```
+
+**Masking change**: inline `config` is always masked — sensitive values are replaced with `"********"`. Use `client.get_device_config(connection_target, reveal=True)` if you need raw secrets after the driver session is up. `allocated.config_is_masked` is `True` whenever the inline path was taken.
+
+`reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound. Pass `include=` on the per-worker `claim_device` call instead.
+
+`include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
+
+`hydrate_allocated_device` accepts claim responses only. For multi-device reservations, iterate `reserve_response["devices"]`, call `claim_device` per worker, and hydrate each claim response.
+
 ## Examples
 
 Baseline screenshot examples:
