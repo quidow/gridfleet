@@ -59,8 +59,8 @@ def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_l
         to_version="0.3.0",
         os_name="Linux",
         run_command=record,
-        drain_check=lambda url: drains.append(url) or DrainResult(ok=True, message="drained"),
-        health_check=lambda url: HealthCheckResult(ok=True, message=f"healthy at {url}"),
+        drain_check=lambda url, *, auth=None: drains.append(url) or DrainResult(ok=True, message="drained"),
+        health_check=lambda url, *, auth=None: HealthCheckResult(ok=True, message=f"healthy at {url}"),
     )
 
     assert result == UpdateResult(
@@ -88,8 +88,8 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
         to_version=None,
         os_name="Linux",
         run_command=record,
-        drain_check=lambda _url: DrainResult(ok=True, message="drained"),
-        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
     )
 
     assert commands[0] == ["uv", "tool", "upgrade", "gridfleet-agent"]
@@ -107,8 +107,8 @@ def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
         to_version="0.3.0",
         os_name="Darwin",
         run_command=record,
-        drain_check=lambda _url: DrainResult(ok=True, message="drained"),
-        health_check=lambda _url: HealthCheckResult(ok=False, message="health failed"),
+        drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health failed"),
         uid=0,
     )
 
@@ -134,8 +134,8 @@ def test_update_agent_uses_sudo_uid_for_launchd_restart_on_macos(
         to_version=None,
         os_name="Darwin",
         run_command=record,
-        drain_check=lambda _url: DrainResult(ok=True, message="drained"),
-        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
     )
 
     assert commands[1] == ["launchctl", "kickstart", "-k", "gui/501/com.gridfleet.agent"]
@@ -151,8 +151,8 @@ def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path) ->
             to_version="0.3.0",
             os_name="Linux",
             run_command=lambda command: commands.append(command),
-            drain_check=lambda _url: DrainResult(ok=False, message="active local nodes remain"),
-            health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+            drain_check=lambda _url, *, auth=None: DrainResult(ok=False, message="active local nodes remain"),
+            health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         )
     except RuntimeError as exc:
         assert "active local nodes remain" in str(exc)
@@ -172,8 +172,8 @@ def test_update_agent_raises_when_uv_not_installed(monkeypatch: pytest.MonkeyPat
             to_version="0.3.0",
             os_name="Linux",
             run_command=lambda _command: None,
-            drain_check=lambda _url: DrainResult(ok=True, message="drained"),
-            health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+            drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
+            health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         )
     except RuntimeError as exc:
         assert "uv is not installed" in str(exc)
@@ -216,3 +216,62 @@ def test_wait_for_update_drain_times_out_while_running_nodes_remain() -> None:
 
     assert result.ok is False
     assert "1 active local node" in result.message
+
+
+def test_wait_for_update_drain_passes_basic_auth() -> None:
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"appium_processes": {"running_nodes": []}}
+
+    captured: list[tuple[str, str] | None] = []
+
+    def fake_get(url: str, *, timeout: float = 2.0, auth: tuple[str, str] | None = None) -> Response:
+        captured.append(auth)
+        return Response()
+
+    result = wait_for_update_drain(
+        "http://localhost:5200/agent/health",
+        timeout_sec=5.0,
+        interval_sec=0.01,
+        get=fake_get,
+        auth=("ops", "secret"),
+    )
+
+    assert result == DrainResult(ok=True, message="no active local nodes")
+    assert captured == [("ops", "secret")]
+
+
+def test_update_agent_forwards_api_auth_to_drain_and_health(tmp_path: Path) -> None:
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt/gridfleet-agent"),
+        config_dir=str(tmp_path / "etc/gridfleet-agent"),
+        port=5200,
+        api_auth_username="ops",
+        api_auth_password="secret",
+    )
+
+    drain_auths: list[tuple[str, str] | None] = []
+    health_auths: list[tuple[str, str] | None] = []
+
+    def fake_drain(url: str, *, auth: tuple[str, str] | None = None) -> DrainResult:
+        drain_auths.append(auth)
+        return DrainResult(ok=True, message="drained")
+
+    def fake_health(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+        health_auths.append(auth)
+        return HealthCheckResult(ok=True, message="healthy")
+
+    update_agent(
+        config,
+        to_version=None,
+        os_name="Linux",
+        run_command=lambda _command: None,
+        drain_check=fake_drain,
+        health_check=fake_health,
+    )
+
+    assert drain_auths == [("ops", "secret")]
+    assert health_auths == [("ops", "secret")]

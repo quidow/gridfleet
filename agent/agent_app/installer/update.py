@@ -5,11 +5,12 @@ import platform
 import shutil
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
 from agent_app.installer.install import (
+    HealthCheckCallable,
     HealthCheckResult,
     _run_command,
     poll_agent_health,
@@ -25,6 +26,11 @@ if TYPE_CHECKING:
 class DrainResult:
     ok: bool
     message: str
+
+
+class DrainCheckCallable(Protocol):
+    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> DrainResult:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -104,12 +110,13 @@ def wait_for_update_drain(
     timeout_sec: float = 120.0,
     interval_sec: float = 2.0,
     get: Callable[..., object] = httpx.get,
+    auth: tuple[str, str] | None = None,
 ) -> DrainResult:
     deadline = time.monotonic() + timeout_sec
     last_error = "no response"
     while time.monotonic() <= deadline:
         try:
-            response = get(url, timeout=2.0)
+            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
             status_code = getattr(response, "status_code", None)
             if status_code == 200:
                 json_body = getattr(response, "json", None)
@@ -136,8 +143,8 @@ def update_agent(
     to_version: str | None = None,
     os_name: str | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
-    drain_check: Callable[[str], DrainResult] = wait_for_update_drain,
-    health_check: Callable[[str], HealthCheckResult] = poll_agent_health,
+    drain_check: DrainCheckCallable = wait_for_update_drain,
+    health_check: HealthCheckCallable = poll_agent_health,
     uid: int | None = None,
 ) -> UpdateResult:
     resolved_os = os_name or platform.system()
@@ -146,12 +153,18 @@ def update_agent(
     if not shutil.which("uv"):
         raise RuntimeError("uv is not installed. Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh")
 
-    drain = drain_check(health_url)
+    api_auth = (
+        (config.api_auth_username, config.api_auth_password)
+        if config.api_auth_username and config.api_auth_password
+        else None
+    )
+
+    drain = drain_check(health_url, auth=api_auth) if api_auth else drain_check(health_url)
     if not drain.ok:
         raise RuntimeError(drain.message)
 
     run_command(_uv_upgrade_command(to_version))
     run_command(_restart_command(resolved_os, uid=uid))
-    health = health_check(health_url)
+    health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
 
     return UpdateResult(to_version=to_version, restarted=True, drain=drain, health=health)

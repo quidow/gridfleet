@@ -80,3 +80,7 @@ To enable, set on the backend: `GRIDFLEET_ENABLE_WEB_TERMINAL=true`, `GRIDFLEET_
 On every host agent: `AGENT_ENABLE_WEB_TERMINAL=true`, `AGENT_TERMINAL_TOKEN=<same secret>`.
 
 Restart both services after setting the variables.
+
+### Backend → agent authentication (optional)
+
+When `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set on each agent and the matching `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` are set on the backend, the agent enforces HTTP Basic on every `/agent/*` HTTP route. Without matching credentials the backend receives 401 and surfaces an agent call failure (circuit breaker tracks consecutive 5xx; 401 is recorded as an agent response error per the existing handling). The WebSocket terminal endpoint continues to require `AGENT_TERMINAL_TOKEN` regardless of API auth. Leave all four unset for local dev or trusted networks.

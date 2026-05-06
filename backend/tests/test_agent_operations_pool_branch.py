@@ -154,3 +154,78 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
         assert fresh_pool.size() == 0
         assert len(seen_clients) == 1
         assert seen_clients[0].is_closed
+
+
+# ---------------------------------------------------------------------------
+# Auth forwarding via pool branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pool branch must forward the BasicAuth returned by _agent_basic_auth."""
+    from app.services.agent_http_pool import agent_http_pool
+
+    sentinel = httpx.BasicAuth("ops", "secret")
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: sentinel)
+    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    class _PooledStub:
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            captured["kwargs"] = kwargs
+            return httpx.Response(200, request=httpx.Request("GET", url), json={"status": "ok"})
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(200, request=httpx.Request("POST", url), json={})
+
+        @property
+        def is_closed(self) -> bool:
+            return False
+
+    pooled = _PooledStub()
+
+    async def _fake_get_client(host: str, agent_port: int, **_kwargs: object) -> _PooledStub:
+        captured["pool_key"] = (host, agent_port)
+        return pooled
+
+    monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
+
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100)
+    assert payload == {"status": "ok"}
+    assert captured["pool_key"] == ("agent.local", 5100)
+    assert captured["kwargs"].get("auth") is sentinel  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pool branch must not inject an auth kwarg when _agent_basic_auth returns None."""
+    from app.services.agent_http_pool import agent_http_pool
+
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
+    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    class _PooledStub:
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            captured["kwargs"] = kwargs
+            return httpx.Response(200, request=httpx.Request("GET", url), json={"status": "ok"})
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(200, request=httpx.Request("POST", url), json={})
+
+        @property
+        def is_closed(self) -> bool:
+            return False
+
+    async def _fake_get_client(host: str, agent_port: int, **_kwargs: object) -> _PooledStub:
+        return _PooledStub()
+
+    monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
+
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100)
+    assert payload == {"status": "ok"}, "pool branch did not call .get"
+    assert "kwargs" in captured
+    assert "auth" not in captured["kwargs"]  # type: ignore[operator]

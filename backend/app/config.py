@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = True
     machine_auth_username: str | None = None
     machine_auth_password: str | None = None
+    agent_auth_username: str | None = None
+    agent_auth_password: str | None = None
     agent_terminal_token: str | None = None
     agent_terminal_scheme: Literal["ws", "wss"] = "ws"
     driver_pack_storage_dir: Path = Path("/var/lib/gridfleet/driver-packs")
@@ -44,6 +46,14 @@ class Settings(BaseSettings):
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"Auth is enabled but required settings are missing: {joined}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_agent_auth_pair(self) -> "Settings":
+        has_username = bool(self.agent_auth_username)
+        has_password = bool(self.agent_auth_password)
+        if has_username != has_password:
+            raise ValueError("GRIDFLEET_AGENT_AUTH_USERNAME and GRIDFLEET_AGENT_AUTH_PASSWORD must be set together")
         return self
 
 

@@ -10,6 +10,7 @@ from app.agent_client import (
     AgentHttpClient,
     JsonBody,
     QueryParams,
+    _agent_basic_auth,
 )
 from app.agent_client import (
     request as agent_request,
@@ -37,6 +38,7 @@ async def _send_request(
     params: QueryParams = None,
     json_body: JsonBody = None,
 ) -> httpx.Response:
+    auth = _agent_basic_auth()
     use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled()
     if use_pool:
         max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10)
@@ -57,6 +59,7 @@ async def _send_request(
             params=params,
             json_body=json_body,
             timeout=timeout,
+            auth=auth,
         )
 
     client_manager = http_client_factory(timeout=timeout)
@@ -70,6 +73,7 @@ async def _send_request(
             params=params,
             json_body=json_body,
             timeout=timeout,
+            auth=auth,
         )
 
 

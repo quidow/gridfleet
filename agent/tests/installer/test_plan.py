@@ -243,3 +243,78 @@ def test_render_launchd_plist_uses_custom_bin_path() -> None:
         ToolDiscovery(),
     )
     assert "<string>/home/user/.local/bin/gridfleet-agent</string>" in rendered
+
+
+def test_install_config_rejects_api_auth_pair_partial() -> None:
+    from agent_app.installer.plan import InstallConfig
+
+    with pytest.raises(ValueError, match="AGENT_API_AUTH"):
+        InstallConfig(api_auth_username="ops", api_auth_password=None)
+    with pytest.raises(ValueError, match="AGENT_API_AUTH"):
+        InstallConfig(api_auth_username=None, api_auth_password="secret")
+
+
+def test_render_config_env_writes_api_auth_pair() -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, render_config_env
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    rendered = render_config_env(config, ToolDiscovery())
+    assert "AGENT_API_AUTH_USERNAME=ops" in rendered
+    assert "AGENT_API_AUTH_PASSWORD=secret" in rendered
+
+
+def test_render_config_env_redacts_api_auth_password() -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, render_config_env
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    rendered = render_config_env(config, ToolDiscovery(), redact_secrets=True)
+    assert "AGENT_API_AUTH_USERNAME=ops" in rendered
+    assert "AGENT_API_AUTH_PASSWORD=<redacted>" in rendered
+
+
+def test_load_installed_config_round_trips_api_auth(tmp_path: Path) -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, load_installed_config, render_config_env
+
+    config_dir = tmp_path / "etc"
+    config_dir.mkdir()
+    base = InstallConfig(
+        config_dir=str(config_dir),
+        api_auth_username="ops",
+        api_auth_password="secret",
+    )
+    (config_dir / "config.env").write_text(render_config_env(base, ToolDiscovery()))
+
+    loaded = load_installed_config(InstallConfig(config_dir=str(config_dir)))
+    assert loaded.api_auth_username == "ops"
+    assert loaded.api_auth_password == "secret"
+
+
+def test_render_launchd_plist_includes_api_auth_pair() -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, render_launchd_plist
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    plist = render_launchd_plist(config, ToolDiscovery())
+    assert "<key>AGENT_API_AUTH_USERNAME</key>" in plist
+    assert "<string>ops</string>" in plist
+    assert "<key>AGENT_API_AUTH_PASSWORD</key>" in plist
+    assert "<string>secret</string>" in plist
+
+
+def test_format_dry_run_darwin_redacts_api_auth_password() -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, format_dry_run
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    output = format_dry_run(config, ToolDiscovery(), os_name="Darwin")
+    assert "secret" not in output
+    assert "AGENT_API_AUTH_USERNAME" in output
+    # The launchd plist embeds the redacted password in a <string> element.
+    assert "<string>&lt;redacted&gt;</string>" in output or "<string><redacted></string>" in output
+
+
+def test_redacted_config_masks_api_auth_password() -> None:
+    from agent_app.installer.plan import InstallConfig, _redacted_config
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    redacted = _redacted_config(config)
+    assert redacted.api_auth_username == "ops"
+    assert redacted.api_auth_password == "<redacted>"

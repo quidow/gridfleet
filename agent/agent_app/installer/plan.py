@@ -27,6 +27,8 @@ class InstallConfig:
     manager_url: str = "http://localhost:8000"
     manager_auth_username: str | None = None
     manager_auth_password: str | None = None
+    api_auth_username: str | None = None
+    api_auth_password: str | None = None
     grid_hub_url: str = "http://localhost:4444"
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
@@ -40,6 +42,10 @@ class InstallConfig:
         has_password = bool(self.manager_auth_password)
         if has_username != has_password:
             raise ValueError("AGENT_MANAGER_AUTH_USERNAME and AGENT_MANAGER_AUTH_PASSWORD must be set together.")
+        has_api_username = bool(self.api_auth_username)
+        has_api_password = bool(self.api_auth_password)
+        if has_api_username != has_api_password:
+            raise ValueError("AGENT_API_AUTH_USERNAME and AGENT_API_AUTH_PASSWORD must be set together.")
         if self.enable_web_terminal and not self.terminal_token:
             raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true.")
 
@@ -256,6 +262,14 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
                 f"AGENT_MANAGER_AUTH_PASSWORD={manager_password}",
             ]
         )
+    if config.api_auth_username:
+        api_password = "<redacted>" if redact_secrets else config.api_auth_password
+        lines.extend(
+            [
+                f"AGENT_API_AUTH_USERNAME={config.api_auth_username}",
+                f"AGENT_API_AUTH_PASSWORD={api_password}",
+            ]
+        )
     if config.enable_web_terminal:
         terminal_token = "<redacted>" if redact_secrets else config.terminal_token
         lines.append("AGENT_ENABLE_WEB_TERMINAL=true")
@@ -298,6 +312,8 @@ def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfi
         manager_url=values.get("AGENT_MANAGER_URL", base.manager_url),
         manager_auth_username=values.get("AGENT_MANAGER_AUTH_USERNAME", base.manager_auth_username),
         manager_auth_password=values.get("AGENT_MANAGER_AUTH_PASSWORD", base.manager_auth_password),
+        api_auth_username=values.get("AGENT_API_AUTH_USERNAME", base.api_auth_username),
+        api_auth_password=values.get("AGENT_API_AUTH_PASSWORD", base.api_auth_password),
         grid_hub_url=values.get("AGENT_GRID_HUB_URL", base.grid_hub_url),
         grid_publish_url=values.get("AGENT_GRID_PUBLISH_URL", base.grid_publish_url),
         grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
@@ -380,6 +396,9 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
     if config.manager_auth_username:
         entries["AGENT_MANAGER_AUTH_USERNAME"] = config.manager_auth_username
         entries["AGENT_MANAGER_AUTH_PASSWORD"] = config.manager_auth_password or ""
+    if config.api_auth_username:
+        entries["AGENT_API_AUTH_USERNAME"] = config.api_auth_username
+        entries["AGENT_API_AUTH_PASSWORD"] = config.api_auth_password or ""
     if config.enable_web_terminal:
         entries["AGENT_ENABLE_WEB_TERMINAL"] = "true"
         entries["AGENT_TERMINAL_TOKEN"] = config.terminal_token or ""
@@ -455,6 +474,8 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
         manager_url=config.manager_url,
         manager_auth_username=config.manager_auth_username,
         manager_auth_password="<redacted>" if config.manager_auth_password else None,
+        api_auth_username=config.api_auth_username,
+        api_auth_password="<redacted>" if config.api_auth_password else None,
         grid_hub_url=config.grid_hub_url,
         grid_publish_url=config.grid_publish_url,
         grid_subscribe_url=config.grid_subscribe_url,

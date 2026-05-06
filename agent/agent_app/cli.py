@@ -41,6 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--user", default=None)
     install.add_argument("--manager-auth-username", default=None)
     install.add_argument("--manager-auth-password", default=None)
+    install.add_argument("--api-auth-username", default=None)
+    install.add_argument("--api-auth-password", default=None)
     install.add_argument("--grid-hub-url", default="http://localhost:4444")
     install.add_argument("--grid-publish-url", default="tcp://localhost:4442")
     install.add_argument("--grid-subscribe-url", default="tcp://localhost:4443")
@@ -95,6 +97,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 manager_url=args.manager_url,
                 manager_auth_username=args.manager_auth_username,
                 manager_auth_password=args.manager_auth_password,
+                api_auth_username=args.api_auth_username,
+                api_auth_password=args.api_auth_password,
                 grid_hub_url=args.grid_hub_url,
                 grid_publish_url=args.grid_publish_url,
                 grid_subscribe_url=args.grid_subscribe_url,

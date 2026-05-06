@@ -10,6 +10,8 @@ from app.services import agent_operations
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from app.agent_client import AgentClientFactory, QueryParams, RequestHeaders
 
 
@@ -46,17 +48,12 @@ class StrictAgentClient:
         params: QueryParams = None,
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.get_calls.append(
-            (
-                url,
-                {
-                    "params": params,
-                    "headers": headers,
-                    "timeout": timeout,
-                },
-            )
-        )
+        recorded: dict[str, object] = {"params": params, "headers": headers, "timeout": timeout}
+        if auth is not None:
+            recorded["auth"] = auth
+        self.get_calls.append((url, recorded))
         if self.get_exception is not None:
             raise self.get_exception
         return self.get_response
@@ -69,18 +66,17 @@ class StrictAgentClient:
         headers: RequestHeaders = None,
         json: object | None = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.post_calls.append(
-            (
-                url,
-                {
-                    "params": params,
-                    "headers": headers,
-                    "json": json,
-                    "timeout": timeout,
-                },
-            )
-        )
+        recorded: dict[str, object] = {
+            "params": params,
+            "headers": headers,
+            "json": json,
+            "timeout": timeout,
+        }
+        if auth is not None:
+            recorded["auth"] = auth
+        self.post_calls.append((url, recorded))
         if self.post_exception is not None:
             raise self.post_exception
         return self.post_response
@@ -383,3 +379,93 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
 
     assert exc_info.value.http_status == 500
     assert exc_info.value.host == "10.0.0.1"
+
+
+async def test_agent_request_passes_auth() -> None:
+    from app.agent_client import request as agent_request
+
+    client = StrictAgentClient()
+    auth = httpx.BasicAuth("ops", "secret")
+
+    await agent_request(
+        "GET",
+        "http://host.test/agent/health",
+        endpoint="agent_health",
+        host="host.test",
+        client=client,
+        auth=auth,
+    )
+
+    assert client.get_calls, "expected one GET call"
+    _, kwargs = client.get_calls[0]
+    assert kwargs["auth"] is auth
+
+
+async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import agent_client
+    from app.agent_client import request as agent_request
+
+    client = StrictAgentClient()
+    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
+    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
+
+    await agent_request(
+        "GET",
+        "http://host.test/agent/health",
+        endpoint="agent_health",
+        host="host.test",
+        client=client,
+    )
+
+    assert client.get_calls, "expected one GET call"
+    _, kwargs = client.get_calls[0]
+    assert isinstance(kwargs["auth"], httpx.BasicAuth)
+
+
+def _make_capturing_factory(captured: list[httpx.Auth | None]) -> Callable[..., StrictAgentClient]:
+    class CapturingClient(StrictAgentClient):
+        async def get(
+            self,
+            url: str,
+            *,
+            params: QueryParams = None,
+            headers: RequestHeaders = None,
+            timeout: float | int | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.Response:
+            captured.append(auth)
+            return await super().get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=timeout,
+                auth=auth,
+            )
+
+    def factory(**_kwargs: object) -> StrictAgentClient:
+        return CapturingClient()
+
+    return factory
+
+
+async def test_send_request_supplies_basic_auth_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_auth = httpx.BasicAuth("ops", "secret")
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: expected_auth)
+    captured: list[httpx.Auth | None] = []
+    factory = _make_capturing_factory(captured)
+    await agent_operations.agent_health(
+        "host.test",
+        agent_port=5100,
+        http_client_factory=factory,
+    )
+    assert captured == [expected_auth]
+
+
+async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
+    captured: list[httpx.Auth | None] = []
+    factory = _make_capturing_factory(captured)
+    await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory)
+    assert captured == [None]

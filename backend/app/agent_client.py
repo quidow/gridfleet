@@ -7,6 +7,7 @@ from typing import Protocol, Self, cast
 import httpx
 from httpx._types import HeaderTypes, QueryParamTypes
 
+from app.config import settings as _settings
 from app.errors import AgentUnreachableError, CircuitOpenError
 from app.metrics import record_agent_call
 from app.observability import REQUEST_ID_HEADER, get_request_id
@@ -29,6 +30,7 @@ class AgentHttpClient(Protocol):
         params: QueryParams = None,
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response: ...
 
     async def post(
@@ -39,6 +41,7 @@ class AgentHttpClient(Protocol):
         headers: RequestHeaders = None,
         json: JsonBody = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response: ...
 
 
@@ -50,17 +53,28 @@ def _request_kwargs(
     *,
     headers: dict[str, str],
     params: QueryParams,
-    json_body: JsonBody,
     timeout: float | int | None,
+    auth: httpx.Auth | None = None,
+    json_body: JsonBody,
 ) -> dict[str, object]:
     kwargs: dict[str, object] = {"headers": headers}
     if params is not None:
         kwargs["params"] = params
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if auth is not None:
+        kwargs["auth"] = auth
     if json_body is not None and method not in {"get", "head"}:
         kwargs["json"] = json_body
     return kwargs
+
+
+def _agent_basic_auth() -> httpx.BasicAuth | None:
+    username = _settings.agent_auth_username
+    password = _settings.agent_auth_password
+    if not username or not password:
+        return None
+    return httpx.BasicAuth(username, password)
 
 
 def build_agent_headers(headers: dict[str, str] | None = None) -> dict[str, str]:
@@ -83,14 +97,17 @@ async def request(
     params: QueryParams = None,
     json_body: JsonBody = None,
     timeout: float | int | None = None,
+    auth: httpx.Auth | None = None,
 ) -> httpx.Response:
     request_headers = build_agent_headers(headers)
+    effective_auth = auth if auth is not None else _agent_basic_auth()
     request_kwargs = _request_kwargs(
         method.lower(),
         headers=request_headers,
         params=params,
-        json_body=json_body,
         timeout=timeout,
+        auth=effective_auth,
+        json_body=json_body,
     )
     started = perf_counter()
     outcome = "success"

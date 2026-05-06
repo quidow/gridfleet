@@ -187,3 +187,52 @@ def test_format_status_reports_missing_config_as_not_read(tmp_path: Path) -> Non
     assert "Config file:" in output
     assert "(missing)" in output
     assert "Config read: skipped - config.env missing" in output
+
+
+def test_collect_status_passes_api_auth_to_health_check() -> None:
+    from agent_app.installer.install import HealthCheckResult
+    from agent_app.installer.plan import InstallConfig
+    from agent_app.installer.status import collect_status
+
+    captured: dict[str, object] = {}
+
+    def _fake_health(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+        captured["url"] = url
+        captured["auth"] = auth
+        return HealthCheckResult(ok=True, message="ok", details={})
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    collect_status(
+        config,
+        os_name="Linux",
+        env={
+            "AGENT_AGENT_PORT": "5100",
+            "AGENT_API_AUTH_USERNAME": "ops",
+            "AGENT_API_AUTH_PASSWORD": "secret",
+        },
+        run_command=lambda _cmd: "active",
+        health_check=_fake_health,
+    )
+    assert captured["auth"] == ("ops", "secret")
+
+
+def test_collect_status_redacts_api_auth_password() -> None:
+    from agent_app.installer.install import HealthCheckResult
+    from agent_app.installer.plan import InstallConfig
+    from agent_app.installer.status import _format_env, collect_status
+
+    config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
+    status = collect_status(
+        config,
+        os_name="Linux",
+        env={
+            "AGENT_AGENT_PORT": "5100",
+            "AGENT_API_AUTH_USERNAME": "ops",
+            "AGENT_API_AUTH_PASSWORD": "secret",
+        },
+        run_command=lambda _cmd: "active",
+        health_check=lambda url, auth=None: HealthCheckResult(ok=True, message="ok"),
+    )
+    formatted = "\n".join(_format_env(status.env))
+    assert "AGENT_API_AUTH_PASSWORD=<redacted>" in formatted
+    assert "AGENT_API_AUTH_USERNAME=ops" in formatted
