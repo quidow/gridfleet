@@ -49,8 +49,12 @@ class StrictAgentClient:
         params: QueryParams = None,
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.get_calls.append((url, {"params": params, "headers": headers, "timeout": timeout}))
+        recorded: dict[str, object] = {"params": params, "headers": headers, "timeout": timeout}
+        if auth is not None:
+            recorded["auth"] = auth
+        self.get_calls.append((url, recorded))
         if self.get_exception is not None:
             raise self.get_exception
         return self.get_response
@@ -63,8 +67,12 @@ class StrictAgentClient:
         headers: RequestHeaders = None,
         json: object | None = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.post_calls.append((url, {"params": params, "headers": headers, "json": json, "timeout": timeout}))
+        recorded: dict[str, object] = {"params": params, "headers": headers, "json": json, "timeout": timeout}
+        if auth is not None:
+            recorded["auth"] = auth
+        self.post_calls.append((url, recorded))
         if self.post_exception is not None:
             raise self.post_exception
         return self.post_response

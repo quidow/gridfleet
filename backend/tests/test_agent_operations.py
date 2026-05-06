@@ -46,17 +46,12 @@ class StrictAgentClient:
         params: QueryParams = None,
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.get_calls.append(
-            (
-                url,
-                {
-                    "params": params,
-                    "headers": headers,
-                    "timeout": timeout,
-                },
-            )
-        )
+        recorded: dict[str, object] = {"params": params, "headers": headers, "timeout": timeout}
+        if auth is not None:
+            recorded["auth"] = auth
+        self.get_calls.append((url, recorded))
         if self.get_exception is not None:
             raise self.get_exception
         return self.get_response
@@ -69,18 +64,17 @@ class StrictAgentClient:
         headers: RequestHeaders = None,
         json: object | None = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        self.post_calls.append(
-            (
-                url,
-                {
-                    "params": params,
-                    "headers": headers,
-                    "json": json,
-                    "timeout": timeout,
-                },
-            )
-        )
+        recorded: dict[str, object] = {
+            "params": params,
+            "headers": headers,
+            "json": json,
+            "timeout": timeout,
+        }
+        if auth is not None:
+            recorded["auth"] = auth
+        self.post_calls.append((url, recorded))
         if self.post_exception is not None:
             raise self.post_exception
         return self.post_response
@@ -383,3 +377,23 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
 
     assert exc_info.value.http_status == 500
     assert exc_info.value.host == "10.0.0.1"
+
+
+async def test_agent_request_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent_client import request as agent_request
+
+    client = StrictAgentClient()
+    auth = httpx.BasicAuth("ops", "secret")
+
+    await agent_request(
+        "GET",
+        "http://host.test/agent/health",
+        endpoint="agent_health",
+        host="host.test",
+        client=client,
+        auth=auth,
+    )
+
+    assert client.get_calls, "expected one GET call"
+    _, kwargs = client.get_calls[0]
+    assert kwargs["auth"] is auth
