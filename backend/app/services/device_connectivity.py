@@ -13,7 +13,7 @@ from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperatio
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import control_plane_state_store, device_health, device_locking, lifecycle_policy
+from app.services import appium_node_locking, control_plane_state_store, device_health, device_locking, lifecycle_policy
 from app.services.agent_operations import (
     get_pack_devices,
     pack_device_lifecycle_action,
@@ -192,8 +192,6 @@ async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
 
 
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:
-    from app.services import appium_node_locking, device_locking
-
     locked_device = await device_locking.lock_device(db, device.id)
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None or locked_node.state == NodeState.stopped:

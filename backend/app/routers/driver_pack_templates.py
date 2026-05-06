@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
+from app.config import settings
 from app.database import get_db
 from app.models.driver_pack import DriverPack
 from app.schemas.driver_pack import PackOut
@@ -97,8 +98,6 @@ async def create_from_template(
         release=body.release,
         display_name=body.display_name,
     )
-
-    from app.config import settings
 
     storage = PackStorageService(settings.driver_pack_storage_dir)
     try:

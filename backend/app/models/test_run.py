@@ -3,16 +3,14 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.device_reservation import DeviceReservation
+from app.models.device_reservation import DeviceReservation
 
 
 class RunState(enum.StrEnum):
@@ -61,8 +59,6 @@ class TestRun(Base):
 
     @reserved_devices.setter
     def reserved_devices(self, value: list[dict[str, Any]] | None) -> None:
-        from app.models.device_reservation import DeviceReservation
-
         self.device_reservations = []
         if not value:
             return

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func, select, text
 
 from app.database import Base
+from app.seeding.context import SeedContext
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -87,8 +88,6 @@ async def run_scenario(
     ``skip_telemetry`` is forwarded only to scenarios that accept it
     (currently ``full_demo``).
     """
-    from app.seeding.context import SeedContext
-
     if scenario not in _SCENARIO_REGISTRY:
         raise ValueError(f"unknown scenario {scenario!r}; available: {sorted(_SCENARIO_REGISTRY)}")
     module_path, func_name = _SCENARIO_REGISTRY[scenario]

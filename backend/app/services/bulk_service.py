@@ -14,6 +14,7 @@ from app.errors import AgentCallError
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
+from app.services.device_service import delete_device
 from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from app.services.node_service import restart_node, start_node, stop_node
@@ -26,8 +27,6 @@ MAX_CONCURRENCY = 5
 
 
 async def _load_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
-    from app.services import device_locking
-
     return await device_locking.lock_devices(db, device_ids)
 
 
@@ -161,8 +160,6 @@ async def bulk_update_tags(
 
 
 async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
-    from app.services.device_service import delete_device
-
     errors: dict[str, str] = {}
     for device_id in device_ids:
         try:

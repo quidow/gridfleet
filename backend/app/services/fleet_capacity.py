@@ -10,6 +10,7 @@ from app.database import async_session
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
+from app.models.host import Host, HostStatus
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop
 from app.schemas.analytics import FleetCapacityTimeline, FleetCapacityTimelinePoint
@@ -246,8 +247,6 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
 
 
 async def _count_hosts(db: AsyncSession) -> tuple[int, int]:
-    from app.models.host import Host, HostStatus
-
     stmt = select(
         func.count().label("total"),
         func.count().filter(Host.status == HostStatus.online).label("online"),

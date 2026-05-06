@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from app.observability import get_logger, observe_background_loop
 from app.services.control_plane_leader import LeadershipLost, control_plane_leader
@@ -34,7 +35,5 @@ async def control_plane_leader_keepalive_loop() -> None:
             # failed or another holder claimed the row. sys.exit() can be
             # intercepted by framework code; os._exit(70) guarantees the
             # supervisor gets a clean process failure to restart.
-            import os
-
             os._exit(70)
         await asyncio.sleep(interval)

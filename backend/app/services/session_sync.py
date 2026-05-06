@@ -12,7 +12,7 @@ from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
-from app.services import grid_service, lifecycle_policy, run_service, session_service
+from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
@@ -160,8 +160,6 @@ async def _sync_sessions(db: AsyncSession) -> None:
         db.add(session)
 
         # Mark device busy under row lock
-        from app.services import device_locking
-
         locked_device = await device_locking.lock_device(db, device.id)
         await set_operational_state(locked_device, DeviceOperationalState.busy, publish_event=False)
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
@@ -221,8 +219,6 @@ async def _sync_sessions(db: AsyncSession) -> None:
                     # device busy so the new session keeps it.
                     continue
             if device and device.operational_state == DeviceOperationalState.busy:
-                from app.services import device_locking
-
                 locked_device = await device_locking.lock_device(db, device.id)
                 if locked_device.operational_state == DeviceOperationalState.busy:
                     # Authoritative recheck under the row lock. ``handle_session_finished``

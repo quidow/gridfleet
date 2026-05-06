@@ -17,6 +17,9 @@ from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts, UnavailableInclude
 from app.services import (
+    capability_service,
+    config_service,
+    device_config_masking,
     device_health,
     device_locking,
     grid_service,
@@ -177,8 +180,6 @@ async def hydrate_reserved_device_info(
     Caller must pass a ``Device`` with the ``appium_node`` relationship loaded.
     Never raises on missing data — sets ``None`` and records the reason.
     """
-    from app.services import capability_service, config_service, device_config_masking
-
     unavailable: list[UnavailableInclude] = []
 
     if "config" in includes:
@@ -215,8 +216,6 @@ async def hydrate_reserved_device_infos(
     """Batched variant for reserve. Loads sensitive-key map once for all devices."""
     if not includes or not pairs:
         return
-    from app.services import device_config_masking
-
     sensitive_key_map: dict[tuple[str, str], set[str]] | None = None
     if "config" in includes:
         sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(

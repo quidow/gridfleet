@@ -10,7 +10,13 @@ from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import lifecycle_incident_service, maintenance_service, run_service
+from app.services import (
+    appium_node_locking,
+    device_locking,
+    lifecycle_incident_service,
+    maintenance_service,
+    run_service,
+)
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event
@@ -28,8 +34,6 @@ if TYPE_CHECKING:
 
 
 async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
-    from app.services import device_locking
-
     return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
@@ -152,8 +156,6 @@ async def handle_node_crash(
     ``record_event(DeviceEventType.node_crash, ...)`` fires on every branch —
     webhook subscribers of ``device.crashed`` see the crash unconditionally.
     """
-    from app.services import appium_node_locking
-
     device = await _lock_for_state_write(db, device)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     await record_event(
@@ -185,8 +187,6 @@ async def handle_node_crash(
             # stop_managed_node may commit before raising, releasing both row locks.
             # Re-acquire in the documented Device -> AppiumNode order before
             # writing offline/error state.
-            from app.services import appium_node_locking, device_locking
-
             device = await device_locking.lock_device(db, device.id, load_sessions=True)
             locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
             await set_operational_state(

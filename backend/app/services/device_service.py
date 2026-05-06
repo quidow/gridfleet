@@ -38,6 +38,7 @@ from app.services import (
 from app.services.device_identity_conflicts import (
     ensure_device_payload_identity_available,
 )
+from app.services.node_service import stop_node
 
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
@@ -321,8 +322,6 @@ async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Dev
 
 
 async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device_id: uuid.UUID) -> Device | None:
-    from app.services.node_service import stop_node
-
     while device.appium_node and device.appium_node.state == NodeState.running:
         try:
             await stop_node(db, device)

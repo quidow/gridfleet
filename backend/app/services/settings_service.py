@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
+from app.config import settings as process_settings
 from app.models.setting import Setting
 from app.services.event_catalog import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
 
@@ -63,15 +64,16 @@ def _cross_field_validate(key: str, value: SettingValue) -> str | None:
 
     Returns an error message, or None if the change is allowed.
     """
-    if key == "agent.enable_web_terminal" and value is True:
-        # Local import avoids an import cycle at module load time.
-        from app.config import settings as process_settings
-
-        if process_settings.auth_enabled and not process_settings.agent_terminal_token:
-            return (
-                "GRIDFLEET_AGENT_TERMINAL_TOKEN must be set in the environment before "
-                "enabling the host web terminal while GRIDFLEET_AUTH_ENABLED is true"
-            )
+    if (
+        key == "agent.enable_web_terminal"
+        and value is True
+        and process_settings.auth_enabled
+        and not process_settings.agent_terminal_token
+    ):
+        return (
+            "GRIDFLEET_AGENT_TERMINAL_TOKEN must be set in the environment before "
+            "enabling the host web terminal while GRIDFLEET_AUTH_ENABLED is true"
+        )
     return None
 
 

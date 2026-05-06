@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select, text, update
 
+from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 
 if TYPE_CHECKING:
@@ -127,8 +128,6 @@ async def transfer_temporary_to_managed(
 
 async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str, JsonValue]:
     """Return port claims merged with non-port live capabilities for a node."""
-    from app.models.appium_node import AppiumNode
-
     port_rows = (
         await db.execute(
             select(AppiumNodeResourceClaim.capability_key, AppiumNodeResourceClaim.port).where(

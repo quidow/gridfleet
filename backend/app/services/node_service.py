@@ -17,8 +17,21 @@ from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import DeviceOperationalState
-from app.services import appium_capability_keys, device_health
-from app.services.agent_operations import appium_start, appium_status, appium_stop, response_json_dict
+from app.services import (
+    appium_capability_keys,
+    appium_node_locking,
+    appium_node_resource_service,
+    device_health,
+    device_locking,
+)
+from app.services.agent_error_codes import AgentErrorCode
+from app.services.agent_operations import (
+    appium_start,
+    appium_status,
+    appium_stop,
+    parse_agent_error_detail,
+    response_json_dict,
+)
 from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
@@ -87,8 +100,6 @@ __all__ = [
 
 async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
     """Acquire and refresh the Device row used for node-state writes."""
-    from app.services import device_locking
-
     try:
         return await device_locking.lock_device(db, device_id)
     except NoResultFound:
@@ -168,8 +179,6 @@ async def mark_node_started(
     allocated_caps: dict[str, Any] | None = None,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
-    from app.services import appium_node_locking, appium_node_resource_service
-
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = upsert_node(db, device, port, pid, active_connection_target)
     await db.flush()
@@ -222,8 +231,6 @@ async def mark_node_started(
 
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
-    from app.services import appium_node_locking
-
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     node = device.appium_node
     assert node is not None
@@ -439,9 +446,6 @@ async def start_remote_temporary_node(
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        from app.services.agent_error_codes import AgentErrorCode
-        from app.services.agent_operations import parse_agent_error_detail
-
         code, message_text = parse_agent_error_detail(exc.response)
         message = f"Agent failed to start node: {message_text}"
         if code in {AgentErrorCode.PORT_OCCUPIED.value, AgentErrorCode.ALREADY_RUNNING.value}:
@@ -570,8 +574,6 @@ async def restart_node_via_agent(
     *,
     http_client_factory: AgentClientFactory,
 ) -> bool:
-    from app.services import appium_node_locking, appium_node_resource_service, device_locking
-
     try:
         host = require_management_host(device, action="restart Appium nodes")
     except NodeManagerError:
@@ -671,8 +673,6 @@ async def _start_with_owner(
         # resource allocation. Devices without a pack still start, the
         # allocator simply gets no port/derived-data-path hints.
         pass
-    from app.services import appium_node_resource_service
-
     existing_caps: dict[str, Any] = {}
     if device.appium_node is not None:
         existing_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)
@@ -807,8 +807,6 @@ async def start_temporary_node(
 ) -> TemporaryNodeHandle:
     resolved_owner_key = owner_key or _build_device_owner_key(device)
     if device.id is not None and device.appium_node is not None and device.appium_node.state == NodeState.running:
-        from app.services import appium_node_resource_service
-
         return TemporaryNodeHandle(
             port=device.appium_node.port,
             pid=device.appium_node.pid,
@@ -856,8 +854,6 @@ async def stop_temporary_node(
     # ports in use; freeing the owner here would let the allocator hand the
     # same resources to a new owner while the orphan is still running.
     if stopped and release_allocations and handle.owner_key:
-        from app.services import appium_node_resource_service
-
         node = await db.scalar(select(AppiumNode).where(AppiumNode.device_id == device.id))
         if node is not None:
             await appium_node_resource_service.release_managed(db, node_id=node.id)
@@ -923,8 +919,6 @@ async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
                 exc,
             )
             await asyncio.sleep(wait)
-
-    from app.services import appium_node_resource_service
 
     node = device.appium_node
     if node is not None:

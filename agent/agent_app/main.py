@@ -12,7 +12,17 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 
 from agent_app import __version__
-from agent_app.appium_process import AppiumProcessManager, sanitize_appium_driver_capabilities
+from agent_app.appium_process import (
+    AlreadyRunningError,
+    AppiumProcessManager,
+    DeviceNotFoundError,
+    InvalidStartPayloadError,
+    PortOccupiedError,
+    RuntimeMissingError,
+    RuntimeNotInstalledError,
+    StartupTimeoutError,
+    sanitize_appium_driver_capabilities,
+)
 from agent_app.capabilities import (
     capabilities_refresh_loop,
     get_capabilities_snapshot,
@@ -20,12 +30,13 @@ from agent_app.capabilities import (
 )
 from agent_app.config import agent_settings
 from agent_app.driver_doctor import run_driver_doctor
+from agent_app.error_codes import AgentErrorCode, http_exc
 from agent_app.host_telemetry import get_host_telemetry
 from agent_app.observability import RequestContextMiddleware, configure_logging
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.adapter_loader import load_adapter
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.discovery import enumerate_pack_candidates
+from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
 from agent_app.pack.dispatch import (
     adapter_health_check,
     adapter_lifecycle_action,
@@ -41,6 +52,7 @@ from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugin_manager import get_installed_plugins, sync_plugins
+from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import ensure_tools, get_tool_status
 from agent_app.version_guidance import get_version_guidance
@@ -155,7 +167,6 @@ def _get_network_devices() -> list[dict[str, Any]]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    from agent_app.registration import registration_loop
 
     await refresh_capabilities_snapshot()
     capabilities_task = asyncio.create_task(capabilities_refresh_loop(refresh_immediately=False))
@@ -376,8 +387,6 @@ async def pack_device_properties_route(
     connection_target: str,
     pack_id: str = Query(...),
 ) -> dict[str, Any]:
-    from agent_app.pack.discovery import pack_device_properties
-
     loop = getattr(request.app.state, "pack_state_loop", None)
     desired = loop.latest_desired_packs if loop else None
     adapter_registry = getattr(request.app.state, "adapter_registry", None)
@@ -557,17 +566,6 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
 
 @app.post("/agent/appium/start")
 async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
-    from agent_app.appium_process import (
-        AlreadyRunningError,
-        DeviceNotFoundError,
-        InvalidStartPayloadError,
-        PortOccupiedError,
-        RuntimeMissingError,
-        RuntimeNotInstalledError,
-        StartupTimeoutError,
-    )
-    from agent_app.error_codes import AgentErrorCode, http_exc
-
     try:
         info = await appium_mgr.start(
             connection_target=req.connection_target,
@@ -621,8 +619,6 @@ async def appium_status(port: int) -> dict[str, Any]:
 
 @app.post("/agent/appium/{port}/probe-session")
 async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
-    from agent_app.error_codes import AgentErrorCode, http_exc
-
     base_url = f"http://127.0.0.1:{port}"
     payload = {
         "capabilities": {

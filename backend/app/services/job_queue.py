@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 
 from app.models.job import Job
 from app.observability import get_logger, observe_background_loop
+from app.services.device_verification_job_state import reset_snapshot_for_retry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -89,8 +90,6 @@ async def reset_stale_running_jobs(
             row.started_at = None
             row.completed_at = None
             if row.kind == JOB_KIND_DEVICE_VERIFICATION:
-                from app.services.device_verification_job_state import reset_snapshot_for_retry
-
                 row.snapshot = reset_snapshot_for_retry(row.snapshot)
             else:
                 snapshot = copy.deepcopy(row.snapshot)

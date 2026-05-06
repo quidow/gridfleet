@@ -19,6 +19,7 @@ from agent_app.config import agent_settings
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
+from agent_app.tool_utils import _find_adb, find_android_home
 
 logger = logging.getLogger(__name__)
 
@@ -209,8 +210,6 @@ def _build_env(
         bin_dir = os.path.dirname(appium_bin)
         if bin_dir and bin_dir not in env.get("PATH", ""):
             extra_paths.append(bin_dir)
-
-    from agent_app.tool_utils import _find_adb, find_android_home
 
     adb_dir = os.path.dirname(_find_adb())
     if adb_dir and adb_dir not in env.get("PATH", ""):

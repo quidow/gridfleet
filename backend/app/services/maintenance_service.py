@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
+from app.services import device_locking
 from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
@@ -33,8 +34,6 @@ async def enter_maintenance(
             await stop_node(db, device)
             # stop_node commits via mark_node_stopped, releasing our row lock.
             # Re-acquire the Device row before restoring maintenance.
-            from app.services import device_locking
-
             device = await device_locking.lock_device(db, device.id)
             await set_hold(
                 device,

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import freeze_background_loops_enabled
+from app.database import async_session as session_factory
 from app.database import engine, get_db
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
@@ -43,6 +44,7 @@ from app.routers import (
 )
 from app.services import auth as auth_service
 from app.services import device_health, device_service, webhook_dispatcher
+from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
@@ -50,6 +52,7 @@ from app.services.control_plane_leader_watcher import control_plane_leader_watch
 from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
+from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
@@ -64,6 +67,7 @@ from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
 from app.services.session_viability import session_viability_loop
+from app.services.settings_service import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
 
 configure_logging()
@@ -84,8 +88,6 @@ def _freeze_background_loops() -> bool:
 
 
 def _validate_appium_reservation_settings() -> None:
-    from app.services.settings_service import settings_service
-
     ttl = int(settings_service.get("appium.reservation_ttl_sec"))
     startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
     if ttl <= startup_timeout + 5:
@@ -97,8 +99,6 @@ def _validate_appium_reservation_settings() -> None:
 
 
 def _validate_leader_keepalive_settings() -> None:
-    from app.services.settings_service import settings_service, validate_leader_keepalive_settings
-
     keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
     stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
     error = validate_leader_keepalive_settings(
@@ -111,11 +111,6 @@ def _validate_leader_keepalive_settings() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    from app.database import async_session as session_factory
-    from app.services.agent_http_pool import agent_http_pool
-    from app.services.event_bus import event_bus
-    from app.services.settings_service import settings_service
-
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
     await agent_http_pool.reopen()

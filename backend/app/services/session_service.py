@@ -11,7 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.session import Session, SessionStatus
-from app.services import lifecycle_policy, run_service
+from app.services import device_locking, lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -302,8 +302,6 @@ async def _lock_resolved_device_for_session(
     if device is None:
         return None
 
-    from app.services import device_locking
-
     locked = await device_locking.lock_device(db, device.id)
     if device_id is not None and locked.id == device_id:
         return locked
@@ -439,8 +437,6 @@ async def update_session_status(
         session.ended_at = datetime.now(UTC)
 
     if status != SessionStatus.running and session.device_id is not None:
-        from app.services import device_locking
-
         locked_device = await device_locking.lock_device(db, session.device_id)
         event_device = locked_device
         running_stmt = select(Session).where(

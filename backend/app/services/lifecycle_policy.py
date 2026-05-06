@@ -10,7 +10,13 @@ from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import device_health, lifecycle_incident_service, lifecycle_policy_summary, run_service
+from app.services import (
+    device_health,
+    device_locking,
+    lifecycle_incident_service,
+    lifecycle_policy_summary,
+    run_service,
+)
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
@@ -158,8 +164,6 @@ async def clear_pending_auto_stop_on_recovery(
 
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
-    from app.services import device_locking
-
     return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
@@ -465,8 +469,6 @@ async def attempt_auto_recovery(
         # the row lock via intermediate commits in handle_node_crash.
         # Without this re-lock, the trailing write_state below would clobber any
         # concurrent writer (e.g., note_connectivity_loss) on the same device.
-        from app.services import device_locking
-
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
         fresh_state = policy_state(device)
@@ -508,8 +510,6 @@ async def attempt_auto_recovery(
     # commits multiple times during execution, releasing the row lock that
     # _reload_device acquired at the top of this function. Without this re-lock,
     # the trailing writes below would clobber any concurrent writer on the same device.
-    from app.services import device_locking
-
     device = await device_locking.lock_device(db, device.id, load_sessions=True)
     fresh_state = policy_state(device)
     # Carry forward this writer's intent in current_state into fresh_state, but

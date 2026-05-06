@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.errors import AgentCallError
 from app.models.job import Job
-from app.services import control_plane_state_store
+from app.services import control_plane_state_store, host_service
 from app.services.agent_operations import ensure_tools as ensure_agent_tools
 from app.services.job_queue import (
     JOB_KIND_HOST_TOOLS_ENSURE,
@@ -16,6 +16,7 @@ from app.services.job_queue import (
     JOB_STATUS_PENDING,
     JOB_STATUS_RUNNING,
     create_job,
+    get_job,
 )
 from app.services.settings_service import settings_service
 
@@ -131,9 +132,7 @@ async def start_host_tool_ensure_job(db: AsyncSession, host: Host) -> dict[str, 
 
 
 async def get_host_tool_ensure_job(db: AsyncSession, job_id: uuid.UUID) -> dict[str, Any] | None:
-    from app.services import job_queue
-
-    row = await job_queue.get_job(db, job_id)
+    row = await get_job(db, job_id)
     if row is None or row.kind != JOB_KIND_HOST_TOOLS_ENSURE:
         return None
     return copy.deepcopy(row.snapshot)
@@ -145,8 +144,6 @@ async def run_persisted_host_tool_ensure_job(
     *,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    from app.services import host_service
-
     parsed_job_id = uuid.UUID(job_id)
     host_id = uuid.UUID(str(payload["host_id"]))
     async with session_factory() as db:
