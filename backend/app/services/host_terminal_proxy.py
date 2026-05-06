@@ -13,13 +13,13 @@ AGENT_TOKEN_HEADER = "x-agent-terminal-token"
 
 class BrowserSocket(Protocol):
     async def send_text(self, data: str) -> None:
-        pass
+        raise NotImplementedError
 
     async def receive_text(self) -> str:
-        pass
+        raise NotImplementedError
 
     async def close(self, code: int = 1000) -> None:
-        pass
+        raise NotImplementedError
 
 
 async def proxy_terminal_session(

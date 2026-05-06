@@ -149,13 +149,13 @@ class DriverPackAdapter(Protocol):
     pack_release: str
 
     async def discover(self, ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
-        pass
+        raise NotImplementedError
 
     async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
-        pass
+        raise NotImplementedError
 
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
-        pass
+        raise NotImplementedError
 
     async def lifecycle_action(
         self,
@@ -163,13 +163,13 @@ class DriverPackAdapter(Protocol):
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult:
-        pass
+        raise NotImplementedError
 
     async def pre_session(self, spec: SessionSpec) -> dict[str, Any]:
-        pass
+        raise NotImplementedError
 
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
-        pass
+        raise NotImplementedError
 
     async def feature_action(
         self,
@@ -178,17 +178,17 @@ class DriverPackAdapter(Protocol):
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> FeatureActionResult:
-        pass
+        raise NotImplementedError
 
     async def sidecar_lifecycle(
         self,
         feature_id: str,
         action: Literal["start", "stop", "status"],
     ) -> SidecarStatus:
-        pass
+        raise NotImplementedError
 
     async def normalize_device(self, ctx: NormalizeDeviceContext) -> NormalizedDevice:
-        pass
+        raise NotImplementedError
 
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
-        pass
+        raise NotImplementedError

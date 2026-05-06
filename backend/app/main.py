@@ -109,6 +109,24 @@ def _validate_leader_keepalive_settings() -> None:
         raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
 
 
+async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: str) -> None:
+    if not tasks:
+        return
+    for task in tasks:
+        task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for task, result in zip(tasks, results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        if isinstance(result, BaseException):
+            logger.error(
+                "%s task %s failed during shutdown",
+                label,
+                task.get_name(),
+                exc_info=(type(result), result, result.__traceback__),
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
@@ -185,15 +203,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await shutdown_coordinator.begin_shutdown()
         await shutdown_coordinator.wait_for_drain(SHUTDOWN_DRAIN_TIMEOUT_SEC)
-        for t in tasks:
-            t.cancel()
-        if tasks:
-            cancelled_task_results = await asyncio.gather(*tasks, return_exceptions=True)
-            del cancelled_task_results
+        await _cancel_and_wait_for_tasks(tasks, label="background")
         if watcher_task is not None:
-            watcher_task.cancel()
-            cancelled_watcher_results = await asyncio.gather(watcher_task, return_exceptions=True)
-            del cancelled_watcher_results
+            await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
         await shutdown_background_tasks()
         await settings_service.shutdown()
         await control_plane_leader.release()
@@ -201,9 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await agent_http_pool.close()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)
-        if pending_signal_tasks:
-            cancelled_signal_results = await asyncio.gather(*pending_signal_tasks, return_exceptions=True)
-            del cancelled_signal_results
+        await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")
         for signum in registered_signals:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signum)

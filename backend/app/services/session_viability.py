@@ -42,7 +42,7 @@ class HealthFailureHandler(Protocol):
         source: str,
         reason: str,
     ) -> object:
-        pass
+        raise NotImplementedError
 
 
 _health_failure_handler: HealthFailureHandler | None = None

@@ -403,7 +403,7 @@ async def prepare_device_create_payload_async(
         resolved_scheme = resolved_plat.identity_scheme
         resolved_scope = resolved_plat.identity_scope
     except LookupError:
-        logger.debug("Pack platform not resolvable for pack=%s platform=%s", pack_id, platform_id, exc_info=True)
+        logger.debug("Pack platform not resolvable for pack=%r platform=%r", pack_id, platform_id, exc_info=True)
     payload = _resolve_create_payload_fields(
         data,
         connection_behavior=behavior,

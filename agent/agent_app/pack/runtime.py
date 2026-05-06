@@ -34,7 +34,7 @@ class RuntimeEnv:
 
 class NpmRunner(Protocol):
     async def install_appium(self, package: str, version: str, appium_home: str) -> str:
-        pass
+        raise NotImplementedError
 
     async def install_driver(
         self,
@@ -46,7 +46,7 @@ class NpmRunner(Protocol):
         source: str = "npm",
         github_repo: str | None = None,
     ) -> None:
-        pass
+        raise NotImplementedError
 
     async def install_plugin(
         self,
@@ -56,7 +56,7 @@ class NpmRunner(Protocol):
         package: str | None,
         appium_home: str,
     ) -> None:
-        pass
+        raise NotImplementedError
 
 
 class RealNpmRunner:

@@ -71,6 +71,14 @@ describe('platformSelection', () => {
     });
   });
 
+  it('rejects malformed composite keys', () => {
+    expect(parsePlatformKey('')).toBeNull();
+    expect(parsePlatformKey('pack-only')).toBeNull();
+    expect(parsePlatformKey('::platform')).toBeNull();
+    expect(parsePlatformKey('pack::')).toBeNull();
+    expect(parsePlatformKey('pack::platform::extra')).toBeNull();
+  });
+
   it('keeps platforms with the same platform_id distinct by pack_id', () => {
     const descriptor = findPlatformDescriptorByKey(
       packs,
