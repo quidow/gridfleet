@@ -1,5 +1,3 @@
-import copy
-import re
 import uuid
 from typing import Any
 
@@ -9,34 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import Device
 from app.services import device_readiness
+from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
+from app.services.device_config_masking_primitives import MASK_VALUE, deep_merge  # noqa: F401
 from app.services.event_bus import queue_event_for_session
-
-SENSITIVE_PATTERNS = re.compile(r"(password|secret|key|token|credential)", re.IGNORECASE)
-MASK_VALUE = "********"
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge override into base, returning a new dict."""
-    result = copy.deepcopy(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = copy.deepcopy(value)
-    return result
-
-
-def _mask_sensitive(config: dict[str, Any]) -> dict[str, Any]:
-    """Mask values whose keys match sensitive patterns."""
-    masked: dict[str, Any] = {}
-    for key, value in config.items():
-        if isinstance(value, dict):
-            masked[key] = _mask_sensitive(value)
-        elif SENSITIVE_PATTERNS.search(key):
-            masked[key] = MASK_VALUE
-        else:
-            masked[key] = value
-    return masked
 
 
 def _filter_keys(config: dict[str, Any], keys: list[str]) -> dict[str, Any]:
@@ -53,8 +26,6 @@ async def get_device_config(
     keys: list[str] | None = None,
     reveal: bool = False,
 ) -> dict[str, Any]:
-    from app.services.device_config_masking import mask_device_config
-
     config = device.device_config or {}
     if keys:
         config = _filter_keys(config, keys)
@@ -67,8 +38,6 @@ async def replace_device_config(
     new_config: dict[str, Any],
     changed_by: str | None = None,
 ) -> dict[str, Any]:
-    from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
-
     previous = device.device_config or {}
     new_config = await preserve_masked_device_config_values(
         db,
@@ -108,10 +77,8 @@ async def merge_device_config(
     partial_config: dict[str, Any],
     changed_by: str | None = None,
 ) -> dict[str, Any]:
-    from app.services.device_config_masking import mask_device_config, preserve_masked_device_config_values
-
     previous = device.device_config or {}
-    merged = _deep_merge(previous, partial_config)
+    merged = deep_merge(previous, partial_config)
     merged = await preserve_masked_device_config_values(
         db,
         device,

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.services.config_service import MASK_VALUE, SENSITIVE_PATTERNS
+from app.services.device_config_masking_primitives import MASK_VALUE, SENSITIVE_PATTERNS
 from app.services.pack_release_ordering import selected_release
 
 if TYPE_CHECKING:
