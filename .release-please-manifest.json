@@ -2,5 +2,5 @@
   "backend": "0.1.0",
   "agent": "0.3.0",
   "frontend": "0.1.0",
-  "testkit": "0.3.0"
+  "testkit": "0.4.0"
 }
