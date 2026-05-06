@@ -10,11 +10,11 @@ from app.agent_client import (
     AgentHttpClient,
     JsonBody,
     QueryParams,
+    _agent_basic_auth,
 )
 from app.agent_client import (
     request as agent_request,
 )
-from app.config import settings as _settings
 from app.errors import AgentResponseError, AgentUnreachableError
 from app.services.agent_http_pool import agent_http_pool
 from app.services.settings_service import settings_service
@@ -24,14 +24,6 @@ _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 
 def agent_base_url(host: str, agent_port: int) -> str:
     return f"http://{host}:{agent_port}"
-
-
-def _agent_basic_auth() -> httpx.BasicAuth | None:
-    username = _settings.agent_auth_username
-    password = _settings.agent_auth_password
-    if not username or not password:
-        return None
-    return httpx.BasicAuth(username, password)
 
 
 async def _send_request(

@@ -401,6 +401,27 @@ async def test_agent_request_passes_auth() -> None:
     assert kwargs["auth"] is auth
 
 
+async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import agent_client
+    from app.agent_client import request as agent_request
+
+    client = StrictAgentClient()
+    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
+    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
+
+    await agent_request(
+        "GET",
+        "http://host.test/agent/health",
+        endpoint="agent_health",
+        host="host.test",
+        client=client,
+    )
+
+    assert client.get_calls, "expected one GET call"
+    _, kwargs = client.get_calls[0]
+    assert isinstance(kwargs["auth"], httpx.BasicAuth)
+
+
 def _make_capturing_factory(captured: list[httpx.Auth | None]) -> Callable[..., StrictAgentClient]:
     class CapturingClient(StrictAgentClient):
         async def get(

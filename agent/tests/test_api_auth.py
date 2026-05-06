@@ -48,6 +48,18 @@ async def test_health_requires_credentials_when_configured(monkeypatch: pytest.M
         assert good.status_code == 200
 
 
+async def test_health_accepts_latin1_basic_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    password = "s" + chr(0xEB) + "cret"
+    monkeypatch.setattr(_config.agent_settings, "api_auth_username", "ops")
+    monkeypatch.setattr(_config.agent_settings, "api_auth_password", password)
+    encoded = base64.b64encode(b"ops:s\xebcret").decode("ascii")
+
+    async with await _client() as c:
+        resp = await c.get("/agent/health", headers={"Authorization": f"Basic {encoded}"})
+
+    assert resp.status_code == 200
+
+
 async def test_non_agent_path_unaffected() -> None:
     async with await _client() as c:
         # Non-/agent path. App currently has no such route, so 404 is fine.

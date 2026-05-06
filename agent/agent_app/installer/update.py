@@ -29,7 +29,8 @@ class DrainResult:
 
 
 class DrainCheckCallable(Protocol):
-    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> DrainResult: ...
+    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> DrainResult:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)

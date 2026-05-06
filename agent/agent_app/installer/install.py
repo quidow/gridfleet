@@ -44,7 +44,8 @@ class RegistrationCheckResult:
 
 
 class HealthCheckCallable(Protocol):
-    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult: ...
+    def __call__(self, url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)

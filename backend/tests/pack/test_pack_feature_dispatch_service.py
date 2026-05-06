@@ -69,7 +69,9 @@ class StrictAgentClient:
         params: QueryParams = None,
         headers: RequestHeaders = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
+        del auth
         raise AssertionError("dispatch_feature_action must not GET the agent")
 
     async def post(
@@ -80,11 +82,12 @@ class StrictAgentClient:
         headers: RequestHeaders = None,
         json: object | None = None,
         timeout: float | int | None = None,
+        auth: httpx.Auth | None = None,
     ) -> httpx.Response:
         self.post_calls.append(
             (
                 url,
-                {"params": params, "headers": headers, "json": json, "timeout": timeout},
+                {"params": params, "headers": headers, "json": json, "timeout": timeout, "auth": auth},
             )
         )
         if self.post_exception is not None:
@@ -179,6 +182,42 @@ async def test_dispatch_calls_agent_and_records_ok_status(
     ).scalar_one()
     assert row.ok is True
     assert row.detail == "captured 1 file"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_configured_agent_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
+    sample_host: Host,
+) -> None:
+    from app import agent_client
+
+    await _seed_pack_with_feature(db_session, pack_id=PACK_ID, feature_id=FEATURE_ID)
+    await db_session.commit()
+    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
+    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
+
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST",
+            "http://x/agent/pack/features/x/actions/y",
+            payload={"ok": True, "detail": "done", "data": {}},
+        )
+    )
+
+    await pack_feature_dispatch_service.dispatch_feature_action(
+        db_session,
+        host_id=sample_host.id,
+        pack_id=PACK_ID,
+        feature_id=FEATURE_ID,
+        action_id=ACTION_ID,
+        args={},
+        http_client_factory=_factory(client),
+    )
+
+    assert client.post_calls
+    _, kwargs = client.post_calls[0]
+    assert isinstance(kwargs["auth"], httpx.BasicAuth)
 
 
 @pytest.mark.asyncio

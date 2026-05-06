@@ -207,7 +207,14 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
     def fake_run(command: list[str]) -> None:
         commands.append(command)
 
-    def fake_health(url: str, timeout_sec: float = 30.0, interval_sec: float = 1.0) -> HealthCheckResult:
+    def fake_health(
+        url: str,
+        timeout_sec: float = 30.0,
+        interval_sec: float = 1.0,
+        *,
+        auth: tuple[str, str] | None = None,
+    ) -> HealthCheckResult:
+        del timeout_sec, interval_sec, auth
         health_urls.append(url)
         return HealthCheckResult(ok=True, message="healthy")
 
@@ -246,7 +253,7 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
-        health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         registration_check=lambda checked_config: (
             registration_checks.append(checked_config) or RegistrationCheckResult(ok=True, message="registered")
         ),
@@ -272,7 +279,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
-        health_check=lambda _url: HealthCheckResult(ok=False, message="health failed"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health failed"),
         registration_check=fail_registration,
     )
 
@@ -294,7 +301,7 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytes
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda command: commands.append(command),
-        health_check=lambda _url: HealthCheckResult(ok=False, message="health check timed out"),
+        health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health check timed out"),
         uid=0,
     )
 
@@ -384,7 +391,7 @@ def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) ->
             executable=executable,
             download=lambda _url, dest: dest.write_text("selenium"),
             run_command=fail_command,
-            health_check=lambda _url: HealthCheckResult(ok=True, message="healthy"),
+            health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
         )
 
 

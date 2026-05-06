@@ -54,14 +54,21 @@ def _credentials_match(scope: Scope, expected_username: str, expected_password: 
     if scheme.lower() != "basic" or not encoded:
         return False
     try:
-        decoded = base64.b64decode(encoded).decode("utf-8")
+        decoded = base64.b64decode(encoded).decode("latin-1")
     except (ValueError, UnicodeDecodeError, binascii.Error):
         return False
     username, separator, password = decoded.partition(":")
     if not separator:
         return False
-    user_ok = hmac.compare_digest(username, expected_username)
-    pass_ok = hmac.compare_digest(password, expected_password)
+    try:
+        username_bytes = username.encode("latin-1")
+        password_bytes = password.encode("latin-1")
+        expected_username_bytes = expected_username.encode("latin-1")
+        expected_password_bytes = expected_password.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    user_ok = hmac.compare_digest(username_bytes, expected_username_bytes)
+    pass_ok = hmac.compare_digest(password_bytes, expected_password_bytes)
     return user_ok and pass_ok
 
 
