@@ -33,7 +33,7 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
     "app/services/device_verification_job_state.py:87": (
         "persist_job opens and commits its own session before publish; no caller-level outer transaction."
     ),
-    "app/services/event_bus.py:326": (
+    "app/services/event_bus.py:334": (
         "Internal recursive dispatch from _publish_pending_events after the writer transaction committed."
     ),
 }
