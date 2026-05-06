@@ -1092,13 +1092,13 @@ def test_claim_device_accepts_arbitrary_iterable_for_include(monkeypatch):
 def test_claim_device_rejects_string_include_to_avoid_character_split():
     client = GridFleetClient("http://manager/api")
     with pytest.raises(TypeError, match="must be a sequence of strings"):
-        client.claim_device("run-1", worker_id="gw0", include="config")  # type: ignore[arg-type]
+        client.claim_device("run-1", worker_id="gw0", include="config")
 
 
 def test_claim_device_rejects_bytes_include():
     client = GridFleetClient("http://manager/api")
     with pytest.raises(TypeError, match="must be a sequence of strings"):
-        client.claim_device("run-1", worker_id="gw0", include=b"config")  # type: ignore[arg-type]
+        client.claim_device("run-1", worker_id="gw0", include=b"config")
 
 
 def test_claim_device_raises_unknown_include_on_422(monkeypatch):
