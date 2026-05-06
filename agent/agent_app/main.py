@@ -12,6 +12,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 
 from agent_app import __version__
+from agent_app.api_auth import BasicAuthMiddleware
 from agent_app.appium_process import (
     AlreadyRunningError,
     AppiumProcessManager,
@@ -219,7 +220,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="GridFleet Agent", version="0.1.0", lifespan=lifespan)
-app.add_middleware(RequestContextMiddleware)
+app.add_middleware(BasicAuthMiddleware)  # inner: enforces Basic auth on /agent/*
+app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs first
 
 
 class AppiumStartRequest(BaseModel):
