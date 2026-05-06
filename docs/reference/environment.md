@@ -23,6 +23,8 @@ These are read directly by `backend/app/config.py`.
 | `GRIDFLEET_AUTH_COOKIE_SECURE` | `true` | backend auth gate | Marks the browser session cookie as `Secure`; keep enabled behind HTTPS |
 | `GRIDFLEET_MACHINE_AUTH_USERNAME` | unset | backend auth gate | Basic-auth username accepted for machine clients such as agents, CI helpers, and metrics scrapers |
 | `GRIDFLEET_MACHINE_AUTH_PASSWORD` | unset | backend auth gate | Basic-auth password accepted for machine clients such as agents, CI helpers, and metrics scrapers |
+| `GRIDFLEET_AGENT_AUTH_USERNAME` | unset | backend process | Username sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_PASSWORD`. |
+| `GRIDFLEET_AGENT_AUTH_PASSWORD` | unset | backend process | Password sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_USERNAME`. |
 | `GRIDFLEET_ENABLE_WEB_TERMINAL` | `false` | runtime setting default | Initial value for `agent.enable_web_terminal`. Admins can flip this in the Settings UI at runtime; the env var only seeds the default for fresh installs. Must be `true` on both manager and agent for sessions to succeed. |
 | `GRIDFLEET_AGENT_TERMINAL_TOKEN` | unset | backend web-terminal proxy | Shared secret sent to the agent as `X-Agent-Terminal-Token` when proxying a terminal session. Required when the terminal is enabled and `GRIDFLEET_AUTH_ENABLED=true`; the backend rejects enabling the terminal from the Settings UI while this is unset under those conditions. |
 | `GRIDFLEET_AGENT_TERMINAL_SCHEME` | `ws` | backend web-terminal proxy | WebSocket scheme used from the backend proxy to host agents. Use `wss` only when agents terminate TLS directly or sit behind a TLS WebSocket endpoint reachable at the registered host IP and agent port. |
@@ -61,6 +63,8 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `30` | agent process | How often the agent re-registers to refresh mutable host fields such as IP address and capabilities |
 | `AGENT_MANAGER_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username used for manager API calls when the backend auth gate is enabled |
 | `AGENT_MANAGER_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password used for manager API calls when the backend auth gate is enabled |
+| `AGENT_API_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username; required together with `AGENT_API_AUTH_PASSWORD`. When set, the agent enforces HTTP Basic on all `/agent/*` HTTP routes. WebSocket terminal still requires `AGENT_TERMINAL_TOKEN`. |
+| `AGENT_API_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password; required together with `AGENT_API_AUTH_USERNAME`. |
 | `AGENT_AGENT_PORT` | `5100` | agent process | Agent listen port |
 | `AGENT_GRID_HUB_URL` | `http://selenium-hub:4444` | agent process | Grid hub URL announced to the relay node |
 | `AGENT_GRID_PUBLISH_URL` | `tcp://localhost:4442` | agent process | Grid event-bus publish URL |
