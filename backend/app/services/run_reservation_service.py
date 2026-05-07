@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -37,7 +37,7 @@ def _reservation_entry_for_device(
         matching = [entry for entry in matching if entry.released_at is None]
     if not matching:
         return None
-    return matching[-1]
+    return cast("DeviceReservation", matching[-1])
 
 
 def _reservation_entry_is_excluded(entry: DeviceReservation) -> bool:
@@ -73,7 +73,7 @@ async def get_device_reservation_with_entry(
     reservation = result.scalars().first()
     if reservation is None:
         return None, None
-    return reservation.run, reservation
+    return cast("TestRun | None", reservation.run), reservation
 
 
 def get_reservation_entry_for_device(run: TestRun, device_id: uuid.UUID | str) -> DeviceReservation | None:

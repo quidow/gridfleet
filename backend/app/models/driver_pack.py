@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -25,10 +25,6 @@ class PackState(enum.StrEnum):
     enabled = "enabled"
     draining = "draining"
     disabled = "disabled"
-
-
-if TYPE_CHECKING:
-    from app.models.host_pack_installation import HostPackInstallation
 
 
 class DriverPack(Base):
@@ -70,7 +66,7 @@ class DriverPack(Base):
     releases: Mapped[list[DriverPackRelease]] = relationship(
         "DriverPackRelease", back_populates="pack", cascade="all, delete-orphan"
     )
-    host_pack_installations: Mapped[list[HostPackInstallation]] = relationship(
+    host_pack_installations: Mapped[list[Any]] = relationship(
         "HostPackInstallation", back_populates="pack", cascade="all, delete-orphan"
     )
 

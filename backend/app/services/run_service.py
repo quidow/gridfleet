@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from fastapi import HTTPException
 from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
@@ -138,7 +139,7 @@ def _reserved_entry_for_device(
         matching = [entry for entry in matching if entry.released_at is None]
     if not matching:
         return None
-    return matching[-1]
+    return cast("DeviceReservation", matching[-1])
 
 
 def _generated_worker_id() -> str:

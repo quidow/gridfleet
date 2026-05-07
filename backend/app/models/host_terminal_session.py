@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.host import Host
 
 
 class HostTerminalSession(Base):
@@ -32,4 +29,4 @@ class HostTerminalSession(Base):
     shell: Mapped[str | None] = mapped_column(String(255), nullable=True)
     agent_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    host: Mapped[Host] = relationship("Host", back_populates="terminal_sessions")
+    host: Mapped[Any] = relationship("Host", back_populates="terminal_sessions")

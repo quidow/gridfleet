@@ -3,20 +3,13 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.appium_node import AppiumNode
-    from app.models.device_event import DeviceEvent
-    from app.models.device_reservation import DeviceReservation
-    from app.models.host import Host
-    from app.models.session import Session
 
 
 class DeviceType(enum.StrEnum):
@@ -148,16 +141,14 @@ class Device(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    host: Mapped[Host | None] = relationship("Host", back_populates="devices")
-    appium_node: Mapped[AppiumNode | None] = relationship(
+    host: Mapped[Any | None] = relationship("Host", back_populates="devices")
+    appium_node: Mapped[Any | None] = relationship(
         "AppiumNode", back_populates="device", uselist=False, cascade="all, delete-orphan"
     )
-    sessions: Mapped[list[Session]] = relationship("Session", back_populates="device", cascade="all, delete-orphan")
-    reservations: Mapped[list[DeviceReservation]] = relationship(
+    sessions: Mapped[list[Any]] = relationship("Session", back_populates="device", cascade="all, delete-orphan")
+    reservations: Mapped[list[Any]] = relationship(
         "DeviceReservation",
         back_populates="device",
         cascade="all, delete-orphan",
     )
-    events: Mapped[list[DeviceEvent]] = relationship(
-        "DeviceEvent", back_populates="device", cascade="all, delete-orphan"
-    )
+    events: Mapped[list[Any]] = relationship("DeviceEvent", back_populates="device", cascade="all, delete-orphan")

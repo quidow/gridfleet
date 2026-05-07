@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.driver_pack import DriverPack
-    from app.models.host import Host
 
 
 class HostPackInstallation(Base):
@@ -39,8 +35,8 @@ class HostPackInstallation(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    host: Mapped[Host] = relationship("Host")
-    pack: Mapped[DriverPack] = relationship("DriverPack", back_populates="host_pack_installations")
+    host: Mapped[Any] = relationship("Host")
+    pack: Mapped[Any] = relationship("DriverPack", back_populates="host_pack_installations")
 
 
 class HostPackDoctorResult(Base):
@@ -59,5 +55,5 @@ class HostPackDoctorResult(Base):
     message: Mapped[str] = mapped_column(String, default="", nullable=False, server_default="")
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    host: Mapped[Host] = relationship("Host")
-    pack: Mapped[DriverPack] = relationship("DriverPack")
+    host: Mapped[Any] = relationship("Host")
+    pack: Mapped[Any] = relationship("DriverPack")
