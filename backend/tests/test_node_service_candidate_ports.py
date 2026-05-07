@@ -136,3 +136,18 @@ async def test_candidate_ports_raises_when_all_ports_used_on_host(db_session: As
         await _add_running_node(db_session, host=host, port=port)
     with pytest.raises(NodeManagerError):
         await candidate_ports(db_session, host_id=host.id)
+
+
+async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) -> None:
+    """Spec acceptance: two running nodes on different hosts can both use
+    `appium.port_range_start`."""
+    host_a = await _make_host(db_session, ip="10.0.0.70")
+    host_b = await _make_host(db_session, ip="10.0.0.71")
+    start = settings_service.get("appium.port_range_start")
+    await _add_running_node(db_session, host=host_a, port=start)
+
+    ports_for_a = await candidate_ports(db_session, host_id=host_a.id)
+    ports_for_b = await candidate_ports(db_session, host_id=host_b.id)
+
+    assert ports_for_a[0] != start, "Same host must skip the in-use port"
+    assert ports_for_b[0] == start, "Different host must reuse the same port"
