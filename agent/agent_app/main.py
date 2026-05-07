@@ -622,11 +622,10 @@ async def appium_status(port: int) -> dict[str, Any]:
 @app.post("/agent/appium/{port}/probe-session")
 async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
     try:
-        appium_mgr.require_managed_running_port(port)
+        base_url = appium_mgr.loopback_origin_for_managed_port(port)
     except DeviceNotFoundError as exc:
         raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
 
-    base_url = f"http://127.0.0.1:{port}"
     payload = {
         "capabilities": {
             "alwaysMatch": sanitize_appium_driver_capabilities(req.capabilities),
@@ -634,9 +633,9 @@ async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, 
         }
     }
 
-    async with httpx.AsyncClient(timeout=req.timeout_sec) as client:
+    async with httpx.AsyncClient(base_url=base_url, timeout=req.timeout_sec) as client:
         try:
-            create_resp = await client.post(f"{base_url}/session", json=payload)
+            create_resp = await client.post("/session", json=payload)
         except httpx.TimeoutException as exc:
             raise http_exc(
                 status_code=504,
@@ -674,7 +673,7 @@ async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, 
             )
 
         try:
-            delete_resp = await client.delete(f"{base_url}/session/{session_id}")
+            delete_resp = await client.delete(f"/session/{session_id}")
         except httpx.TimeoutException as exc:
             raise http_exc(
                 status_code=504,

@@ -20,6 +20,11 @@ from app.services.agent_http_pool import agent_http_pool
 from app.services.settings_service import settings_service
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
+type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
+
+
+def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
+    return cast("AgentHttpClient", client)
 
 
 def agent_base_url(host: str, agent_port: int) -> str:
@@ -55,7 +60,7 @@ async def _send_request(
             url,
             endpoint=endpoint,
             host=host,
-            client=cast("AgentHttpClient", client),
+            client=_as_agent_client(client),
             params=params,
             json_body=json_body,
             timeout=timeout,
@@ -69,7 +74,7 @@ async def _send_request(
             url,
             endpoint=endpoint,
             host=host,
-            client=cast("AgentHttpClient", fresh_client),
+            client=_as_agent_client(fresh_client),
             params=params,
             json_body=json_body,
             timeout=timeout,

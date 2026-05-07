@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 
 
 _DEFAULT_TIMEOUT_SEC: float = 30.0
+type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
+
+
+def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
+    return cast("AgentHttpClient", client)
 
 
 async def dispatch_feature_action(
@@ -157,7 +162,7 @@ async def _call_agent(
                 url,
                 endpoint="pack_feature_action",
                 host=host,
-                client=cast("AgentHttpClient", client),
+                client=_as_agent_client(client),
                 json_body=body,
                 timeout=timeout,
             )

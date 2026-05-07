@@ -345,7 +345,7 @@ async def test_rotating_session_secret_invalidates_existing_session(
     }
 
 
-async def test_rotating_operator_password_invalidates_existing_session(
+async def test_operator_password_rotation_keeps_stateless_session_until_secret_rotates(
     client: AsyncClient,
     auth_settings: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -362,17 +362,11 @@ async def test_rotating_operator_password_invalidates_existing_session(
     monkeypatch.setattr(settings, "auth_password", "rotated-operator-secret")
 
     protected_response = await client.get("/api/hosts")
-    assert protected_response.status_code == 401
+    assert protected_response.status_code == 200
 
     session_response = await client.get("/api/auth/session")
     assert session_response.status_code == 200
-    assert session_response.json() == {
-        "enabled": True,
-        "authenticated": False,
-        "username": None,
-        "csrf_token": None,
-        "expires_at": None,
-    }
+    assert session_response.json()["authenticated"] is True
 
 
 def test_issue_session_uses_configured_username(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,7 +384,7 @@ def test_issue_session_uses_configured_username(monkeypatch: pytest.MonkeyPatch)
     assert "configured-password" not in token
 
 
-def test_password_rotation_invalidates_session_without_plain_password_in_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_issue_session_does_not_store_password_derived_marker_in_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth.settings, "auth_enabled", True)
     monkeypatch.setattr(auth.settings, "auth_username", "operator")
     monkeypatch.setattr(auth.settings, "auth_password", "old-password")
@@ -401,12 +395,12 @@ def test_password_rotation_invalidates_session_without_plain_password_in_token(m
     payload = auth._decode_session_payload(token)
 
     assert payload is not None
-    assert "cv" in payload
+    assert "cv" not in payload
     assert "old-password" not in token
 
     monkeypatch.setattr(auth.settings, "auth_password", "new-password")
 
     session = auth.resolve_browser_session_from_headers(Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={token}"}))
 
-    assert session.authenticated is False
-    assert session.username is None
+    assert session.authenticated is True
+    assert session.username == "operator"
