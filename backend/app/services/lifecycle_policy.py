@@ -15,7 +15,7 @@ from app.services import (
     device_locking,
     lifecycle_incident_service,
     lifecycle_policy_summary,
-    run_service,
+    run_reservation_service,
     session_viability,
 )
 from app.services.device_event_service import record_event
@@ -326,13 +326,13 @@ async def attempt_auto_recovery(
 ) -> bool:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
-    run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
+    run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     node = loaded_node(device)
     if (
         node is not None
         and node.state == NodeState.running
         and device.operational_state != DeviceOperationalState.offline
-        and not run_service.reservation_entry_is_excluded(entry)
+        and not run_reservation_service.reservation_entry_is_excluded(entry)
     ):
         return False
 
@@ -470,7 +470,7 @@ async def attempt_auto_recovery(
         # Without this re-lock, the trailing write_state below would clobber any
         # concurrent writer (e.g., note_connectivity_loss) on the same device.
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
+        run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
         fresh_state = policy_state(device)
         fresh_state["backoff_until"] = backoff_until_iso
         fresh_state["recovery_backoff_attempts"] = current_state["recovery_backoff_attempts"]
@@ -519,13 +519,13 @@ async def attempt_auto_recovery(
     fresh_state["recovery_backoff_attempts"] = current_state.get("recovery_backoff_attempts", 0)
     current_state = fresh_state
     # Re-resolve the reservation under lock as well:
-    run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
+    run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
 
     clear_backoff(current_state)
     current_state["recovery_suppressed_reason"] = None
 
     if run is not None and run.state not in TERMINAL_STATES:
-        if run_service.reservation_entry_is_excluded(entry):
+        if run_reservation_service.reservation_entry_is_excluded(entry):
             run, entry = await restore_run_if_needed(
                 db,
                 device,

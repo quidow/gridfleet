@@ -27,6 +27,7 @@ from app.services import (
     lifecycle_policy_actions,
     maintenance_service,
     platform_label_service,
+    run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_readiness import is_ready_for_use_async
@@ -518,17 +519,7 @@ async def get_device_reservation_with_entry(
     db: AsyncSession,
     device_id: uuid.UUID,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
-    stmt = (
-        select(DeviceReservation)
-        .where(DeviceReservation.device_id == device_id, DeviceReservation.released_at.is_(None))
-        .options(selectinload(DeviceReservation.run).selectinload(TestRun.device_reservations))
-        .order_by(DeviceReservation.created_at.desc())
-    )
-    result = await db.execute(stmt)
-    reservation = result.scalars().first()
-    if reservation is None:
-        return None, None
-    return reservation.run, reservation
+    return await run_reservation_service.get_device_reservation_with_entry(db, device_id)
 
 
 async def get_device_reservation_map(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[uuid.UUID, TestRun]:
@@ -613,7 +604,7 @@ async def restore_device_to_run(
 
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:
-    return bool(entry and _reserved_entry_is_excluded(entry))
+    return run_reservation_service.reservation_entry_is_excluded(entry)
 
 
 async def list_runs(

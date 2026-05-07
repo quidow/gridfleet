@@ -1195,3 +1195,14 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
     # last_failure_* is preserved (historical) but no longer drives behavior.
     assert reloaded.lifecycle_policy_state["last_failure_reason"] == "ADB hung"
+
+
+def test_lifecycle_run_import_order_is_acyclic() -> None:
+    import importlib
+
+    lifecycle_policy = importlib.import_module("app.services.lifecycle_policy")
+    lifecycle_policy_summary = importlib.import_module("app.services.lifecycle_policy_summary")
+    run_service = importlib.import_module("app.services.run_service")
+
+    assert lifecycle_policy.build_lifecycle_policy is lifecycle_policy_summary.build_lifecycle_policy
+    assert hasattr(run_service, "reservation_entry_is_excluded")
