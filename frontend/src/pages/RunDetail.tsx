@@ -36,6 +36,8 @@ type ReservedDevice = {
   host_ip: string | null;
   excluded: boolean;
   exclusion_reason: string | null;
+  excluded_until: string | null;
+  cooldown_count: number;
 };
 
 const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
@@ -69,14 +71,33 @@ const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
     render: (d) => <span className="text-sm text-text-3">{d.host_ip ?? '-'}</span>,
   },
   {
+    key: 'cooldowns',
+    header: 'Cooldowns',
+    render: (d) =>
+      d.cooldown_count > 0 ? (
+        <span className="text-sm text-text-2">{d.cooldown_count}</span>
+      ) : (
+        <span className="text-sm text-text-3">-</span>
+      ),
+  },
+  {
     key: 'reservation',
     header: 'Reservation',
-    render: (d) =>
-      d.excluded ? (
-        <span className="text-sm text-warning-foreground">{d.exclusion_reason ?? 'Excluded'}</span>
-      ) : (
-        <span className="text-sm text-text-3">Active</span>
-      ),
+    render: (d) => {
+      if (d.excluded && d.excluded_until === null && d.cooldown_count > 0) {
+        return (
+          <span className="text-sm text-warning-foreground">
+            Escalated to maintenance ({d.exclusion_reason ?? 'cooldown threshold'})
+          </span>
+        );
+      }
+      if (d.excluded) {
+        return (
+          <span className="text-sm text-warning-foreground">{d.exclusion_reason ?? 'Excluded'}</span>
+        );
+      }
+      return <span className="text-sm text-text-3">Active</span>;
+    },
   },
 ];
 
