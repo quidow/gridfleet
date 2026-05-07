@@ -963,6 +963,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert node.consecutive_health_failures == initial_failures
     assert node.state == initial_state
+    assert device.operational_state == DeviceOperationalState.available
 
 
 async def test_node_health_recovery_clears_pending_stop(
