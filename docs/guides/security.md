@@ -42,12 +42,10 @@ Environment variables control the base credentials and routing strings. These sh
 ### Inline allocation includes
 
 `POST /api/runs?include=config` and `POST /api/runs/{run_id}/claim?include=config`
-embed the device config inline on the response. The inline payload is **always
-masked** with the same `MASK_VALUE` (`********`) used by `GET /api/devices/{id}/config?reveal=false`.
-There is no `reveal=true` analogue on the include path — callers needing raw
-secrets must hit `GET /api/devices/{id}/config?reveal=true` explicitly with the
-appropriate auth scope. This keeps the high-traffic claim hot path from becoming
-a credentials exfiltration vector if auth scope is misconfigured.
+embed the device config verbatim in the response. The manager does not mask or
+filter any fields on the inline path — the full `device_config` object is returned
+as stored. The auth gate (`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary:
+callers without valid credentials cannot reach these endpoints at all.
 
 `include=capabilities` is rejected on `POST /api/runs` (HTTP 422,
 `details.code = "reserve_capabilities_unsupported"`). On claim,

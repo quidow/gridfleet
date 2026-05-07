@@ -7,10 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import ConnectionType, Device, DeviceType
 from app.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
-from app.services.device_config_masking import (
-    preserve_masked_sensitive_values,
-    sensitive_config_keys_for_pack_platform,
-)
 from app.services.device_identity import (
     derive_pack_identity,
     looks_like_ip_address,
@@ -126,16 +122,6 @@ async def _build_device_config(
     config.pop("canonical_identity", None)
     if payload_config is not None:
         config.update(payload_config)
-        sensitive_keys = await sensitive_config_keys_for_pack_platform(
-            session,
-            pack_id=pack_id,
-            platform_id=platform_id,
-        )
-        config = preserve_masked_sensitive_values(
-            existing_config=existing_config,
-            next_config=config,
-            sensitive_keys=sensitive_keys,
-        )
     return config
 
 

@@ -1,11 +1,9 @@
 """Supported Python integration helpers for GridFleet.
 
-**0.4.0 masking change**: when callers opt in to inline `config` via
-`claim_device(include=("config",))`, the inline `config` payload is **always
-masked** (sensitive values are replaced with `"********"`). Code that needs raw
-secrets must continue to call `client.get_device_config(connection_target,
-reveal=True)` explicitly. `AllocatedDevice.config_is_masked` is `True` whenever
-the inline path was taken.
+`device_config` values returned by the manager are verbatim; the testkit no
+longer distinguishes between masked and revealed payloads. Code that wants
+the live Appium-side config can use either inline `config` from
+`claim_device(include=("config",))` or `client.get_device_config(connection_target)`.
 
 Environment variables read by the client:
 

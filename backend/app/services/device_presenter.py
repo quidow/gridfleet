@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -9,7 +10,6 @@ from app.errors import PackDisabledError, PackDrainingError, PackUnavailableErro
 from app.schemas.device import DeviceReservationRead
 from app.services import (
     device_attention,
-    device_config_masking,
     device_health,
     device_readiness,
     hardware_telemetry,
@@ -19,8 +19,6 @@ from app.services import (
 from app.services.pack_platform_resolver import assert_runnable
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.device import Device
@@ -63,7 +61,6 @@ async def serialize_device(
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
     health_summary: dict[str, Any] | None = None,
     platform_label: str | None = None,
-    sensitive_key_map: Mapping[tuple[str, str], set[str]] | None = None,
 ) -> dict[str, Any]:
     if reservation_context is None:
         reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
@@ -116,12 +113,7 @@ async def serialize_device(
         "device_type": device.device_type,
         "connection_type": device.connection_type,
         "ip_address": device.ip_address,
-        "device_config": await device_config_masking.mask_device_config(
-            db,
-            device,
-            device.device_config,
-            sensitive_key_map=sensitive_key_map,
-        ),
+        "device_config": copy.deepcopy(device.device_config or {}),
         "battery_level_percent": device.battery_level_percent,
         "battery_temperature_c": device.battery_temperature_c,
         "charging_state": device.charging_state,
@@ -148,7 +140,6 @@ async def serialize_device_detail(
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
     health_summary: dict[str, Any] | None = None,
     platform_label: str | None = None,
-    sensitive_key_map: Mapping[tuple[str, str], set[str]] | None = None,
 ) -> dict[str, Any]:
     payload = await serialize_device(
         db,
@@ -156,7 +147,6 @@ async def serialize_device_detail(
         reservation_context,
         health_summary=health_summary,
         platform_label=platform_label,
-        sensitive_key_map=sensitive_key_map,
     )
     payload["appium_node"] = device.appium_node
     payload["sessions"] = device.sessions

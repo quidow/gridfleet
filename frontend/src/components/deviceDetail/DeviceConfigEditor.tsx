@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import type { OnMount } from '@monaco-editor/react';
-import { Save, RotateCcw, Code, Clock, ChevronDown, ChevronRight, Plus, Eye, EyeOff } from 'lucide-react';
+import { Save, RotateCcw, Code, Clock, ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import {
   useDeviceConfig,
   useConfigHistory,
@@ -22,8 +22,7 @@ const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
 export default function DeviceConfigEditor({ device }: Props) {
   const { id: deviceId } = device;
-  const [reveal, setReveal] = useState(false);
-  const { data: config, refetch } = useDeviceConfig(deviceId, reveal);
+  const { data: config, refetch } = useDeviceConfig(deviceId);
   const { data: history } = useConfigHistory(deviceId);
   const { data: catalog = [] } = useDriverPackCatalog();
   const descriptor = findPlatformDescriptor(catalog, device.pack_id, device.platform_id);
@@ -99,22 +98,6 @@ export default function DeviceConfigEditor({ device }: Props) {
           <p className="mt-1 text-xs text-text-2">Device-specific overrides that must pass guided re-verification.</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Reveal toggle */}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setReveal(!reveal);
-              setIsDirty(false);
-              setIsValid(true);
-              refetch();
-            }}
-            leadingIcon={reveal ? <EyeOff size={12} /> : <Eye size={12} />}
-            title={reveal ? 'Hide sensitive values' : 'Show sensitive values'}
-          >
-            {reveal ? 'Hide' : 'Show'} secrets
-          </Button>
-
           <Button
             size="sm"
             variant="ghost"

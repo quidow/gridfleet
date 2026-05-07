@@ -122,8 +122,8 @@ export async function restartNode(id: string): Promise<AppiumNodeRead> {
   return data;
 }
 
-export async function fetchDeviceConfig(id: string, reveal = false): Promise<Record<string, unknown>> {
-  const { data } = await api.get(`/devices/${id}/config`, { params: { reveal } });
+export async function fetchDeviceConfig(id: string): Promise<Record<string, unknown>> {
+  const { data } = await api.get(`/devices/${id}/config`);
   return data;
 }
 

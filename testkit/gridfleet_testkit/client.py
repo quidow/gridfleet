@@ -258,7 +258,7 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
-    def get_device_config(self, connection_target: str, reveal: bool = True) -> dict[str, Any]:
+    def get_device_config(self, connection_target: str) -> dict[str, Any]:
         """Fetch device config by looking up the current runtime connection target."""
         resp = httpx.get(
             f"{self.base_url}/devices",
@@ -273,7 +273,6 @@ class GridFleetClient:
         device_id = devices[0]["id"]
         config_resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/config",
-            params={"reveal": str(reveal).lower()},
             timeout=10,
             auth=self._auth,
         )

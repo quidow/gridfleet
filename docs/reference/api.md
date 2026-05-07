@@ -50,10 +50,10 @@ Current auth behavior:
 | `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance, optionally draining | `DeviceMaintenanceUpdate` | `DeviceRead` |
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}/sessions` | List recent sessions for one device | `limit` | `SessionRead[]` |
-| `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered and unmasked | `keys`, `reveal` | config object |
+| `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered by key | `keys` | config object |
 | `PUT` | `/api/devices/{device_id}/config` | Replace device config | config object body | config object |
 | `PATCH` | `/api/devices/{device_id}/config` | Deep-merge config keys | partial config object | config object |
-| `GET` | `/api/devices/{device_id}/config/history` | Read masked config audit history | `limit` | config-audit entries |
+| `GET` | `/api/devices/{device_id}/config/history` | Read config audit history | `limit` | config-audit entries |
 | `GET` | `/api/devices/{device_id}/health` | Probe current device health through the assigned host | path `device_id` | health/status object |
 | `POST` | `/api/devices/{device_id}/lifecycle/{action}` | Run a pack-defined device lifecycle action | action args object | lifecycle action result |
 | `GET` | `/api/devices/{device_id}/logs` | Read device/agent log view | `lines` | log payload |
@@ -138,12 +138,12 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/runs` | Create a reservation run; add `?include=config` to inline masked config per device | `RunCreate` | `RunCreateResponse` (`201`) |
+| `POST` | `/api/runs` | Create a reservation run; add `?include=config` to inline config per device | `RunCreate` | `RunCreateResponse` (`201`) |
 | `GET` | `/api/runs` | List runs | filters: `state`, `created_from`, `created_to`, `limit`, `offset`, `sort_by`, `sort_dir` | `{ items: RunRead[], total, limit, offset }` |
 | `GET` | `/api/runs/{run_id}` | Read full run detail | path `run_id` | `RunDetail` |
 | `POST` | `/api/runs/{run_id}/ready` | Transition run to `ready` | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/active` | Transition run to `active` | path `run_id` | `RunRead` |
-| `POST` | `/api/runs/{run_id}/claim` | Atomically claim one unclaimed active reservation for a CI worker; add `?include=config,capabilities` to inline masked config and live Appium capabilities | optional `ClaimRequest` | `ClaimResponse` |
+| `POST` | `/api/runs/{run_id}/claim` | Atomically claim one unclaimed active reservation for a CI worker; add `?include=config,capabilities` to inline config and live Appium capabilities | optional `ClaimRequest` | `ClaimResponse` |
 | `POST` | `/api/runs/{run_id}/release` | Release one claimed reservation back to the run's unclaimed pool | `ReleaseRequest` | `{ status: "released" }` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/release-with-cooldown` | Release one worker claim and cool that reservation down inside the same run | `ReleaseWithCooldownRequest` | `ReleaseWithCooldownResponse` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
@@ -198,12 +198,12 @@ When no device is claimable, `409` responses include a `Retry-After` header and 
 
 `POST /api/runs` supports an optional `?include=` query parameter:
 
-- `include=config` — inlines the masked Appium configuration for each reserved device in the response. Useful when the CI orchestrator wants device-level config without a follow-up request.
+- `include=config` — inlines the Appium configuration for each reserved device in the response. Useful when the CI orchestrator wants device-level config without a follow-up request.
 - `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a device is claimed and a session is established.
 
 `POST /api/runs/{run_id}/claim` supports `?include=` to embed extra data in the `ClaimResponse`:
 
-- `include=config` — inlines the masked Appium configuration for the claimed device.
+- `include=config` — inlines the Appium configuration for the claimed device.
 - `include=capabilities` — inlines the live Appium capabilities reported by the agent for the claimed device.
 - Both can be combined: `?include=config,capabilities`.
 - Unknown include values return `422` with `details.code = "unknown_include"`.

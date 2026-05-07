@@ -19,7 +19,6 @@ from app.schemas.device import (
 from app.schemas.device_filters import ChipStatus, DeviceQueryFilters, DeviceSortBy, DeviceSortDir
 from app.services import (
     capability_service,
-    device_config_masking,
     device_health,
     device_presenter,
     device_service,
@@ -95,7 +94,6 @@ async def list_devices(
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
     health_summary_map = {str(device.id): device_health.build_public_summary(device) for device in devices}
-    sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(db, devices)
     label_map = await platform_label_service.load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in devices),
@@ -108,7 +106,6 @@ async def list_devices(
             device,
             reservation_context=reservation_context,
             health_summary=health_summary_map.get(str(device.id)),
-            sensitive_key_map=sensitive_key_map,
             platform_label=label_map.get((device.pack_id, device.platform_id)),
         )
         serialized.append(payload)

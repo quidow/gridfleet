@@ -14,12 +14,12 @@ from gridfleet_testkit.allocation import (
 
 class FakeClient:
     def __init__(self) -> None:
-        self.config_calls: list[tuple[str, bool]] = []
+        self.config_calls: list[str] = []
         self.capability_calls: list[str] = []
         self.device_calls: list[str] = []
 
-    def get_device_config(self, connection_target: str, reveal: bool = True) -> dict[str, Any]:
-        self.config_calls.append((connection_target, reveal))
+    def get_device_config(self, connection_target: str) -> dict[str, Any]:
+        self.config_calls.append(connection_target)
         return {"ip": "10.0.0.8", "username": "operator"}
 
     def get_device_capabilities(self, device_id: str) -> dict[str, Any]:
@@ -86,7 +86,7 @@ def test_hydrate_allocated_device_uses_claim_payload_and_fetches_config() -> Non
         config={"ip": "10.0.0.8", "username": "operator"},
         live_capabilities=None,
     )
-    assert client.config_calls == [("SERIAL123", True)]
+    assert client.config_calls == ["SERIAL123"]
     assert client.capability_calls == []
     assert client.device_calls == []
 
@@ -164,7 +164,7 @@ def test_allocated_device_properties_prefer_stable_sources() -> None:
     assert allocated.platform_name == "Android"
 
 
-def test_allocated_device_defaults_unavailable_includes_and_config_is_masked() -> None:
+def test_allocated_device_defaults_unavailable_includes() -> None:
     allocated = AllocatedDevice(
         run_id="run-1",
         device_id="dev-1",
@@ -189,7 +189,6 @@ def test_allocated_device_defaults_unavailable_includes_and_config_is_masked() -
     assert allocated.unavailable_includes == ()
     assert isinstance(allocated.unavailable_includes, tuple)
     assert all(isinstance(u, UnavailableInclude) for u in allocated.unavailable_includes)
-    assert allocated.config_is_masked is False
 
 
 def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
@@ -199,7 +198,6 @@ def test_hydrate_allocated_device_uses_inline_config_and_skips_get() -> None:
     allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
 
     assert allocated.config == {"ip": "10.0.0.8", "username": "operator", "password": "********"}
-    assert allocated.config_is_masked is True
     assert client.config_calls == []
     assert client.device_calls == []
 
@@ -210,8 +208,7 @@ def test_hydrate_allocated_device_falls_back_to_get_device_config_when_inline_ab
     allocated = hydrate_allocated_device(claim_payload(), run_id="run-1", client=client)
 
     assert allocated.config == {"ip": "10.0.0.8", "username": "operator"}
-    assert allocated.config_is_masked is False
-    assert client.config_calls == [("SERIAL123", True)]
+    assert client.config_calls == ["SERIAL123"]
 
 
 def test_hydrate_allocated_device_uses_inline_live_capabilities_and_skips_get() -> None:
@@ -284,7 +281,6 @@ def test_hydrate_allocated_device_skips_config_fetch_when_marked_unavailable() -
     allocated = hydrate_allocated_device(payload, run_id="run-1", client=client)
 
     assert allocated.config is None
-    assert allocated.config_is_masked is False
     assert client.config_calls == []
     assert allocated.unavailable_includes == (UnavailableInclude(include="config", reason="device_offline"),)
 

@@ -186,13 +186,11 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
 
 def test_device_config_uses_runtime_connection_target():
-    gridfleet_client = types.SimpleNamespace(
-        get_device_config=lambda target, reveal=True: {"target": target, "reveal": reveal}
-    )
+    gridfleet_client = types.SimpleNamespace(get_device_config=lambda target: {"target": target})
     driver = types.SimpleNamespace(capabilities={"appium:udid": "SERIAL123"})
 
     fixture_fn = pytest_plugin.device_config.__wrapped__
-    assert fixture_fn(driver, gridfleet_client) == {"target": "SERIAL123", "reveal": True}
+    assert fixture_fn(driver, gridfleet_client) == {"target": "SERIAL123"}
 
 
 def test_device_config_skips_when_connection_target_missing():

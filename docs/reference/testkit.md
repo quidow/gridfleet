@@ -125,7 +125,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.get_device_config(connection_target, reveal=True)` | Look up a device by active connection target, then fetch its config |
+| `GridFleetClient.get_device_config(connection_target)` | Look up a device by active connection target, then fetch its config |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
 | `GridFleetClient.signal_ready(run_id)` | Move a run to `ready` |
@@ -144,7 +144,7 @@ Public Appium helpers:
 | `build_appium_options(pack_id, platform_id, capabilities=None, test_name=None)` | Build an Appium options object for an explicit driver-pack platform |
 | `create_appium_driver(pack_id, platform_id, capabilities=None, test_name=None, grid_url=GRID_URL)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
 | `get_connection_target_from_driver(driver)` | Read the active connection target from a live Appium session |
-| `get_device_config_for_driver(driver, gridfleet_client=None, reveal=True)` | Fetch device config for a live Appium session using its active connection target |
+| `get_device_config_for_driver(driver, gridfleet_client=None)` | Fetch device config for a live Appium session using its active connection target |
 
 ## Example Reservation Flow
 
@@ -199,7 +199,7 @@ allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
 # zero follow-up GETs; allocated.config / allocated.live_capabilities populated inline
 ```
 
-**Masking change**: inline `config` is always masked — sensitive values are replaced with `"********"`. Use `client.get_device_config(connection_target, reveal=True)` if you need raw secrets after the driver session is up. `allocated.config_is_masked` is `True` whenever the inline path was taken.
+Inline `config` is returned verbatim — all values are present as stored. The manager auth gate (`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary protecting these values.
 
 `reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound. Pass `include=` on the per-worker `claim_device` call instead.
 
