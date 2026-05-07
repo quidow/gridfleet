@@ -3,6 +3,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agent_app.tools_manager import (
     CommandResult,
     NodeProvider,
@@ -167,3 +169,21 @@ async def test_get_tool_status_includes_go_ios_version() -> None:
         status = await get_tool_status()
 
     assert status["go_ios"] == "1.0.207"
+
+
+@pytest.mark.asyncio
+async def test_ensure_selenium_jar_rejects_malformed_version_without_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jar_path = tmp_path / "selenium-server.jar"
+
+    async def fail_if_http_client_created(*args: object, **kwargs: object) -> object:
+        raise AssertionError("malformed Selenium version must not reach httpx")
+
+    monkeypatch.setattr("agent_app.tools_manager.httpx.AsyncClient", fail_if_http_client_created)
+
+    result = await ensure_selenium_jar("4.41.0/../../latest", str(jar_path))
+
+    assert result == {"success": False, "error": "invalid_selenium_version", "version": None}
+    assert not jar_path.exists()

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from packaging.version import InvalidVersion, Version
 
 from agent_app.appium_process import _build_env, _parse_node_version
 from agent_app.capabilities import refresh_capabilities_snapshot
@@ -30,6 +31,23 @@ SELENIUM_DOWNLOAD_TIMEOUT_SEC = 120
 SELENIUM_JAR_URL = (
     "https://github.com/SeleniumHQ/selenium/releases/download/selenium-{version}/selenium-server-{version}.jar"
 )
+
+
+def _normalize_selenium_version(version: str) -> str | None:
+    stripped = version.strip()
+    try:
+        parsed = Version(stripped)
+    except InvalidVersion:
+        return None
+    if parsed.is_prerelease or parsed.is_devrelease or parsed.local is not None:
+        return None
+    normalized = str(parsed)
+    if normalized != stripped:
+        return None
+    release = parsed.release
+    if len(release) != 3:
+        return None
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -370,6 +388,10 @@ async def ensure_selenium_jar(version: str, jar_path: str) -> dict[str, Any]:
     version = version.strip()
     if not version:
         return {"success": True, "action": "skipped"}
+    normalized_version = _normalize_selenium_version(version)
+    if normalized_version is None:
+        return {"success": False, "error": "invalid_selenium_version", "version": get_selenium_jar_version(jar_path)}
+    version = normalized_version
 
     current_version = get_selenium_jar_version(jar_path)
     if current_version == version:
