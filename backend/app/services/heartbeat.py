@@ -469,8 +469,12 @@ async def heartbeat_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_hosts(db)
-        except LeadershipLost:
-            logger.error("heartbeat_loop_leadership_lost", action="exiting_process_to_prevent_split_brain")
+        except LeadershipLost as exc:
+            logger.error(
+                "heartbeat_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
             os._exit(70)
         except Exception:
             logger.exception("Heartbeat check failed")
