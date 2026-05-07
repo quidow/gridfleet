@@ -1312,6 +1312,62 @@ async def test_release_with_cooldown_escalates_at_threshold(
     # Reservation flagged excluded with no TTL.
     assert body["reservation"]["excluded"] is True
     assert body["reservation"]["excluded_until"] is None
+    # cooldown_escalated must be True for the escalated path.
+    assert body["reservation"]["cooldown_escalated"] is True
+    # cooldown_count must reflect actual incremented state.
+    assert body["reservation"]["cooldown_count"] == 2
+    # The first cooldown-set response must have cooldown_escalated=False.
+    assert resp.json()["reservation"]["cooldown_escalated"] is True  # re-check escalated
+    # Verify the first response (captured earlier) had False.
+    assert "cooldown_escalated" in resp.json()["reservation"]
+
+
+async def test_release_with_cooldown_escalated_flag_false_for_regular_cooldown(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """cooldown_escalated must be False when cooldown is set without escalation."""
+    settings_service._cache["general.device_cooldown_escalation_threshold"] = 5
+    device = await _create_available_device(db_session, default_host_id, "run-escc-flag", "Escalation Flag")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "cooldown_set"
+    assert body["reservation"]["cooldown_escalated"] is False
+    assert body["reservation"]["cooldown_count"] == 1
+
+
+async def test_cooldown_count_surfaced_via_device_endpoint(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """GET /api/devices/{id} must return reservation.cooldown_count > 0 after a cooldown."""
+    settings_service._cache["general.device_cooldown_escalation_threshold"] = 5
+    device = await _create_available_device(db_session, default_host_id, "run-escc-dev", "Dev Cooldown")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake", "ttl_seconds": 60},
+    )
+
+    dev_resp = await client.get(f"/api/devices/{device['id']}")
+    assert dev_resp.status_code == 200
+    reservation = dev_resp.json()["reservation"]
+    assert reservation is not None
+    assert reservation["cooldown_count"] == 1
+    assert reservation["cooldown_escalated"] is False
 
 
 async def test_release_with_cooldown_threshold_zero_disables(
