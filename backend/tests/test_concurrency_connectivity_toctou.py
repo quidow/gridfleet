@@ -54,6 +54,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
             patch("app.services.device_connectivity.device_health.update_device_checks", new=AsyncMock()),
             patch("app.services.device_connectivity.record_event", new=AsyncMock()),
             patch("app.services.device_connectivity.device_locking.lock_device", side_effect=gated_lock),
+            patch("app.services.device_connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(session)
@@ -121,6 +122,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
                 new=note_connectivity_loss,
             ),
             patch("app.services.device_connectivity.device_locking.lock_device", side_effect=gated_lock),
+            patch("app.services.device_connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(session)

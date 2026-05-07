@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from app.services.agent_operations import (
 from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import legacy_label_for_audit, set_operational_state
@@ -234,6 +236,8 @@ async def _check_connectivity(db: AsyncSession) -> None:
         if connected_targets is None:
             continue  # Agent unreachable — skip (heartbeat handles host status)
 
+        await assert_current_leader(db)
+
         for device in devices:
             lifecycle_state = await _get_lifecycle_state(db, device)
             if lifecycle_state is not None:
@@ -242,6 +246,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
             if _device_expected_aliases(device) & connected_targets:
                 # Device is connected
                 health_result = await _get_device_health(device)
+                await assert_current_leader(db)
                 if health_result is not None and not health_result.get("healthy", False):
                     await device_health.update_device_checks(
                         db,
@@ -301,6 +306,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
             else:
                 if await _uses_endpoint_health(db, device):
                     health_result = await _get_device_health(device)
+                    await assert_current_leader(db)
                     if health_result is not None and health_result.get("healthy", False):
                         await device_health.update_device_checks(db, device, healthy=True, summary="Healthy")
                         if device.operational_state == DeviceOperationalState.offline:
@@ -440,6 +446,13 @@ async def device_connectivity_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_connectivity(db)
+        except LeadershipLost as exc:
+            logger.error(
+                "device_connectivity_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
         except Exception:
             logger.exception("Device connectivity check failed")
         await asyncio.sleep(interval)
