@@ -79,10 +79,11 @@ async def test_get_config_returns_sensitive_values_verbatim(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_device(db_session, default_host_id)
-    await client.put(
+    put_resp = await client.put(
         f"/api/devices/{device['id']}/config",
         json={"api_key": "super-secret", "timeout": 30},
     )
+    assert put_resp.status_code == 200
     resp = await client.get(f"/api/devices/{device['id']}/config")
     assert resp.status_code == 200
     data = resp.json()

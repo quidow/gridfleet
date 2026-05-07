@@ -984,7 +984,7 @@ async def test_existing_device_verification_can_replace_device_config(
     assert config_resp.json() == {"new": True}
 
 
-async def test_existing_device_verification_preserves_sensitive_config_values(
+async def test_existing_device_verification_config_replace_writes_verbatim(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
