@@ -1238,3 +1238,145 @@ async def test_completed_run_does_not_globally_block_cooled_down_device(
     )
     assert new_run.status_code == 201
     assert new_run.json()["devices"][0]["device_id"] == device["id"]
+
+
+async def test_release_with_cooldown_increments_count(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "run-escc-incr", "Escalation Incr")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "cooldown_set"
+    assert body["reservation"]["cooldown_count"] == 1
+
+
+async def test_release_with_cooldown_escalates_at_threshold(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    settings_service._cache["general.device_cooldown_escalation_threshold"] = 2
+    device = await _create_available_device(db_session, default_host_id, "run-escc-esc", "Escalation Esc")
+    run = await _create_run(client)
+    claim1 = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim1.status_code == 200
+
+    # First call: cooldown_set, count=1.
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake-1", "ttl_seconds": 1},
+    )
+    assert resp.json()["status"] == "cooldown_set"
+    assert resp.json()["reservation"]["cooldown_count"] == 1
+
+    # Expire the cooldown so the device is claimable again.
+    run_id_uuid = uuid.UUID(run["id"])
+    device_id_uuid = uuid.UUID(device["id"])
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == run_id_uuid,
+                DeviceReservation.device_id == device_id_uuid,
+            )
+        )
+    ).scalar_one()
+    reservation.excluded_until = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
+    # Re-claim before the next release.
+    claim2 = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim2.status_code == 200
+
+    # Second call: escalate, count=2.
+    resp = await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake-2", "ttl_seconds": 1},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "maintenance_escalated"
+    assert body["cooldown_count"] == 2
+    assert body["threshold"] == 2
+    # Device should now be in maintenance hold.
+    assert body["device_hold"] == "maintenance"
+    # Reservation flagged excluded with no TTL.
+    assert body["reservation"]["excluded"] is True
+    assert body["reservation"]["excluded_until"] is None
+
+
+async def test_release_with_cooldown_threshold_zero_disables(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    settings_service._cache["general.device_cooldown_escalation_threshold"] = 0
+    device = await _create_available_device(db_session, default_host_id, "run-escc-zero", "Escalation Zero")
+    run = await _create_run(client)
+    run_id_uuid = uuid.UUID(run["id"])
+    device_id_uuid = uuid.UUID(device["id"])
+
+    for i in range(5):
+        claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+        assert claim.status_code == 200
+
+        resp = await client.post(
+            f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+            json={"worker_id": "gw0", "reason": f"r{i}", "ttl_seconds": 1},
+        )
+        assert resp.json()["status"] == "cooldown_set"
+
+        # Expire cooldown so the next iteration can re-claim.
+        reservation = (
+            await db_session.execute(
+                select(DeviceReservation).where(
+                    DeviceReservation.run_id == run_id_uuid,
+                    DeviceReservation.device_id == device_id_uuid,
+                )
+            )
+        ).scalar_one()
+        reservation.excluded_until = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+
+
+async def test_release_with_cooldown_escalation_records_event(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from app.models.device_event import DeviceEvent, DeviceEventType
+
+    settings_service._cache["general.device_cooldown_escalation_threshold"] = 1
+    device = await _create_available_device(db_session, default_host_id, "run-escc-evt", "Escalation Evt")
+    run = await _create_run(client)
+    claim = await client.post(f"/api/runs/{run['id']}/claim", json={"worker_id": "gw0"})
+    assert claim.status_code == 200
+
+    await client.post(
+        f"/api/runs/{run['id']}/devices/{device['id']}/release-with-cooldown",
+        json={"worker_id": "gw0", "reason": "flake", "ttl_seconds": 1},
+    )
+
+    rows = (
+        await db_session.execute(
+            select(DeviceEvent.event_type, DeviceEvent.created_at)
+            .where(DeviceEvent.device_id == uuid.UUID(device["id"]))
+            .order_by(DeviceEvent.created_at.asc())
+        )
+    ).all()
+    types = [t for t, _ in rows]
+    assert DeviceEventType.lifecycle_run_cooldown_escalated in types
+    assert DeviceEventType.lifecycle_run_excluded in types
+    # cooldown_escalated must precede lifecycle_run_excluded.
+    escalated_at = next(c for t, c in rows if t == DeviceEventType.lifecycle_run_cooldown_escalated)
+    excluded_at = next(c for t, c in rows if t == DeviceEventType.lifecycle_run_excluded)
+    assert escalated_at <= excluded_at

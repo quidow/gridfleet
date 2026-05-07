@@ -248,6 +248,7 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
         excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
         excluded_until=entry.excluded_until.isoformat() if entry.excluded_until is not None else None,
         cooldown_remaining_sec=_cooldown_remaining_sec(entry.excluded_until),
+        cooldown_count=entry.cooldown_count,
         claimed_by=entry.claimed_by,
         claimed_at=entry.claimed_at.isoformat() if entry.claimed_at is not None else None,
     )
