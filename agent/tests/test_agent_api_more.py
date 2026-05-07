@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -18,6 +18,12 @@ from agent_app.main import (
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
+
+
+class _AdapterContext(Protocol):
+    device_identity_value: object
+    allow_boot: object
+    connection_target: object
 
 
 @pytest.fixture
@@ -91,12 +97,12 @@ class _FakeAdapter:
         self.lifecycle_calls: list[tuple[str, str, dict[str, object]]] = []
 
     async def health_check(self, ctx: object) -> list[HealthCheckResult]:
-        ctx_any = cast("Any", ctx)
+        ctx_any = cast("_AdapterContext", ctx)
         self.health_calls.append((str(ctx_any.device_identity_value), bool(ctx_any.allow_boot)))
         return [HealthCheckResult(check_id="adapter_alive", ok=True)]
 
     async def telemetry(self, ctx: object) -> HardwareTelemetry:
-        ctx_any = cast("Any", ctx)
+        ctx_any = cast("_AdapterContext", ctx)
         self.telemetry_calls.append((str(ctx_any.device_identity_value), str(ctx_any.connection_target)))
         return HardwareTelemetry(supported=True, battery_level_percent=84)
 
@@ -106,7 +112,7 @@ class _FakeAdapter:
         args: dict[str, object],
         ctx: object,
     ) -> LifecycleActionResult:
-        ctx_any = cast("Any", ctx)
+        ctx_any = cast("_AdapterContext", ctx)
         self.lifecycle_calls.append((str(ctx_any.device_identity_value), action_id, args))
         return LifecycleActionResult(ok=True, state="reconnecting")
 

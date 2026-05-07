@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 
 SESSION_COOKIE_NAME = "gridfleet_session"
 CSRF_HEADER_NAME = "x-csrf-token"
-_CREDENTIAL_VERSION_KDF_ITERATIONS = 210_000
 AUTH_STATE_EXEMPT_PATHS = {
     "/api/auth/login",
     "/api/auth/session",
@@ -116,21 +115,8 @@ def _sign_payload(encoded_payload: str) -> str:
     return _base64url_encode(signature)
 
 
-def _credential_version(username: str, password: str) -> str:
-    secret = cast("str", settings.auth_session_secret)
-    salt = f"gridfleet-session-credential-version\0{username}\0{secret}".encode()
-    marker = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        _CREDENTIAL_VERSION_KDF_ITERATIONS,
-        dklen=32,
-    )
-    return _base64url_encode(marker)
-
-
 def issue_session() -> tuple[str, SessionState]:
-    username, password = operator_credentials()
+    username, _password = operator_credentials()
     now = datetime.now(UTC)
     expires_at = datetime.fromtimestamp(now.timestamp() + settings.auth_session_ttl_sec, tz=UTC)
     csrf_token = secrets.token_urlsafe(24)
@@ -139,7 +125,6 @@ def issue_session() -> tuple[str, SessionState]:
         "csrf": csrf_token,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
-        "cv": _credential_version(username, password),
     }
     encoded_payload = _base64url_encode(_json_dumps(payload))
     signature = _sign_payload(encoded_payload)
@@ -201,7 +186,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         username = payload["sub"]
         csrf_token = payload["csrf"]
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
-        credential_version = payload["cv"]
     except (KeyError, TypeError, ValueError):
         return SessionState(True, False, None, None, None)
 
@@ -209,14 +193,10 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         return SessionState(True, False, None, None, None)
     if not isinstance(csrf_token, str) or not csrf_token:
         return SessionState(True, False, None, None, None)
-    if not isinstance(credential_version, str) or not credential_version:
-        return SessionState(True, False, None, None, None)
     if expires_at <= datetime.now(UTC):
         return SessionState(True, False, None, None, None)
-    expected_username, expected_password = operator_credentials()
+    expected_username, _expected_password = operator_credentials()
     if not hmac.compare_digest(username, expected_username):
-        return SessionState(True, False, None, None, None)
-    if not hmac.compare_digest(credential_version, _credential_version(expected_username, expected_password)):
         return SessionState(True, False, None, None, None)
 
     return SessionState(

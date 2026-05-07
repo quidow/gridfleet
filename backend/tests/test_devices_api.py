@@ -1,6 +1,5 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,7 @@ from app.models.device import ConnectionType, Device, DeviceType
 from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.models.host import Host
 from app.observability import BACKGROUND_LOOP_NAMES, build_background_loop_snapshot, set_background_loop_snapshot
-from app.schemas.device import DeviceVerificationCreate
+from app.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.services import device_service
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
@@ -39,7 +38,7 @@ HOST_PAYLOAD = {
 
 
 def test_device_model_declares_scoped_identity_uniqueness() -> None:
-    table = cast("Any", Device.__table__)
+    table = Device.__table__
     unique_indexes = {
         (index.name, tuple(column.name for column in index.columns)) for index in table.indexes if index.unique
     }
@@ -51,7 +50,7 @@ def test_device_model_declares_scoped_identity_uniqueness() -> None:
         "uq_devices_host_identity_scheme_value",
         ("host_id", "identity_scheme", "identity_value"),
     ) in unique_indexes
-    assert cast("Any", table.c.identity_value).unique is None
+    assert table.c.identity_value.unique is None
 
 
 @pytest_asyncio.fixture
@@ -716,7 +715,7 @@ async def test_update_device_returns_none_when_device_missing(client: AsyncClien
     result = await device_service.update_device(
         db_session,
         missing_id,
-        cast("Any", MagicMock(spec=[])),
+        DevicePatch(),
         enforce_patch_contract=False,
     )
     assert result is None

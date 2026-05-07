@@ -1,7 +1,8 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from contextlib import suppress
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,8 +16,9 @@ from app.services.device_verification import store_verification_job_for_test
 from app.services.device_verification_job_state import new_job
 from app.services.event_bus import event_bus
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+
+def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:
+    return cast("AsyncGenerator[dict[str, str], None]", body_iterator)
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +74,7 @@ async def test_event_stream_filters_types_and_device_ids() -> None:
         types="device.operational_state_changed",
         device_ids="dev-1",
     )
-    iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
+    iterator = _event_stream_iterator(response.body_iterator)
 
     task = asyncio.create_task(iterator.__anext__())
     await event_bus.publish("session.started", {"device_id": "dev-1"})
@@ -98,7 +100,7 @@ async def test_event_stream_emits_keepalive_on_timeout() -> None:
         device_ids=None,
     )
 
-    iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
+    iterator = _event_stream_iterator(response.body_iterator)
     with patch("app.routers.events.asyncio.wait_for", side_effect=TimeoutError):
         payload = await iterator.__anext__()
 
@@ -113,7 +115,7 @@ async def test_event_stream_unsubscribes_after_client_disconnect() -> None:
         types=None,
         device_ids=None,
     )
-    iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
+    iterator = _event_stream_iterator(response.body_iterator)
     assert event_bus.subscriber_count == 1
 
     await event_bus.publish("device.operational_state_changed", {"device_id": "dev-1"})
@@ -136,7 +138,7 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
     )
-    iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
+    iterator = _event_stream_iterator(response.body_iterator)
 
     initial = await asyncio.wait_for(iterator.__anext__(), 1)
     assert initial["event"] == "device.verification.updated"
@@ -188,7 +190,7 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
     )
-    iterator = cast("AsyncGenerator[dict[str, str], None]", response.body_iterator)
+    iterator = _event_stream_iterator(response.body_iterator)
 
     await asyncio.wait_for(iterator.__anext__(), 1)
     task = asyncio.create_task(iterator.__anext__())

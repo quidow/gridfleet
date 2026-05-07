@@ -129,10 +129,14 @@ def _platform(raw: dict[str, Any]) -> DesiredPlatform:
 
 def _runtime_policy(raw: dict[str, Any]) -> RuntimePolicy:
     return RuntimePolicy(
-        strategy=cast("Literal['recommended', 'latest_patch', 'exact']", raw.get("strategy", "recommended")),
+        strategy=_runtime_strategy(raw.get("strategy", "recommended")),
         appium_server_version=raw.get("appium_server_version"),
         appium_driver_version=raw.get("appium_driver_version"),
     )
+
+
+def _runtime_strategy(value: object) -> Literal["recommended", "latest_patch", "exact"]:
+    return cast("Literal['recommended', 'latest_patch', 'exact']", value)
 
 
 def resolve_desired_platform(

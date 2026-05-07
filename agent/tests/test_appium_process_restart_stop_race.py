@@ -68,13 +68,13 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(asyncio, "sleep", sleep_then_clear)
         with patch.object(mgr, "_restart_from_launch_spec", new=restart_from_launch_spec):
-            try:
-                await asyncio.wait_for(restart_task, timeout=2.0)
-            except TimeoutError:
+            done, _pending = await asyncio.wait({restart_task}, timeout=2.0)
+            if not done:
                 restart_task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await restart_task
                 pytest.fail("_auto_restart_appium did not exit after launch spec was removed")
+            await restart_task
 
     assert restart_from_launch_spec.await_count == 0, (
         "_auto_restart_appium tried to restart after stop() removed the launch spec"

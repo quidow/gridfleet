@@ -121,6 +121,10 @@ def _validate_appium_port_in_range(port: int) -> None:
         raise InvalidStartPayloadError(f"Port {port} is outside configured Appium port range {start}-{end}")
 
 
+def _loopback_appium_origin(port: int) -> httpx.URL:
+    return httpx.URL(scheme="http", host="127.0.0.1", port=port)
+
+
 def resolve_appium_invocation_for_pack(
     pack_id: str,
     registry: RuntimeRegistry | None,
@@ -1224,6 +1228,10 @@ class AppiumProcessManager:
         if proc is None or proc.returncode is not None:
             raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
+    def loopback_origin_for_managed_port(self, port: int) -> httpx.URL:
+        self.require_managed_running_port(port)
+        return _loopback_appium_origin(port)
+
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)
         if proc is None or proc.returncode is not None:
@@ -1279,10 +1287,9 @@ class AppiumProcessManager:
             task_map.clear()
 
     async def _fetch_appium_status(self, port: int) -> dict[str, Any] | None:
-        url = f"http://127.0.0.1:{port}/status"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=2)
+            async with httpx.AsyncClient(base_url=_loopback_appium_origin(port)) as client:
+                resp = await client.get("/status", timeout=2)
         except httpx.HTTPError:
             return None
         if resp.status_code != 200:

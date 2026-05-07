@@ -1,12 +1,14 @@
 import asyncio
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.services.event_bus import Event, EventBus, event_bus
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncEngine
+
+def _session_bind_engine(session: AsyncSession) -> AsyncEngine:
+    assert session.bind is not None
+    return cast("AsyncEngine", session.bind)
 
 
 def test_event_to_dict() -> None:
@@ -114,8 +116,7 @@ async def test_snapshot_and_reset() -> None:
 
 
 async def test_event_bus_shutdown_waits_for_inflight_handlers(db_session: AsyncSession) -> None:
-    assert db_session.bind is not None
-    engine = cast("AsyncEngine", db_session.bind)
+    engine = _session_bind_engine(db_session)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     event_bus.configure(session_factory=session_factory, engine=engine)
 
