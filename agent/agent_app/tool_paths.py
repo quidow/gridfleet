@@ -22,10 +22,6 @@ def _parse_node_version(path: str) -> tuple[int, ...]:
     return (0,)
 
 
-def _is_executable(path: str) -> bool:
-    return os.path.isfile(path) and os.access(path, os.X_OK)
-
-
 def find_appium() -> str:
     """Find the appium binary, checking PATH and common install locations."""
     found = shutil.which("appium")

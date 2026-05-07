@@ -68,18 +68,6 @@ def sanitize_appium_driver_capabilities(capabilities: dict[str, Any]) -> dict[st
     return sanitized
 
 
-def _parse_node_version(path: str) -> tuple[int, ...]:
-    """Extract a sortable version tuple from an nvm node path like .../v24.12.0/bin/appium."""
-    try:
-        parts = path.split(os.sep)
-        for part in parts:
-            if part.startswith("v") and "." in part:
-                return tuple(int(x) for x in part.lstrip("v").split("."))
-    except (ValueError, IndexError):
-        logger.debug("Failed to parse node version from %r", path, exc_info=True)
-    return (0,)
-
-
 @dataclass
 class AppiumInvocation:
     binary: str
