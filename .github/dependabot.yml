@@ -12,6 +12,9 @@ updates:
       - "/testkit"
     schedule:
       interval: daily
+    commit-message:
+      prefix: "deps"
+      include: "scope"
     groups:
       python-dependencies:
         patterns:
@@ -21,6 +24,10 @@ updates:
     directory: "/frontend"
     schedule:
       interval: daily
+    commit-message:
+      prefix: "deps"
+      prefix-development: "chore"
+      include: "scope"
     ignore:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
