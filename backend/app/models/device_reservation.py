@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,6 +46,7 @@ class DeviceReservation(Base):
     exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     excluded_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cooldown_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -79,6 +80,7 @@ class DeviceReservation(Base):
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,
             "excluded_until": self.excluded_until.isoformat() if self.excluded_until is not None else None,
             "cooldown_remaining_sec": _cooldown_remaining_sec(self.excluded_until),
+            "cooldown_count": self.cooldown_count,
             "claimed_by": self.claimed_by,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at is not None else None,
         }
