@@ -70,6 +70,7 @@ async def _run_node_health_with_gate(
         patch("app.services.node_health._check_node_health", side_effect=unhealthy_probe),
         patch("app.services.node_health.grid_service.get_grid_status", new=AsyncMock(return_value={})),
         patch("app.services.node_health.grid_service.available_node_device_ids", return_value=set()),
+        patch("app.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
             await node_health._check_nodes(session)

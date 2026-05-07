@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uuid  # noqa: TC003 — runtime use in defaultdict type annotation below
 from collections import defaultdict
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from app.services import (
 from app.services.agent_operations import appium_probe_session as fetch_appium_probe_session
 from app.services.agent_operations import appium_status as fetch_appium_status
 from app.services.agent_probe_result import ProbeResult, from_probe_session_response, from_status_response
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
@@ -507,6 +509,11 @@ async def _check_nodes(db: AsyncSession) -> None:
     )
     grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status())
 
+    # Fence: probes (asyncio.gather above) and Grid /status are slow external
+    # calls. If another backend took leadership while we awaited them, drop
+    # all writes from this cycle.
+    await assert_current_leader(db)
+
     for request, result in zip(requests, results, strict=True):
         try:
             locked_device = await device_locking.lock_device(db, request.device.id, load_sessions=True)
@@ -539,6 +546,13 @@ async def node_health_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_nodes(db)
+        except LeadershipLost as exc:
+            logger.error(
+                "node_health_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
         except Exception:
             logger.exception("Node health check failed")
         await asyncio.sleep(interval)
