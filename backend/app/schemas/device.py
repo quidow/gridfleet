@@ -182,6 +182,7 @@ class DeviceReservationRead(BaseModel):
     exclusion_reason: str | None = None
     excluded_until: datetime | None = None
     cooldown_remaining_sec: int | None = None
+    cooldown_count: int = 0
 
 
 class DeviceLifecyclePolicySummaryRead(BaseModel):
