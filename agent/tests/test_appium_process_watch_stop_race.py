@@ -2,11 +2,12 @@
 
 import asyncio
 import contextlib
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.appium_process import AppiumProcessManager
+from agent_app.appium_process import AppiumLaunchSpec, AppiumProcessInfo, AppiumProcessManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,22 +29,32 @@ async def test_stop_cancels_restart_task_from_natural_crash() -> None:
 
     fake_proc.wait = fake_wait
 
-    spec = type("Spec", (), {"manage_grid_node": False})()
+    spec = AppiumLaunchSpec(
+        connection_target="udid-watch",
+        port=port,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=False,
+        device_type="real_device",
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
 
-    mgr._appium_procs[port] = fake_proc  # type: ignore[assignment]
-    mgr._launch_specs[port] = spec  # type: ignore[assignment]
-    mgr._info[port] = type(
-        "Info",
-        (),
-        {
-            "port": port,
-            "pid": 1234,
-            "connection_target": "udid-watch",
-            "platform_id": "android_mobile",
-        },
-    )()  # type: ignore[assignment]
+    fake_proc_typed = cast("asyncio.subprocess.Process", fake_proc)
 
-    watch_task = asyncio.create_task(mgr._watch_appium_process(port, fake_proc))  # type: ignore[arg-type]
+    mgr._appium_procs[port] = fake_proc_typed
+    mgr._launch_specs[port] = spec
+    mgr._info[port] = AppiumProcessInfo(
+        port=port,
+        pid=1234,
+        connection_target="udid-watch",
+        platform_id="android_mobile",
+    )
+
+    watch_task = asyncio.create_task(mgr._watch_appium_process(port, fake_proc_typed))
 
     await asyncio.sleep(0)
 

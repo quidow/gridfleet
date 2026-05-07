@@ -1,11 +1,12 @@
 """Verify auto-restart exits cleanly when stop() removes launch spec during sleep."""
 
 import asyncio
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.appium_process import AppiumProcessManager
+from agent_app.appium_process import AppiumLaunchSpec, AppiumProcessInfo, AppiumProcessManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -20,43 +21,37 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
     fake_proc.pid = 1234
     fake_proc.wait = AsyncMock(return_value=1)
 
-    spec = type(
-        "Spec",
-        (),
-        {
-            "connection_target": "udid-test",
-            "port": port,
-            "plugins": None,
-            "extra_caps": None,
-            "stereotype_caps": None,
-            "session_override": False,
-            "device_type": "real_device",
-            "ip_address": "10.0.0.1",
-            "manage_grid_node": False,
-            "pack_id": "appium-uiautomator2",
-            "platform_id": "android_mobile",
-            "appium_platform_name": None,
-            "workaround_env": None,
-            "insecure_features": [],
-            "grid_slots": ["native"],
-            "lifecycle_actions": [],
-            "connection_behavior": {},
-            "headless": False,
-        },
-    )()
+    spec = AppiumLaunchSpec(
+        connection_target="udid-test",
+        port=port,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=False,
+        device_type="real_device",
+        ip_address="10.0.0.1",
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        appium_platform_name=None,
+        workaround_env=None,
+        insecure_features=[],
+        grid_slots=["native"],
+        lifecycle_actions=[],
+        connection_behavior={},
+        headless=False,
+    )
 
-    mgr._appium_procs[port] = fake_proc  # type: ignore[assignment]
-    mgr._launch_specs[port] = spec  # type: ignore[assignment]
-    mgr._info[port] = type(
-        "Info",
-        (),
-        {
-            "port": port,
-            "pid": 1234,
-            "connection_target": "udid-test",
-            "platform_id": "android_mobile",
-        },
-    )()  # type: ignore[assignment]
+    fake_proc_typed = cast("asyncio.subprocess.Process", fake_proc)
+
+    mgr._appium_procs[port] = fake_proc_typed
+    mgr._launch_specs[port] = spec
+    mgr._info[port] = AppiumProcessInfo(
+        port=port,
+        pid=1234,
+        connection_target="udid-test",
+        platform_id="android_mobile",
+    )
 
     original_sleep = asyncio.sleep
 
@@ -78,7 +73,7 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
             except TimeoutError:
                 restart_task.cancel()
                 with pytest.raises(asyncio.CancelledError):
-                    _ = await restart_task
+                    await restart_task
                 pytest.fail("_auto_restart_appium did not exit after launch spec was removed")
 
     assert restart_from_launch_spec.await_count == 0, (

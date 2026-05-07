@@ -20,11 +20,16 @@ from agent_app.appium_process import AppiumProcessManager
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
+    DoctorCheckResult,
+    DoctorContext,
+    FeatureActionResult,
+    HardwareTelemetry,
     HealthCheckResult,
     LifecycleActionResult,
     NormalizedDevice,
     SessionOutcome,
     SessionSpec,
+    SidecarStatus,
 )
 from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
 from agent_app.pack.dispatch import (
@@ -43,6 +48,7 @@ class _RecordingAdapter:
     def __init__(self, pack_id: str = "vendor-foo", pack_release: str = "0.1.0") -> None:
         self.pack_id = pack_id
         self.pack_release = pack_release
+        self.discovery_scope = ""
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def discover(self, ctx: object) -> list[DiscoveryCandidate]:
@@ -60,7 +66,7 @@ class _RecordingAdapter:
             )
         ]
 
-    async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover - unused here
+    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:  # pragma: no cover - unused here
         self.calls.append(("doctor", {"ctx": ctx}))
         return []
 
@@ -84,6 +90,16 @@ class _RecordingAdapter:
     async def post_session(self, spec: SessionSpec, outcome: SessionOutcome) -> None:
         self.calls.append(("post_session", {"spec": spec, "outcome": outcome}))
 
+    async def feature_action(
+        self, feature_id: str, action_id: str, args: dict[str, Any], ctx: object
+    ) -> FeatureActionResult:
+        self.calls.append(("feature_action", {"feature_id": feature_id, "action_id": action_id, "args": args}))
+        return FeatureActionResult(ok=True, detail="adapter dispatched", data={})
+
+    async def sidecar_lifecycle(self, feature_id: str, action: Literal["start", "stop", "status"]) -> SidecarStatus:
+        self.calls.append(("sidecar_lifecycle", {"feature_id": feature_id, "action": action}))
+        return SidecarStatus(ok=True, detail="running", state="running")
+
     async def normalize_device(self, ctx: object) -> NormalizedDevice:
         raw_input = cast("Any", ctx).raw_input
         self.calls.append(("normalize_device", {"ctx": ctx, "raw_input": raw_input}))
@@ -102,6 +118,10 @@ class _RecordingAdapter:
             model_number="MODEL-1",
             software_versions={"firmware": "15.1.4", "build": "3321"},
         )
+
+    async def telemetry(self, ctx: object) -> HardwareTelemetry:
+        self.calls.append(("telemetry", {"ctx": ctx}))
+        return HardwareTelemetry(supported=False)
 
 
 def _make_adapter_pack(pack_id: str = "vendor-foo", release: str = "0.1.0") -> DesiredPack:
@@ -186,7 +206,7 @@ async def test_adapter_kind_discovery_dispatches_to_adapter() -> None:
 async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once() -> None:
     pack = _make_multi_platform_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
-    adapter.discovery_scope = "pack"  # type: ignore[attr-defined]
+    adapter.discovery_scope = "pack"
 
     async def discover_all(ctx: object) -> list[DiscoveryCandidate]:
         adapter.calls.append(("discover", {"ctx": ctx}))

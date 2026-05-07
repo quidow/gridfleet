@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,7 @@ async def create_device(
         host_id=host_id,
         identity_value=resolved_identity,
         name=name,
-        **overrides,
+        **cast("dict[str, Any]", overrides),
     )
 
 

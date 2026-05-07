@@ -9,15 +9,24 @@ Tests cover:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import FeatureActionResult, SidecarStatus
+from agent_app.pack.adapter_types import (
+    FeatureActionResult,
+    HardwareTelemetry,
+    LifecycleActionResult,
+    NormalizedDevice,
+    SidecarStatus,
+)
 from agent_app.pack.sidecar_supervisor import SidecarSupervisor
+
+if TYPE_CHECKING:
+    from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 
 # ---------------------------------------------------------------------------
 # Fake adapter
@@ -44,19 +53,21 @@ class _FakeAdapter:
         self.calls.append((feature_id, action_id, args))
         return self._result
 
-    async def discover(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def discover(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def doctor(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def health_check(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def health_check(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:  # pragma: no cover
-        return None
+    async def lifecycle_action(
+        self, action_id: object, args: object, ctx: object
+    ) -> LifecycleActionResult:  # pragma: no cover
+        return LifecycleActionResult(ok=True)
 
-    async def pre_session(self, spec: object) -> dict[str, object]:  # pragma: no cover
+    async def pre_session(self, spec: object) -> dict[str, Any]:  # pragma: no cover
         return {}
 
     async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover
@@ -64,8 +75,24 @@ class _FakeAdapter:
 
     async def sidecar_lifecycle(
         self, feature_id: str, action: Literal["start", "stop", "status"]
-    ) -> object:  # pragma: no cover
-        return None
+    ) -> SidecarStatus:  # pragma: no cover
+        return SidecarStatus(ok=True)
+
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:  # pragma: no cover
+        return NormalizedDevice(
+            identity_scheme="",
+            identity_scope="",
+            identity_value="",
+            connection_target="",
+            ip_address="",
+            device_type="",
+            connection_type="",
+            os_version="",
+            field_errors=[],
+        )
+
+    async def telemetry(self, ctx: object) -> HardwareTelemetry:  # pragma: no cover
+        return HardwareTelemetry(supported=False)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +158,9 @@ async def test_feature_action_route_returns_404_when_adapter_absent(empty_regist
 @pytest.mark.asyncio
 async def test_feature_action_route_passes_args_to_adapter(registry_with_fake_adapter: AdapterRegistry) -> None:
     """The route forwards args from the request body to the adapter."""
-    fake_adapter: _FakeAdapter = registry_with_fake_adapter.get_current("vendor-fake")  # type: ignore[assignment]
+    adapter = registry_with_fake_adapter.get_current("vendor-fake")
+    assert adapter is not None
+    fake_adapter = cast("_FakeAdapter", adapter)
     app.state.adapter_registry = registry_with_fake_adapter
     app.state.host_identity = None
 
@@ -205,14 +234,16 @@ async def test_status_payload_includes_sidecars_key() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     supervisor = SidecarSupervisor()
     client = _FakeStateClient()
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
         sidecar_supervisor=supervisor,
     )
@@ -243,7 +274,9 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     class _FakeSidecarAdapter:
@@ -287,8 +320,8 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
 
     client = _FakeStateClient()
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
         sidecar_supervisor=supervisor,
     )
@@ -323,14 +356,16 @@ async def test_status_payload_sidecars_empty_when_no_supervisor() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     client = _FakeStateClient()
     # No sidecar_supervisor argument → should default to empty sidecars
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
     )
     await loop.run_once()

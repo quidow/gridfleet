@@ -1,9 +1,10 @@
 import asyncio
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.appium_process import AppiumProcessManager
+from agent_app.appium_process import AppiumLaunchSpec, AppiumProcessManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -26,8 +27,21 @@ async def test_stop_holds_start_lock_during_process_teardown() -> None:
     fake_appium_proc.send_signal = lambda *_a, **_k: None
     fake_appium_proc.kill = lambda *_a, **_k: None
     fake_appium_proc.wait = AsyncMock(return_value=None)
-    mgr._appium_procs[5555] = fake_appium_proc  # type: ignore[assignment]
-    mgr._launch_specs[5555] = type("Spec", (), {"manage_grid_node": False})()  # type: ignore[assignment]
+    fake_appium_proc_typed = cast("asyncio.subprocess.Process", fake_appium_proc)
+    mgr._appium_procs[5555] = fake_appium_proc_typed
+    mgr._launch_specs[5555] = AppiumLaunchSpec(
+        connection_target="udid-stop",
+        port=5555,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=False,
+        device_type="real_device",
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
 
     inside_stop = asyncio.Event()
     proceed_stop = asyncio.Event()

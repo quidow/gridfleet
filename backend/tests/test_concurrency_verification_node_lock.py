@@ -9,7 +9,9 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_verification_execution
+from app.services.device_state import ready_operational_state
 from app.services.device_verification_job_state import new_job
+from app.services.node_service_types import TemporaryNodeHandle
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -43,21 +45,18 @@ async def test_retain_verified_node_locks_appium_node(
     device_id = device.id
 
     stomper_can_go = asyncio.Event()
-    original_ready = device_verification_execution.ready_operational_state
+    original_ready = ready_operational_state
 
-    async def racing_ready(
-        *args: object,
-        **kwargs: object,
-    ) -> DeviceOperationalState:
+    async def racing_ready(db: AsyncSession, target_device: Device) -> DeviceOperationalState:
         stomper_can_go.set()
         # Yield to the event loop so the stomper can issue its UPDATE to
         # Postgres.  The UPDATE will block at the Postgres level on the FOR
         # UPDATE lock the runner holds, keeping the stomper's transaction open
         # until the runner commits.
         await asyncio.sleep(0.15)
-        return await original_ready(*args, **kwargs)  # type: ignore[arg-type]
+        return await original_ready(db, target_device)
 
-    handle = device_verification_execution.TemporaryNodeHandle(
+    handle = TemporaryNodeHandle(
         port=4724,
         pid=99999,
         active_connection_target="udid-x",
@@ -69,6 +68,7 @@ async def test_retain_verified_node_locks_appium_node(
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
+            assert target is not None
             with (
                 patch("app.services.device_verification_execution.set_stage", new=_noop_set_stage),
                 patch(
