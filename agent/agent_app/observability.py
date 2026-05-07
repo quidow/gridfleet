@@ -15,8 +15,15 @@ REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID: ContextVar[str | None] = ContextVar("agent_request_id", default=None)
 _HTTP_METHOD: ContextVar[str | None] = ContextVar("agent_http_method", default=None)
 _HTTP_PATH: ContextVar[str | None] = ContextVar("agent_http_path", default=None)
-_LOGGING_CONFIGURED = False
 _DEFAULT_RECORD_FACTORY = logging.getLogRecordFactory()
+
+
+def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    if len(text) > max_length:
+        return f"{text[:max_length]}..."
+    return text
 
 
 def generate_request_id() -> str:
@@ -44,8 +51,7 @@ def _record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
 
 
 def configure_logging(*, force: bool = False) -> None:
-    global _LOGGING_CONFIGURED
-    if _LOGGING_CONFIGURED and not force:
+    if logging.getLogger().handlers and not force:
         return
 
     formatter = logging.Formatter(
@@ -66,7 +72,6 @@ def configure_logging(*, force: bool = False) -> None:
         logger.propagate = True
 
     logging.setLogRecordFactory(_record_factory)
-    _LOGGING_CONFIGURED = True
 
 
 class RequestContextMiddleware:

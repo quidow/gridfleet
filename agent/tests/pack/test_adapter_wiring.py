@@ -636,3 +636,9 @@ async def _simulate_caps_merge(
     )
     merged.update(adapter_caps)
     return merged
+
+
+def test_sanitize_log_value_strips_control_characters() -> None:
+    from agent_app.observability import sanitize_log_value
+
+    assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"

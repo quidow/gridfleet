@@ -43,7 +43,6 @@ BACKGROUND_LOOP_NAMES = (
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
-_LOGGING_CONFIGURED = False
 
 
 def _now() -> datetime:
@@ -74,8 +73,7 @@ def _shared_processors() -> list[Any]:
 
 
 def configure_logging(*, force: bool = False) -> None:
-    global _LOGGING_CONFIGURED
-    if _LOGGING_CONFIGURED and not force:
+    if logging.getLogger().handlers and not force:
         return
 
     shared_processors = _shared_processors()
@@ -115,12 +113,19 @@ def configure_logging(*, force: bool = False) -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    _LOGGING_CONFIGURED = True
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     configure_logging()
     return structlog.stdlib.get_logger(name)
+
+
+def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    if len(text) > max_length:
+        return f"{text[:max_length]}..."
+    return text
 
 
 def generate_request_id() -> str:

@@ -1662,3 +1662,9 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
     body = response.json()
     assert body["readiness_state"] == "setup_required"
     assert body["missing_setup_fields"] == ["api_token"]
+
+
+def test_backend_sanitize_log_value_strips_control_characters() -> None:
+    from app.observability import sanitize_log_value
+
+    assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"
