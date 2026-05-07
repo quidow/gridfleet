@@ -93,13 +93,13 @@ async def test_grid_status_hub_unreachable(client: AsyncClient, db_session: Asyn
     )
 
     with patch(
-        "app.routers.grid.grid_service.get_grid_status", return_value={"ready": False, "error": "Connection refused"}
+        "app.routers.grid.grid_service.get_grid_status", return_value={"ready": False, "error": "grid_unreachable"}
     ):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["grid"]["ready"] is False
+    assert data["grid"] == {"ready": False, "error": "grid_unreachable"}
     assert data["registry"]["device_count"] == 1
 
 
