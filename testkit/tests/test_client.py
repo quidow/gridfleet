@@ -1255,7 +1255,9 @@ def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypa
         client.reserve_devices(name="r", requirements=[], include=("config",))
 
 
-def test_release_device_with_cooldown_returns_escalated_response(monkeypatch) -> None:
+def test_release_device_with_cooldown_returns_escalated_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_post(
         url: str,
         *,
