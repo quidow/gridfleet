@@ -192,7 +192,7 @@ async def hydrate_reserved_device_info(
                     sensitive_key_map=sensitive_key_map,
                 )
             else:
-                info.config = await config_service.get_device_config(db, device, keys=None, reveal=False)
+                info.config = await config_service.get_device_config(db, device, keys=None)
         except Exception as exc:
             info.config = None
             unavailable.append(UnavailableInclude(include="config", reason=type(exc).__name__))

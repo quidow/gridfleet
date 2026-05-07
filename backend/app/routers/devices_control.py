@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -36,7 +36,6 @@ from app.services.agent_operations import (
 from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
-from app.services.auth_dependencies import require_admin
 from app.services.device_identity import appium_connection_target
 from app.services.node_service import require_management_host
 from app.services.node_service import restart_node as restart_managed_node
@@ -73,16 +72,12 @@ async def exit_device_maintenance(device_id: uuid.UUID, db: AsyncSession = Depen
 @router.get("/{device_id}/config")
 async def get_device_config(
     device_id: uuid.UUID,
-    request: Request,
     keys: str | None = Query(None, description="Comma-separated list of keys to return"),
-    reveal: bool = Query(False, description="Show sensitive values unmasked"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if reveal:
-        await require_admin(request)
     device = await get_device_or_404(device_id, db)
     key_list = [k.strip() for k in keys.split(",")] if keys else None
-    return await config_service.get_device_config(db, device, keys=key_list, reveal=reveal)
+    return await config_service.get_device_config(db, device, keys=key_list)
 
 
 @router.put("/{device_id}/config")

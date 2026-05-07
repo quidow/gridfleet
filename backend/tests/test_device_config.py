@@ -57,12 +57,10 @@ async def test_replace_config(client: AsyncClient, db_session: AsyncSession, def
 
 async def test_merge_config(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
-    # Set initial config
     await client.put(
         f"/api/devices/{device['id']}/config",
         json={"a": 1, "b": 2},
     )
-    # Merge partial
     resp = await client.patch(
         f"/api/devices/{device['id']}/config",
         json={"b": 99, "c": 3},
@@ -77,7 +75,9 @@ async def test_merge_config(client: AsyncClient, db_session: AsyncSession, defau
     assert detail_resp.json()["verified_at"] is None
 
 
-async def test_config_masks_sensitive_keys(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+async def test_get_config_returns_sensitive_values_verbatim(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
     device = await _create_device(db_session, default_host_id)
     await client.put(
         f"/api/devices/{device['id']}/config",
@@ -86,19 +86,8 @@ async def test_config_masks_sensitive_keys(client: AsyncClient, db_session: Asyn
     resp = await client.get(f"/api/devices/{device['id']}/config")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["api_key"] == "********"
+    assert data["api_key"] == "super-secret"
     assert data["timeout"] == 30
-
-
-async def test_config_reveal_sensitive(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    device = await _create_device(db_session, default_host_id)
-    await client.put(
-        f"/api/devices/{device['id']}/config",
-        json={"api_key": "super-secret"},
-    )
-    resp = await client.get(f"/api/devices/{device['id']}/config?reveal=true")
-    assert resp.status_code == 200
-    assert resp.json()["api_key"] == "super-secret"
 
 
 async def test_config_filter_keys(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:

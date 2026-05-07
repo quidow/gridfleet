@@ -16,7 +16,6 @@ from app.models.device import ConnectionType, Device, DeviceOperationalState, De
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
 from app.models.job import Job
-from app.services.config_service import MASK_VALUE
 from app.services.device_verification import clear_verification_jobs
 from app.services.device_verification_execution import _health_failure_detail
 from app.services.job_queue import reset_stale_running_jobs, run_pending_jobs_once
@@ -980,12 +979,12 @@ async def test_existing_device_verification_can_replace_device_config(
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "completed"
-    config_resp = await client.get(f"/api/devices/{device.id}/config", params={"reveal": True})
+    config_resp = await client.get(f"/api/devices/{device.id}/config")
     assert config_resp.status_code == 200
     assert config_resp.json() == {"new": True}
 
 
-async def test_existing_device_verification_preserves_masked_sensitive_config(
+async def test_existing_device_verification_preserves_sensitive_config_values(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -1031,7 +1030,7 @@ async def test_existing_device_verification_preserves_masked_sensitive_config(
             f"/api/devices/{device.id}/verification-jobs",
             json={
                 "host_id": default_host_id,
-                "device_config": {"roku_password": MASK_VALUE, "label": "living room"},
+                "device_config": {"roku_password": "rotated-secret", "label": "living room"},
                 "replace_device_config": True,
             },
         )
@@ -1039,9 +1038,9 @@ async def test_existing_device_verification_preserves_masked_sensitive_config(
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "completed"
-    config_resp = await client.get(f"/api/devices/{device.id}/config", params={"reveal": True})
+    config_resp = await client.get(f"/api/devices/{device.id}/config")
     assert config_resp.status_code == 200
-    assert config_resp.json() == {"roku_password": "super-secret", "label": "living room"}
+    assert config_resp.json() == {"roku_password": "rotated-secret", "label": "living room"}
 
 
 async def test_existing_device_verification_stops_running_node_before_updated_probe(
