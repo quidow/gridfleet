@@ -3,18 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from agent_app.pack.runtime_policy import RuntimePolicy
-
-
-@dataclass
-class AppiumInstallable:
-    source: str
-    package: str
-    version: str
-    recommended: str | None
-    known_bad: list[str]
-    github_repo: str | None = None
-    available_versions: list[str] = field(default_factory=list)
+from agent_app.pack.runtime_types import AppiumInstallable, RuntimePolicy
 
 
 @dataclass
