@@ -186,9 +186,7 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
 
 
 def test_device_config_uses_runtime_connection_target():
-    gridfleet_client = types.SimpleNamespace(
-        get_device_config=lambda target: {"target": target}
-    )
+    gridfleet_client = types.SimpleNamespace(get_device_config=lambda target: {"target": target})
     driver = types.SimpleNamespace(capabilities={"appium:udid": "SERIAL123"})
 
     fixture_fn = pytest_plugin.device_config.__wrapped__
