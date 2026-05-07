@@ -71,6 +71,7 @@ Only the first range is the "main" Appium port. The other two come into play aft
 
 ```text
 1. used = ports of AppiumNode rows where state = running
+            JOIN Device WHERE Device.host_id = :host_id
 2. excluded = caller-provided exclude set (e.g. ports we already tried this attempt)
 3. for port in [start..end]:
      if port in [used ∪ excluded]: skip
@@ -78,7 +79,7 @@ Only the first range is the "main" Appium port. The other two come into play aft
 4. preferred port (if free) goes first; the rest follow in numeric order
 ```
 
-The DB row, not the agent, is the authority for "is this port in use by us". Current implementation treats main Appium ports as globally used across the manager, even though the listener is host-local. That is conservative and can waste capacity in multi-host labs; see the host-scoped allocation spec under `docs/design/specs/`.
+The DB row, not the agent, is the authority for "is this port in use by us". The `used` set is scoped to the target host: the main Appium listener is host-local, so two hosts can each run Appium on `appium.port_range_start` without colliding.
 
 External listeners on a port in the managed range are detected only at start time, when the agent rejects with "already in use".
 
