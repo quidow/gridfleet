@@ -31,11 +31,16 @@ from app.services.lifecycle_policy_actions import (
 )
 from app.services.lifecycle_policy_state import (
     clear_backoff,
+    clear_deferred_stop,
     loaded_node,
     now,
-    now_iso,
     parse_iso,
+    record_backoff_suppressed,
+    record_recovery_failed,
+    record_recovery_recovered,
+    record_recovery_started,
     set_action,
+    set_deferred_stop,
     write_state,
 )
 from app.services.lifecycle_policy_state import (
@@ -136,9 +141,7 @@ async def clear_pending_auto_stop_on_recovery(
 
     pending_since = current_state.get("stop_pending_since")
     pending_reason = current_state.get("stop_pending_reason")
-    current_state["stop_pending"] = False
-    current_state["stop_pending_reason"] = None
-    current_state["stop_pending_since"] = None
+    clear_deferred_stop(current_state)
     if action is not None:
         set_action(current_state, action)
     write_state(device, current_state)
@@ -199,10 +202,7 @@ async def handle_health_failure(
         return "suppressed"
 
     if await has_running_client_session(db, device.id):
-        current_state["stop_pending"] = True
-        current_state["stop_pending_reason"] = reason
-        current_state["stop_pending_since"] = now_iso()
-        set_action(current_state, "auto_stop_deferred")
+        set_deferred_stop(current_state, reason=reason)
         write_state(device, current_state)
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -301,9 +301,7 @@ async def note_connectivity_loss(
     current_state = policy_state(device)
     current_state["last_failure_source"] = "connectivity"
     current_state["last_failure_reason"] = reason
-    current_state["stop_pending"] = False
-    current_state["stop_pending_reason"] = None
-    current_state["stop_pending_since"] = None
+    clear_deferred_stop(current_state)
     # Persist intent before any await/commit (see handle_health_failure).
     write_state(device, current_state)
 
@@ -391,14 +389,12 @@ async def attempt_auto_recovery(
 
     backoff_until = parse_iso(current_state.get("backoff_until"))
     if backoff_until is not None and backoff_until > now():
-        current_state["recovery_suppressed_reason"] = f"Backing off until {backoff_until.isoformat()}"
-        set_action(current_state, "recovery_suppressed")
+        record_backoff_suppressed(current_state, until_iso=backoff_until.isoformat())
         write_state(device, current_state)
         await db.commit()
         return False
 
-    current_state["recovery_suppressed_reason"] = None
-    set_action(current_state, "recovery_started")
+    record_recovery_started(current_state)
     write_state(device, current_state)
 
     node = loaded_node(device)
@@ -406,11 +402,13 @@ async def attempt_auto_recovery(
         try:
             await start_managed_node(db, device)
         except NodeManagerError as exc:
-            current_state["last_failure_source"] = source
-            current_state["last_failure_reason"] = str(exc)
-            current_state["recovery_suppressed_reason"] = "Automatic restart failed"
             backoff_until_iso = _set_backoff(current_state)
-            set_action(current_state, "recovery_failed")
+            record_recovery_failed(
+                current_state,
+                source=source,
+                reason=str(exc),
+                suppression_reason="Automatic restart failed",
+            )
             write_state(device, current_state)
             await lifecycle_incident_service.record_lifecycle_incident(
                 db,
@@ -450,10 +448,13 @@ async def attempt_auto_recovery(
 
     if result.get("status") != "passed":
         failure_reason = result.get("error") or "Recovery viability probe failed"
-        current_state["last_failure_source"] = "session_viability"
-        current_state["last_failure_reason"] = failure_reason
-        current_state["recovery_suppressed_reason"] = "Recovery probe failed"
         backoff_until_iso = _set_backoff(current_state)
+        record_recovery_failed(
+            current_state,
+            source="session_viability",
+            reason=failure_reason,
+            suppression_reason="Recovery probe failed",
+        )
         write_state(device, current_state)  # eager-write before potential intermediate commit in complete_auto_stop
         await complete_auto_stop(
             db,
@@ -471,12 +472,14 @@ async def attempt_auto_recovery(
         device = await device_locking.lock_device(db, device.id, load_sessions=True)
         run, entry = await run_service.get_device_reservation_with_entry(db, device.id)
         fresh_state = policy_state(device)
-        fresh_state["last_failure_source"] = "session_viability"
-        fresh_state["last_failure_reason"] = failure_reason
-        fresh_state["recovery_suppressed_reason"] = "Recovery probe failed"
         fresh_state["backoff_until"] = backoff_until_iso
         fresh_state["recovery_backoff_attempts"] = current_state["recovery_backoff_attempts"]
-        set_action(fresh_state, "recovery_failed")
+        record_recovery_failed(
+            fresh_state,
+            source="session_viability",
+            reason=failure_reason,
+            suppression_reason="Recovery probe failed",
+        )
         write_state(device, fresh_state)
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -577,11 +580,8 @@ async def attempt_auto_recovery(
     # released the FOR UPDATE acquired earlier in this function.
     device = await device_locking.lock_device(db, device.id, load_sessions=True)
     fresh_state = policy_state(device)
-    fresh_state["recovery_backoff_attempts"] = 0  # cleared in clear_backoff above
-    fresh_state["recovery_suppressed_reason"] = None
-    fresh_state["backoff_until"] = None
+    record_recovery_recovered(fresh_state)
     current_state = fresh_state
-    set_action(current_state, "auto_recovered")
     write_state(device, current_state)
     await lifecycle_incident_service.record_lifecycle_incident(
         db,

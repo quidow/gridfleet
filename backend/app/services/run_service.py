@@ -25,6 +25,7 @@ from app.services import (
     grid_service,
     lifecycle_incident_service,
     lifecycle_policy,
+    lifecycle_policy_actions,
     maintenance_service,
     platform_label_service,
 )
@@ -32,14 +33,6 @@ from app.services.cursor_pagination import CursorPage, CursorToken, decode_curso
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
-from app.services.lifecycle_policy_state import (
-    clear_backoff,
-    set_action,
-    write_state,
-)
-from app.services.lifecycle_policy_state import (
-    state as policy_state,
-)
 from app.services.pack_platform_resolver import assert_runnable
 from app.services.settings_service import settings_service
 
@@ -818,16 +811,12 @@ async def report_preparation_failure(
     run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
     assert run is not None
 
-    current_state = policy_state(device)
-    current_state["last_failure_source"] = source
-    current_state["last_failure_reason"] = reason
-    current_state["stop_pending"] = False
-    current_state["stop_pending_reason"] = None
-    current_state["stop_pending_since"] = None
-    current_state["recovery_suppressed_reason"] = "Device is in maintenance mode"
-    clear_backoff(current_state)
-    set_action(current_state, "ci_preparation_failed")
-    write_state(device, current_state)
+    await lifecycle_policy_actions.record_ci_preparation_failed(
+        db,
+        device,
+        reason=reason,
+        source=source,
+    )
 
     await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
     await device_health.update_device_checks(db, device, healthy=False, summary=reason)

@@ -20,7 +20,12 @@ from app.services import (
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event
-from app.services.lifecycle_policy_state import set_action, write_state
+from app.services.lifecycle_policy_state import (
+    clear_backoff,
+    clear_deferred_stop,
+    set_action,
+    write_state,
+)
 from app.services.lifecycle_policy_state import state as policy_state
 from app.services.node_service import stop_node as stop_managed_node
 
@@ -313,3 +318,28 @@ async def complete_auto_stop(
     )
     await db.commit()
     return run, entry
+
+
+async def record_ci_preparation_failed(
+    db: AsyncSession,
+    device: Device,
+    *,
+    reason: str,
+    source: str,
+) -> None:
+    """Persist the CI preparation failure onto the lifecycle_policy_state JSON.
+
+    The caller is responsible for holding the device row lock and for the
+    surrounding maintenance / event / commit work; this helper only owns the
+    JSON column write so ``run_service`` does not need to import
+    ``write_state`` or other low-level lifecycle_policy_state primitives.
+    """
+    device = await _lock_for_state_write(db, device)
+    fresh = policy_state(device)
+    fresh["last_failure_source"] = source
+    fresh["last_failure_reason"] = reason
+    clear_deferred_stop(fresh)
+    fresh["recovery_suppressed_reason"] = "Device is in maintenance mode"
+    clear_backoff(fresh)
+    set_action(fresh, "ci_preparation_failed")
+    write_state(device, fresh)
