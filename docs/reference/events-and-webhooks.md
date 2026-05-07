@@ -109,6 +109,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `run.completed` | `run_id`, `name` | run completion |
 | `run.cancelled` | `run_id`, `name` | cancel and force-release flows |
 | `run.expired` | `run_id`, `name` | run TTL or heartbeat expiration |
+| `device.cooldown_escalated` | `device_id`, `device_name`, `cooldown_count`, `threshold`, `reason`, `worker_id`, `run_id`, `run_name` | a device's release-with-cooldown count for a single run reached the configured threshold; the device is moved to maintenance and excluded from the run |
 
 ### Groups, bulk actions, settings, and cleanup
 
@@ -151,6 +152,7 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 - `lifecycle_recovered`
 - `lifecycle_run_excluded`
 - `lifecycle_run_restored`
+- `lifecycle_run_cooldown_escalated`
 
 ## Notes
 

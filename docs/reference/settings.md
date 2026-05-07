@@ -6,7 +6,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
-| `general` | General | 13 |
+| `general` | General | 14 |
 | `grid` | Appium & Grid | 11 |
 | `notifications` | Notifications | 3 |
 | `devices` | Device Defaults | 2 |
@@ -25,6 +25,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `general.device_check_interval_sec` | `general` | `int` | `60` | none | `10..600` | Interval for host-reported device connectivity checks |
 | `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for Grid session queueing |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
+| `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated to maintenance and excluded from the run; `0` disables escalation |
 | `general.claim_default_retry_after_sec` | `general` | `int` | `5` | `GRIDFLEET_CLAIM_DEFAULT_RETRY_AFTER_SEC` | `1..300` | Retry-After value returned when no run devices are claimable |
 | `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Interval for background property refresh |
 | `general.session_viability_interval_sec` | `general` | `int` | `86400` | none | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
