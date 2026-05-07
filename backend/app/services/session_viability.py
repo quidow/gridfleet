@@ -206,7 +206,7 @@ def build_probe_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
 
 
 async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int) -> tuple[bool, str | None]:
-    base_url = httpx.URL(settings_service.get("grid.hub_url").rstrip("/"))
+    base_url = httpx.URL(f"{settings_service.get('grid.hub_url').rstrip('/')}/")
     async with httpx.AsyncClient(base_url=base_url, timeout=timeout_sec) as client:
         try:
             create_resp = await client.post("session", json=_build_session_payload(capabilities))

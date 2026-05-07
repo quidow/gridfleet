@@ -337,7 +337,7 @@ async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
 
     assert ok is True
     assert error is None
-    client_factory.assert_called_once_with(base_url=httpx.URL("http://hub:4444/wd/hub"), timeout=5)
+    client_factory.assert_called_once_with(base_url=httpx.URL("http://hub:4444/wd/hub/"), timeout=5)
     mock_client.post.assert_awaited_once_with(
         "session", json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}}
     )
