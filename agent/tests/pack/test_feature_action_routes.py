@@ -16,10 +16,11 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import DriverPackAdapter, FeatureActionResult, SidecarStatus
+from agent_app.pack.adapter_types import FeatureActionResult, SidecarStatus
 from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 
 if TYPE_CHECKING:
+    from agent_app.pack.adapter_types import DriverPackAdapter
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 
 # ---------------------------------------------------------------------------

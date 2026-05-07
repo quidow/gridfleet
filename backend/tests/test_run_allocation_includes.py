@@ -1,7 +1,10 @@
 import contextlib
 import uuid
 from collections.abc import Iterator
-from typing import Any, cast, get_type_hints
+from typing import TYPE_CHECKING, cast, get_type_hints
+
+if TYPE_CHECKING:
+    from typing import Any
 
 import pytest
 from fastapi import HTTPException
