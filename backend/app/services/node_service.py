@@ -616,7 +616,7 @@ async def restart_node_via_agent(
         # The DB row still says the old node is running, so candidate_ports()
         # intentionally excludes node.port here. That is desirable after an
         # unmanaged-listener conflict: restart on the next free managed port.
-        for candidate_port in await candidate_ports(db, host_id=host.id, preferred_port=node.port):
+        for candidate_port in await candidate_ports(db, host_id=device.host_id, preferred_port=node.port):
             try:
                 started_handle = await start_remote_temporary_node(
                     db,
