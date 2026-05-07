@@ -84,16 +84,20 @@ def requires_csrf_check(path: str, method: str) -> bool:
     return path not in AUTH_STATE_EXEMPT_PATHS
 
 
-def operator_credentials() -> tuple[str, str]:
-    username = settings.auth_username or ""
-    password = settings.auth_password or ""
-    return username, password
+def operator_username() -> str:
+    return settings.auth_username or ""
 
 
-def machine_credentials() -> tuple[str, str]:
-    username = settings.machine_auth_username or ""
-    password = settings.machine_auth_password or ""
-    return username, password
+def operator_password() -> str:
+    return settings.auth_password or ""
+
+
+def machine_username() -> str:
+    return settings.machine_auth_username or ""
+
+
+def machine_password() -> str:
+    return settings.machine_auth_password or ""
 
 
 def _base64url_encode(raw: bytes) -> str:
@@ -116,7 +120,7 @@ def _sign_payload(encoded_payload: str) -> str:
 
 
 def issue_session() -> tuple[str, SessionState]:
-    username, _password = operator_credentials()
+    username = operator_username()
     now = datetime.now(UTC)
     expires_at = datetime.fromtimestamp(now.timestamp() + settings.auth_session_ttl_sec, tz=UTC)
     csrf_token = secrets.token_urlsafe(24)
@@ -195,7 +199,7 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         return SessionState(True, False, None, None, None)
     if expires_at <= datetime.now(UTC):
         return SessionState(True, False, None, None, None)
-    expected_username, _expected_password = operator_credentials()
+    expected_username = operator_username()
     if not hmac.compare_digest(username, expected_username):
         return SessionState(True, False, None, None, None)
 
@@ -238,7 +242,8 @@ def require_valid_csrf(headers: Headers, csrf_token: str | None) -> bool:
 
 
 def authenticate_operator(username: str, password: str) -> bool:
-    expected_username, expected_password = operator_credentials()
+    expected_username = operator_username()
+    expected_password = operator_password()
     return hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)
 
 
@@ -280,7 +285,8 @@ def _authenticate_basic_auth(headers: Headers) -> str | None:
     username, separator, password = decoded.partition(":")
     if not separator:
         return None
-    expected_username, expected_password = machine_credentials()
+    expected_username = machine_username()
+    expected_password = machine_password()
     if not (hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)):
         return None
     return username

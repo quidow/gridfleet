@@ -384,6 +384,25 @@ def test_issue_session_uses_configured_username(monkeypatch: pytest.MonkeyPatch)
     assert "configured-password" not in token
 
 
+def test_issue_session_does_not_read_operator_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    class PasswordRaisingSettings:
+        auth_username = "operator"
+        auth_session_secret = "session-secret"
+        auth_session_ttl_sec = 28_800
+
+        @property
+        def auth_password(self) -> str:
+            raise AssertionError("session issuance must not read the operator password")
+
+    monkeypatch.setattr(auth, "settings", PasswordRaisingSettings())
+
+    token, session = auth.issue_session()
+
+    assert token
+    assert session.authenticated is True
+    assert session.username == "operator"
+
+
 def test_issue_session_does_not_store_password_derived_marker_in_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth.settings, "auth_enabled", True)
     monkeypatch.setattr(auth.settings, "auth_username", "operator")
