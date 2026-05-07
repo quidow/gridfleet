@@ -34,7 +34,7 @@ import tarfile
 import uuid
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_client import AgentClientFactory, AgentHttpClient
 
 # ---------------------------------------------------------------------------
 # Agent availability guard (mirrors test_uploaded_pack_vertical_slice.py).
@@ -262,13 +264,13 @@ def override_storage(tmp_path: Path) -> Iterator[Path]:
 
 
 @pytest.fixture
-def fake_agent() -> Iterator[_FakeAgentClient]:
+def fake_agent(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeAgentClient]:
     """Patch dispatch_feature_action's http_client_factory to use the fake."""
     agent = _FakeAgentClient()
 
-    def _factory(*, timeout: float | int) -> _FakeAgentClient:
+    def _factory(*, timeout: float | int) -> AgentHttpClient:
         del timeout
-        return agent
+        return cast("AgentHttpClient", agent)
 
     original = pack_feature_dispatch_service.dispatch_feature_action
     # Wrap the function so the factory is always our fake, regardless of what
@@ -277,18 +279,32 @@ def fake_agent() -> Iterator[_FakeAgentClient]:
     import functools
 
     @functools.wraps(original)
-    async def _patched(*args: object, **kwargs: object) -> object:
-        kwargs["http_client_factory"] = _factory
-        return await original(*args, **kwargs)
+    async def _patched(
+        session: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        pack_id: str,
+        feature_id: str,
+        action_id: str,
+        args: dict[str, Any],
+        http_client_factory: AgentClientFactory = _factory,
+        timeout: float | int = 30.0,
+    ) -> object:
+        return await original(
+            session,
+            host_id=host_id,
+            pack_id=pack_id,
+            feature_id=feature_id,
+            action_id=action_id,
+            args=args,
+            http_client_factory=http_client_factory,
+            timeout=timeout,
+        )
 
     import app.routers.host_driver_pack_features as feature_routes
 
-    original_route_ref = feature_routes.dispatch_feature_action
-    feature_routes.dispatch_feature_action = _patched  # type: ignore[assignment]
-    try:
-        yield agent
-    finally:
-        feature_routes.dispatch_feature_action = original_route_ref  # type: ignore[assignment]
+    monkeypatch.setattr(feature_routes, "dispatch_feature_action", _patched)
+    yield agent
 
 
 @pytest.fixture

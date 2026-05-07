@@ -7,8 +7,8 @@ from app.models.device import (
     DeviceType,
 )
 from app.models.test_run import RunState
-from app.seeding.context import SeedContext
 from app.seeding.factories.run import make_reservation, make_run
+from tests.seeding.helpers import build_test_seed_context
 
 
 def _fake_device() -> Device:
@@ -29,7 +29,7 @@ def _fake_device() -> Device:
 
 
 def test_make_run_completed_sets_completed_at() -> None:
-    ctx = SeedContext.build(session=None, seed=42)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=42)
     started = ctx.now - timedelta(hours=6)
     run = make_run(
         ctx,
@@ -45,7 +45,7 @@ def test_make_run_completed_sets_completed_at() -> None:
 
 
 def test_make_run_active_has_no_completed_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     run = make_run(
         ctx,
         name="live",
@@ -58,7 +58,7 @@ def test_make_run_active_has_no_completed_at() -> None:
 
 
 def test_make_reservation_terminal_run_has_released_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     run = make_run(
         ctx,
         name="r",
@@ -73,7 +73,7 @@ def test_make_reservation_terminal_run_has_released_at() -> None:
 
 
 def test_make_reservation_active_run_has_no_released_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     run = make_run(
         ctx,
         name="r",

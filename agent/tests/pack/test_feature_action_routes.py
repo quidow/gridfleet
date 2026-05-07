@@ -9,15 +9,18 @@ Tests cover:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import FeatureActionResult, SidecarStatus
+from agent_app.pack.adapter_types import DriverPackAdapter, FeatureActionResult, SidecarStatus
 from agent_app.pack.sidecar_supervisor import SidecarSupervisor
+
+if TYPE_CHECKING:
+    from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 
 # ---------------------------------------------------------------------------
 # Fake adapter
@@ -78,7 +81,7 @@ def registry_with_fake_adapter() -> AdapterRegistry:
     """Returns a fresh registry with the fake adapter pre-loaded."""
     registry = AdapterRegistry()
     adapter = _FakeAdapter()
-    registry.set("vendor-fake", "1.0.0", adapter)
+    registry.set("vendor-fake", "1.0.0", cast("DriverPackAdapter", adapter))
     return registry
 
 
@@ -131,7 +134,9 @@ async def test_feature_action_route_returns_404_when_adapter_absent(empty_regist
 @pytest.mark.asyncio
 async def test_feature_action_route_passes_args_to_adapter(registry_with_fake_adapter: AdapterRegistry) -> None:
     """The route forwards args from the request body to the adapter."""
-    fake_adapter: _FakeAdapter = registry_with_fake_adapter.get_current("vendor-fake")  # type: ignore[assignment]
+    adapter = registry_with_fake_adapter.get_current("vendor-fake")
+    assert adapter is not None
+    fake_adapter = cast("_FakeAdapter", adapter)
     app.state.adapter_registry = registry_with_fake_adapter
     app.state.host_identity = None
 
@@ -205,14 +210,16 @@ async def test_status_payload_includes_sidecars_key() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     supervisor = SidecarSupervisor()
     client = _FakeStateClient()
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
         sidecar_supervisor=supervisor,
     )
@@ -243,7 +250,9 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     class _FakeSidecarAdapter:
@@ -287,8 +296,8 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
 
     client = _FakeStateClient()
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
         sidecar_supervisor=supervisor,
     )
@@ -323,14 +332,16 @@ async def test_status_payload_sidecars_empty_when_no_supervisor() -> None:
             self.posted.append(payload)
 
     class _FakeRuntimeMgr:
-        async def reconcile(self, desired_by_pack: dict[str, object]) -> tuple[dict[str, object], dict[str, str]]:
+        async def reconcile(
+            self, desired_by_pack: dict[str, RuntimeSpec]
+        ) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
             return {}, {}
 
     client = _FakeStateClient()
     # No sidecar_supervisor argument → should default to empty sidecars
     loop = PackStateLoop(
-        client=client,  # type: ignore[arg-type]
-        runtime_mgr=_FakeRuntimeMgr(),  # type: ignore[arg-type]
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
     )
     await loop.run_once()

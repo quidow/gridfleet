@@ -1,9 +1,10 @@
 import asyncio
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.appium_process import AppiumProcessManager
+from agent_app.appium_process import AppiumLaunchSpec, AppiumProcessManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,8 +15,22 @@ async def test_advertise_ip_refresh_holds_start_lock_during_restart() -> None:
     concurrent ``start()`` proceeds in parallel; with the fix, it blocks.
     """
     mgr = AppiumProcessManager()
-    mgr._launch_specs[5555] = type("Spec", (), {"manage_grid_node": True})()  # type: ignore[assignment]
-    mgr._appium_procs[5555] = type("P", (), {"returncode": None})()  # type: ignore[assignment]
+    mgr._launch_specs[5555] = AppiumLaunchSpec(
+        connection_target="udid-refresh",
+        port=5555,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=False,
+        device_type="real_device",
+        ip_address=None,
+        manage_grid_node=True,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    proc_mock = AsyncMock()
+    proc_mock.returncode = None
+    mgr._appium_procs[5555] = cast("asyncio.subprocess.Process", proc_mock)
     mgr._grid_advertise_ip = "10.0.0.1"
 
     inside_restart = asyncio.Event()

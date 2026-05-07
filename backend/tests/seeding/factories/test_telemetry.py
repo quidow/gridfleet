@@ -3,15 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 
-from app.seeding.context import SeedContext
 from app.seeding.factories.telemetry import (
     host_resource_series,
     make_capacity_snapshot,
 )
+from tests.seeding.helpers import build_test_seed_context
 
 
 def test_host_resource_series_resolution_bands() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     host_id = uuid.uuid4()
     samples = list(host_resource_series(ctx, host_id=host_id, days_back=90))
     # 1-min x 24h + 5-min x 7d + 1h x 82d (inclusive endpoints may +/-1)
@@ -23,7 +23,7 @@ def test_host_resource_series_resolution_bands() -> None:
 
 
 def test_make_capacity_snapshot_populates_counts() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     snap = make_capacity_snapshot(
         ctx,
         captured_at=ctx.now - timedelta(hours=1),

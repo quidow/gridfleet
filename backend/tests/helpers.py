@@ -33,7 +33,7 @@ async def create_device(
     host_id: str | uuid.UUID,
     name: str,
     identity_value: str | None = None,
-    **overrides: object,
+    **overrides: Any,  # noqa: ANN401
 ) -> Device:
     """Convenience wrapper around ``create_device_record`` for tests that don't care about identity_value."""
     resolved_identity = identity_value if identity_value is not None else f"auto-{uuid.uuid4().hex[:12]}"

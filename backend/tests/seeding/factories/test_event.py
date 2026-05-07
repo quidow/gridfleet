@@ -2,12 +2,12 @@ import uuid
 from datetime import timedelta
 
 from app.models.device_event import DeviceEventType
-from app.seeding.context import SeedContext
 from app.seeding.factories.event import make_device_event, make_system_event
+from tests.seeding.helpers import build_test_seed_context
 
 
 def test_make_device_event_uses_timestamp_offset() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     device_id = uuid.uuid4()
     evt = make_device_event(
         ctx,
@@ -23,7 +23,7 @@ def test_make_device_event_uses_timestamp_offset() -> None:
 
 
 def test_make_system_event_generates_unique_event_id() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     a = make_system_event(ctx, event_type="run.completed", data={"run_id": "1"}, created_at=ctx.now)
     b = make_system_event(ctx, event_type="run.completed", data={"run_id": "2"}, created_at=ctx.now)
     assert a.event_id != b.event_id

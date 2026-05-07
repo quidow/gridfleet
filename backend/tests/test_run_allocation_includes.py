@@ -1,7 +1,7 @@
 import contextlib
 import uuid
 from collections.abc import Iterator
-from typing import get_type_hints
+from typing import Any, cast, get_type_hints
 
 import pytest
 from fastapi import HTTPException
@@ -42,6 +42,10 @@ def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
         yield statements
     finally:
         event.remove(sync_engine, "before_cursor_execute", listener)
+
+
+def _counter_value(metric: object) -> float:
+    return float(cast("Any", metric)._value.get())
 
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -250,7 +254,7 @@ def test_parse_includes_rejects_unknown_token_with_machine_readable_detail() -> 
     with pytest.raises(HTTPException) as exc:
         run_service.parse_includes("config,garbage", allowed={"config", "capabilities"})
     assert exc.value.status_code == 422
-    assert exc.value.detail == {
+    assert cast("Any", exc.value.detail) == {
         "code": "unknown_include",
         "values": ["garbage"],
     }
@@ -557,12 +561,12 @@ async def test_claim_increments_run_claims_counter_with_boolean_include_labels(
     run = await create_reserved_run(db_session, name="metrics-run", devices=[device])
 
     labels = RUN_CLAIMS_TOTAL.labels(include_config="true", include_capabilities="false")
-    before = labels._value.get()  # type: ignore[attr-defined]
+    before = _counter_value(labels)
 
     response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
     assert response.status_code == 200, response.text
 
-    after = labels._value.get()  # type: ignore[attr-defined]
+    after = _counter_value(labels)
     assert after == before + 1
 
 
