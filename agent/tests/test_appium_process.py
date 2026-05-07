@@ -13,6 +13,7 @@ from agent_app.appium_process import (
     AppiumProcessInfo,
     AppiumProcessManager,
     DeviceNotFoundError,
+    InvalidStartPayloadError,
     _build_env,
     _find_java,
     _parse_node_version,
@@ -612,6 +613,29 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
             **PACK_START_KWARGS,
         )
 
+    create_proc.assert_not_awaited()
+
+
+async def test_start_rejects_port_outside_configured_range_before_localhost_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AppiumProcessManager()
+    monkeypatch.setattr("agent_app.appium_process.agent_settings.appium_port_range_start", 4723)
+    monkeypatch.setattr("agent_app.appium_process.agent_settings.appium_port_range_end", 4823)
+
+    with (
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock) as can_connect,
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+        pytest.raises(InvalidStartPayloadError, match="outside configured Appium port range"),
+    ):
+        await manager.start(
+            connection_target="device-out-of-range-port",
+            port=6553,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+        )
+
+    can_connect.assert_not_awaited()
     create_proc.assert_not_awaited()
 
 

@@ -24,6 +24,25 @@ def test_configure_logging_uses_dev_renderer_and_process_owner(monkeypatch: pyte
     assert observability.process_owner()
 
 
+def test_configure_logging_installs_structlog_when_handlers_preexist(monkeypatch: pytest.MonkeyPatch) -> None:
+    import logging
+
+    monkeypatch.setenv("GRIDFLEET_ENV", "development")
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    existing_handler = logging.NullHandler()
+
+    try:
+        root_logger.handlers[:] = [existing_handler]
+        observability.configure_logging(force=False)
+
+        assert root_logger.handlers != [existing_handler]
+        assert observability.get_logger("tests.observability") is not None
+    finally:
+        root_logger.handlers[:] = original_handlers
+        observability.configure_logging(force=True)
+
+
 def test_parse_timestamp_and_loop_heartbeat_freshness() -> None:
     now = datetime.now(UTC)
     snapshot = {"next_expected_at": (now + timedelta(seconds=5)).isoformat()}

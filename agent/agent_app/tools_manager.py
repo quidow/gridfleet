@@ -35,11 +35,20 @@ SELENIUM_JAR_URL = (
 
 def _normalize_selenium_version(version: str) -> str | None:
     stripped = version.strip()
+    parts = stripped.split(".")
+    if len(parts) != 3 or any(not part or not all("0" <= char <= "9" for char in part) for part in parts):
+        return None
     try:
         parsed = Version(stripped)
     except InvalidVersion:
         return None
-    if parsed.is_prerelease or parsed.is_devrelease or parsed.local is not None:
+    if (
+        parsed.epoch != 0
+        or parsed.post is not None
+        or parsed.is_prerelease
+        or parsed.is_devrelease
+        or parsed.local is not None
+    ):
         return None
     normalized = str(parsed)
     if normalized != stripped:

@@ -43,6 +43,7 @@ BACKGROUND_LOOP_NAMES = (
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
+_GRIDFLEET_BACKEND_HANDLER_ATTR = "_gridfleet_backend_logging_handler"
 
 
 def _now() -> datetime:
@@ -72,8 +73,13 @@ def _shared_processors() -> list[Any]:
     ]
 
 
+def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
+    return any(bool(getattr(handler, _GRIDFLEET_BACKEND_HANDLER_ATTR, False)) for handler in logger.handlers)
+
+
 def configure_logging(*, force: bool = False) -> None:
-    if logging.getLogger().handlers and not force:
+    root_logger = logging.getLogger()
+    if structlog.is_configured() and _has_gridfleet_logging_handler(root_logger) and not force:
         return
 
     shared_processors = _shared_processors()
@@ -93,8 +99,8 @@ def configure_logging(*, force: bool = False) -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
+    setattr(handler, _GRIDFLEET_BACKEND_HANDLER_ATTR, True)
 
-    root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)

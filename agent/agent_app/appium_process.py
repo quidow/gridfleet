@@ -114,6 +114,13 @@ class DeviceNotFoundError(RuntimeError):
     """Connection target is not visible to the host adapter."""
 
 
+def _validate_appium_port_in_range(port: int) -> None:
+    start = agent_settings.appium_port_range_start
+    end = agent_settings.appium_port_range_end
+    if port < start or port > end:
+        raise InvalidStartPayloadError(f"Port {port} is outside configured Appium port range {start}-{end}")
+
+
 def resolve_appium_invocation_for_pack(
     pack_id: str,
     registry: RuntimeRegistry | None,
@@ -1057,6 +1064,7 @@ class AppiumProcessManager:
             raise AlreadyRunningError(f"Appium already running on port {port}")
         if not pack_id or not platform_id:
             raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
+        _validate_appium_port_in_range(port)
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._grid_node_restart_tasks, port)
         resolved_connection_target = connection_target

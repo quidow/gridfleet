@@ -16,6 +16,7 @@ _REQUEST_ID: ContextVar[str | None] = ContextVar("agent_request_id", default=Non
 _HTTP_METHOD: ContextVar[str | None] = ContextVar("agent_http_method", default=None)
 _HTTP_PATH: ContextVar[str | None] = ContextVar("agent_http_path", default=None)
 _DEFAULT_RECORD_FACTORY = logging.getLogRecordFactory()
+_GRIDFLEET_AGENT_HANDLER_ATTR = "_gridfleet_agent_logging_handler"
 
 
 def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
@@ -50,8 +51,13 @@ def _record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
     return record
 
 
+def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
+    return any(bool(getattr(handler, _GRIDFLEET_AGENT_HANDLER_ATTR, False)) for handler in logger.handlers)
+
+
 def configure_logging(*, force: bool = False) -> None:
-    if logging.getLogger().handlers and not force:
+    root_logger = logging.getLogger()
+    if logging.getLogRecordFactory() is _record_factory and _has_gridfleet_logging_handler(root_logger) and not force:
         return
 
     formatter = logging.Formatter(
@@ -60,8 +66,8 @@ def configure_logging(*, force: bool = False) -> None:
     )
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
+    setattr(handler, _GRIDFLEET_AGENT_HANDLER_ATTR, True)
 
-    root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
