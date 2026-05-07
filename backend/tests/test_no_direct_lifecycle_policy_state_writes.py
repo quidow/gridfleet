@@ -31,6 +31,8 @@ def _scan() -> list[tuple[Path, int, str]]:
         if any(path.is_relative_to(d) for d in EXEMPT_DIRS):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue
             if _ASSIGNMENT_RE.search(line):
                 findings.append((path, lineno, line.strip()))
     return findings
