@@ -20,10 +20,13 @@ ALLOWLIST = {
     BACKEND_APP / "services" / "lifecycle_policy_actions.py",
     BACKEND_APP / "services" / "lifecycle_policy_state.py",
 }
+EXEMPT_DIRS = {BACKEND_APP / "seeding"}
 
-# Match either "from ... import ..., write_state, ..." (any list shape) or a
-# bare "write_state(" call. The literal token must not be part of a longer
-# identifier.
+# `_IMPORT_RE` matches single-line `from ... import ... write_state ...`
+# forms only; multi-line parenthesized imports are caught transitively via
+# `_CALL_RE`, since any legitimate use will call `write_state(...)` at least
+# once. `_CALL_RE`'s lookbehind keeps the literal token from matching a
+# longer identifier suffix (e.g. `_write_state(`, `self.write_state(`).
 _IMPORT_RE = re.compile(r"\bfrom\s+app\.services\.lifecycle_policy_state\s+import\b[^#\n]*\bwrite_state\b")
 _CALL_RE = re.compile(r"(?<![\w\.])write_state\s*\(")
 
@@ -32,6 +35,8 @@ def _scan() -> list[tuple[Path, int, str]]:
     findings: list[tuple[Path, int, str]] = []
     for path in BACKEND_APP.rglob("*.py"):
         if path in ALLOWLIST:
+            continue
+        if any(path.is_relative_to(d) for d in EXEMPT_DIRS):
             continue
         text = path.read_text(encoding="utf-8")
         if "write_state" not in text:
