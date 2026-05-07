@@ -31,6 +31,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -955,13 +956,23 @@ async def release_claimed_device_with_cooldown(
     worker_id: str,
     reason: str,
     ttl_seconds: int,
-) -> tuple[ReservedDeviceInfo, DeviceOperationalState, DeviceHold | None, datetime]:
+) -> tuple[
+    ReservedDeviceInfo,
+    DeviceOperationalState,
+    DeviceHold | None,
+    datetime | None,
+    int,  # cooldown_count after this call
+    bool,  # escalated to maintenance?
+    int,  # threshold (for response payload)
+]:
     max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
     if ttl_seconds > max_ttl:
         raise ValueError(f"ttl_seconds must be <= {max_ttl}")
     clean_reason = reason.strip()
     if not clean_reason:
         raise ValueError("Cooldown reason is required")
+
+    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
 
     async with db.begin():
         run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
@@ -993,35 +1004,77 @@ async def release_claimed_device_with_cooldown(
         if entry.claimed_by != worker_id:
             raise ValueError(f"Device {device_id} is claimed by another worker")
 
-        excluded_at = now_utc()
-        excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
-        entry.excluded = True
-        entry.exclusion_reason = clean_reason
-        entry.excluded_at = excluded_at
-        entry.excluded_until = excluded_until
+        entry.cooldown_count += 1
         entry.claimed_by = None
         entry.claimed_at = None
 
-        next_operational_state = await ready_operational_state(db, device)
-        await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
+        escalate = threshold > 0 and entry.cooldown_count >= threshold
 
-        await lifecycle_incident_service.record_lifecycle_incident(
-            db,
-            device,
-            event_type=DeviceEventType.lifecycle_run_cooldown_set,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=clean_reason,
-            detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
-            source="testkit",
-            run_id=run.id,
-            run_name=run.name,
-            ttl_seconds=ttl_seconds,
-            worker_id=worker_id,
-            expires_at=excluded_until,
-        )
+        if escalate:
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.lifecycle_run_cooldown_escalated,
+                {
+                    "cooldown_count": entry.cooldown_count,
+                    "threshold": threshold,
+                    "reason": clean_reason,
+                    "worker_id": worker_id,
+                    "run_id": str(run.id),
+                    "run_name": run.name,
+                },
+            )
+            escalation_reason = f"Exceeded cooldown threshold ({entry.cooldown_count}/{threshold}): {clean_reason}"
+            await lifecycle_policy_actions.exclude_run_if_needed(
+                db,
+                device,
+                reason=escalation_reason,
+                source="testkit",
+            )
+            # `enter_maintenance` (called inside `exclude_run_if_needed`) handles
+            # operational state via stop_node/mark_node_stopped and sets the
+            # maintenance hold. Do not call set_operational_state here.
+            next_operational_state = device.operational_state
+            excluded_until: datetime | None = None
+        else:
+            excluded_at = now_utc()
+            excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
+            entry.excluded = True
+            entry.exclusion_reason = clean_reason
+            entry.excluded_at = excluded_at
+            entry.excluded_until = excluded_until
 
-    logger.info("device.cooldown.set")
-    return _reservation_to_claim_response(entry), next_operational_state, device.hold, excluded_until
+            next_operational_state = await ready_operational_state(db, device)
+            await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
+
+            await lifecycle_incident_service.record_lifecycle_incident(
+                db,
+                device,
+                event_type=DeviceEventType.lifecycle_run_cooldown_set,
+                summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                reason=clean_reason,
+                detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
+                source="testkit",
+                run_id=run.id,
+                run_name=run.name,
+                ttl_seconds=ttl_seconds,
+                worker_id=worker_id,
+                expires_at=excluded_until,
+            )
+
+    if escalate:
+        logger.info("device.cooldown.escalated")
+    else:
+        logger.info("device.cooldown.set")
+    return (
+        _reservation_to_claim_response(entry),
+        next_operational_state,
+        device.hold,
+        excluded_until,
+        entry.cooldown_count,
+        escalate,
+        threshold,
+    )
 
 
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:

@@ -378,6 +378,9 @@ async def release_device_with_cooldown(
             next_operational_state,
             next_hold,
             excluded_until,
+            _cooldown_count,
+            _escalated,
+            _threshold,
         ) = await run_service.release_claimed_device_with_cooldown(
             db,
             run_id,
