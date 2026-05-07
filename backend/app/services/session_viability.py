@@ -209,7 +209,7 @@ async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int)
     base_url = httpx.URL(settings_service.get("grid.hub_url").rstrip("/"))
     async with httpx.AsyncClient(base_url=base_url, timeout=timeout_sec) as client:
         try:
-            create_resp = await client.post("/session", json=_build_session_payload(capabilities))
+            create_resp = await client.post("session", json=_build_session_payload(capabilities))
         except httpx.HTTPError as exc:
             return False, f"Session create request failed: {_format_http_error(exc)}"
 
@@ -231,7 +231,7 @@ async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int)
             return False, "Session create did not return a session id"
 
         try:
-            delete_resp = await client.delete(f"/session/{session_id}")
+            delete_resp = await client.delete(f"session/{session_id}")
             if delete_resp.status_code >= 400:
                 return False, f"Session created but cleanup failed ({delete_resp.status_code})"
         except httpx.HTTPError as exc:

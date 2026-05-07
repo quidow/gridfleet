@@ -317,3 +317,28 @@ async def test_probe_session_via_grid_includes_exception_type_for_blank_http_err
 
     assert ok is False
     assert error == "Session create request failed: ReadTimeout while calling http://hub:4444/session"
+
+
+async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
+    create_response = MagicMock(spec=httpx.Response, status_code=200)
+    create_response.json.return_value = {"value": {"sessionId": "session-1"}}
+    delete_response = MagicMock(spec=httpx.Response, status_code=200)
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=create_response)
+    mock_client.delete = AsyncMock(return_value=delete_response)
+
+    with (
+        patch("app.services.session_viability.settings_service.get", return_value="http://hub:4444/wd/hub"),
+        patch("app.services.session_viability.httpx.AsyncClient", return_value=mock_client) as client_factory,
+    ):
+        ok, error = await probe_session_via_grid({"platformName": "iOS"}, timeout_sec=5)
+
+    assert ok is True
+    assert error is None
+    client_factory.assert_called_once_with(base_url=httpx.URL("http://hub:4444/wd/hub"), timeout=5)
+    mock_client.post.assert_awaited_once_with(
+        "session", json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}}
+    )
+    mock_client.delete.assert_awaited_once_with("session/session-1")

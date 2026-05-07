@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from httpx import Response as HttpxResponse
 
+from agent_app.appium_process import DeviceNotFoundError
 from agent_app.error_codes import AgentErrorCode
 from agent_app.main import app, appium_mgr
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -369,6 +370,19 @@ async def test_probe_appium_session(client: AsyncClient) -> None:
         "/session",
         json={"capabilities": {"alwaysMatch": {"platformName": "Android"}, "firstMatch": [{}]}},
     )
+
+
+async def test_probe_appium_session_maps_managed_port_race_to_not_found(client: AsyncClient) -> None:
+    with patch.object(
+        appium_mgr,
+        "loopback_origin_for_managed_port",
+        side_effect=DeviceNotFoundError("No managed Appium process is running on port 4723"),
+    ):
+        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
+
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert detail["code"] == AgentErrorCode.DEVICE_NOT_FOUND
 
 
 async def test_probe_appium_session_strips_gridfleet_routing_metadata(client: AsyncClient) -> None:
