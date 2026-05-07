@@ -974,6 +974,17 @@ async def release_claimed_device_with_cooldown(
 
     threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
 
+    excluded_until: datetime | None = None
+    escalate = False
+    cooldown_count_after = 0
+    # These are assigned in exactly one of the two branches below; the
+    # initializer placeholders prevent mypy possibly-unbound warnings.
+    reservation_payload: ReservedDeviceInfo
+    next_operational_state: DeviceOperationalState
+    device_hold: DeviceHold | None
+
+    # Tx 1: locked-write phase — validates, increments cooldown_count, clears the
+    # claim, and fully completes the cooldown branch when not escalating.
     async with db.begin():
         run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
         run = run_result.scalar_one_or_none()
@@ -1008,35 +1019,10 @@ async def release_claimed_device_with_cooldown(
         entry.claimed_by = None
         entry.claimed_at = None
 
+        cooldown_count_after = entry.cooldown_count
         escalate = threshold > 0 and entry.cooldown_count >= threshold
 
-        if escalate:
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.lifecycle_run_cooldown_escalated,
-                {
-                    "cooldown_count": entry.cooldown_count,
-                    "threshold": threshold,
-                    "reason": clean_reason,
-                    "worker_id": worker_id,
-                    "run_id": str(run.id),
-                    "run_name": run.name,
-                },
-            )
-            escalation_reason = f"Exceeded cooldown threshold ({entry.cooldown_count}/{threshold}): {clean_reason}"
-            await lifecycle_policy_actions.exclude_run_if_needed(
-                db,
-                device,
-                reason=escalation_reason,
-                source="testkit",
-            )
-            # `enter_maintenance` (called inside `exclude_run_if_needed`) handles
-            # operational state via stop_node/mark_node_stopped and sets the
-            # maintenance hold. Do not call set_operational_state here.
-            next_operational_state = device.operational_state
-            excluded_until: datetime | None = None
-        else:
+        if not escalate:
             excluded_at = now_utc()
             excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
             entry.excluded = True
@@ -1061,17 +1047,77 @@ async def release_claimed_device_with_cooldown(
                 worker_id=worker_id,
                 expires_at=excluded_until,
             )
+            reservation_payload = _reservation_to_claim_response(entry)
+            device_hold = device.hold
+
+    # Tx 1 has committed (or raised). Cooldown branch is fully done at this point.
+
+    if escalate:
+        # Tx 2+: escalation path — mirrors complete_auto_stop which also calls
+        # exclude_run_if_needed followed by db.commit() without an enclosing
+        # db.begin() block. exclude_run_if_needed internally calls
+        # enter_maintenance which calls stop_node; stop_node commits
+        # unconditionally when the node is running, so we must not nest this
+        # inside an outer async with db.begin(): block.
+        escalation_reason = f"Exceeded cooldown threshold ({cooldown_count_after}/{threshold}): {clean_reason}"
+
+        # Re-lock device for a fresh row after Tx 1 committed.
+        device = await device_locking.lock_device(db, device_id, load_sessions=True)
+        run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
+        run_obj = run_for_event.scalar_one()
+
+        await record_event(
+            db,
+            device.id,
+            DeviceEventType.lifecycle_run_cooldown_escalated,
+            {
+                "cooldown_count": cooldown_count_after,
+                "threshold": threshold,
+                "reason": clean_reason,
+                "worker_id": worker_id,
+                "run_id": str(run_obj.id),
+                "run_name": run_obj.name,
+            },
+        )
+
+        await lifecycle_policy_actions.exclude_run_if_needed(
+            db,
+            device,
+            reason=escalation_reason,
+            source="testkit",
+        )
+        # exclude_run_if_needed leaves mutations in the session; commit them.
+        await db.commit()
+        # Refresh device so the response reflects post-maintenance state.
+        # enter_maintenance may have committed mid-flight via stop_node and
+        # re-set the hold, so we need fresh values here.
+        await db.refresh(device, ["operational_state", "hold"])
+        # Re-fetch entry because exclude_device_from_run mutated excluded,
+        # excluded_at, and exclusion_reason; returning a stale snapshot would
+        # mis-represent the state in the API response.
+        result = await db.execute(
+            select(DeviceReservation)
+            .options(selectinload(DeviceReservation.device))
+            .where(DeviceReservation.run_id == run_id)
+            .where(DeviceReservation.device_id == device_id)
+            .where(DeviceReservation.released_at.is_(None))
+            .limit(1)
+        )
+        entry = result.scalar_one()
+        reservation_payload = _reservation_to_claim_response(entry)
+        next_operational_state = device.operational_state
+        device_hold = device.hold
 
     if escalate:
         logger.info("device.cooldown.escalated")
     else:
         logger.info("device.cooldown.set")
     return (
-        _reservation_to_claim_response(entry),
+        reservation_payload,
         next_operational_state,
-        device.hold,
+        device_hold,
         excluded_until,
-        entry.cooldown_count,
+        cooldown_count_after,
         escalate,
         threshold,
     )
