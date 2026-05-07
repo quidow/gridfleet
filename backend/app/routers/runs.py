@@ -17,9 +17,11 @@ from app.schemas.run import (
     ClaimResponse,
     HeartbeatResponse,
     NoClaimableDevicesDetail,
+    ReleaseEscalatedToMaintenanceResponse,
     ReleaseRequest,
     ReleaseWithCooldownRequest,
     ReleaseWithCooldownResponse,
+    ReleaseWithCooldownResult,
     ReservedDeviceInfo,
     RunCreate,
     RunCreateResponse,
@@ -365,22 +367,25 @@ async def release_device(
     return {"status": "released"}
 
 
-@router.post("/{run_id}/devices/{device_id}/release-with-cooldown", response_model=ReleaseWithCooldownResponse)
+@router.post(
+    "/{run_id}/devices/{device_id}/release-with-cooldown",
+    response_model=ReleaseWithCooldownResult,
+)
 async def release_device_with_cooldown(
     run_id: uuid.UUID,
     device_id: uuid.UUID,
     data: ReleaseWithCooldownRequest,
     db: AsyncSession = Depends(get_db),
-) -> ReleaseWithCooldownResponse:
+) -> ReleaseWithCooldownResponse | ReleaseEscalatedToMaintenanceResponse:
     try:
         (
             reservation,
             next_operational_state,
             next_hold,
             excluded_until,
-            _cooldown_count,
-            _escalated,
-            _threshold,
+            cooldown_count,
+            escalated,
+            threshold,
         ) = await run_service.release_claimed_device_with_cooldown(
             db,
             run_id,
@@ -397,6 +402,18 @@ async def release_device_with_cooldown(
             raise HTTPException(status_code=422, detail=msg) from e
         raise HTTPException(status_code=409, detail=msg) from e
 
+    if escalated:
+        return ReleaseEscalatedToMaintenanceResponse(
+            status="maintenance_escalated",
+            reservation=reservation,
+            device_operational_state=next_operational_state.value,
+            device_hold=next_hold.value if next_hold else None,
+            cooldown_count=cooldown_count,
+            threshold=threshold,
+        )
+    if excluded_until is None:
+        # Defensive: non-escalated path always sets excluded_until.
+        raise HTTPException(status_code=500, detail="Cooldown returned no expiry")
     return ReleaseWithCooldownResponse(
         status="cooldown_set",
         reservation=reservation,
