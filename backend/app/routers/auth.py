@@ -40,7 +40,7 @@ async def login(request: AuthLoginRequest, response: Response) -> AuthSessionRea
     if not auth.authenticate_operator(request.username, request.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
 
-    token, session = auth.issue_session(request.username)
+    token, session = auth.issue_session()
     auth.set_session_cookie(response, token)
     return _session_payload(session)
 

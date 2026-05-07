@@ -105,19 +105,6 @@ def _base64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(f"{value}{padding}")
 
 
-def _credential_fingerprint(username: str, password: str) -> str:
-    digest = hashlib.sha256()
-    digest.update(username.encode("utf-8"))
-    digest.update(b":")
-    digest.update(password.encode("utf-8"))
-    return digest.hexdigest()
-
-
-def _operator_credential_fingerprint() -> str:
-    username, password = operator_credentials()
-    return _credential_fingerprint(username, password)
-
-
 def _json_dumps(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -128,7 +115,8 @@ def _sign_payload(encoded_payload: str) -> str:
     return _base64url_encode(signature)
 
 
-def issue_session(username: str) -> tuple[str, SessionState]:
+def issue_session() -> tuple[str, SessionState]:
+    username, _password = operator_credentials()
     now = datetime.now(UTC)
     expires_at = datetime.fromtimestamp(now.timestamp() + settings.auth_session_ttl_sec, tz=UTC)
     csrf_token = secrets.token_urlsafe(24)
@@ -137,7 +125,6 @@ def issue_session(username: str) -> tuple[str, SessionState]:
         "csrf": csrf_token,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
-        "fp": _operator_credential_fingerprint(),
     }
     encoded_payload = _base64url_encode(_json_dumps(payload))
     signature = _sign_payload(encoded_payload)
@@ -199,7 +186,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         username = payload["sub"]
         csrf_token = payload["csrf"]
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
-        fingerprint = payload["fp"]
     except (KeyError, TypeError, ValueError):
         return SessionState(True, False, None, None, None)
 
@@ -207,11 +193,7 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         return SessionState(True, False, None, None, None)
     if not isinstance(csrf_token, str) or not csrf_token:
         return SessionState(True, False, None, None, None)
-    if not isinstance(fingerprint, str) or not fingerprint:
-        return SessionState(True, False, None, None, None)
     if expires_at <= datetime.now(UTC):
-        return SessionState(True, False, None, None, None)
-    if not hmac.compare_digest(fingerprint, _operator_credential_fingerprint()):
         return SessionState(True, False, None, None, None)
 
     return SessionState(
