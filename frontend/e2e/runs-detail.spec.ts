@@ -18,16 +18,18 @@ const ACTIVE_DEVICE = {
   excluded_until: null,
   cooldown_remaining_sec: null,
   cooldown_count: 0,
+  cooldown_escalated: false,
 };
 
 const ESCALATED_DEVICE = {
   ...ACTIVE_DEVICE,
   excluded: true,
-  exclusion_reason: 'cooldown threshold exceeded',
+  exclusion_reason: 'Exceeded cooldown threshold (3/3): cooldown threshold exceeded',
   excluded_at: new Date(Date.UTC(2026, 3, 10, 10, 6, 0)).toISOString(),
   excluded_until: null,
   cooldown_remaining_sec: null,
   cooldown_count: 3,
+  cooldown_escalated: true,
 };
 
 const MOCK_RUN = {

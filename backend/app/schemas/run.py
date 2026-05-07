@@ -74,6 +74,7 @@ class ReservedDeviceInfo(BaseModel):
     excluded_until: str | None = None
     cooldown_remaining_sec: int | None = None
     cooldown_count: int = 0
+    cooldown_escalated: bool = False
     claimed_by: str | None = None
     claimed_at: str | None = None
     config: dict[str, Any] | None = None

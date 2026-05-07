@@ -81,6 +81,9 @@ class DeviceReservation(Base):
             "excluded_until": self.excluded_until.isoformat() if self.excluded_until is not None else None,
             "cooldown_remaining_sec": _cooldown_remaining_sec(self.excluded_until),
             "cooldown_count": self.cooldown_count,
+            "cooldown_escalated": bool(
+                self.exclusion_reason and self.exclusion_reason.startswith("Exceeded cooldown threshold ")
+            ),
             "claimed_by": self.claimed_by,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at is not None else None,
         }

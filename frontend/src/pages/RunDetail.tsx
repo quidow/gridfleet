@@ -38,6 +38,7 @@ type ReservedDevice = {
   exclusion_reason: string | null;
   excluded_until: string | null;
   cooldown_count: number;
+  cooldown_escalated: boolean;
 };
 
 const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
@@ -84,7 +85,7 @@ const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
     key: 'reservation',
     header: 'Reservation',
     render: (d) => {
-      if (d.excluded && d.excluded_until === null && d.cooldown_count > 0) {
+      if (d.cooldown_escalated) {
         return (
           <span className="text-sm text-warning-foreground">
             Escalated to maintenance ({d.exclusion_reason ?? 'cooldown threshold'})

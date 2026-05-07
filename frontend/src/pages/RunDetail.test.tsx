@@ -26,6 +26,7 @@ type ReservedDevice = {
   exclusion_reason: string | null;
   excluded_until: string | null;
   cooldown_count: number;
+  cooldown_escalated: boolean;
 };
 
 // Inline the two column render functions that the spec asks us to test.
@@ -41,7 +42,7 @@ function renderCooldownsCell(d: ReservedDevice): ReactNode {
 }
 
 function renderReservationCell(d: ReservedDevice): ReactNode {
-  if (d.excluded && d.excluded_until === null && d.cooldown_count > 0) {
+  if (d.cooldown_escalated) {
     return (
       <span className="text-sm text-warning-foreground">
         Escalated to maintenance ({d.exclusion_reason ?? 'cooldown threshold'})
@@ -71,6 +72,7 @@ const BASE: ReservedDevice = {
   exclusion_reason: null,
   excluded_until: null,
   cooldown_count: 0,
+  cooldown_escalated: false,
 };
 
 // (a) Not excluded, no cooldowns — "Active"
@@ -83,15 +85,17 @@ const FIXTURE_B: ReservedDevice = {
   excluded_until: '2099-01-01T00:00:00Z',
   cooldown_count: 1,
   exclusion_reason: 'test-reason',
+  cooldown_escalated: false,
 };
 
-// (c) Excluded, excluded_until is null, cooldown_count > 0 — escalated
+// (c) Excluded via cooldown escalation — cooldown_escalated=true
 const FIXTURE_C: ReservedDevice = {
   ...BASE,
   excluded: true,
   excluded_until: null,
   cooldown_count: 3,
-  exclusion_reason: 'exceeded threshold',
+  exclusion_reason: 'Exceeded cooldown threshold (3/3): exceeded threshold',
+  cooldown_escalated: true,
 };
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -131,14 +135,14 @@ describe('RunDetail reservation column', () => {
     expect(screen.queryByText(/Escalated/)).toBeNull();
   });
 
-  it('(c) shows escalated badge only when excluded AND excluded_until is null AND cooldown_count > 0', () => {
+  it('(c) shows escalated badge when cooldown_escalated is true', () => {
     render(<Cell node={renderReservationCell(FIXTURE_C)} />);
     expect(screen.getByText(/Escalated to maintenance/)).toBeInTheDocument();
-    expect(screen.getByText(/exceeded threshold/)).toBeInTheDocument();
+    expect(screen.getByText(/Exceeded cooldown threshold/)).toBeInTheDocument();
     expect(screen.queryByText('Active')).toBeNull();
   });
 
-  it('(c) uses fallback reason when exclusion_reason is null', () => {
+  it('(c) uses fallback reason when exclusion_reason is null but cooldown_escalated is true', () => {
     const fixtureNoReason: ReservedDevice = { ...FIXTURE_C, exclusion_reason: null };
     render(<Cell node={renderReservationCell(fixtureNoReason)} />);
     expect(screen.getByText(/cooldown threshold/)).toBeInTheDocument();

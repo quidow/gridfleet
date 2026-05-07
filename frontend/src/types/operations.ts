@@ -146,6 +146,7 @@ export interface ReservedDeviceInfo {
   excluded_until: string | null;
   cooldown_remaining_sec: number | null;
   cooldown_count: number;
+  cooldown_escalated: boolean;
   name?: string | null;
   device_type?: string | null;
   connection_type?: string | null;
