@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 @pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> pytest.MonkeyPatch:  # type: ignore[return]
+def _skip_leader_fencing() -> Iterator[None]:
     """No-op assert_current_leader so unit tests don't need a real leader row."""
     with patch("app.services.session_sync.assert_current_leader"):
         yield
