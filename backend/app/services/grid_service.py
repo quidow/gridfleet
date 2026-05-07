@@ -19,7 +19,7 @@ async def get_grid_status() -> dict[str, Any]:
             return result
     except httpx.HTTPError as e:
         logger.warning("Failed to reach Grid hub at %s: %s", url, e)
-        return {"ready": False, "error": str(e)}
+        return {"ready": False, "error": "grid_unreachable"}
 
 
 async def terminate_grid_session(session_id: str) -> bool:

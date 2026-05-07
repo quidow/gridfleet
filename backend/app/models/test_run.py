@@ -3,16 +3,13 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.device_reservation import DeviceReservation
 
 
 class RunState(enum.StrEnum):
@@ -46,7 +43,7 @@ class TestRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String, nullable=True)
-    device_reservations: Mapped[list[DeviceReservation]] = relationship(
+    device_reservations: Mapped[list[Any]] = relationship(
         "DeviceReservation",
         back_populates="run",
         cascade="all, delete-orphan",
@@ -65,7 +62,7 @@ class TestRun(Base):
         if not value:
             return
         reservation_cls = cast(
-            "type[DeviceReservation]",
+            "Any",
             self.__mapper__.relationships["device_reservations"].mapper.class_,
         )
         self.device_reservations = [

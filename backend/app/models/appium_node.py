@@ -3,17 +3,13 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
-    from app.models.device import Device
 
 
 class NodeState(enum.StrEnum):
@@ -47,8 +43,8 @@ class AppiumNode(Base):
     health_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     health_state: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    device: Mapped[Device] = relationship("Device", back_populates="appium_node")
-    resource_claims: Mapped[list[AppiumNodeResourceClaim]] = relationship(
+    device: Mapped[Any] = relationship("Device", back_populates="appium_node")
+    resource_claims: Mapped[list[Any]] = relationship(
         "AppiumNodeResourceClaim",
         back_populates="node",
         cascade="all, delete-orphan",

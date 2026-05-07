@@ -102,6 +102,6 @@ async def test_reconcile_failed_rid_not_added_to_refcounts(tmp_path: Path) -> No
     )
     rid = AppiumRuntimeManager.runtime_id_for(spec)
 
-    _envs, _errors = await manager.reconcile({"pack-x": spec})
+    await manager.reconcile({"pack-x": spec})
 
     assert manager.refcount(rid) == 0

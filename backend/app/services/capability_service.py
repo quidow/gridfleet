@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,7 +95,7 @@ async def _get_live_active_connection_target(db: AsyncSession, device: Device) -
         return None
     node = device.appium_node
     if node is not None and node.active_connection_target:
-        return node.active_connection_target
+        return cast("str", node.active_connection_target)
 
     # The node exists but active_connection_target is not yet cached — we must
     # fetch it from the host snapshot and persist it.  Acquire Device + AppiumNode

@@ -43,7 +43,7 @@ BACKGROUND_LOOP_NAMES = (
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
-_LOGGING_CONFIGURED = False
+_GRIDFLEET_BACKEND_HANDLER_ATTR = "_gridfleet_backend_logging_handler"
 
 
 def _now() -> datetime:
@@ -73,9 +73,13 @@ def _shared_processors() -> list[Any]:
     ]
 
 
+def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
+    return any(bool(getattr(handler, _GRIDFLEET_BACKEND_HANDLER_ATTR, False)) for handler in logger.handlers)
+
+
 def configure_logging(*, force: bool = False) -> None:
-    global _LOGGING_CONFIGURED
-    if _LOGGING_CONFIGURED and not force:
+    root_logger = logging.getLogger()
+    if structlog.is_configured() and _has_gridfleet_logging_handler(root_logger) and not force:
         return
 
     shared_processors = _shared_processors()
@@ -95,8 +99,8 @@ def configure_logging(*, force: bool = False) -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
+    setattr(handler, _GRIDFLEET_BACKEND_HANDLER_ATTR, True)
 
-    root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
@@ -115,12 +119,19 @@ def configure_logging(*, force: bool = False) -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    _LOGGING_CONFIGURED = True
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     configure_logging()
     return structlog.stdlib.get_logger(name)
+
+
+def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    if len(text) > max_length:
+        return f"{text[:max_length]}..."
+    return text
 
 
 def generate_request_id() -> str:

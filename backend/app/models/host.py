@@ -3,17 +3,13 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.device import Device
-    from app.models.host_terminal_session import HostTerminalSession
 
 
 class OSType(enum.StrEnum):
@@ -41,8 +37,8 @@ class Host(Base):
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    devices: Mapped[list[Device]] = relationship("Device", back_populates="host")
-    terminal_sessions: Mapped[list[HostTerminalSession]] = relationship(
+    devices: Mapped[list[Any]] = relationship("Device", back_populates="host")
+    terminal_sessions: Mapped[list[Any]] = relationship(
         "HostTerminalSession", back_populates="host", cascade="all, delete-orphan"
     )
 

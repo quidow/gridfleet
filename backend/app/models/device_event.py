@@ -3,16 +3,13 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.device import Device
 
 
 class DeviceEventType(enum.StrEnum):
@@ -45,4 +42,4 @@ class DeviceEvent(Base):
     details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    device: Mapped[Device] = relationship("Device", back_populates="events")
+    device: Mapped[Any] = relationship("Device", back_populates="events")

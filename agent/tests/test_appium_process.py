@@ -12,6 +12,8 @@ from agent_app.appium_process import (
     AppiumLaunchSpec,
     AppiumProcessInfo,
     AppiumProcessManager,
+    DeviceNotFoundError,
+    InvalidStartPayloadError,
     _build_env,
     _find_java,
     _parse_node_version,
@@ -595,18 +597,6 @@ async def test_status_reports_running_and_stopped() -> None:
     assert stopped == {"running": False, "port": 4723}
 
 
-async def test_status_reports_unmanaged_listener_as_not_running() -> None:
-    manager = AppiumProcessManager()
-    with patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True):
-        status = await manager.status(4723)
-
-    assert status == {
-        "running": False,
-        "port": 4723,
-        "detail": "An unmanaged Appium listener is responding on this port",
-    }
-
-
 async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
     manager = AppiumProcessManager()
     with (
@@ -623,6 +613,29 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
             **PACK_START_KWARGS,
         )
 
+    create_proc.assert_not_awaited()
+
+
+async def test_start_rejects_port_outside_configured_range_before_localhost_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = AppiumProcessManager()
+    monkeypatch.setattr("agent_app.appium_process.agent_settings.appium_port_range_start", 4723)
+    monkeypatch.setattr("agent_app.appium_process.agent_settings.appium_port_range_end", 4823)
+
+    with (
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock) as can_connect,
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+        pytest.raises(InvalidStartPayloadError, match="outside configured Appium port range"),
+    ):
+        await manager.start(
+            connection_target="device-out-of-range-port",
+            port=6553,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+        )
+
+    can_connect.assert_not_awaited()
     create_proc.assert_not_awaited()
 
 
@@ -1242,3 +1255,23 @@ async def test_start_omits_allow_insecure_when_insecure_features_empty() -> None
     args = create_proc.await_args_list[0].args
     assert "--allow-insecure" not in args
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_does_not_probe_unmanaged_localhost_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = AppiumProcessManager()
+
+    async def fail_if_called(port: int) -> dict[str, Any] | None:
+        raise AssertionError(f"unexpected localhost probe for unmanaged port {port}")
+
+    monkeypatch.setattr(manager, "_fetch_appium_status", fail_if_called)
+
+    assert await manager.status(6553) == {"running": False, "port": 6553}
+
+
+@pytest.mark.asyncio
+async def test_require_managed_running_port_rejects_unmanaged_port() -> None:
+    manager = AppiumProcessManager()
+
+    with pytest.raises(DeviceNotFoundError, match="No managed Appium process is running on port 6553"):
+        manager.require_managed_running_port(6553)

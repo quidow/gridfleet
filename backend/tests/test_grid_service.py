@@ -57,8 +57,7 @@ async def test_get_grid_status_returns_error_payload_on_http_error(monkeypatch: 
 
     result = await grid_service.get_grid_status()
 
-    assert result["ready"] is False
-    assert "boom" in result["error"]
+    assert result == {"ready": False, "error": "grid_unreachable"}
 
 
 async def test_terminate_grid_session_success(monkeypatch: pytest.MonkeyPatch) -> None:

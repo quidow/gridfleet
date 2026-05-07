@@ -47,3 +47,21 @@ def test_agent_logs_include_request_context(capsys: pytest.CaptureFixture[str]) 
     assert "method=GET" in captured
     assert "path=/agent/health" in captured
     assert "agent structured test" in captured
+
+
+def test_agent_configure_logging_installs_record_factory_when_handlers_preexist() -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_factory = logging.getLogRecordFactory()
+    existing_handler = logging.NullHandler()
+
+    try:
+        logging.setLogRecordFactory(logging.LogRecord)
+        root_logger.handlers[:] = [existing_handler]
+        configure_logging(force=False)
+
+        assert logging.getLogRecordFactory() is not logging.LogRecord
+        assert root_logger.handlers != [existing_handler]
+    finally:
+        logging.setLogRecordFactory(original_factory)
+        root_logger.handlers[:] = original_handlers

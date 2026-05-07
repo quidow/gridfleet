@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from agent_app.pack.runtime import RuntimeSpec
+from agent_app.pack.runtime_types import AppiumInstallable, RuntimePolicy
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from agent_app.pack.manifest import AppiumInstallable
-
-
-@dataclass(frozen=True)
-class RuntimePolicy:
-    strategy: Literal["recommended", "latest_patch", "exact"] = "recommended"
-    appium_server_version: str | None = None
-    appium_driver_version: str | None = None
+__all__ = ["AppiumInstallable", "RuntimePolicy", "RuntimePolicyResolution", "resolve_runtime_spec"]
 
 
 @dataclass(frozen=True)

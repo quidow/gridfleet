@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from app.models.device import Device, DeviceOperationalState
 from app.models.test_run import TERMINAL_STATES
 from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import run_service
+from app.services import run_reservation_service
 from app.services.lifecycle_policy_state import now, parse_iso, state
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ def derive_run_tracking(
             "will_auto_rejoin_run": False,
         }
 
-    excluded = run_service.reservation_entry_is_excluded(reservation_entry)
+    excluded = run_reservation_service.reservation_entry_is_excluded(reservation_entry)
     return {
         "excluded_from_run": excluded,
         "excluded_run_id": str(reservation.id) if excluded else None,
@@ -47,7 +47,7 @@ async def build_lifecycle_policy(
 ) -> dict[str, Any]:
     policy = state(device)
     if reservation_context is None:
-        reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
+        reservation_context = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     run, entry = reservation_context
     policy.update(derive_run_tracking(run, entry))
 

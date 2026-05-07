@@ -114,6 +114,13 @@ class DeviceNotFoundError(RuntimeError):
     """Connection target is not visible to the host adapter."""
 
 
+def _validate_appium_port_in_range(port: int) -> None:
+    start = agent_settings.appium_port_range_start
+    end = agent_settings.appium_port_range_end
+    if port < start or port > end:
+        raise InvalidStartPayloadError(f"Port {port} is outside configured Appium port range {start}-{end}")
+
+
 def resolve_appium_invocation_for_pack(
     pack_id: str,
     registry: RuntimeRegistry | None,
@@ -1057,6 +1064,7 @@ class AppiumProcessManager:
             raise AlreadyRunningError(f"Appium already running on port {port}")
         if not pack_id or not platform_id:
             raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
+        _validate_appium_port_in_range(port)
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._grid_node_restart_tasks, port)
         resolved_connection_target = connection_target
@@ -1211,14 +1219,15 @@ class AppiumProcessManager:
                 t.cancel()
             self._intentional_stop_ports.discard(port)
 
+    def require_managed_running_port(self, port: int) -> None:
+        proc = self._appium_procs.get(port)
+        if proc is None or proc.returncode is not None:
+            raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
+
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)
         if proc is None or proc.returncode is not None:
-            unmanaged_listener = await self._can_connect_to_appium(port)
-            status: dict[str, Any] = {"running": False, "port": port}
-            if unmanaged_listener:
-                status["detail"] = "An unmanaged Appium listener is responding on this port"
-            return status
+            return {"running": False, "port": port}
 
         appium_status = await self._fetch_appium_status(port)
         if appium_status is None:

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from sqlalchemy import select
@@ -158,7 +158,7 @@ def upsert_node(
     active_connection_target: str | None,
 ) -> AppiumNode:
     if device.appium_node:
-        node = device.appium_node
+        node = cast("AppiumNode", device.appium_node)
         node.port = port
         node.grid_url = settings_service.get("grid.hub_url")
         node.pid = pid
@@ -240,7 +240,7 @@ async def mark_node_started(
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    node = device.appium_node
+    node = cast("AppiumNode | None", device.appium_node)
     assert node is not None
     node.pid = None
     node.active_connection_target = None
@@ -267,7 +267,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
 
 
 def require_management_host(device: Device, *, action: str = "use remote management") -> Host:
-    host = device.host
+    host = cast("Host | None", device.host)
     if host is None or device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot {action}")
     return host

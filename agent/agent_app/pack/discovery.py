@@ -4,6 +4,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_dispatch import dispatch_discover, dispatch_normalize_device
 
 if TYPE_CHECKING:
@@ -219,9 +220,9 @@ async def pack_device_properties(
             except Exception:
                 logger.exception(
                     "Adapter device property normalization failed: pack=%s platform=%s target=%s",
-                    pack.id,
-                    platform_def.id,
-                    connection_target,
+                    sanitize_log_value(pack.id),
+                    sanitize_log_value(platform_def.id),
+                    sanitize_log_value(connection_target),
                 )
                 continue
             if normalized.field_errors:

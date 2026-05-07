@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -11,10 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.device import ConnectionType, DeviceType
-
-if TYPE_CHECKING:
-    from app.models.device import Device
-    from app.models.test_run import TestRun
 
 
 class SessionStatus(enum.StrEnum):
@@ -48,5 +44,5 @@ class Session(Base):
         UUID(as_uuid=True), ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    device: Mapped[Device | None] = relationship("Device", back_populates="sessions")
-    run: Mapped[TestRun | None] = relationship("TestRun")
+    device: Mapped[Any | None] = relationship("Device", back_populates="sessions")
+    run: Mapped[Any | None] = relationship("TestRun")

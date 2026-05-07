@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
-
-if TYPE_CHECKING:
-    from app.models.device import Device
-    from app.models.test_run import TestRun
 
 
 def _cooldown_remaining_sec(excluded_until: datetime | None) -> int | None:
@@ -55,8 +51,8 @@ class DeviceReservation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    run: Mapped[TestRun] = relationship("TestRun", back_populates="device_reservations")
-    device: Mapped[Device] = relationship("Device", back_populates="reservations")
+    run: Mapped[Any] = relationship("TestRun", back_populates="device_reservations")
+    device: Mapped[Any] = relationship("Device", back_populates="reservations")
 
     def to_reserved_device_info(self) -> dict[str, Any]:
         device = self.device

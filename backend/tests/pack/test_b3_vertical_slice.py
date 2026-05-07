@@ -414,7 +414,7 @@ async def test_b3_feature_action_degraded_and_recovered(
     # that expire_all() later does not trigger lazy I/O on the ORM object.
     host = await _seed_host(db_session)
     host_id: uuid.UUID = host.id
-    _pack, _release, _feature = await _seed_pack_with_feature(db_session)
+    await _seed_pack_with_feature(db_session)
     await db_session.commit()
 
     route = f"/api/hosts/{host_id}/driver-packs/{PACK_ID}/features/{FEATURE_ID}/actions/{ACTION_ID}"

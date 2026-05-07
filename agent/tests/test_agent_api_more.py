@@ -220,60 +220,71 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
 
 
 async def test_probe_session_covers_remaining_error_paths(client: AsyncClient) -> None:
-    create_response = MagicMock(spec=HttpxResponse, status_code=400)
-    create_response.json.return_value = {"detail": "bad create"}
+    with patch.object(appium_mgr, "require_managed_running_port"):
+        create_response = MagicMock(spec=HttpxResponse, status_code=400)
+        create_response.json.return_value = {"detail": "bad create"}
 
-    mock_http_client = MagicMock()
-    mock_http_client.__aenter__.return_value = mock_http_client
-    mock_http_client.__aexit__.return_value = False
-    mock_http_client.post = AsyncMock(return_value=create_response)
+        mock_http_client = MagicMock()
+        mock_http_client.__aenter__.return_value = mock_http_client
+        mock_http_client.__aexit__.return_value = False
+        mock_http_client.post = AsyncMock(return_value=create_response)
 
-    with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
+        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
+            resp = await client.post(
+                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
+            )
 
-    assert resp.status_code == 502
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert detail["message"] == "bad create"
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PROBE_FAILED"
+        assert detail["message"] == "bad create"
 
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.side_effect = ValueError
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-    assert resp.status_code == 502
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert "invalid JSON" in detail["message"]
+        create_response = MagicMock(spec=HttpxResponse, status_code=200)
+        create_response.json.side_effect = ValueError
+        mock_http_client.post = AsyncMock(return_value=create_response)
+        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
+            resp = await client.post(
+                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
+            )
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PROBE_FAILED"
+        assert "invalid JSON" in detail["message"]
 
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.return_value = {"value": {}}
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-    assert resp.status_code == 502
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert "session id" in detail["message"]
+        create_response = MagicMock(spec=HttpxResponse, status_code=200)
+        create_response.json.return_value = {"value": {}}
+        mock_http_client.post = AsyncMock(return_value=create_response)
+        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
+            resp = await client.post(
+                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
+            )
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PROBE_FAILED"
+        assert "session id" in detail["message"]
 
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.return_value = {"sessionId": "session-123"}
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    mock_http_client.delete = AsyncMock(side_effect=httpx.ReadTimeout("slow", request=MagicMock()))
-    with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-    assert resp.status_code == 504
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert "cleanup timed out" in detail["message"]
+        create_response = MagicMock(spec=HttpxResponse, status_code=200)
+        create_response.json.return_value = {"sessionId": "session-123"}
+        mock_http_client.post = AsyncMock(return_value=create_response)
+        mock_http_client.delete = AsyncMock(side_effect=httpx.ReadTimeout("slow", request=MagicMock()))
+        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
+            resp = await client.post(
+                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
+            )
+        assert resp.status_code == 504
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PROBE_FAILED"
+        assert "cleanup timed out" in detail["message"]
 
-    mock_http_client.delete = AsyncMock(side_effect=httpx.HTTPError("cleanup boom"))
-    with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-    assert resp.status_code == 502
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert "cleanup failed" in detail["message"]
+        mock_http_client.delete = AsyncMock(side_effect=httpx.HTTPError("cleanup boom"))
+        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
+            resp = await client.post(
+                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
+            )
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail["code"] == "PROBE_FAILED"
+        assert "cleanup failed" in detail["message"]
 
 
 async def test_appium_logs_caps_requested_lines(client: AsyncClient) -> None:

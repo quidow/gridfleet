@@ -18,6 +18,7 @@ from app.models.device import (
     HardwareHealthStatus,
 )
 from app.models.host import Host
+from app.observability import sanitize_log_value
 from app.schemas.device import (
     DevicePatch,
     DeviceVerificationCreate,
@@ -326,7 +327,11 @@ async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device
         try:
             await stop_node(db, device)
         except Exception as e:
-            logger.warning("Failed to stop node for device %s before delete: %s", device_id, e)
+            logger.warning(
+                "Failed to stop node for device %s before delete: %s",
+                sanitize_log_value(device_id),
+                sanitize_log_value(e),
+            )
             return await _lock_device_for_delete(db, device_id)
         relocked = await _lock_device_for_delete(db, device_id)
         if relocked is None:
