@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
-from app.models.device import DeviceOperationalState
+from app.models.device import Device, DeviceOperationalState
 from app.services import (
     appium_capability_keys,
     appium_node_locking,
@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_client import AgentClientFactory
-    from app.models.device import Device
     from app.models.host import Host
 
 logger = logging.getLogger(__name__)
@@ -106,17 +105,26 @@ async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Devic
         raise NodeManagerError(f"Device {device_id} no longer exists") from None
 
 
-async def allocate_port(db: AsyncSession) -> int:
-    return (await candidate_ports(db))[0]
+async def allocate_port(db: AsyncSession, *, host_id: uuid.UUID) -> int:
+    return (await candidate_ports(db, host_id=host_id))[0]
 
 
 async def candidate_ports(
     db: AsyncSession,
     *,
+    host_id: uuid.UUID,
     preferred_port: int | None = None,
     exclude_ports: set[int] | None = None,
 ) -> list[int]:
-    stmt = select(AppiumNode.port).where(AppiumNode.state == NodeState.running)
+    # Main Appium port is host-local: two hosts can each run Appium on
+    # `appium.port_range_start` without colliding. Scope the "used" set
+    # to running nodes on the requested host so the manager stops
+    # treating the cluster-wide set as reserved.
+    stmt = (
+        select(AppiumNode.port)
+        .join(Device, Device.id == AppiumNode.device_id)
+        .where(AppiumNode.state == NodeState.running, Device.host_id == host_id)
+    )
     result = await db.execute(stmt)
     used_ports = {row[0] for row in result.all()}
     excluded = exclude_ports or set()
@@ -608,7 +616,7 @@ async def restart_node_via_agent(
         # The DB row still says the old node is running, so candidate_ports()
         # intentionally excludes node.port here. That is desirable after an
         # unmanaged-listener conflict: restart on the next free managed port.
-        for candidate_port in await candidate_ports(db, preferred_port=node.port):
+        for candidate_port in await candidate_ports(db, host_id=device.host_id, preferred_port=node.port):
             try:
                 started_handle = await start_remote_temporary_node(
                     db,
@@ -720,7 +728,7 @@ async def _start_with_owner(
     agent_base = await agent_url(device)
     try:
         last_conflict: NodePortConflictError | None = None
-        for port in await candidate_ports(db, preferred_port=preferred_port):
+        for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port):
             try:
                 handle = await start_remote_temporary_node(
                     db,
