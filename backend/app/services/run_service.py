@@ -1088,6 +1088,39 @@ async def release_claimed_device_with_cooldown(
             f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
         )
 
+        # Before re-locking the device for escalation work, verify the device's
+        # CURRENT active reservation still belongs to this run.  A concurrent
+        # complete_run / cancel_run / force_release may have released the old
+        # reservation (setting released_at) between Tx1 committing and here, and
+        # a new run could have reserved the same device — in that case we MUST NOT
+        # put the new run's device into maintenance.
+        async with db.begin():
+            _current_run, current_entry = await run_reservation_service.get_device_reservation_with_entry(db, device_id)
+            if current_entry is None or str(current_entry.run_id) != str(run_id):
+                logger.warning(
+                    "device.cooldown.escalation.skipped_after_reassignment",
+                    extra={
+                        "device_id": str(device_id),
+                        "original_run_id": str(run_id),
+                        "current_run_id": str(current_entry.run_id) if current_entry else None,
+                    },
+                )
+                # Tx1 already incremented cooldown_count and excluded the old
+                # reservation; the device just won't enter maintenance because it
+                # is no longer ours.  Return the escalation response for the OLD
+                # reservation — its exclusion IS permanent, the device simply
+                # wasn't put into maintenance on this path.
+                return (
+                    _reservation_to_claim_response(entry),
+                    entry.device.operational_state if entry.device is not None else DeviceOperationalState.offline,
+                    None,  # no maintenance hold was applied
+                    None,  # excluded_until (permanent exclusion has no TTL)
+                    cooldown_count_after,
+                    True,  # escalated — the OLD reservation IS excluded permanently
+                    threshold,
+                )
+        # Reassignment check passed: active reservation still belongs to this run.
+
         # Re-lock device for a fresh row after Tx 1 committed.
         device = await device_locking.lock_device(db, device_id, load_sessions=True)
         run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
