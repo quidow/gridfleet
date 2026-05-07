@@ -200,16 +200,14 @@ def test_get_device_config_for_driver_uses_runtime_connection_target() -> None:
 
     class FakeClient:
         def __init__(self) -> None:
-            self.calls: list[tuple[str, bool]] = []
+            self.calls: list[str] = []
 
-        def get_device_config(self, connection_target: str, reveal: bool = True) -> dict[str, Any]:
-            self.calls.append((connection_target, reveal))
-            return {"target": connection_target, "reveal": reveal}
+        def get_device_config(self, connection_target: str) -> dict[str, Any]:
+            self.calls.append(connection_target)
+            return {"target": connection_target}
 
     client = FakeClient()
-
-    assert get_device_config_for_driver(driver, gridfleet_client=client, reveal=False) == {
+    assert get_device_config_for_driver(driver, gridfleet_client=client) == {
         "target": "SERIAL123",
-        "reveal": False,
     }
-    assert client.calls == [("SERIAL123", False)]
+    assert client.calls == ["SERIAL123"]

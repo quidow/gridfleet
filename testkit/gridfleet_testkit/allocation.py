@@ -40,7 +40,6 @@ class AllocatedDevice:
     config: dict[str, Any] | None
     live_capabilities: dict[str, Any] | None
     unavailable_includes: tuple[UnavailableInclude, ...] = ()
-    config_is_masked: bool = False
 
     @property
     def is_real_device(self) -> bool:
@@ -142,13 +141,10 @@ def hydrate_allocated_device(
     inline_config = payload.get("config")
     if isinstance(inline_config, dict):
         config: dict[str, Any] | None = inline_config
-        config_is_masked = True
     elif fetch_config and connection_target and "config" not in unavailable_set:
         config = client.get_device_config(connection_target)
-        config_is_masked = False
     else:
         config = None
-        config_is_masked = False
     inline_capabilities = payload.get("live_capabilities")
     if isinstance(inline_capabilities, dict):
         live_capabilities: dict[str, Any] | None = inline_capabilities
@@ -175,7 +171,6 @@ def hydrate_allocated_device(
         claimed_by=_string_value(payload, "claimed_by"),
         claimed_at=_string_value(payload, "claimed_at"),
         config=config,
-        config_is_masked=config_is_masked,
         live_capabilities=live_capabilities,
         unavailable_includes=unavailable_includes,
     )

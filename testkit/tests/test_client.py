@@ -58,7 +58,7 @@ def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
     assert config == {"username": "operator"}
     assert calls == [
         ("GET", "http://manager/api/devices", {"connection_target": "10.0.0.8:5555"}, 10),
-        ("GET", "http://manager/api/devices/dev-1/config", {"reveal": "true"}, 10),
+        ("GET", "http://manager/api/devices/dev-1/config", None, 10),
     ]
 
 
