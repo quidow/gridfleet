@@ -16,11 +16,16 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import FeatureActionResult, SidecarStatus
+from agent_app.pack.adapter_types import (
+    FeatureActionResult,
+    HardwareTelemetry,
+    LifecycleActionResult,
+    NormalizedDevice,
+    SidecarStatus,
+)
 from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 
 if TYPE_CHECKING:
-    from agent_app.pack.adapter_types import DriverPackAdapter
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 
 # ---------------------------------------------------------------------------
@@ -48,19 +53,21 @@ class _FakeAdapter:
         self.calls.append((feature_id, action_id, args))
         return self._result
 
-    async def discover(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def discover(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def doctor(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def doctor(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def health_check(self, ctx: object) -> list[object]:  # pragma: no cover
+    async def health_check(self, ctx: object) -> list[Any]:  # pragma: no cover
         return []
 
-    async def lifecycle_action(self, action_id: object, args: object, ctx: object) -> object:  # pragma: no cover
-        return None
+    async def lifecycle_action(
+        self, action_id: object, args: object, ctx: object
+    ) -> LifecycleActionResult:  # pragma: no cover
+        return LifecycleActionResult(ok=True)
 
-    async def pre_session(self, spec: object) -> dict[str, object]:  # pragma: no cover
+    async def pre_session(self, spec: object) -> dict[str, Any]:  # pragma: no cover
         return {}
 
     async def post_session(self, spec: object, outcome: object) -> None:  # pragma: no cover
@@ -68,8 +75,24 @@ class _FakeAdapter:
 
     async def sidecar_lifecycle(
         self, feature_id: str, action: Literal["start", "stop", "status"]
-    ) -> object:  # pragma: no cover
-        return None
+    ) -> SidecarStatus:  # pragma: no cover
+        return SidecarStatus(ok=True)
+
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:  # pragma: no cover
+        return NormalizedDevice(
+            identity_scheme="",
+            identity_scope="",
+            identity_value="",
+            connection_target="",
+            ip_address="",
+            device_type="",
+            connection_type="",
+            os_version="",
+            field_errors=[],
+        )
+
+    async def telemetry(self, ctx: object) -> HardwareTelemetry:  # pragma: no cover
+        return HardwareTelemetry(supported=False)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +105,7 @@ def registry_with_fake_adapter() -> AdapterRegistry:
     """Returns a fresh registry with the fake adapter pre-loaded."""
     registry = AdapterRegistry()
     adapter = _FakeAdapter()
-    registry.set("vendor-fake", "1.0.0", cast("DriverPackAdapter", adapter))
+    registry.set("vendor-fake", "1.0.0", adapter)
     return registry
 
 

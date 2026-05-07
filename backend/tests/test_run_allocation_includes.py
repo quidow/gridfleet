@@ -1,10 +1,7 @@
 import contextlib
 import uuid
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, cast, get_type_hints
-
-if TYPE_CHECKING:
-    from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
 from fastapi import HTTPException
@@ -48,7 +45,8 @@ def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
 
 
 def _counter_value(metric: object) -> float:
-    return float(cast("Any", metric)._value.get())
+    raw: Any = metric
+    return float(raw._value.get())
 
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -257,7 +255,8 @@ def test_parse_includes_rejects_unknown_token_with_machine_readable_detail() -> 
     with pytest.raises(HTTPException) as exc:
         run_service.parse_includes("config,garbage", allowed={"config", "capabilities"})
     assert exc.value.status_code == 422
-    assert cast("Any", exc.value.detail) == {
+    detail: Any = exc.value.detail
+    assert detail == {
         "code": "unknown_include",
         "values": ["garbage"],
     }
