@@ -36,6 +36,9 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from app.agent_client import AgentClientFactory
+
 import httpx
 import pytest
 from sqlalchemy import select
@@ -52,6 +55,7 @@ from app.services.pack_storage_service import PackStorageService
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from agent_app.pack.adapter_types import FeatureActionResult
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -277,18 +281,37 @@ def fake_agent() -> Iterator[_FakeAgentClient]:
     import functools
 
     @functools.wraps(original)
-    async def _patched(*args: object, **kwargs: object) -> object:
-        kwargs["http_client_factory"] = _factory
-        return await original(*args, **kwargs)
+    async def _patched(
+        session: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        pack_id: str,
+        feature_id: str,
+        action_id: str,
+        args: dict[str, Any],
+        http_client_factory: AgentClientFactory = httpx.AsyncClient,
+        timeout: float | int = 30.0,
+    ) -> FeatureActionResult:
+        kwargs = {
+            "session": session,
+            "host_id": host_id,
+            "pack_id": pack_id,
+            "feature_id": feature_id,
+            "action_id": action_id,
+            "args": args,
+            "http_client_factory": _factory,
+            "timeout": timeout,
+        }
+        return await original(**kwargs)  # type: ignore[arg-type]
 
     import app.routers.host_driver_pack_features as feature_routes
 
     original_route_ref = feature_routes.dispatch_feature_action
-    feature_routes.dispatch_feature_action = _patched  # type: ignore[assignment]
+    feature_routes.dispatch_feature_action = _patched
     try:
         yield agent
     finally:
-        feature_routes.dispatch_feature_action = original_route_ref  # type: ignore[assignment]
+        feature_routes.dispatch_feature_action = original_route_ref
 
 
 @pytest.fixture

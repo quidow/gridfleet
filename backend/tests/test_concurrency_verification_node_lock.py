@@ -46,8 +46,8 @@ async def test_retain_verified_node_locks_appium_node(
     original_ready = device_verification_execution.ready_operational_state
 
     async def racing_ready(
-        *args: object,
-        **kwargs: object,
+        db: AsyncSession,
+        target_device: Device,
     ) -> DeviceOperationalState:
         stomper_can_go.set()
         # Yield to the event loop so the stomper can issue its UPDATE to
@@ -55,7 +55,7 @@ async def test_retain_verified_node_locks_appium_node(
         # UPDATE lock the runner holds, keeping the stomper's transaction open
         # until the runner commits.
         await asyncio.sleep(0.15)
-        return await original_ready(*args, **kwargs)  # type: ignore[arg-type]
+        return await original_ready(db, target_device)
 
     handle = device_verification_execution.TemporaryNodeHandle(
         port=4724,

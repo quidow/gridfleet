@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app.models.device import (
     ConnectionType,
@@ -10,7 +10,6 @@ from app.models.device import (
 )
 from app.models.session import SessionStatus
 from app.models.test_run import RunState, TestRun
-from app.seeding.context import SeedContext
 from app.seeding.factories.session import make_session
 
 
@@ -31,7 +30,7 @@ def _fake_device() -> Device:
     )
 
 
-def _fake_run(state: RunState, started_at) -> TestRun:  # noqa: ANN001
+def _fake_run(state: RunState, started_at: datetime) -> TestRun:
     return TestRun(
         id=uuid.uuid4(),
         name="r",
@@ -44,9 +43,12 @@ def _fake_run(state: RunState, started_at) -> TestRun:  # noqa: ANN001
 
 
 def test_make_terminal_session_has_ended_at() -> None:
-    ctx = SeedContext.build(session=None, seed=42)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=42)
     run = _fake_run(RunState.completed, ctx.now - timedelta(hours=2))
     device = _fake_device()
+    assert run.started_at is not None
     session = make_session(
         ctx,
         run=run,
@@ -60,9 +62,12 @@ def test_make_terminal_session_has_ended_at() -> None:
 
 
 def test_make_active_session_has_no_ended_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     run = _fake_run(RunState.active, ctx.now - timedelta(minutes=3))
     device = _fake_device()
+    assert run.started_at is not None
     session = make_session(
         ctx,
         run=run,

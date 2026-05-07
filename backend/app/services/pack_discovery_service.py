@@ -234,7 +234,7 @@ async def refresh_device_properties(
     *,
     agent_get_pack_device_properties: Callable[[str, int, str, str], Awaitable[dict[str, object] | None]],
 ) -> None:
-    host: Host = await session.get(Host, device.host_id)  # type: ignore[assignment]
+    host: Host | None = await session.get(Host, device.host_id)
     if host is None:
         return
 
@@ -248,7 +248,7 @@ async def refresh_device_properties(
     if data is None:
         return
 
-    props: dict[str, Any] = data.get("detected_properties") or {}  # type: ignore[assignment]
+    props: dict[str, Any] = cast("dict[str, Any]", data.get("detected_properties")) or {}
     changed = False
 
     new_os_version: str | None = props.get("os_version") or None

@@ -1,17 +1,20 @@
 import uuid
 
-from app.seeding.context import SeedContext
 from app.seeding.factories.webhook import make_webhook, make_webhook_delivery
 
 
 def test_make_webhook_defaults_enabled() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     hook = make_webhook(ctx, name="slack_alerts", url="https://example.com", event_types=["run.failed"])
     assert hook.enabled is True
 
 
 def test_make_webhook_delivery_retrying_has_next_retry_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     delivery = make_webhook_delivery(
         ctx,
         webhook_id=uuid.uuid4(),

@@ -40,6 +40,8 @@ from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatf
 class _RecordingAdapter:
     """Fake DriverPackAdapter that records calls instead of doing real work."""
 
+    discovery_scope: str = ""
+
     def __init__(self, pack_id: str = "vendor-foo", pack_release: str = "0.1.0") -> None:
         self.pack_id = pack_id
         self.pack_release = pack_release
@@ -186,7 +188,7 @@ async def test_adapter_kind_discovery_dispatches_to_adapter() -> None:
 async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once() -> None:
     pack = _make_multi_platform_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
-    adapter.discovery_scope = "pack"  # type: ignore[attr-defined]
+    adapter.discovery_scope = "pack"
 
     async def discover_all(ctx: object) -> list[DiscoveryCandidate]:
         adapter.calls.append(("discover", {"ctx": ctx}))

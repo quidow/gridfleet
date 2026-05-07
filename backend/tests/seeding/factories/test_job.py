@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from app.seeding.context import SeedContext
 from app.seeding.factories.job import make_job
 
 
 def test_make_job_queued_has_no_started_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     job = make_job(
         ctx,
         kind="device.restart",
@@ -22,7 +23,9 @@ def test_make_job_queued_has_no_started_at() -> None:
 
 
 def test_make_job_succeeded_sets_completed_at() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     job = make_job(
         ctx,
         kind="device.restart",
@@ -37,7 +40,9 @@ def test_make_job_succeeded_sets_completed_at() -> None:
 
 
 def test_make_job_failed_respects_max_attempts() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    from tests.seeding.helpers import build_test_seed_context
+
+    ctx = build_test_seed_context(seed=1)
     job = make_job(
         ctx,
         kind="device.restart",

@@ -177,7 +177,7 @@ async def test_start_when_adapter_returns_not_ok_does_not_schedule_poll() -> Non
         actions = [a for a, _ in adapter.calls]
         assert actions == ["start"]
         # handle stored, no poll task running
-        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]  # type: ignore[attr-defined]
+        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]
         assert handle.poll_task is None
         assert handle.last_status.ok is False
     finally:
@@ -222,7 +222,7 @@ async def test_stop_cancels_poll_task_and_calls_adapter_stop() -> None:
             adapter=adapter,  # type: ignore[arg-type]
         )
         # confirm poll task exists and is active
-        handle_before = sup._handles[("vendor-fake", "1.0.0", "tunnel")]  # type: ignore[attr-defined]
+        handle_before = sup._handles[("vendor-fake", "1.0.0", "tunnel")]
         assert handle_before.poll_task is not None
         assert not handle_before.poll_task.done()
         poll_task = handle_before.poll_task
@@ -239,7 +239,7 @@ async def test_stop_cancels_poll_task_and_calls_adapter_stop() -> None:
         # poll task cancelled
         assert poll_task.cancelled() or poll_task.done()
         # handle removed
-        assert ("vendor-fake", "1.0.0", "tunnel") not in sup._handles  # type: ignore[attr-defined]
+        assert ("vendor-fake", "1.0.0", "tunnel") not in sup._handles
     finally:
         await sup.shutdown()
 
@@ -337,7 +337,7 @@ async def test_poll_loop_updates_status_periodically() -> None:
         )
         # let several polls fire
         await asyncio.sleep(0.25)
-        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]  # type: ignore[attr-defined]
+        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]
         # at least one status poll happened
         status_actions = [a for a, _ in adapter.calls if a == "status"]
         assert len(status_actions) >= 1
@@ -364,7 +364,7 @@ async def test_poll_loop_stops_when_status_flips_not_ok() -> None:
             adapter=adapter,  # type: ignore[arg-type]
         )
         await asyncio.sleep(0.2)
-        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]  # type: ignore[attr-defined]
+        handle = sup._handles[("vendor-fake", "1.0.0", "tunnel")]
         # poll task ended after seeing not-ok status
         assert handle.poll_task is not None
         assert handle.poll_task.done()
@@ -427,7 +427,7 @@ async def test_shutdown_cancels_all_poll_tasks() -> None:
         adapter=adapter_b,  # type: ignore[arg-type]
     )
     tasks: list[asyncio.Task[None]] = []
-    for handle in sup._handles.values():  # type: ignore[attr-defined]
+    for handle in sup._handles.values():
         assert isinstance(handle, SidecarHandle)
         if handle.poll_task is not None:
             tasks.append(handle.poll_task)

@@ -7,12 +7,12 @@ from app.models.device import (
     DeviceOperationalState,
     DeviceType,
 )
-from app.seeding.context import SeedContext
 from app.seeding.factories.device import _PACK_IDENTITY_BY_PLATFORM_ID, make_device
+from tests.seeding.helpers import build_test_seed_context
 
 
 def test_make_real_android_device() -> None:
-    ctx = SeedContext.build(session=None, seed=42)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=42)
     host_id = uuid.uuid4()
     device = make_device(
         ctx,
@@ -36,7 +36,7 @@ def test_make_real_android_device() -> None:
 
 
 def test_make_emulator_uses_virtual_connection_type() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     device = make_device(
         ctx,
         host_id=uuid.uuid4(),
@@ -54,7 +54,7 @@ def test_make_emulator_uses_virtual_connection_type() -> None:
 
 
 def test_make_ios_device() -> None:
-    ctx = SeedContext.build(session=None, seed=1)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=1)
     device = make_device(
         ctx,
         host_id=uuid.uuid4(),
@@ -71,7 +71,7 @@ def test_make_ios_device() -> None:
 
 
 def test_pending_verification_device_has_no_verified_at() -> None:
-    ctx = SeedContext.build(session=None, seed=2)  # type: ignore[arg-type]
+    ctx = build_test_seed_context(seed=2)
     device = make_device(
         ctx,
         host_id=uuid.uuid4(),
