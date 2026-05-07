@@ -143,6 +143,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=86400,
     ),
     SettingDefinition(
+        key="general.device_cooldown_escalation_threshold",
+        category="general",
+        setting_type="int",
+        default=3,
+        description=(
+            "Number of cooldowns of the same device within one run before the device is "
+            "escalated to maintenance and excluded from the run. Set to 0 to disable."
+        ),
+        env_var="GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD",
+        min_value=0,
+        max_value=100,
+    ),
+    SettingDefinition(
         key="general.claim_default_retry_after_sec",
         category="general",
         setting_type="int",

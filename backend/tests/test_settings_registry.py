@@ -129,3 +129,14 @@ def test_terminal_toggle_env_fallback_resolves_default(monkeypatch: pytest.Monke
     monkeypatch.setenv("GRIDFLEET_ENABLE_WEB_TERMINAL", "true")
     defn = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
     assert settings_registry.resolve_default(defn) is True
+
+
+def test_device_cooldown_escalation_threshold_default_and_bounds() -> None:
+    setting = settings_registry.SETTINGS_REGISTRY["general.device_cooldown_escalation_threshold"]
+
+    assert setting.setting_type == "int"
+    assert setting.default == 3
+    assert setting.min_value == 0
+    assert setting.max_value == 100
+    assert setting.env_var == "GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD"
+    assert setting.category == "general"
