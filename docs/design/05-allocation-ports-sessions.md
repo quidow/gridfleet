@@ -38,7 +38,12 @@ appium_node_resource_claims(
     owner_token     text null,
     claimed_at      timestamptz not null,
     expires_at      timestamptz null,
-    unique (host_id, capability_key, port)
+    unique (host_id, capability_key, port),
+    check (
+      (node_id is not null and owner_token is null and expires_at is null)
+      or
+      (node_id is null and owner_token is not null and expires_at is not null)
+    )
 );
 ```
 
@@ -46,6 +51,8 @@ Two flavours of row:
 
 - **Managed claim** — `node_id` set, `owner_token` null. Lifetime is tied to `AppiumNode`. Drop the node and the claim cascades. Confirmed stop can release early via `appium_node_resource_service.release_managed(node_id)`.
 - **Temporary claim** — `node_id` null, `owner_token` set, `expires_at` set. Used during the start window for managed starts and verification probes. Released by `release_temporary(host_id, owner_token)` on teardown, or reaped by `appium_resource_sweeper_loop` after the TTL.
+
+Additional partial unique indexes enforce one temporary row per `(host_id, owner_token, capability_key)` and one managed row per `(node_id, capability_key)`.
 
 Every reservation begins as temporary. The token is `device:<uuid>` for first-time managed starts and refresh-of-managed verifications, or `temp:<host>:<identity>` for verification of a not-yet-saved transient device. Once the agent ACKs the start, `mark_node_started` upserts the `AppiumNode` row, then calls `transfer_temporary_to_managed(host_id, owner_token, node_id)` in the same transaction to rebind the claim under the FK.
 
@@ -87,18 +94,18 @@ External listeners on a port in the managed range are detected only at start tim
 
 ```mermaid
 flowchart LR
-    A[start request] --> B{candidate_ports}
-    B --> C{try start on port}
-    C -->|2xx| D[mark_node_started]
-    C -->|already in use| E[map to NodePortConflictError]
-    E --> F{more candidates?}
-    F -->|yes| C
-    F -->|no| G[raise NodePortConflictError]
+    A["start request"] --> B{"candidate_ports"}
+    B --> C{"try start on port"}
+    C -->|"2xx"| D["mark_node_started"]
+    C -->|"already in use"| E["map to NodePortConflictError"]
+    E --> F{"more candidates?"}
+    F -->|"yes"| C
+    F -->|"no"| G["raise NodePortConflictError"]
 ```
 
 `_start_with_owner` (`node_service.py`) iterates candidates until one succeeds or the pool is exhausted. The rule from commit `54707d1` — agent drops stale node state on a managed-port conflict — is what makes this loop converge: an agent that was bouncing requests on the same port should accept the next attempt instead of permanently rejecting.
 
-The `restart_node_via_agent` path uses the same loop but starts from the **previous port** as the preferred candidate (`node_service.py`). This minimises Grid registration churn: usually we restart on the same port and Grid does not need to re-discover the relay.
+The operator `restart_node` path marks the old node stopped after an acknowledged stop, so the old port is available and is passed as the preferred candidate. The loop-driven `restart_node_via_agent` path does **not** mark the node stopped between stop and start; the DB row remains `state=running`, so `candidate_ports` intentionally excludes the old port and the restart binds to a different free port. Doc 2 covers why this avoids racing an unconfirmed orphan.
 
 ## Grid sessions and Selenium Grid registration
 
@@ -127,7 +134,7 @@ Two consequences for the lifecycle:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as CI / operator
+    participant Client as CI operator
     participant Run as run_service
     participant Pg as Postgres
     participant Sync as session_sync_loop
@@ -135,8 +142,8 @@ sequenceDiagram
     participant Reaper as run_reaper_loop
 
     Client->>Run: POST /api/runs (capabilities, count)
-    Run->>Pg: insert TestRun + DeviceReservation rows
-    Run->>Pg: lock_devices + set_hold(reserved)
+    Run->>Pg: insert TestRun and DeviceReservation rows
+    Run->>Pg: SELECT FOR UPDATE SKIP LOCKED then set_hold(reserved)
     Note over Pg: Devices gain reservation hold
     Client->>Grid: WebDriver POST /session against reserved device
     Grid-->>Client: session id
@@ -151,10 +158,10 @@ sequenceDiagram
 
     alt Run completes normally
       Run->>Pg: TestRun.state=completed
-      Run->>Pg: clear DeviceReservation rows + clear hold
+      Run->>Pg: clear DeviceReservation rows and clear hold
     else Run abandoned (no signal in time)
       Reaper->>Grid: terminate_grid_session for each device's open session
-      Reaper->>Pg: TestRun.state=expired/failed, clear reservations, clear hold
+      Reaper->>Pg: TestRun.state expired or failed, clear reservations and hold
     end
 ```
 

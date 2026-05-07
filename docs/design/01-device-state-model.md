@@ -15,7 +15,7 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 | Readiness | derived from `Device.verified_at` + setup gates | computed | `device_readiness.is_ready_for_use_async` |
 | Operational state + hold | `Device.operational_state`, `Device.hold` | enum + nullable enum | node/session loops + operator/run mutators through `device_state` |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
-| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` / selected run-preparation paths through `lifecycle_policy_state.write_state` |
+| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` through `lifecycle_policy_state.write_state` |
 | Node state | `AppiumNode.state` | enum | `node_service` and health/reconciliation paths through `device_health.apply_node_state_transition` |
 | Health | `Device.device_checks_*`, `Device.session_viability_*`, `Device.emulator_state`, `AppiumNode.health_*` | typed columns | `device_health` service |
 
@@ -56,11 +56,11 @@ The combinations make sense in any pairing. `operational_state=offline, hold=res
 Two helpers in `backend/app/services/device_state.py` own writes:
 
 ```text
-set_operational_state(device, new_state, *, reason=None)
-set_hold(device, new_hold, *, reason=None)
+set_operational_state(device, new_state, *, reason=None, publish_event=True)
+set_hold(device, new_hold, *, reason=None, publish_event=True)
 ```
 
-Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition, and early-return when the value is unchanged. The row lock from `device_locking.lock_device` is required before calling them. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
+Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition unless `publish_event=False`, and return `False` when the value is unchanged. A row-level lock is required before calling them. Most writers acquire it through `device_locking.lock_device` or `lock_devices`; run creation uses its matching query's `SELECT ... FOR UPDATE SKIP LOCKED` window before setting `hold=reserved`. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
 
 Seeding scripts under `backend/app/seeding/` are exempt because fixture builders run in a single short-lived transaction with no event consumers attached.
 
@@ -121,7 +121,7 @@ Live event surface:
 JSON blob on `Device` (`device.py`). Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
 
 - Low-level writer: `app.services.lifecycle_policy_state.write_state`.
-- Sanctioned service writers: `app.services.lifecycle_policy`, `app.services.lifecycle_policy_actions`, and the run-preparation path in `run_service` that records `ci_preparation_failed`.
+- Sanctioned service writers: `app.services.lifecycle_policy` and `app.services.lifecycle_policy_actions`. The run-preparation failure path calls `lifecycle_policy_actions.record_ci_preparation_failed`, so `run_service` does not import the low-level JSON writer directly.
 - Read by: every loop that decides whether to attempt recovery (`node_health`, `device_connectivity`, `session_viability`).
 - Surface: lifecycle summary chip, derived through `DeviceLifecyclePolicySummaryState`.
 
@@ -200,11 +200,10 @@ Both run under the device row lock and only act on `operational_state` (`availab
 
 ```text
 Any write to Device.operational_state, Device.hold, or Device.lifecycle_policy_state
-MUST hold the row-level lock from device_locking.lock_device(),
-acquired in the same transaction as the write.
+MUST hold a row-level lock in the same transaction as the write.
 ```
 
-`backend/app/services/device_locking.py`. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
+Prefer `backend/app/services/device_locking.py` (`lock_device` / `lock_devices`) for that lock. The current run allocator is the exception: `_find_matching_devices` in `run_service.py` locks allocatable rows with `SELECT ... FOR UPDATE SKIP LOCKED` before reserving them. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
 
 `AppiumNode.state` writes additionally hold the `appium_node_locking.lock_appium_node_for_device` row lock — both `mark_node_started` and `mark_node_stopped` acquire it after the device lock (`node_service.py`).
 
@@ -219,22 +218,22 @@ flowchart LR
     classDef ui fill:#e9f7ec,stroke:#1f7a3a,color:#000
 
     subgraph Sources of truth
-      ready[device_readiness derived]:::col
-      state[Device.operational_state + Device.hold]:::col
-      lc[Device.lifecycle_policy_state]:::col
-      hw[Device.hardware_health_status]:::col
-      node[AppiumNode.state]:::col
+      ready["device_readiness derived"]:::col
+      state["Device.operational_state and Device.hold"]:::col
+      lc["Device.lifecycle_policy_state"]:::col
+      hw["Device.hardware_health_status"]:::col
+      node["AppiumNode.state"]:::col
     end
 
     subgraph Projection
-      derived[build_public_summary(device)]:::proj
+      derived["build_public_summary(device)"]:::proj
     end
 
     subgraph UI surfaces
-      readyBadge[Readiness badge]:::ui
-      statusChip[Status chip]:::ui
-      lcChip[Lifecycle chip]:::ui
-      healthChip[Health chip]:::ui
+      readyBadge["Readiness badge"]:::ui
+      statusChip["Status chip"]:::ui
+      lcChip["Lifecycle chip"]:::ui
+      healthChip["Health chip"]:::ui
     end
 
     ready --> readyBadge
@@ -256,7 +255,7 @@ The UI health chip reads the derived public summary, not a stored health documen
 | Device flaps `available -> offline -> available` every minute | Loop coerced indeterminate probe result to refused | Use `ProbeResult` and short-circuit `indeterminate` (commit `a58c8e5`) |
 | Device shows `stopped` in DB but Grid still routes to it | `mark_node_stopped` ran without agent ack | Gate node-state flip on agent ack returning `True` (commits `4171847`, `bdfae85`) |
 | Operator sets `maintenance` and a loop reverts it to `available` | Loop wrote `hold` or derived chip state instead of only updating `operational_state` | Loop must call `set_operational_state` and leave `hold` untouched |
-| Two workers race on the same device | Mutator skipped `lock_device` | Acquire row lock before any device-state/lifecycle write |
+| Two workers race on the same device | Mutator skipped the row lock | Acquire row lock before any device-state/lifecycle write |
 
 ## What this doc does NOT cover
 

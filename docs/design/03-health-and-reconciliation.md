@@ -23,10 +23,10 @@ sequenceDiagram
 
     W1->>Pg: pg_try_advisory_lock(6001)
     Pg-->>W1: TRUE
-    Note over W1: leader; spawns leader-owned loops + watcher
+    Note over W1: leader. Spawns leader-owned loops and watcher
     W2->>Pg: pg_try_advisory_lock(6001)
     Pg-->>W2: FALSE
-    Note over W2: non-leader; serves API + watcher only
+    Note over W2: non-leader. Serves API and watcher only
     W1->>W1: process exits / SIGTERM
     W1->>Pg: pg_advisory_unlock(6001)
     W2->>Pg: pg_try_advisory_lock(6001)
@@ -43,7 +43,7 @@ The leader lock alone is **not** sufficient to prevent races. API mutators run o
 
 ## Leader keepalive and failover latency
 
-> **Scope:** This section describes a latency improvement for leader failover. It does **not** eliminate split-brain — see "Trade-off and follow-up" below.
+> **Scope:** This section describes a latency improvement for leader failover plus the write fence used by lifecycle-critical loops.
 
 The advisory lock (`pg_try_advisory_lock(6001)`) is the only fact of leadership. On top:
 
@@ -53,7 +53,7 @@ The advisory lock (`pg_try_advisory_lock(6001)`) is the only fact of leadership.
 - Privilege model: `pg_terminate_backend` is allowed when the calling role is a member of the target backend's role, when the calling role has `pg_signal_backend`, or when the caller is a superuser. Same-role replicas, the default in `docker-compose.yml`, can terminate each other without a separate grant. In restricted deployments lacking those privileges, preemption degrades to a no-op and failover falls back to TCP keepalive; this is logged once via `control_plane_leader_preempt_no_op`.
 - Kill switch: `general.leader_keepalive_enabled = false` disables both the keepalive write fail-fast and the watcher's preemption path. While disabled, the watcher short-circuits before reading the heartbeat row. To re-enable after the toggle has been off longer than `general.leader_stale_threshold_sec`, restart the current leader replica first so it rewrites a fresh row, then flip the toggle back on, then bring the rest of the fleet online.
 
-**Trade-off and follow-up:** between the moment another backend wins the lock and the moment the old leader's keepalive task observes `LeadershipLost`, the old leader's other DB sessions can still mutate state. The window is bounded by `leader_keepalive_interval_sec` (default 5 s), but a paused or slow event loop on the old leader can resume any overdue background task during it. The proposed fix is lease-token fencing on every leader-owned write: each loop reads the current `holder_id` and aborts if it does not match its own. See the leader-fencing spec under `docs/design/specs/`.
+**Fencing on leader-owned writes:** `control_plane_leader.assert_current_leader(db)` is the implemented lease-token fence. It reads `control_plane_leader_heartbeats.id = 1` and raises `LeadershipLost` unless the row's `holder_id` still matches this process's `control_plane_leader.holder_id` and `lock_backend_pid` is present. Lifecycle-critical loops call it after slow external awaits and before durable writes: `heartbeat`, `node_health`, `device_connectivity`, `session_sync`, and `run_reaper`. If fencing fails, the process exits via `os._exit(70)` so the supervisor restarts it. When `general.leader_keepalive_enabled=false`, the fence no-ops and failover falls back to the older advisory-lock/TCP-keepalive behavior.
 
 ## Loop registry
 
@@ -71,15 +71,15 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
-| `run_reaper_loop` | (internal) | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, Grid `DELETE /session/{id}` through `grid_service.terminate_grid_session` | abandoned-run reaping |
-| `webhook_delivery_loop` | (queue-driven) | `outbound_webhook_deliveries` | webhook delivery rows | webhook delivery state |
-| `durable_job_worker_loop` | (queue-driven) | `durable_jobs` | durable job state | durable-job state |
-| `pack_drain_loop` | (internal) | pack desired-state | drain progress | pack-drain rows |
-| `data_cleanup_loop` | (internal) | various retention windows | deletes old rows | data-retention deletions |
+| `run_reaper_loop` | 15 s | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, Grid `DELETE /session/{id}` through `grid_service.terminate_grid_session` | abandoned-run reaping |
+| `webhook_delivery_loop` | 1 s poll | `outbound_webhook_deliveries` | webhook delivery rows | webhook delivery state |
+| `durable_job_worker_loop` | 1 s poll | `durable_jobs` | durable job state | durable-job state |
+| `pack_drain_loop` | 60 s | pack desired-state | drain progress | pack-drain rows |
+| `data_cleanup_loop` | 1 h | various retention windows | deletes old rows | data-retention deletions |
 | `fleet_capacity_collector_loop` | 60 s | aggregate device counts | `fleet_capacity_snapshots` | capacity snapshot rows |
-| `appium_resource_sweeper_loop` | `reservations.reaper_interval_sec` | `appium_node_resource_claims` | deletes expired temporary claims | TTL-based reaping of unfinalised reservations |
+| `appium_resource_sweeper_loop` | 300 s | `appium_node_resource_claims` | deletes expired temporary claims | TTL-based reaping of unfinalised Appium resource claims |
 
-The first four loops (heartbeat, node_health, device_connectivity, session_sync) are the lifecycle-critical ones. The rest are telemetry, queue workers, and housekeeping — they cannot cause split-brain on their own.
+The lifecycle-critical loops are `heartbeat`, `node_health`, `device_connectivity`, and `session_sync`. `control_plane_leader_keepalive` and `control_plane_leader_watcher` own leadership liveness; the remaining loops are telemetry, queue workers, and housekeeping.
 
 ## The tri-state probe pattern
 
@@ -157,18 +157,18 @@ For node health, the ladder looks like:
 
 ```mermaid
 flowchart TD
-    A[probe] --> B{result}
-    B -- ack --> C[clear counter, clear health override]
-    B -- indeterminate --> D[no-op, columns unchanged]
-    B -- refused --> E[increment counter]
-    E --> F{count >= max_failures?}
-    F -- no --> G[health_running=false; keep lifecycle running]
-    F -- yes --> H{auto_manage on?}
-    H -- no --> I[lifecycle: recovery_suppressed; node.state=error; offline]
-    H -- yes --> J[restart_node_via_agent]
-    J --> K{restart succeeded?}
-    K -- yes --> L[lifecycle: auto_recovered; clear health override]
-    K -- no --> M[lifecycle: recovery_failed; node.state=error; offline]
+    A["probe"] --> B{"result"}
+    B -- ack --> C["clear counter and health override"]
+    B -- indeterminate --> D["no-op, columns unchanged"]
+    B -- refused --> E["increment counter"]
+    E --> F{"count >= max_failures?"}
+    F -- no --> G["health_running false, keep lifecycle running"]
+    F -- yes --> H{"auto_manage on?"}
+    H -- no --> I["lifecycle recovery_suppressed, node.state error, offline"]
+    H -- yes --> J["restart_node_via_agent"]
+    J --> K{"restart succeeded?"}
+    K -- yes --> L["lifecycle auto_recovered, clear health override"]
+    K -- no --> M["lifecycle recovery_failed, node.state error, offline"]
 ```
 
 Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general.node_max_failures`, default `3`. Each rung records a lifecycle action via `lifecycle_policy.record_control_action` so the operator-facing summary reflects the escalation.
@@ -177,7 +177,8 @@ Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general
 
 - **Demo freeze.** `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips loop spawning entirely. The compose `docker-compose.demo.yml` sets this so seeded state never changes.
 - **Non-leader workers.** Workers that lose the advisory lock race never spawn leader-owned loops. They only run the watcher. Only one process runs maintenance work even with N replicas.
-- **`device_connectivity` / `node_health` skip cases.** A device that is `maintenance` / unverified / not `available` is excluded from `_should_probe_node_health`. Virtual devices are excluded from network-style health probes. iOS/tvOS real devices use a different probe path.
+- **`node_health` skip cases.** `_should_probe_node_health` excludes devices that are held, not `available`, not ready, virtual (`emulator` / `simulator` / `connection_type=virtual`), or XCUITest iOS/tvOS real devices.
+- **`device_connectivity` skip cases.** The connectivity loop skips a host when `/agent/pack/devices` is indeterminate. For disconnected devices, it suppresses lifecycle action when the device is in maintenance or `auto_manage=false`; endpoint-health platforms can still report healthy through `/agent/pack/devices/{ct}/health` even when the device target is absent from the generic pack-device list.
 
 ## What a new loop must implement
 
@@ -190,7 +191,8 @@ When adding a new periodic task, copy the `node_health_loop` shape:
 5. Use the tri-state probe pattern for any agent or Grid call.
 6. Route health and node-health writes through `app.services.device_health` so locks, cross-links, and `device.health_changed` events stay centralized.
 7. Add a Prometheus gauge or counter via the metrics module so the loop is visible on the dashboards.
-8. Defer `event_bus.publish` to after-commit when the published change must align with a durable transition (use `_schedule_health_event_after_commit` as the model).
+8. Call `assert_current_leader(db)` after slow external awaits and before durable writes when the loop can outlive a leader handoff.
+9. Defer `event_bus.publish` to after-commit when the published change must align with a durable transition (use `_schedule_health_event_after_commit` as the model).
 
 ## What this doc does NOT cover
 

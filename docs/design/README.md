@@ -16,7 +16,7 @@ These docs exist because the recent class of node/device bugs (split-brain betwe
 
 Read in order. Each doc assumes the previous ones; a forward reference is always to a "What this doc does NOT cover" section in another file.
 
-Open follow-up specs live under [`specs/`](specs/). They are intentionally separate from the implementation-state docs: the numbered docs describe what is true today; specs describe proposed simplifications or reliability fixes that still need implementation.
+Open follow-up specs, when present, live under `docs/design/specs/`. They are intentionally separate from the implementation-state docs: the numbered docs describe what is true today; specs describe proposed simplifications or reliability fixes that still need implementation.
 
 ## When to update these
 
@@ -26,7 +26,7 @@ Open follow-up specs live under [`specs/`](specs/). They are intentionally separ
 
 ## Citation baseline
 
-References in these docs cite **file paths and function/class names**, not line numbers. Lines drift as code moves; functions are renamed less often. If a citation no longer points to a real symbol (e.g. a file was consolidated, a function renamed), search by symbol name in the current tree and update the doc in place. Last citation refresh: 2026-05-06.
+References in these docs cite **file paths and function/class names**, not line numbers. Lines drift as code moves; functions are renamed less often. If a citation no longer points to a real symbol (e.g. a file was consolidated, a function renamed), search by symbol name in the current tree and update the doc in place. Last citation refresh: 2026-05-07.
 
 ## Deferred stop note (`stop_pending`)
 

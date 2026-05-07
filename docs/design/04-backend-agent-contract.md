@@ -14,17 +14,17 @@ flowchart LR
     classDef ag fill:#e7f0fe,stroke:#1c4ea3,color:#000
     classDef ext fill:#e9f7ec,stroke:#1f7a3a,color:#000
 
-    backend[FastAPI backend<br/>multi-worker, leader-elected]:::be
-    agent1[Host agent A<br/>FastAPI :5100]:::ag
-    agent2[Host agent B<br/>FastAPI :5100]:::ag
-    grid[Selenium Grid hub<br/>:4444]:::ext
-    appium1[Appium :4723..4823]:::ext
-    appium2[Appium :4723..4823]:::ext
+    backend["FastAPI backend<br/>multi-worker, leader-elected"]:::be
+    agent1["Host agent A<br/>FastAPI 5100"]:::ag
+    agent2["Host agent B<br/>FastAPI 5100"]:::ag
+    grid["Selenium Grid hub<br/>4444"]:::ext
+    appium1["Appium<br/>4723 to 4823"]:::ext
+    appium2["Appium<br/>4723 to 4823"]:::ext
 
-    backend -->|/agent/* HTTP| agent1
-    backend -->|/agent/* HTTP| agent2
-    agent1 -->|/agent/driver-packs/desired<br/>/agent/driver-packs/status<br/>POST /api/hosts/register| backend
-    agent2 -->|/agent/driver-packs/desired<br/>/agent/driver-packs/status<br/>POST /api/hosts/register| backend
+    backend -->|"agent HTTP"| agent1
+    backend -->|"agent HTTP"| agent2
+    agent1 -->|"desired packs, status, host registration"| backend
+    agent2 -->|"desired packs, status, host registration"| backend
     agent1 -.spawns.-> appium1
     agent2 -.spawns.-> appium2
     appium1 --> grid
@@ -37,11 +37,12 @@ The CI runner / test client speaks **only** to the Selenium Grid hub for session
 
 The two directions are asymmetric today.
 
-- **Backend → agent.** No HTTP authentication is enforced by the agent HTTP API today. The backend's `agent_request` helper (`backend/app/agent_client.py`) attaches request-id headers and circuit-breaker metrics, but it does not attach Basic auth and the agent does not validate Basic credentials on `/agent/*`.
+- **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `_agent_basic_auth` in `backend/app/agent_client.py`. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
 - **Agent → backend.** `agent/agent_app/main.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
+- **Agent terminal WebSocket.** The agent Basic-auth middleware only covers HTTP scopes. `/agent/terminal` is guarded separately by `AGENT_TERMINAL_TOKEN` through `agent/agent_app/terminal_ws.py`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
-There is no HMAC, no message signing, and no backend→agent auth. Transport security relies on the network boundary documented in `docs/guides/security.md`.
+There is no HMAC or message signing. When the optional backend→agent Basic-auth credentials are unset, transport security relies entirely on the network boundary documented in `docs/guides/security.md`.
 
 ## Endpoint catalog (backend → agent)
 
@@ -88,7 +89,7 @@ Every backend→agent call goes through `request()` in `backend/app/agent_client
 ```text
 1. agent_circuit_breaker.before_request(host)   # may raise CircuitOpenError
 2. attach REQUEST_ID_HEADER (correlation id)    # build_agent_headers
-3. perform httpx call                           # GET or POST; no backend→agent auth today
+3. perform httpx call                           # GET or POST, with Basic auth when GRIDFLEET_AGENT_AUTH_* is set
 4. classify result:
      status >= 500                  → record_failure (transport-like)
      transport exception            → record_failure (transport)
@@ -99,7 +100,7 @@ Every backend→agent call goes through `request()` in `backend/app/agent_client
 The wrapper guarantees:
 
 - `AgentUnreachableError` for transport failures (DNS, TCP, TLS, idle timeout).
-- `AgentResponseError` for 5xx with structured payload (raised explicitly by `_raise_for_status`).
+- `AgentResponseError` for non-2xx responses when the wrapper calls `_raise_for_status`.
 - `CircuitOpenError` for hosts in the open state — body includes `retry_after_seconds`.
 - `httpx.HTTPStatusError` only escapes when a caller chose to inspect the response itself (e.g. `appium_start` to detect "already in use" details).
 
@@ -107,14 +108,14 @@ The wrapper guarantees:
 
 ```mermaid
 flowchart TD
-    call[backend → agent call] --> q1{circuit open?}
-    q1 -- yes --> r1[CircuitOpenError]
-    q1 -- no --> q2{transport ok?}
-    q2 -- no --> r2[AgentUnreachableError]
-    q2 -- yes --> q3{HTTP status}
-    q3 -- 2xx --> ok[parse payload — caller inspects ack contract]
-    q3 -- 4xx --> r4[caller-specific:<br/>NodePortConflictError on 'already in use'<br/>HTTPException pass-through<br/>or AgentResponseError]
-    q3 -- 5xx --> r5[AgentResponseError]
+    call["backend to agent call"] --> q1{"circuit open?"}
+    q1 -- yes --> r1["CircuitOpenError"]
+    q1 -- no --> q2{"transport ok?"}
+    q2 -- no --> r2["AgentUnreachableError"]
+    q2 -- yes --> q3{"HTTP status"}
+    q3 -- 2xx --> ok["parse payload, caller inspects ack contract"]
+    q3 -- 4xx --> r4["caller-specific conflict, pass-through, or AgentResponseError"]
+    q3 -- 5xx --> r5["AgentResponseError"]
 ```
 
 Loop callers map all three terminal errors to `None` (indeterminate). API mutators map them to user-visible 502/503 via the FastAPI exception handlers in `backend/app/errors.py`.
@@ -174,9 +175,9 @@ sequenceDiagram
         alt HTTP 2xx
             Ag-->>Mgr: payload
             Mgr-->>Mgr: parse payload → ack = True or definitive False (per endpoint)
-        else HTTP 5xx
-            Ag-->>Mgr: 5xx
-            Mgr-->>Mgr: AgentResponseError ⇒ ack = None
+        else HTTP non-2xx
+            Ag-->>Mgr: non-2xx
+            Mgr-->>Mgr: caller-specific projection: conflict/refused, AgentResponseError, or ack = None
         else transport error
             Mgr-->>Mgr: AgentUnreachableError ⇒ ack = None
         end
@@ -215,9 +216,9 @@ Timeouts are deliberately tight on health-path endpoints so a slow agent does no
 
 ## Request correlation
 
-Every request carries a `REQUEST_ID_HEADER` (`X-Request-Id`) injected by `RequestContextMiddleware` on both backend and agent. Logs on both sides bind the request id, so operator-facing traces line up across backend + agent.
+Every request carries a `REQUEST_ID_HEADER` (`X-Request-ID`) injected by `RequestContextMiddleware` on both backend and agent. Logs on both sides bind the request id, so operator-facing traces line up across backend + agent.
 
-When a backend loop initiates a request (no inbound request id to forward), the wrapper still uses whatever the loop's context has set up via `set_request_id`. Loops should call `set_request_id(...)` at the start of each iteration with a generated UUID so the agent-side logs can be searched by that id.
+When a backend loop initiates a request with no inbound request id bound in structlog context, `build_agent_headers` does not synthesize one; the agent's `RequestContextMiddleware` generates one for the agent-side request and returns it on the response.
 
 ## Connection pooling
 
@@ -227,13 +228,13 @@ The pool is opt-in via two guards: `agent.http_pool_enabled` (default `true`) **
 
 `httpx.Limits(max_keepalive_connections=N, keepalive_expiry=S)` is set per client. `agent.http_pool_max_keepalive` controls N (default 10); `agent.http_pool_idle_seconds` controls S in seconds (default 60).
 
-Auth is not part of the pool key today because backend → agent does not pass `httpx.Auth`. When machine credentials are added, extend the key in that change.
+Auth is not part of the pool key because Basic auth is applied per request, not bound to the pooled `httpx.AsyncClient`. Credential changes are process-env changes; restart the backend process after changing `GRIDFLEET_AGENT_AUTH_*`.
 
 Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process — toggling `agent.http_pool_enabled` off only routes new calls through the legacy path; existing pooled clients stay open and resume serving if the toggle is flipped back on. Process restart is the only drain.
 
 ## Versioning
 
-There is no formal API version on either side today. The backend asserts the agent's `version` in `/agent/health` matches its expected range — the bootstrap installer keeps agents within compatible ranges via `version_guidance`. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
+There is no formal API version on either side today. The backend records the agent's `version` from `/agent/health` on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
 
 When evolving an endpoint:
 
@@ -243,7 +244,7 @@ When evolving an endpoint:
 
 ## Structured error codes
 
-Agent endpoints return failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. The enum is mirrored on both sides:
+The Appium lifecycle/probe endpoints return structured failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. Other agent endpoints may still use ordinary FastAPI `detail` strings or endpoint-specific payloads. The Appium error enum is mirrored on both sides:
 
 - `agent/agent_app/error_codes.py:AgentErrorCode`
 - `backend/app/services/agent_error_codes.py:AgentErrorCode`

@@ -21,8 +21,8 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 
 Translating that into rules:
 
-1. Every state-changing call to the agent returns a definitive `True` (acknowledged), `False` (not acknowledged), or `None` (transport failure / agent unreachable).
-2. `False` and `None` MUST NOT promote to `True`. The DB stays where it was; the caller raises or retries.
+1. Lifecycle code must project every state-changing agent call into a definitive ack before mutating DB state: success/2xx means acknowledged; transport failures, open circuits, and failed HTTP statuses mean not acknowledged. Probe endpoints use the `ack | refused | indeterminate` projection from Doc 3.
+2. A missing or failed ack MUST NOT promote to success. The DB stays where it was; the caller raises or retries.
 3. `mark_node_started` / `mark_node_stopped` only run after a definitive ack from the agent.
 4. `device_health.apply_node_state_transition` records node health detail and emits `device.health_changed` inside the same transaction as the DB state flip.
 5. Owner allocations (ports + per-host capabilities) are released only after a confirmed stop. Unconfirmed stops keep the allocation so the orphan cannot collide with a fresh start.
@@ -67,14 +67,14 @@ sequenceDiagram
     API->>NM: start_node(device)
     NM->>NM: is_ready_for_use_async — readiness gate
     NM->>Alloc: reserve parallel resources under owner_token
-    Note over Alloc: Reserves pack-declared Appium-side ports/capabilities, not the main Appium port. Temporary claims are promoted via transfer_temporary_to_managed after the node row exists.
-    NM->>State: candidate_ports() — excludes main Appium ports held by "running" rows
+    Note over Alloc: Reserves pack-declared Appium-side ports and capabilities, not the main Appium port. Temporary claims are promoted after the node row exists.
+    NM->>State: candidate_ports excludes main Appium ports held by running rows
     loop until success or all candidates fail
         NM->>Agent: POST /agent/appium/start (port, payload)
         Agent-->>NM: 2xx {pid, connection_target}
         NM->>Agent: GET /agent/appium/{port}/status — wait until running
     end
-    NM->>Pg: lock_device + lock_appium_node
+    NM->>Pg: lock_device and lock_appium_node
     NM->>State: mark_node_started(port, pid, connection_target)
     State->>Pg: upsert AppiumNode (state=running)
     State->>Pg: set_operational_state(available/offline)
@@ -117,8 +117,8 @@ sequenceDiagram
     NM->>Agent: POST /agent/appium/stop (port)
     alt Agent acknowledges (2xx)
         Agent-->>NM: 2xx
-        NM->>Alloc: release_owner(owner_key)
-        NM->>Pg: lock_device + lock_appium_node
+        NM->>Alloc: release_managed(node.id) and release_temporary(owner_key)
+        NM->>Pg: lock_device and lock_appium_node
         NM->>State: mark_node_stopped()
         State->>Pg: AppiumNode.state=stopped, pid=None
         State->>Pg: device_health.apply_node_state_transition(stopped)
@@ -160,7 +160,7 @@ sequenceDiagram
             end
         end
     else Not acknowledged
-        NM-->>NM: NodeManagerError; do not flip DB; do not retry on a different port
+        NM-->>NM: NodeManagerError. Keep DB unchanged and do not retry on a different port
     end
 ```
 
@@ -177,41 +177,36 @@ So `restart_node` **must** see a confirmed stop before it considers the start si
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Loop as node_health_loop
+    participant L as node_health_loop
     participant Probe as _check_node_health
     participant Agent as Host agent
     participant Process as _process_node_health
     participant Restart as restart_node_via_agent
     participant Pg as Postgres
 
-    Loop->>Probe: probe each running AppiumNode
+    L->>Probe: probe each running AppiumNode
     Probe->>Agent: POST /agent/appium/{port}/probe-session
     Agent-->>Probe: ack / refused / indeterminate
     Probe-->>Process: result
-    alt result is indeterminate
-        Process->>Process: early return — keep columns, no counter bump
-    else result ack
+    alt indeterminate
+        Process-->>L: no DB mutation
+    else ack
         Process->>Pg: clear failure counter and health override
-    else result refused
+    else refused below threshold
         Process->>Pg: increment AppiumNode.consecutive_health_failures
-        Process->>Pg: health_running=False, mark_offline=count>=max
-        alt count >= max_failures
-            alt auto_manage off
-                Process->>Pg: lifecycle "recovery_suppressed"; node.state=error; offline
-            else auto_manage on
-                Process->>Restart: restart_node_via_agent
-                Restart->>Agent: POST /agent/appium/stop
-                alt stop acknowledged
-                    Restart->>Agent: POST /agent/appium/start (try candidate ports)
-                    alt started
-                        Restart->>Pg: rewrite node.port/pid/state in place
-                    else exhausted
-                        Restart-->>Process: False
-                    end
-                else stop unacknowledged
-                    Restart-->>Process: False (do not retry on another port)
-                end
-            end
+        Process->>Pg: health_running false and mark_offline when count reaches max
+    else refused at threshold and auto_manage off
+        Process->>Pg: recovery_suppressed and node.state error
+    else refused at threshold and auto_manage on
+        Process->>Restart: restart_node_via_agent
+        Restart->>Agent: POST /agent/appium/stop
+        alt stop acknowledged and start succeeds
+            Restart->>Agent: POST /agent/appium/start
+            Restart->>Pg: rewrite node.port pid and state
+            Restart-->>Process: True
+        else stop unacknowledged or start exhausted
+            Restart-->>Process: False
+            Process->>Pg: recovery_failed and node.state error
         end
     end
 ```
