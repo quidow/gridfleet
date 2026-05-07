@@ -18,9 +18,10 @@ from typing import Any
 import httpx
 from packaging.version import InvalidVersion, Version
 
-from agent_app.appium_process import _build_env, _parse_node_version
+from agent_app.appium_process import _build_env
 from agent_app.capabilities import refresh_capabilities_snapshot
 from agent_app.config import agent_settings
+from agent_app.tool_paths import _parse_node_version
 from agent_app.tool_paths import find_appium as _find_appium
 
 logger = logging.getLogger(__name__)

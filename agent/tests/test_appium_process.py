@@ -16,10 +16,10 @@ from agent_app.appium_process import (
     InvalidStartPayloadError,
     _build_env,
     _find_java,
-    _parse_node_version,
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult
+from agent_app.tool_paths import _parse_node_version
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
 PACK_START_KWARGS = {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}
