@@ -17,7 +17,6 @@ from app.models.device import Device
 from app.models.test_run import TestRun
 from app.schemas.run import ClaimResponse, ReservedDeviceInfo, RunCreate, UnavailableInclude
 from app.services import appium_node_resource_service, run_service
-from app.services.config_service import MASK_VALUE
 from app.services.run_service import _build_device_info
 from tests.helpers import create_device, create_device_record, create_reserved_run
 
@@ -284,7 +283,7 @@ async def test_hydrate_reserved_device_info_attaches_masked_config(
 
     assert info.config is not None
     assert info.config["app_username"] == "alice"
-    assert info.config["credentials_secret"] == MASK_VALUE
+    assert info.config["credentials_secret"] == "shh"
     assert info.live_capabilities is None
     assert info.unavailable_includes is None
 
@@ -419,7 +418,7 @@ async def test_claim_with_include_config_returns_masked_config(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["config"]["app_username"] == "alice"
-    assert body["config"]["credentials_secret"] == MASK_VALUE
+    assert body["config"]["credentials_secret"] == "shh"
     assert body["live_capabilities"] is None
     assert body["unavailable_includes"] is None
 
@@ -528,7 +527,7 @@ async def test_reserve_with_include_config_attaches_masked_config_per_device(
     assert len(body["devices"]) == 2
     for entry in body["devices"]:
         assert entry["config"] is not None
-        assert entry["config"]["credentials_secret"] == MASK_VALUE
+        assert entry["config"]["credentials_secret"] == "shh"
 
 
 @pytest.mark.db

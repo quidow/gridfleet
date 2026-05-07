@@ -19,7 +19,6 @@ from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, Ru
 from app.services import (
     capability_service,
     config_service,
-    device_config_masking,
     device_health,
     device_locking,
     grid_service,
@@ -172,7 +171,6 @@ async def hydrate_reserved_device_info(
     device: Device,
     *,
     includes: set[str],
-    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None,
 ) -> None:
     """Attach optional config + live capabilities to a single ReservedDeviceInfo.
 
@@ -184,15 +182,7 @@ async def hydrate_reserved_device_info(
 
     if "config" in includes:
         try:
-            if sensitive_key_map is not None:
-                info.config = await device_config_masking.mask_device_config(
-                    db,
-                    device,
-                    device.device_config or {},
-                    sensitive_key_map=sensitive_key_map,
-                )
-            else:
-                info.config = await config_service.get_device_config(db, device, keys=None)
+            info.config = await config_service.get_device_config(db, device, keys=None)
         except Exception as exc:
             info.config = None
             unavailable.append(UnavailableInclude(include="config", reason=type(exc).__name__))
@@ -213,16 +203,11 @@ async def hydrate_reserved_device_infos(
     *,
     includes: set[str],
 ) -> None:
-    """Batched variant for reserve. Loads sensitive-key map once for all devices."""
+    """Batched variant for reserve."""
     if not includes or not pairs:
         return
-    sensitive_key_map: dict[tuple[str, str], set[str]] | None = None
-    if "config" in includes:
-        sensitive_key_map = await device_config_masking.load_sensitive_config_key_map(
-            db, [device for _, device in pairs]
-        )
     for info, device in pairs:
-        await hydrate_reserved_device_info(db, info, device, includes=includes, sensitive_key_map=sensitive_key_map)
+        await hydrate_reserved_device_info(db, info, device, includes=includes)
 
 
 def mark_reserved_device_info_includes_unavailable(
