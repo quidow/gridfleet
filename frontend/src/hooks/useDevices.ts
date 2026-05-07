@@ -438,10 +438,10 @@ export function useDeviceHealth(id: string) {
   });
 }
 
-export function useDeviceConfig(id: string, reveal = true) {
+export function useDeviceConfig(id: string) {
   return useQuery({
-    queryKey: ['device-config', id, reveal],
-    queryFn: () => fetchDeviceConfig(id, reveal),
+    queryKey: ['device-config', id],
+    queryFn: () => fetchDeviceConfig(id),
   });
 }
 
