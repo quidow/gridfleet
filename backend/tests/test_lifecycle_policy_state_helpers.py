@@ -26,14 +26,19 @@ def test_set_deferred_stop_sets_pending_fields_and_action() -> None:
 def test_clear_deferred_stop_resets_pending_fields_only() -> None:
     state = default_state()
     set_deferred_stop(state, reason="probe failed")
-    prior_action = state["last_action"]
+    # Sentinel last_action so the assertion below catches an accidental
+    # re-stamp by clear_deferred_stop, even when the new value happens to
+    # match the prior set_deferred_stop action string.
+    state["last_action"] = "sentinel_action"
+    state["last_action_at"] = "2000-01-01T00:00:00+00:00"
     clear_deferred_stop(state)
     assert state["stop_pending"] is False
     assert state["stop_pending_reason"] is None
     assert state["stop_pending_since"] is None
     # last_action is left untouched; callers that want to record auto_stop_cleared
     # must call set_action explicitly.
-    assert state["last_action"] == prior_action
+    assert state["last_action"] == "sentinel_action"
+    assert state["last_action_at"] == "2000-01-01T00:00:00+00:00"
 
 
 def test_record_recovery_started_clears_suppression_and_stamps_action() -> None:
