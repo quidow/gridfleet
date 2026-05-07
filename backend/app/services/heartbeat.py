@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -25,6 +26,7 @@ from app.services import (
     plugin_service,
 )
 from app.services.agent_operations import agent_health
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
@@ -368,6 +370,11 @@ async def _check_hosts(db: AsyncSession) -> None:
         health_data = await _ping_agent(host.ip, host.agent_port)
         alive = health_data is not None
 
+        # Fence: drop any writes from a stale leader that lost the advisory lock
+        # while we were awaiting _ping_agent. assert_current_leader raises
+        # LeadershipLost when another backend now owns the heartbeat row.
+        await assert_current_leader(db)
+
         if alive:
             await control_plane_state_store.delete_value(db, HEARTBEAT_NAMESPACE, host_key)
             # Update agent version if reported
@@ -462,6 +469,13 @@ async def heartbeat_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_hosts(db)
+        except LeadershipLost as exc:
+            logger.error(
+                "heartbeat_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
         except Exception:
             logger.exception("Heartbeat check failed")
         await asyncio.sleep(interval)

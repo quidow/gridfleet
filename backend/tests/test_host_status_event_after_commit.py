@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
@@ -29,6 +30,7 @@ async def test_host_offline_cascade_queues_all_events(
         "app.services.settings_service.settings_service.get",
         lambda key: 1 if key == "general.max_missed_heartbeats" else 60,
     )
+    monkeypatch.setattr("app.services.heartbeat.assert_current_leader", AsyncMock())
 
     await _check_hosts(db_session)
     await settle_after_commit_tasks()

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -14,6 +15,13 @@ from app.services.lifecycle_policy import handle_health_failure
 from app.services.session_sync import _sync_sessions
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+@pytest.fixture(autouse=True)
+def _skip_leader_fencing() -> Iterator[None]:
+    """No-op assert_current_leader so unit tests don't need a real leader row."""
+    with patch("app.services.session_sync.assert_current_leader"):
+        yield
 
 
 def _grid_response(sessions_per_node: list[dict[str, Any]] | None = None) -> dict[str, Any]:

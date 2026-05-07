@@ -65,6 +65,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         with (
             patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=None)),
             patch.object(heartbeat, "set_operational_state", new=gated_set_operational_state),
+            patch.object(heartbeat, "assert_current_leader", new=AsyncMock()),
         ):
             async with db_session_maker() as db:
                 for _ in range(threshold):

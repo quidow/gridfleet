@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -13,6 +14,7 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
@@ -94,6 +96,10 @@ async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
 async def _sync_sessions(db: AsyncSession) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status()
+
+    # Fence: Grid /status is a slow external call. If another backend took
+    # leadership while we awaited it, drop all writes from this cycle.
+    await assert_current_leader(db)
 
     # Skip the Grid-driven sync when the hub is unreachable, but still run
     # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
@@ -252,6 +258,13 @@ async def session_sync_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _sync_sessions(db)
+        except LeadershipLost as exc:
+            logger.error(
+                "session_sync_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
         except Exception:
             logger.exception("Session sync failed")
         await asyncio.sleep(interval)

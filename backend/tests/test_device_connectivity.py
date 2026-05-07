@@ -23,6 +23,11 @@ def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.services.device_connectivity._get_lifecycle_state", AsyncMock(return_value=None))
 
 
+@pytest.fixture(autouse=True)
+def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.services.device_connectivity.assert_current_leader", AsyncMock(return_value=None))
+
+
 async def _setup_host_and_device(
     db_session: AsyncSession,
     connection_target: str = "dc-001",

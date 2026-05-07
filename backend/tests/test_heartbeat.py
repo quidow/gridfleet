@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +22,16 @@ from app.services.heartbeat import (
 )
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.node_health import _check_nodes
+
+
+@pytest.fixture(autouse=True)
+def _skip_leader_fencing() -> Iterator[None]:
+    """No-op assert_current_leader so unit tests don't need a real leader row."""
+    with (
+        patch("app.services.heartbeat.assert_current_leader"),
+        patch("app.services.node_health.assert_current_leader"),
+    ):
+        yield
 
 
 async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:

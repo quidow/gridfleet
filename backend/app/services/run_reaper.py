@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from app.database import async_session
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.observability import get_logger, observe_background_loop
 from app.services import run_service
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
@@ -35,6 +37,7 @@ async def _reap_stale_runs(db: AsyncSession) -> None:
                     run.last_heartbeat,
                     run.heartbeat_timeout_sec,
                 )
+                await assert_current_leader(db)
                 await run_service.expire_run(db, run, "Heartbeat timeout")
                 continue
 
@@ -48,6 +51,7 @@ async def _reap_stale_runs(db: AsyncSession) -> None:
                     run.name,
                     run.ttl_minutes,
                 )
+                await assert_current_leader(db)
                 await run_service.expire_run(db, run, f"TTL exceeded ({run.ttl_minutes} minutes)")
                 continue
 
@@ -59,6 +63,13 @@ async def run_reaper_loop() -> None:
     try:
         async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
             await _reap_stale_runs(db)
+    except LeadershipLost as exc:
+        logger.error(
+            "run_reaper_loop_leadership_lost",
+            reason=str(exc),
+            action="exiting_process_to_prevent_split_brain",
+        )
+        os._exit(70)
     except Exception:
         logger.exception("Initial stale run check failed")
 
@@ -67,5 +78,12 @@ async def run_reaper_loop() -> None:
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _reap_stale_runs(db)
+        except LeadershipLost as exc:
+            logger.error(
+                "run_reaper_loop_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
         except Exception:
             logger.exception("Run reaper check failed")

@@ -182,6 +182,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
             "app.services.device_connectivity.control_plane_state_store.delete_value",
             new=AsyncMock(),
         ) as delete_value,
+        patch("app.services.device_connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(db_session)
 
@@ -224,6 +225,7 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
             new=AsyncMock(),
         ) as update_emulator_state,
         patch("app.services.device_connectivity.record_event", new=AsyncMock()) as record_event,
+        patch("app.services.device_connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(db_session)
 

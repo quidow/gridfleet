@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -6,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.test_run import RunState, TestRun
 from app.services.run_reaper import _reap_stale_runs
+
+
+@pytest.fixture(autouse=True)
+def _skip_leader_fencing() -> Iterator[None]:
+    with patch("app.services.run_reaper.assert_current_leader"):
+        yield
 
 
 async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSession) -> None:

@@ -4,8 +4,10 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - runtime use in helper signature
 
 from app.observability import get_logger
+from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -209,3 +211,36 @@ class ControlPlaneLeader:
 
 
 control_plane_leader = ControlPlaneLeader()
+
+
+async def assert_current_leader(db: AsyncSession) -> None:
+    """Verify this process still holds the control-plane advisory lock.
+
+    Reads ``control_plane_leader_heartbeats.id = 1`` and raises
+    ``LeadershipLost`` when:
+      * the row is missing,
+      * ``holder_id`` does not equal this process's
+        ``control_plane_leader.holder_id``, or
+      * ``lock_backend_pid`` is NULL (acquisition has not finished
+        stamping the row yet — treat as not-leader to avoid writing
+        through a half-claimed leadership).
+
+    No-ops with a debug log when ``general.leader_keepalive_enabled``
+    is false, so disabling keepalive falls back to the previous
+    "eventually exits stale leaders" behavior.
+    """
+    if not settings_service.get("general.leader_keepalive_enabled"):
+        logger.debug("control_plane_leader_fencing_disabled")
+        return
+
+    result = await db.execute(
+        text("SELECT holder_id, lock_backend_pid FROM control_plane_leader_heartbeats WHERE id = 1")
+    )
+    row = result.first()
+    if row is None:
+        raise LeadershipLost("control_plane_leader_heartbeats row missing during fencing check")
+    if row.lock_backend_pid is None:
+        raise LeadershipLost("control_plane_leader_heartbeats.lock_backend_pid is NULL during fencing check")
+    expected = control_plane_leader.holder_id
+    if row.holder_id != expected:
+        raise LeadershipLost(f"holder_id mismatch during fencing check: row={row.holder_id} self={expected}")

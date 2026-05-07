@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -13,11 +14,20 @@ from app.services.session_viability import PROBE_TEST_NAME
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.host import Host
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _skip_leader_fencing() -> Iterator[None]:
+    """No-op assert_current_leader so unit tests don't need a real leader row."""
+    with patch("app.services.session_sync.assert_current_leader"):
+        yield
 
 
 async def test_session_sync_does_not_persist_probe_sessions(
