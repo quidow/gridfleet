@@ -240,6 +240,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
 
         for device in devices:
             lifecycle_state = await _get_lifecycle_state(db, device)
+            await assert_current_leader(db)
             if lifecycle_state is not None:
                 await device_health.update_emulator_state(db, device, lifecycle_state)
 
@@ -361,6 +362,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     continue
                 if not device.auto_manage:
                     continue
+                await assert_current_leader(db)
                 stopped_node = await _stop_disconnected_node(db, device)
                 if device.operational_state == DeviceOperationalState.offline:
                     if stopped_node is not None:
