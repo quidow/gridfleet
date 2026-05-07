@@ -258,9 +258,7 @@ def test_parse_includes_rejects_unknown_token_with_machine_readable_detail() -> 
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_hydrate_reserved_device_info_attaches_masked_config(
-    db_session: AsyncSession, default_host_id: str
-) -> None:
+async def test_hydrate_reserved_device_info_attaches_config(db_session: AsyncSession, default_host_id: str) -> None:
     device = await create_device(
         db_session,
         host_id=default_host_id,
@@ -313,9 +311,7 @@ async def test_hydrate_reserved_device_info_capabilities_uses_capability_service
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_hydrate_reserved_device_infos_batches_sensitive_key_lookup(
-    db_session: AsyncSession, default_host_id: str
-) -> None:
+async def test_hydrate_reserved_device_infos_batches_lookup(db_session: AsyncSession, default_host_id: str) -> None:
     devices: list[Device] = []
     for i in range(5):
         d = await create_device(db_session, host_id=default_host_id, name=f"batch-{i}")
@@ -400,7 +396,7 @@ async def test_reserve_include_config_marks_missing_device_unavailable_after_com
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_claim_with_include_config_returns_masked_config(
+async def test_claim_with_include_config_returns_config(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await create_device(
@@ -501,7 +497,7 @@ async def test_claim_with_unknown_include_returns_wrapped_422(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_reserve_with_include_config_attaches_masked_config_per_device(
+async def test_reserve_with_include_config_attaches_config_per_device(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     devices = []
@@ -597,7 +593,7 @@ async def test_reservation_context_lookup_does_not_load_reserved_device_rows(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_reserve_with_include_config_adds_o1_sensitive_key_queries(
+async def test_reserve_with_include_config_adds_o1_queries(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     devices: list[Device] = []
