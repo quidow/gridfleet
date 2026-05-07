@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,7 @@ async def create_device(
     host_id: str | uuid.UUID,
     name: str,
     identity_value: str | None = None,
-    **overrides: Any,  # noqa: ANN401
+    **overrides: object,
 ) -> Device:
     """Convenience wrapper around ``create_device_record`` for tests that don't care about identity_value."""
     resolved_identity = identity_value if identity_value is not None else f"auto-{uuid.uuid4().hex[:12]}"
@@ -42,7 +42,7 @@ async def create_device(
         host_id=host_id,
         identity_value=resolved_identity,
         name=name,
-        **overrides,
+        **cast("dict[str, Any]", overrides),
     )
 
 
