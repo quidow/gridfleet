@@ -105,6 +105,71 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_check_connectivity_aborts_before_stop_disconnected_node_when_leadership_lost(
+    db_session: AsyncSession,
+) -> None:
+    """Cover the fence guarding _stop_disconnected_node in the disconnected branch."""
+    host = Host(
+        id=uuid.uuid4(),
+        hostname="conn-stop-h",
+        ip="10.0.0.45",
+        agent_port=5100,
+        status=HostStatus.online,
+        os_type=OSType.linux,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="conn-stop-001",
+        connection_target="conn-stop-001",
+        name="Conn Stop Device",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        auto_manage=True,
+    )
+    db_session.add(device)
+    await db_session.commit()
+    initial_state = device.operational_state
+
+    stop_called = AsyncMock()
+
+    with (
+        patch(
+            "app.services.device_connectivity._get_agent_devices",
+            new_callable=AsyncMock,
+            return_value=set(),
+        ),
+        patch(
+            "app.services.device_connectivity._uses_endpoint_health",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "app.services.device_connectivity._stop_disconnected_node",
+            new=stop_called,
+        ),
+        patch(
+            "app.services.device_connectivity.assert_current_leader",
+            side_effect=[None, None, LeadershipLost("site stop")],
+        ),
+        pytest.raises(LeadershipLost),
+    ):
+        await _check_connectivity(db_session)
+
+    stop_called.assert_not_called()
+    await db_session.refresh(device, attribute_names=["operational_state"])
+    assert device.operational_state == initial_state
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadership_lost(
     db_session: AsyncSession,
 ) -> None:
