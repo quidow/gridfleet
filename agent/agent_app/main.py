@@ -621,6 +621,11 @@ async def appium_status(port: int) -> dict[str, Any]:
 
 @app.post("/agent/appium/{port}/probe-session")
 async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
+    try:
+        appium_mgr.require_managed_running_port(port)
+    except DeviceNotFoundError as exc:
+        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
+
     base_url = f"http://127.0.0.1:{port}"
     payload = {
         "capabilities": {

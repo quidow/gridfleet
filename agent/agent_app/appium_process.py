@@ -1211,14 +1211,15 @@ class AppiumProcessManager:
                 t.cancel()
             self._intentional_stop_ports.discard(port)
 
+    def require_managed_running_port(self, port: int) -> None:
+        proc = self._appium_procs.get(port)
+        if proc is None or proc.returncode is not None:
+            raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
+
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)
         if proc is None or proc.returncode is not None:
-            unmanaged_listener = await self._can_connect_to_appium(port)
-            status: dict[str, Any] = {"running": False, "port": port}
-            if unmanaged_listener:
-                status["detail"] = "An unmanaged Appium listener is responding on this port"
-            return status
+            return {"running": False, "port": port}
 
         appium_status = await self._fetch_appium_status(port)
         if appium_status is None:
