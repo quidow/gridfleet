@@ -127,6 +127,66 @@ def test_bootstrap_wrapper_does_not_use_python_venv() -> None:
     assert "pip install" not in script
 
 
+def _stage_fakes(tmp_path: Path, captured: Path) -> dict[str, str]:
+    """Create fake binaries (sudo, gridfleet-agent, id, uv, curl, launchctl, systemctl) that log to `captured`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    def _make(name: str, body: str) -> None:
+        path = bin_dir / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o755)
+
+    _make("sudo", f'echo "sudo $@" >> "{captured}"\nexec "$@"\n')
+    _make("gridfleet-agent", f'echo "gridfleet-agent $@" >> "{captured}"\n')
+    _make("id", "echo 1001\n")
+    _make("uv", f'echo "uv $@" >> "{captured}"\n')
+    _make("curl", "")
+    _make("launchctl", "")
+    _make("systemctl", "")
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["USER"] = "ops"
+    env["HOME"] = str(tmp_path / "home" / "ops")
+    Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
+    return env
+
+
+def test_install_script_appends_user_when_missing(tmp_path: Path) -> None:
+    captured = tmp_path / "calls.log"
+    captured.touch()
+    env = _stage_fakes(tmp_path, captured)
+
+    repo_script = Path(__file__).resolve().parents[2] / "scripts" / "install-agent.sh"
+    subprocess.run(
+        ["sh", str(repo_script), "--manager-url", "http://m"],
+        env=env,
+        check=True,
+    )
+
+    log = captured.read_text()
+    assert "gridfleet-agent install --start --manager-url http://m --user ops" in log
+
+
+def test_install_script_does_not_duplicate_user(tmp_path: Path) -> None:
+    captured = tmp_path / "calls.log"
+    captured.touch()
+    env = _stage_fakes(tmp_path, captured)
+
+    repo_script = Path(__file__).resolve().parents[2] / "scripts" / "install-agent.sh"
+    subprocess.run(
+        ["sh", str(repo_script), "--manager-url", "http://m", "--user", "alice"],
+        env=env,
+        check=True,
+    )
+
+    log = captured.read_text()
+    invocation = next(line for line in log.splitlines() if "gridfleet-agent install" in line)
+    assert invocation.count("--user") == 1
+    assert "--user alice" in invocation
+
+
 def test_operator_docs_point_to_bootstrap_wrapper_not_legacy_install_script() -> None:
     root = Path(__file__).resolve().parents[2]
     docs = {
