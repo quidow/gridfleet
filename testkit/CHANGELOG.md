@@ -2,6 +2,37 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.4.0...gridfleet-testkit-v0.5.0) (2026-05-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove device_config secret masking ([#104](https://github.com/quidow/gridfleet/issues/104))
+
+### Features
+
+* **backend:** escalate device to maintenance after N cooldowns in same run ([#121](https://github.com/quidow/gridfleet/issues/121)) ([7fe01f7](https://github.com/quidow/gridfleet/commit/7fe01f768ff70cd3ddb7f26aec1ab7210b49987f))
+* **main:** split device test_data from device_config + modal portal ([b5d0fa0](https://github.com/quidow/gridfleet/commit/b5d0fa09a862af742b3a2462667a86b1d3a867b6))
+* **testkit:** add allocated_device test_data and hydration ([e814e3d](https://github.com/quidow/gridfleet/commit/e814e3d0040b87a547ffc892ee2064305724d576))
+* **testkit:** add device_test_data pytest fixture ([51eeefc](https://github.com/quidow/gridfleet/commit/51eeefc522989e827610f2b1103d2ded0cadda89))
+* **testkit:** add gridfleetclient test_data methods ([b7f1124](https://github.com/quidow/gridfleet/commit/b7f1124e49618a7193ffc61f9db066f847d38522))
+* **testkit:** align public surface, fix run cleanup, lazy env reads ([#128](https://github.com/quidow/gridfleet/issues/128)) ([ee85958](https://github.com/quidow/gridfleet/commit/ee859581f84f77f43c2d0bb627eeeaef1e2a99db))
+
+
+### Dependencies
+
+* **deps:** bump appium-python-client in /testkit ([dc12591](https://github.com/quidow/gridfleet/commit/dc12591f5ebfba2361341132df546f6325750a61))
+
+
+### Documentation
+
+* **docs:** document discriminated-union release-with-cooldown response ([7fe01f7](https://github.com/quidow/gridfleet/commit/7fe01f768ff70cd3ddb7f26aec1ab7210b49987f))
+
+
+### Code Refactoring
+
+* remove device_config secret masking ([#104](https://github.com/quidow/gridfleet/issues/104)) ([7329a31](https://github.com/quidow/gridfleet/commit/7329a3107814f653b81b2753e519e271ec0dd8bd))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.3.0...gridfleet-testkit-v0.4.0) (2026-05-06)
 
 
