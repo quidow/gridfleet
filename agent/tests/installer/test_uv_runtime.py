@@ -31,7 +31,10 @@ def test_operator_home_local_bin(tmp_path: Path) -> None:
 
 
 def test_path_fallback() -> None:
-    with patch("agent_app.installer.uv_runtime.shutil.which", return_value="/usr/local/bin/uv"):
+    with (
+        patch("agent_app.installer.uv_runtime.shutil.which", return_value="/usr/local/bin/uv"),
+        patch("agent_app.installer.uv_runtime.os.path.expanduser", return_value="/nonexistent"),
+    ):
         operator = OperatorIdentity(login="ops", uid=1001, home=Path("/nonexistent"))
         runtime = discover_uv(operator=operator, override=None)
     assert runtime.bin_path == Path("/usr/local/bin/uv")
@@ -39,7 +42,10 @@ def test_path_fallback() -> None:
 
 
 def test_missing_uv_returns_none() -> None:
-    with patch("agent_app.installer.uv_runtime.shutil.which", return_value=None):
+    with (
+        patch("agent_app.installer.uv_runtime.shutil.which", return_value=None),
+        patch("agent_app.installer.uv_runtime.os.path.expanduser", return_value="/nonexistent"),
+    ):
         operator = OperatorIdentity(login="ops", uid=1001, home=Path("/nonexistent"))
         runtime = discover_uv(operator=operator, override=None)
     assert runtime.bin_path is None
@@ -124,3 +130,20 @@ def test_build_upgrade_command_raises_if_missing(tmp_path: Path) -> None:
             os_name="Linux",
             current_uid=0,
         )
+
+
+def test_current_home_fallback(tmp_path: Path) -> None:
+    current_home = tmp_path / "current"
+    current_home.mkdir()
+    bin_path = current_home / ".local" / "bin" / "uv"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    bin_path.chmod(0o755)
+    operator = OperatorIdentity(login="ops", uid=1001, home=Path("/nonexistent"))
+    with patch(
+        "agent_app.installer.uv_runtime.os.path.expanduser",
+        return_value=str(current_home),
+    ):
+        runtime = discover_uv(operator=operator, override=None)
+    assert runtime.bin_path == bin_path
+    assert runtime.source == "current_home"

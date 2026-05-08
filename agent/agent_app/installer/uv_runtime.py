@@ -34,6 +34,12 @@ def discover_uv(*, operator: OperatorIdentity, override: Path | None) -> UvRunti
     if _is_executable(operator_candidate):
         return UvRuntime(bin_path=operator_candidate, source="operator_home", searched=searched)
 
+    current_home_candidate = Path(os.path.expanduser("~")) / ".local" / "bin" / "uv"
+    if current_home_candidate != operator_candidate:
+        searched.append(str(current_home_candidate))
+        if _is_executable(current_home_candidate):
+            return UvRuntime(bin_path=current_home_candidate, source="current_home", searched=searched)
+
     which = shutil.which("uv")
     if which:
         searched.append(which)
