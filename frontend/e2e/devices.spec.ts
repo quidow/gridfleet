@@ -1364,9 +1364,12 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('button', { name: 'Add override' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Save & Verify' })).toBeHidden();
     await page.getByRole('button', { name: 'Add override' }).click();
-    await expect(page.getByRole('button', { name: 'Save & Verify' })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole('button', { name: 'Format' })).toBeVisible({ timeout: 15_000 });
+    const configSection = page
+      .locator('section')
+      .filter({ has: page.getByRole('heading', { name: 'Configuration' }) });
+    await expect(configSection.getByRole('button', { name: 'Save & Verify' })).toBeVisible({ timeout: 15_000 });
+    await expect(configSection.getByRole('button', { name: 'Reset' })).toBeVisible({ timeout: 15_000 });
+    await expect(configSection.getByRole('button', { name: 'Format' })).toBeVisible({ timeout: 15_000 });
 
     // Switch to Logs tab
     await page.getByRole('button', { name: 'Logs', exact: true }).click();
