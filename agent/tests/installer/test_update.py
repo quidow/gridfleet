@@ -386,6 +386,44 @@ def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
     assert "tool" in upgrade_cmd and "upgrade" in upgrade_cmd
 
 
+def test_cli_update_invalid_uv_bin_exits_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def raiser(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
+
+    monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr(
+        "agent_app.cli.resolve_operator_identity",
+        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+    )
+    rc = cli_main(["update", "--uv-bin", "/missing"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR:")
+    assert "Traceback" not in err
+
+
+def test_cli_update_dry_run_invalid_uv_bin_exits_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def raiser(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
+
+    monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr(
+        "agent_app.cli.resolve_operator_identity",
+        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+    )
+    rc = cli_main(["update", "--dry-run", "--uv-bin", "/missing"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR:")
+    assert "Traceback" not in err
+
+
 def test_cli_update_exit_code_for_drain(monkeypatch: pytest.MonkeyPatch) -> None:
     def raiser(*args: object, **kwargs: object) -> None:
         raise UpdateDrainError("busy")

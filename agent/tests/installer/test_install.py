@@ -646,6 +646,63 @@ def test_install_no_start_chowns_on_darwin(tmp_path: Path) -> None:
     assert all(login == "ops" for _, login in chown_calls)
 
 
+def test_install_no_start_chowns_when_root_even_if_login_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Under sudo -E getpass.getuser() may match operator.login while euid is 0.
+
+    The chown gate must rely on euid, not login, so /opt artefacts are still chowned.
+    """
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
+    monkeypatch.setattr("agent_app.installer.install.getpass.getuser", lambda: "ops")
+    discovery = ToolDiscovery()
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Linux",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    assert chown_calls, "chown must fire when running as root even if login matches"
+
+
+def test_install_no_start_skips_chown_when_already_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: operator.uid)
+    discovery = ToolDiscovery()
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Linux",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    assert chown_calls == []
+
+
 @pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
 def test_install_with_start_omits_auth_when_unset(tmp_path: Path, os_name: str) -> None:
     from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start

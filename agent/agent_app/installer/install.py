@@ -143,6 +143,19 @@ def _chown_to_user(path: Path, user: str) -> None:
         raise RuntimeError(f"failed to set owner of {path} to {user}: {exc}") from exc
 
 
+def _should_chown(operator: OperatorIdentity) -> bool:
+    """Whether install artefacts need a chown to the operator.
+
+    Skip only when the current process is already running as the operator
+    (same euid). Don't compare logins — under sudo -E the env-derived login
+    can match the operator while euid is still 0, leaving artefacts root-owned.
+    """
+    try:
+        return os.geteuid() != operator.uid
+    except AttributeError:  # pragma: no cover — non-POSIX platforms
+        return operator.login != getpass.getuser()
+
+
 def install_no_start(
     config: InstallConfig,
     discovery: ToolDiscovery,
@@ -189,7 +202,7 @@ def install_no_start(
     os.chmod(service_file, 0o600)
 
     chown_targets = (agent_dir, runtime_dir, config_dir, config_env, selenium_jar, service_file)
-    if operator.login != getpass.getuser():
+    if _should_chown(operator):
         for path in chown_targets:
             if path.exists():
                 chown(path, operator.login)

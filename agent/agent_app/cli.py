@@ -211,7 +211,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
         override = Path(args.uv_bin) if args.uv_bin else None
-        uv_runtime = discover_uv(operator=operator, override=override)
+        try:
+            uv_runtime = discover_uv(operator=operator, override=override)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
         if args.dry_run:
             print(format_update_dry_run(config, operator=operator, uv_runtime=uv_runtime, to_version=args.to))

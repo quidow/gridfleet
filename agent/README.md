@@ -24,8 +24,8 @@ curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/insta
 
 ```bash
 # Production: always pin VERSION
-VERSION=0.4.0 curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/install-agent.sh \
-    | sh -s -- --start --manager-url http://manager.example.com:8000
+curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/install-agent.sh \
+    | VERSION=0.4.0 sh -s -- --start --manager-url http://manager.example.com:8000
 ```
 
 The script reads `$USER` and passes `--user "$USER"` to the sudo'd `gridfleet-agent install`, so the systemd unit runs as the invoking operator, not root.
