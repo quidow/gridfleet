@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,3 +51,16 @@ def test_documented_example_paths_exist() -> None:
     missing = sorted(example for example in documented if example not in existing)
 
     assert missing == []
+
+
+def test_manual_examples_compile() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "compileall", "-q", "examples"],
+        cwd=TESTKIT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout
