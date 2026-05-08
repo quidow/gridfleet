@@ -146,7 +146,7 @@ finally:
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(filters)` | List devices using backend filters such as `status`, `pack_id`, `platform_id`, `host_id`, `connection_target`, and `tags.*` |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
 | `GridFleetClient.get_device_config(connection_target)` | Look up a device by runtime connection target and fetch its config |
 | `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
@@ -206,7 +206,9 @@ run = client.reserve_devices(
 run_id = run["id"]
 worker_count = len(run["devices"])
 heartbeat_thread = client.start_heartbeat(run_id, interval=30)
-register_run_cleanup(client, run_id, heartbeat_thread)
+cleanup = register_run_cleanup(client, run_id, heartbeat_thread)
+# cleanup() runs at process exit; call client.complete_run(run_id) on success
+# or client.cancel_run(run_id) on failure to set the run state explicitly.
 
 # If one reserved device fails setup:
 client.report_preparation_failure(
@@ -306,7 +308,7 @@ test_data = get_device_test_data_for_driver(driver)
 
 ### Reduced HTTP round-trips on claim
 
-`gridfleet-testkit` 0.4.0 lets the manager inline the device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
+The manager can inline device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
 
 ```python
 client = GridFleetClient()

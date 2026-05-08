@@ -130,7 +130,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 
 | Helper | Purpose |
 | --- | --- |
-| `GridFleetClient.list_devices(filters)` | List devices using backend filters such as `status`, `pack_id`, `platform_id`, `host_id`, `connection_target`, and `tags.*` |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
 | `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
 | `GridFleetClient.get_device_config(connection_target)` | Look up a device by active connection target, then fetch its config |
 | `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
@@ -158,15 +158,14 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
 | `hydrate_allocated_device(claim_response, run_id, client)` | Combine a claim response with optional device config and live capabilities |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
-| `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
 Public Appium helpers:
 
 | Helper | Purpose |
 | --- | --- |
-| `build_appium_options(pack_id, platform_id, capabilities=None, test_name=None)` | Build an Appium options object for an explicit driver-pack platform |
-| `create_appium_driver(pack_id, platform_id, capabilities=None, test_name=None, grid_url=GRID_URL)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
+| `build_appium_options(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, catalog_client=None)` | Build an Appium options object for an explicit driver-pack platform |
+| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
 | `get_connection_target_from_driver(driver)` | Read the active connection target from a live Appium session |
 | `get_device_config_for_driver(driver, gridfleet_client=None)` | Fetch device config for a live Appium session using its active connection target |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
@@ -232,7 +231,9 @@ run = client.reserve_devices(
 run_id = run["id"]
 worker_count = len(run["devices"])
 heartbeat_thread = client.start_heartbeat(run_id, interval=30)
-register_run_cleanup(client, run_id, heartbeat_thread)
+cleanup = register_run_cleanup(client, run_id, heartbeat_thread)
+# cleanup() runs at process exit; call client.complete_run(run_id) on success
+# or client.cancel_run(run_id) on failure to set the run state explicitly.
 
 client.report_preparation_failure(
     run_id,
@@ -249,7 +250,7 @@ Use `count` for exact reservations. Use `allocation: "all_available"` when CI sh
 
 ## Reduced HTTP round-trips on claim
 
-`gridfleet-testkit` 0.4.0 lets the manager inline the device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
+The manager can inline device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
 
 ```python
 from gridfleet_testkit import GridFleetClient, hydrate_allocated_device

@@ -34,10 +34,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pytest import StashKey
 
 from gridfleet_testkit import GridFleetClient, register_run_cleanup
-
-from pytest import StashKey
 
 GRIDFLEET_RUN: StashKey[dict] = StashKey()
 GRIDFLEET_CLIENT: StashKey[GridFleetClient] = StashKey()
