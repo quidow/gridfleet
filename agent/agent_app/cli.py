@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import uvicorn
@@ -13,7 +14,16 @@ from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run, load_installed_config
 from agent_app.installer.status import collect_status, format_status
 from agent_app.installer.uninstall import uninstall
-from agent_app.installer.update import format_update_dry_run, update_agent
+from agent_app.installer.update import (
+    UpdateDrainError,
+    UpdateHealthError,
+    UpdateRestartError,
+    UpdateUpgradeError,
+    UvNotFoundError,
+    format_update_dry_run,
+    update_agent,
+)
+from agent_app.installer.uv_runtime import discover_uv
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -182,23 +192,39 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "update":
         try:
+            operator = resolve_operator_identity(login=args.user)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+        try:
             config = load_installed_config()
         except (ValueError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
+
+        override = Path(args.uv_bin) if args.uv_bin else None
+        uv_runtime = discover_uv(operator=operator, override=override)
+
         if args.dry_run:
-            print(format_update_dry_run(config, to_version=args.to))
+            print(format_update_dry_run(config, operator=operator, uv_runtime=uv_runtime, to_version=args.to))
             return 0
+
         try:
-            update_result = update_agent(config, to_version=args.to)
-        except (RuntimeError, OSError) as exc:
+            update_result = update_agent(
+                config,
+                operator=operator,
+                uv_runtime=uv_runtime,
+                to_version=args.to,
+            )
+        except (UpdateDrainError, UvNotFoundError, UpdateHealthError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        except (UpdateUpgradeError, UpdateRestartError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         print(f"Drain: {update_result.drain.message}")
         print("GridFleet agent updated.")
-        health = getattr(update_result, "health", None)
-        if health is not None and not health.ok:
-            print(f"WARNING: {health.message}", file=sys.stderr)
         return 0
 
     parser.print_help()

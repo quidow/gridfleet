@@ -266,20 +266,34 @@ def test_uninstall_invokes_uninstaller(monkeypatch: pytest.MonkeyPatch, capsys: 
 
 
 def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from agent_app.installer.uv_runtime import UvRuntime
+
     captured: dict[str, object] = {}
     loaded_config = InstallConfig(port=5300)
+    fake_runtime = UvRuntime(bin_path=Path("/usr/bin/uv"), source="path", searched=())
 
-    def fake_format_update_dry_run(config: InstallConfig, *, to_version: str | None = None) -> str:
+    def fake_format_update_dry_run(
+        config: InstallConfig,
+        *,
+        operator: OperatorIdentity,
+        uv_runtime: UvRuntime,
+        to_version: str | None = None,
+        **_kw: object,
+    ) -> str:
         captured["config"] = config
+        captured["operator"] = operator
         captured["to_version"] = to_version
         return "update plan"
 
+    _patch_operator(monkeypatch)
     monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
     monkeypatch.setattr(cli, "format_update_dry_run", fake_format_update_dry_run)
+    monkeypatch.setattr(cli, "discover_uv", lambda **kw: fake_runtime)
 
     assert cli.main(["update", "--dry-run", "--to", "0.3.0"]) == 0
 
     assert captured["config"] == loaded_config
+    assert captured["operator"] == _TEST_OPERATOR
     assert captured["to_version"] == "0.3.0"
     assert capsys.readouterr().out == "update plan\n"
 
@@ -295,11 +309,22 @@ def test_update_dry_run_reports_installed_config_error(
 
 
 def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from agent_app.installer.uv_runtime import UvRuntime
+
     captured: dict[str, object] = {}
     loaded_config = InstallConfig(port=5300)
+    fake_runtime = UvRuntime(bin_path=Path("/usr/bin/uv"), source="path", searched=())
 
-    def fake_update_agent(config: InstallConfig, *, to_version: str | None = None) -> UpdateResult:
+    def fake_update_agent(
+        config: InstallConfig,
+        *,
+        operator: OperatorIdentity,
+        uv_runtime: UvRuntime,
+        to_version: str | None = None,
+        **_kw: object,
+    ) -> UpdateResult:
         captured["config"] = config
+        captured["operator"] = operator
         captured["to_version"] = to_version
         return UpdateResult(
             to_version=to_version,
@@ -308,12 +333,15 @@ def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
             health=HealthCheckResult(ok=True, message="healthy"),
         )
 
+    _patch_operator(monkeypatch)
     monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
     monkeypatch.setattr(cli, "update_agent", fake_update_agent)
+    monkeypatch.setattr(cli, "discover_uv", lambda **kw: fake_runtime)
 
     assert cli.main(["update", "--to", "0.3.0"]) == 0
 
     assert captured["config"] == loaded_config
+    assert captured["operator"] == _TEST_OPERATOR
     assert captured["to_version"] == "0.3.0"
     output = capsys.readouterr().out
     assert "Drain: no active local nodes" in output
