@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_app import cli
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import HealthCheckResult, InstallResult, RegistrationCheckResult
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
 from agent_app.installer.update import DrainResult, UpdateResult
@@ -54,6 +56,7 @@ def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -
     def fake_install_no_start(
         config: InstallConfig,
         discovery: ToolDiscovery,
+        **kwargs: object,
     ) -> InstallResult:
         captured["config"] = config
         captured["discovery"] = discovery
@@ -79,7 +82,7 @@ def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatc
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
 
-    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery) -> InstallResult:
+    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery, **kwargs: object) -> InstallResult:
         captured["config"] = config
         captured["discovery"] = discovery
         return InstallResult(
@@ -105,7 +108,7 @@ def test_install_start_warns_when_manager_registration_is_pending(
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
 
-    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery) -> InstallResult:
+    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery, **kwargs: object) -> InstallResult:
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
@@ -129,7 +132,7 @@ def test_install_start_returns_nonzero_when_health_fails(
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
 
-    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery) -> InstallResult:
+    def fake_install_with_start(config: InstallConfig, discovery: ToolDiscovery, **kwargs: object) -> InstallResult:
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
@@ -158,6 +161,11 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(cli, "discover_tools", fake_discover_tools)
     monkeypatch.setattr(cli, "format_dry_run", fake_format_dry_run)
+    monkeypatch.setattr(
+        cli,
+        "resolve_operator_identity",
+        lambda login=None: OperatorIdentity(login=login or "gridfleet", uid=os.getuid(), home=Path("/home/gridfleet")),
+    )
 
     assert (
         cli.main(

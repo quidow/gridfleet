@@ -318,3 +318,9 @@ def test_redacted_config_masks_api_auth_password() -> None:
     redacted = _redacted_config(config)
     assert redacted.api_auth_username == "ops"
     assert redacted.api_auth_password == "<redacted>"
+
+
+def test_systemd_unit_uses_explicit_user() -> None:
+    config = InstallConfig(user="ops")
+    rendered = render_systemd_unit(config)
+    assert "User=ops" in rendered

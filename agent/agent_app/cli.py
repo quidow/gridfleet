@@ -8,6 +8,7 @@ import uvicorn
 
 from agent_app import __version__
 from agent_app.config import agent_settings
+from agent_app.installer.identity import resolve_operator_identity
 from agent_app.installer.install import install_no_start, install_with_start
 from agent_app.installer.plan import InstallConfig, discover_tools, format_dry_run, load_installed_config
 from agent_app.installer.status import collect_status, format_status
@@ -103,8 +104,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         try:
+            operator = resolve_operator_identity(login=args.user)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        try:
             config = InstallConfig(
-                user=args.user or InstallConfig().user,
+                user=operator.login,
                 port=args.port,
                 manager_url=args.manager_url,
                 manager_auth_username=args.manager_auth_username,
@@ -127,7 +133,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(format_dry_run(config, discovery))
             return 0
         try:
-            result = install_with_start(config, discovery) if args.start else install_no_start(config, discovery)
+            result = (
+                install_with_start(config, discovery, operator=operator)
+                if args.start
+                else install_no_start(config, discovery, operator=operator)
+            )
         except (RuntimeError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
