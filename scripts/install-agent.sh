@@ -43,8 +43,11 @@ for arg in "$@"; do
     esac
 done
 
-if [ "$HAS_USER" -eq 0 ] && [ -n "${USER:-}" ]; then
-    set -- "$@" --user "$USER"
+if [ "$HAS_USER" -eq 0 ]; then
+    OPERATOR_USER="${SUDO_USER:-${USER:-}}"
+    if [ -n "$OPERATOR_USER" ] && [ "$OPERATOR_USER" != "root" ]; then
+        set -- "$@" --user "$OPERATOR_USER"
+    fi
 fi
 
 echo "=== GridFleet Agent Installer ==="

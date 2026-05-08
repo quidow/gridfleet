@@ -68,14 +68,20 @@ def _run_status_command(command: list[str]) -> str:
     return result.stdout.strip()
 
 
-def _service_state(os_name: str, *, run_command: Callable[[list[str]], str]) -> tuple[str, str]:
+def _service_state(
+    os_name: str,
+    *,
+    run_command: Callable[[list[str]], str],
+    operator: OperatorIdentity,
+) -> tuple[str, str]:
     if os_name == "Linux":
         return (
             run_command(["systemctl", "is-active", "gridfleet-agent"]).strip(),
             run_command(["systemctl", "is-enabled", "gridfleet-agent"]).strip(),
         )
     if os_name == "Darwin":
-        state = run_command(["launchctl", "list", "com.gridfleet.agent"]).strip()
+        target = f"gui/{operator.uid}/com.gridfleet.agent"
+        state = run_command(["launchctl", "print", target]).strip()
         return (state or "not loaded", "launchd")
     return (f"unsupported OS: {os_name}", "unknown")
 
@@ -102,7 +108,7 @@ def collect_status(
     else:
         parsed_env, config_error = _parse_config_env_with_error(config_env)
     service_file = _service_file_path(config, resolved_os, operator)
-    service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
+    service_active, service_enabled = _service_state(resolved_os, run_command=run_command, operator=operator)
 
     api_auth_username = parsed_env.get("AGENT_API_AUTH_USERNAME") or config.api_auth_username
     api_auth_password = parsed_env.get("AGENT_API_AUTH_PASSWORD") or config.api_auth_password

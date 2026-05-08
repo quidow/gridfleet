@@ -238,12 +238,12 @@ def update_agent(
 
     try:
         run_command(upgrade_cmd)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         raise UpdateUpgradeError(str(exc)) from exc
 
     try:
         run_command(_restart_command(resolved_os, operator_uid=operator.uid))
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         raise UpdateRestartError(str(exc)) from exc
 
     try:

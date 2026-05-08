@@ -187,6 +187,45 @@ def test_install_script_does_not_duplicate_user(tmp_path: Path) -> None:
     assert "--user alice" in invocation
 
 
+def test_install_script_prefers_sudo_user_over_user(tmp_path: Path) -> None:
+    captured = tmp_path / "calls.log"
+    captured.touch()
+    env = _stage_fakes(tmp_path, captured)
+    env["USER"] = "root"
+    env["SUDO_USER"] = "alice"
+
+    repo_script = Path(__file__).resolve().parents[2] / "scripts" / "install-agent.sh"
+    subprocess.run(
+        ["sh", str(repo_script), "--manager-url", "http://m"],
+        env=env,
+        check=True,
+    )
+
+    log = captured.read_text()
+    invocation = next(line for line in log.splitlines() if "gridfleet-agent install" in line)
+    assert "--user alice" in invocation
+    assert "--user root" not in invocation
+
+
+def test_install_script_skips_user_when_only_root_available(tmp_path: Path) -> None:
+    captured = tmp_path / "calls.log"
+    captured.touch()
+    env = _stage_fakes(tmp_path, captured)
+    env["USER"] = "root"
+    env.pop("SUDO_USER", None)
+
+    repo_script = Path(__file__).resolve().parents[2] / "scripts" / "install-agent.sh"
+    subprocess.run(
+        ["sh", str(repo_script), "--manager-url", "http://m"],
+        env=env,
+        check=True,
+    )
+
+    log = captured.read_text()
+    invocation = next(line for line in log.splitlines() if "gridfleet-agent install" in line)
+    assert "--user" not in invocation
+
+
 def test_operator_docs_point_to_bootstrap_wrapper_not_legacy_install_script() -> None:
     root = Path(__file__).resolve().parents[2]
     docs = {

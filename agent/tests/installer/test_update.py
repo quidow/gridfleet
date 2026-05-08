@@ -14,6 +14,7 @@ from agent_app.installer.update import (
     UpdateHealthError,
     UpdateRestartError,
     UpdateResult,
+    UpdateUpgradeError,
     UvNotFoundError,
     format_update_dry_run,
     update_agent,
@@ -438,5 +439,54 @@ def test_update_health_failure_raises_typed(tmp_path: Path, os_name: str) -> Non
             run_command=lambda cmd: None,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
             health_check=lambda url, **kw: HealthCheckResult(ok=False, message="unhealthy"),
+            current_uid=0,
+        )
+
+
+def _raise_oserror(_cmd: list[str]) -> None:
+    raise FileNotFoundError("[Errno 2] No such file or directory: 'sudo'")
+
+
+def test_update_upgrade_oserror_wraps_typed(tmp_path: Path) -> None:
+    bin_path = tmp_path / "uv"
+    bin_path.write_text("")
+    bin_path.chmod(0o755)
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
+
+    with pytest.raises(UpdateUpgradeError):
+        update_agent(
+            InstallConfig(user="ops"),
+            operator=operator,
+            uv_runtime=runtime,
+            os_name="Linux",
+            run_command=_raise_oserror,
+            drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
+            current_uid=0,
+        )
+
+
+def test_update_restart_oserror_wraps_typed(tmp_path: Path) -> None:
+    bin_path = tmp_path / "uv"
+    bin_path.write_text("")
+    bin_path.chmod(0o755)
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
+    calls = 0
+
+    def fake_run(cmd: list[str]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise FileNotFoundError("[Errno 2] No such file or directory: 'systemctl'")
+
+    with pytest.raises(UpdateRestartError):
+        update_agent(
+            InstallConfig(user="ops"),
+            operator=operator,
+            uv_runtime=runtime,
+            os_name="Linux",
+            run_command=fake_run,
+            drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
             current_uid=0,
         )

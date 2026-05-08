@@ -18,6 +18,20 @@ def test_explicit_override_wins(tmp_path: Path) -> None:
     assert runtime.source == "explicit"
 
 
+def test_explicit_override_missing_raises(tmp_path: Path) -> None:
+    bogus = tmp_path / "missing-uv"
+    with pytest.raises(RuntimeError, match="not an executable file"):
+        discover_uv(operator=OPERATOR, override=bogus)
+
+
+def test_explicit_override_non_executable_raises(tmp_path: Path) -> None:
+    nonexec = tmp_path / "not-executable"
+    nonexec.write_text("#!/bin/sh\n")
+    nonexec.chmod(0o644)
+    with pytest.raises(RuntimeError, match="not an executable file"):
+        discover_uv(operator=OPERATOR, override=nonexec)
+
+
 def test_operator_home_local_bin(tmp_path: Path) -> None:
     home = tmp_path / "home" / "ops"
     bin_path = home / ".local" / "bin" / "uv"

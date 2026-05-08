@@ -14,6 +14,10 @@ _DEFAULT_OPERATOR = OperatorIdentity(login="testop", uid=9999, home=Path("/home/
 _DEFAULT_UV = UvRuntime(bin_path=None, source="missing", searched=())
 
 
+def _stub_health(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+    return HealthCheckResult(ok=True, message="stubbed")
+
+
 def _make_config(tmp_path: Path) -> InstallConfig:
     return InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
@@ -144,7 +148,7 @@ def test_collect_status_uses_launchctl_on_macos(monkeypatch: pytest.MonkeyPatch,
         health_check=lambda _url: HealthCheckResult(ok=False, message="down"),
     )
 
-    assert commands == [["launchctl", "list", "com.gridfleet.agent"]]
+    assert commands == [["launchctl", "print", f"gui/{_DEFAULT_OPERATOR.uid}/com.gridfleet.agent"]]
 
 
 def test_format_status_redacts_secrets() -> None:
@@ -273,6 +277,7 @@ def test_status_reports_operator_and_uv(tmp_path: Path) -> None:
         os_name="Linux",
         env={"AGENT_AGENT_PORT": "5100"},
         run_command=lambda cmd: "active",
+        health_check=_stub_health,
     )
     rendered = format_status(status)
     assert "Operator: ops (uid 1001" in rendered
@@ -290,6 +295,7 @@ def test_collect_status_uses_operator_home_for_macos_plist(tmp_path: Path) -> No
         os_name="Darwin",
         env={},
         run_command=lambda cmd: "",
+        health_check=_stub_health,
     )
     expected = operator.home / "Library/LaunchAgents/com.gridfleet.agent.plist"
     assert status.service_file == expected
@@ -306,6 +312,7 @@ def test_status_reports_uv_missing(tmp_path: Path) -> None:
         os_name="Linux",
         env={},
         run_command=lambda cmd: "",
+        health_check=_stub_health,
     )
     rendered = format_status(status)
     assert "uv path: not found" in rendered

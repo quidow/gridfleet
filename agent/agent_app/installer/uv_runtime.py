@@ -28,6 +28,7 @@ def discover_uv(*, operator: OperatorIdentity, override: Path | None) -> UvRunti
         searched.append(str(override))
         if _is_executable(override):
             return UvRuntime(bin_path=override, source="explicit", searched=tuple(searched))
+        raise RuntimeError(f"--uv-bin {str(override)!r} is not an executable file; refusing to fall back to discovery")
 
     operator_candidate = operator.home / ".local" / "bin" / "uv"
     searched.append(str(operator_candidate))
