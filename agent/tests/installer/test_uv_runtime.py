@@ -57,7 +57,7 @@ def test_build_upgrade_command_uses_runuser_when_available(tmp_path: Path) -> No
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=[])
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
     with patch("agent_app.installer.uv_runtime.shutil.which", return_value="/usr/sbin/runuser"):
         cmd = build_upgrade_command(
             runtime,
@@ -76,7 +76,7 @@ def test_build_upgrade_command_falls_back_to_sudo_u_on_linux(tmp_path: Path) -> 
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=[])
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
     with patch("agent_app.installer.uv_runtime.shutil.which", return_value=None):
         cmd = build_upgrade_command(
             runtime,
@@ -93,7 +93,7 @@ def test_build_upgrade_command_skips_wrapper_when_already_operator(tmp_path: Pat
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=[])
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
     cmd = build_upgrade_command(
         runtime,
         operator=OPERATOR,
@@ -109,7 +109,7 @@ def test_build_upgrade_command_macos_uses_sudo_u(tmp_path: Path) -> None:
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=[])
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
     cmd = build_upgrade_command(
         runtime,
         operator=OPERATOR,
@@ -121,7 +121,7 @@ def test_build_upgrade_command_macos_uses_sudo_u(tmp_path: Path) -> None:
 
 
 def test_build_upgrade_command_raises_if_missing(tmp_path: Path) -> None:
-    runtime = UvRuntime(bin_path=None, source="missing", searched=["/foo", "/bar"])
+    runtime = UvRuntime(bin_path=None, source="missing", searched=("/foo", "/bar"))
     with pytest.raises(RuntimeError, match="uv not found"):
         build_upgrade_command(
             runtime,
