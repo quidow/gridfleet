@@ -236,6 +236,10 @@ const REGISTRY: Record<string, RegistryEntry> = {
     render: (data) => `${firstString(data, ['name', 'config_name'], 'Config')} updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
     severity: 'neutral',
   },
+  'test_data.updated': {
+    render: (data) => `${firstString(data, ['device_name'], 'Device')} test_data updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
+    severity: 'neutral',
+  },
   'webhook.delivered': {
     render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')} delivered`,
     severity: 'success',
