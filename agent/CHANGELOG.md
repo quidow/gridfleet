@@ -43,6 +43,47 @@ All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are 
 
 * **backend:** derive device health summary on read ([#78](https://github.com/quidow/gridfleet/issues/78)) ([10078ef](https://github.com/quidow/gridfleet/commit/10078ef89dcf12e855776a68002456302c51684c))
 
+## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.3.0...gridfleet-agent-v0.4.0) (2026-05-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** derive device health summary on read ([#78](https://github.com/quidow/gridfleet/issues/78))
+
+### Features
+
+* **agent:** add --user to status/update/uninstall and --uv-bin to update ([da0636c](https://github.com/quidow/gridfleet/commit/da0636c83dcdad45082f403266ad759dc224c94c))
+* **agent:** add operator identity resolver primitive ([575f05f](https://github.com/quidow/gridfleet/commit/575f05ff9d90dd8131eec1e540e73fda7d344558))
+* **agent:** add uv runtime discovery and operator-context upgrade command ([a608e12](https://github.com/quidow/gridfleet/commit/a608e1230a76a28e3650fedb9a34ea8394d71079))
+* **agent:** enforce optional http basic auth on backend-&gt;agent calls ([#100](https://github.com/quidow/gridfleet/issues/100)) ([00f985e](https://github.com/quidow/gridfleet/commit/00f985e58391b356861a94147b89d502bd57df35))
+* **agent:** status reports operator identity and resolved uv path ([2b23756](https://github.com/quidow/gridfleet/commit/2b2375693ca5929c47c6f8321ba11c860d8c1012))
+
+
+### Bug Fixes
+
+* **agent:** address pr review findings on cli operator path ([67b41c3](https://github.com/quidow/gridfleet/commit/67b41c36041e9d51ae3e30e619260a85e735d3a0))
+* **agent:** bootstrap script passes --user so service does not run as root ([a3a4272](https://github.com/quidow/gridfleet/commit/a3a42724b0163eee457d971d848c2d48527e2eae))
+* **agent:** chown install artefacts to operator on macos as well as linux ([154f97f](https://github.com/quidow/gridfleet/commit/154f97fae12347bec2f40164dd990269addc7af6))
+* **agent:** operator identity through CLI install/update/status ([4e717eb](https://github.com/quidow/gridfleet/commit/4e717ebd2016a6925066079194d394ac466b4f50))
+* **agent:** pass operator to status service file resolution ([99ab0b0](https://github.com/quidow/gridfleet/commit/99ab0b089cf262568d3a85b4af3cdcbbfbf58a31))
+* **agent:** resolve operator identity before install so service does not run as root ([26fe674](https://github.com/quidow/gridfleet/commit/26fe6748beba353560ea594b7840481ffcf64f4e))
+* **agent:** restore current_home branch in uv discovery ([c566add](https://github.com/quidow/gridfleet/commit/c566addb6ad82ee5cf854447a94bb8518833b972))
+* **agent:** uninstall uses operator identity for launchctl domain ([0efe41b](https://github.com/quidow/gridfleet/commit/0efe41b7f431c4b403af60f8c39fb67b3efc2815))
+* **agent:** update runs uv as operator and maps drain/health failures to exit 1 ([a29bf57](https://github.com/quidow/gridfleet/commit/a29bf5757149011660882bafdfa05fc053a34773))
+* **agent:** wrap discover_uv in update cli, fix readme version pin, gate chown on euid ([315f780](https://github.com/quidow/gridfleet/commit/315f780c03de00c904b35926a0674dfb986a31d8))
+* **backend,agent:** close 52 codeql alerts ([#115](https://github.com/quidow/gridfleet/issues/115)) ([05190ac](https://github.com/quidow/gridfleet/commit/05190ac32e7be9c2b979513114230f51705a0422))
+
+
+### Documentation
+
+* **agent:** correct troubleshooting row for registration pending ([0f6b316](https://github.com/quidow/gridfleet/commit/0f6b31691e2c55878edd7b1aa468bd962cef3b80))
+* **agent:** rewrite readme to match locked cli spec ([fafd38a](https://github.com/quidow/gridfleet/commit/fafd38a689844db9cadbdb06cfdf8a6c3c194b4a))
+
+
+### Code Refactoring
+
+* **backend:** derive device health summary on read ([#78](https://github.com/quidow/gridfleet/issues/78)) ([10078ef](https://github.com/quidow/gridfleet/commit/10078ef89dcf12e855776a68002456302c51684c))
+
 ## [0.3.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.2.4...gridfleet-agent-v0.3.0) (2026-05-05)
 
 
