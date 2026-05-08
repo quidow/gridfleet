@@ -6,6 +6,10 @@ from typing import Any
 import httpx
 import pytest
 
+# Both import styles are intentional:
+# - `import gridfleet_testkit` tests the module-level __getattr__ surface (GRID_URL, GRIDFLEET_API_URL).
+# - `import gridfleet_testkit.client as client_mod` provides the monkeypatching target strings
+#   used by tests that patch gridfleet_testkit.client.* symbols.
 import gridfleet_testkit
 import gridfleet_testkit.client as client_mod
 from gridfleet_testkit.client import (
@@ -1021,10 +1025,13 @@ def test_register_run_cleanup_warns_when_heartbeat_does_not_join(monkeypatch, ca
 def test_register_run_cleanup_is_idempotent(monkeypatch):
     registered: list[Any] = []
     installed: dict[signal.Signals, Any] = {}
+    raises: list[int] = []
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
     monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_DFL)
     monkeypatch.setattr("gridfleet_testkit.client.signal.signal", lambda sig, fn: installed.__setitem__(sig, fn))
+    # Patch raise_signal so that the SIG_DFL chain path does not actually kill the test process.
+    monkeypatch.setattr("gridfleet_testkit.client.signal.raise_signal", lambda sig: raises.append(sig))
 
     class FakeClient:
         def __init__(self) -> None:
@@ -1547,3 +1554,89 @@ def test_module_api_url_reads_environment_lazily(monkeypatch):
     monkeypatch.setenv("GRIDFLEET_API_URL", "http://lazy-manager/api")
     assert gridfleet_testkit.GRIDFLEET_API_URL == "http://lazy-manager/api"
     assert client_mod.GRIDFLEET_API_URL == "http://lazy-manager/api"
+
+
+# --- Signal chain semantics: SIG_DFL and SIG_IGN ---
+
+
+def test_register_run_cleanup_chains_sig_dfl_by_re_raising(monkeypatch):
+    """When the previous handler is SIG_DFL, chain_signals=True should restore the default
+    and re-raise the signal so the kernel's default action (e.g. terminate on SIGTERM) fires."""
+    registered: list[Any] = []
+    installed: dict[signal.Signals, Any] = {}
+    raises: list[int] = []
+    re_set: list[tuple[int, Any]] = []
+
+    monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
+    monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_DFL)
+    monkeypatch.setattr(
+        "gridfleet_testkit.client.signal.signal",
+        lambda sig, fn: (installed.__setitem__(sig, fn), re_set.append((sig, fn)))[0],
+    )
+    monkeypatch.setattr("gridfleet_testkit.client.signal.raise_signal", lambda sig: raises.append(sig))
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def cancel_run(self, run_id: str) -> dict[str, Any]:
+            self.calls.append(f"cancel:{run_id}")
+            return {"state": "cancelled"}
+
+    register_run_cleanup(FakeClient(), "run-dfl", install_signal_handlers=True)
+    installed[signal.SIGTERM](int(signal.SIGTERM), None)
+
+    assert raises == [int(signal.SIGTERM)]
+    # The default handler must be restored *before* re-raising.
+    restored = [item for item in re_set if item[1] is signal.SIG_DFL and item[0] == signal.SIGTERM]
+    assert restored, "SIG_DFL handler not restored before raise_signal"
+
+
+def test_register_run_cleanup_chains_sig_ign_as_drop(monkeypatch):
+    """When the previous handler is SIG_IGN, chain_signals=True should silently drop the signal
+    without re-raising and without invoking raise_signal."""
+    registered: list[Any] = []
+    installed: dict[signal.Signals, Any] = {}
+    raises: list[int] = []
+
+    monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
+    monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_IGN)
+    monkeypatch.setattr(
+        "gridfleet_testkit.client.signal.signal",
+        lambda sig, fn: installed.__setitem__(sig, fn),
+    )
+    monkeypatch.setattr("gridfleet_testkit.client.signal.raise_signal", lambda sig: raises.append(sig))
+
+    class FakeClient:
+        def cancel_run(self, run_id: str) -> dict[str, Any]:
+            return {"state": "cancelled"}
+
+    register_run_cleanup(FakeClient(), "run-ign", install_signal_handlers=True)
+    installed[signal.SIGTERM](int(signal.SIGTERM), None)
+
+    assert raises == []
+
+
+# --- Thread-safety: idempotency under explicit double call ---
+
+
+def test_register_run_cleanup_idempotent_under_explicit_double_call(monkeypatch):
+    """Calling the returned cleanup callable twice must invoke the policy exactly once,
+    even without a signal or atexit path (regression for unsynchronized `called` flag)."""
+    registered: list[Any] = []
+    monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def complete_run(self, run_id: str) -> dict[str, Any]:
+            self.calls.append(f"complete:{run_id}")
+            return {"state": "completed"}
+
+    client = FakeClient()
+    cleanup_fn = register_run_cleanup(client, "run-double", on_exit="complete")
+    cleanup_fn()
+    cleanup_fn()  # second invocation must be a no-op
+
+    assert client.calls == ["complete:run-double"]

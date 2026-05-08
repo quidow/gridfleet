@@ -8,6 +8,9 @@ import pytest
 
 from gridfleet_testkit import pytest_plugin
 
+# Required for the pytester fixture (sub-pytest session runner).
+pytest_plugins = ("pytester",)
+
 
 class FakeOptions:
     def __init__(self):
@@ -327,3 +330,23 @@ def test_gridfleet_worker_id_defaults_to_controller() -> None:
     request = types.SimpleNamespace(config=types.SimpleNamespace())
 
     assert pytest_plugin._gridfleet_worker_id(request) == "controller"
+
+
+def test_gridfleet_worker_id_fixture_resolves_by_public_name(pytester) -> None:
+    """Regression: gridfleet_worker_id is registered under the assignment name, not the
+    private function name _gridfleet_worker_id.  pytest.fixture(fn) uses the attribute
+    name from FixtureManager.parsefactories, so consumers requesting gridfleet_worker_id
+    must be able to resolve it through pytest's normal fixture-resolution path.
+
+    The plugin is already installed via the `pytest11` entry-point so the subprocess
+    sub-session picks it up automatically — no extra pytest_plugins= line needed.
+    """
+    pytester.makepyfile(
+        test_uses_public_name="""
+        def test_x(gridfleet_worker_id):
+            assert isinstance(gridfleet_worker_id, str)
+        """
+    )
+    # Use subprocess mode so the sub-session has a clean, isolated plugin registry.
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=1)
