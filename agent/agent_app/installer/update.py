@@ -109,8 +109,10 @@ def format_update_dry_run(
     uv_runtime: UvRuntime,
     to_version: str | None = None,
     os_name: str | None = None,
+    current_uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
+    resolved_uid = current_uid if current_uid is not None else os.getuid()
     package_spec = _agent_package_spec(to_version)
 
     # Resolve uv path display
@@ -127,7 +129,7 @@ def format_update_dry_run(
             operator=operator,
             package_spec=package_spec,
             os_name=resolved_os,
-            current_uid=os.getuid(),
+            current_uid=resolved_uid,
         )
         uv_command = " ".join(upgrade_cmd)
     except RuntimeError as exc:
@@ -244,7 +246,10 @@ def update_agent(
     except RuntimeError as exc:
         raise UpdateRestartError(str(exc)) from exc
 
-    health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
+    try:
+        health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
+    except Exception as exc:  # symmetric with the other wrappers
+        raise UpdateHealthError(str(exc)) from exc
     if not health.ok:
         raise UpdateHealthError(health.message)
 

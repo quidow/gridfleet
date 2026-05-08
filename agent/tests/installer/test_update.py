@@ -11,6 +11,7 @@ from agent_app.installer.plan import InstallConfig
 from agent_app.installer.update import (
     DrainResult,
     UpdateDrainError,
+    UpdateHealthError,
     UpdateRestartError,
     UpdateResult,
     UvNotFoundError,
@@ -416,3 +417,23 @@ def test_cli_update_exit_code_for_restart_failure(monkeypatch: pytest.MonkeyPatc
     )
     rc = cli_main(["update"])
     assert rc == 2
+
+
+def test_update_health_failure_raises_typed(tmp_path: Path) -> None:
+    bin_path = tmp_path / "uv"
+    bin_path.write_text("")
+    bin_path.chmod(0o755)
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
+
+    with pytest.raises(UpdateHealthError):
+        update_agent(
+            InstallConfig(user="ops"),
+            operator=operator,
+            uv_runtime=runtime,
+            os_name="Linux",
+            run_command=lambda cmd: None,
+            drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
+            health_check=lambda url, **kw: HealthCheckResult(ok=False, message="unhealthy"),
+            current_uid=0,
+        )
