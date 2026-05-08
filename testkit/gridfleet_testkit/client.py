@@ -315,9 +315,31 @@ class GridFleetClient:
         return cast("dict[str, Any]", resp.json())
 
     def get_device_test_data(self, device_id: str) -> dict[str, Any]:
-        """Fetch free-form test data for a specific device."""
+        """Fetch operator-attached free-form test data for a specific device."""
         resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/test_data",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def replace_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Replace device test_data with the supplied object."""
+        resp = httpx.put(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            json=body,
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def merge_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Deep-merge into device test_data."""
+        resp = httpx.patch(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            json=body,
             timeout=10,
             auth=self._auth,
         )
