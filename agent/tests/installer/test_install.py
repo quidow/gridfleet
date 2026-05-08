@@ -31,9 +31,21 @@ def _make_config(tmp_path: Path) -> InstallConfig:
     )
 
 
-def _make_operator(config: InstallConfig, home: Path | None = None) -> OperatorIdentity:
-    """Build a test OperatorIdentity matching config.user."""
-    return OperatorIdentity(login=config.user, uid=os.getuid(), home=home or Path("/tmp"))
+def _make_operator(
+    config: InstallConfig | None = None,
+    *,
+    login: str = "testoperator",
+    uid: int = 4242,
+    home: Path | None = None,
+) -> OperatorIdentity:
+    """Build a deterministic OperatorIdentity for tests.
+
+    Default login is "testoperator" (a non-current user), so the chown gate in
+    install_no_start fires and exercises the chown callable. Pass
+    ``login=config.user`` explicitly when you intentionally want operator.login
+    to match config.user (e.g., to skip chown).
+    """
+    return OperatorIdentity(login=login, uid=uid, home=home or Path("/tmp"))
 
 
 def test_resolve_bin_path_returns_resolved_executable(tmp_path: Path) -> None:
@@ -76,7 +88,7 @@ def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.
 
 def test_install_no_start_writes_config_runtime_dir_service_and_downloads_selenium(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -147,7 +159,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: 
 
 def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -190,7 +202,7 @@ def test_macos_service_path_resolves_sudo_user_home(monkeypatch: pytest.MonkeyPa
 def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
-    operator = _make_operator(config, home=tmp_path)
+    operator = _make_operator(home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -212,7 +224,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
 
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -257,7 +269,7 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
 
 def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -283,7 +295,7 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
 
 def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -309,7 +321,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
 def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
-    operator = _make_operator(config, home=tmp_path)
+    operator = _make_operator(home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -398,7 +410,7 @@ def test_poll_manager_registration_explains_auth_required_on_401() -> None:
 
 def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -584,7 +596,7 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) ->
         api_auth_username="ops",
         api_auth_password="secret",
     )
-    op = _make_operator(config)
+    op = _make_operator(config, login=config.user)
     install_with_start(
         config,
         ToolDiscovery(),
@@ -614,7 +626,7 @@ def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
         agent_dir=str(tmp_path / "agent"),
         config_dir=str(tmp_path / "etc"),
     )
-    op = _make_operator(config)
+    op = _make_operator(config, login=config.user)
     install_with_start(
         config,
         ToolDiscovery(),

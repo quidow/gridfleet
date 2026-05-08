@@ -13,6 +13,12 @@ from agent_app.installer.update import DrainResult, UpdateResult
 if TYPE_CHECKING:
     import pytest
 
+_TEST_OPERATOR = OperatorIdentity(login="testop", uid=4242, home=Path("/home/testop"))
+
+
+def _patch_operator(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agent_app.cli.resolve_operator_identity", lambda login=None: _TEST_OPERATOR)
+
 
 def test_install_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fake_discover_tools() -> ToolDiscovery:
@@ -49,6 +55,7 @@ def test_install_rejects_conflicting_modes(capsys: pytest.CaptureFixture[str]) -
 
 def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
+    _patch_operator(monkeypatch)
 
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
@@ -78,6 +85,7 @@ def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -
 
 def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
+    _patch_operator(monkeypatch)
 
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
@@ -105,6 +113,8 @@ def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatc
 def test_install_start_warns_when_manager_registration_is_pending(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _patch_operator(monkeypatch)
+
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
 
@@ -129,6 +139,8 @@ def test_install_start_warns_when_manager_registration_is_pending(
 def test_install_start_returns_nonzero_when_health_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _patch_operator(monkeypatch)
+
     def fake_discover_tools() -> ToolDiscovery:
         return ToolDiscovery()
 
@@ -357,6 +369,7 @@ def test_install_main_threads_api_auth_into_install_config(monkeypatch: pytest.M
     from agent_app.installer.plan import ToolDiscovery
 
     captured: dict[str, InstallConfig] = {}
+    _patch_operator(monkeypatch)
 
     def _fake_install_no_start(config: InstallConfig, _discovery: ToolDiscovery, **_kwargs: object) -> object:
         captured["config"] = config
