@@ -162,3 +162,15 @@ def get_device_config_for_driver(
     """Fetch device config for a live Appium driver using its runtime connection target."""
     client = gridfleet_client or GridFleetClient()
     return client.get_device_config(get_connection_target_from_driver(driver))
+
+
+def get_device_test_data_for_driver(
+    driver: Any,
+    *,
+    gridfleet_client: GridFleetClient | None = None,
+) -> dict[str, Any]:
+    """Fetch operator-attached test_data for a live Appium driver session."""
+    client = gridfleet_client or GridFleetClient()
+    connection_target = get_connection_target_from_driver(driver)
+    device_id = client.resolve_device_id_by_connection_target(connection_target)
+    return client.get_device_test_data(device_id)
