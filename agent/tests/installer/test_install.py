@@ -148,12 +148,14 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: 
         chown=lambda path, user: ownership.append((path, user)),
     )
 
+    service_file = Path(config.config_dir).parent / "systemd/system/gridfleet-agent.service"
     assert ownership == [
         (Path(config.agent_dir), "gridfleet"),
         (Path(config.agent_dir) / "runtimes", "gridfleet"),
         (Path(config.config_dir), "gridfleet"),
         (Path(config.config_env_path), "gridfleet"),
         (Path(config.selenium_jar), "gridfleet"),
+        (service_file, "gridfleet"),
     ]
 
 
@@ -214,6 +216,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
         os_name="Darwin",
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
+        chown=lambda path, user: None,
     )
 
     assert result.service_file == tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
@@ -321,7 +324,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
 def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
-    operator = _make_operator(home=tmp_path)
+    operator = _make_operator(login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -609,6 +612,34 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) ->
     )
 
     assert captured["auth"] == ("ops", "secret")
+
+
+def test_install_no_start_chowns_on_darwin(tmp_path: Path) -> None:
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    discovery = ToolDiscovery()
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Darwin",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    paths = {path for path, login in chown_calls}
+    assert any("config.env" in str(p) for p in paths)
+    assert any("selenium-server.jar" in str(p) for p in paths)
+    assert any("LaunchAgents/com.gridfleet.agent.plist" in str(p) for p in paths)
+    assert all(login == "ops" for _, login in chown_calls)
 
 
 def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:

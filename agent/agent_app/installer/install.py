@@ -180,9 +180,6 @@ def install_no_start(
     config_env = Path(config.config_env_path)
     config_env.write_text(render_config_env(config, discovery))
     os.chmod(config_env, 0o600)
-    if resolved_os == "Linux" and operator.login != getpass.getuser():
-        for path in (agent_dir, runtime_dir, config_dir, config_env, selenium_jar):
-            chown(path, operator.login)
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
     elif resolved_os == "Darwin":
@@ -190,6 +187,12 @@ def install_no_start(
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
     os.chmod(service_file, 0o600)
+
+    chown_targets = (agent_dir, runtime_dir, config_dir, config_env, selenium_jar, service_file)
+    if operator.login != getpass.getuser():
+        for path in chown_targets:
+            if path.exists():
+                chown(path, operator.login)
 
     return InstallResult(
         config_env=Path(config.config_env_path),
