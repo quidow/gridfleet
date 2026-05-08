@@ -314,6 +314,16 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
+    def get_device_test_data(self, device_id: str) -> dict[str, Any]:
+        """Fetch free-form test data for a specific device."""
+        resp = httpx.get(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
     def get_driver_pack_catalog(self) -> dict[str, Any]:
         """Fetch enabled driver pack catalog data used for Appium platform selection."""
         resp = httpx.get(
