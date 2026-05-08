@@ -22,6 +22,10 @@ import {
   startNode,
   stopNode,
   updateDevice,
+  getDeviceTestData,
+  replaceDeviceTestData,
+  mergeDeviceTestData,
+  getTestDataHistory,
 } from '../api/devices';
 import type { DeviceSortBy, DeviceSortDir } from '../api/devices';
 import type {
@@ -36,6 +40,7 @@ import type {
   DeviceVerificationCreate,
   DeviceVerificationUpdate,
   NodeState,
+  DeviceTestData,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
 
@@ -449,6 +454,44 @@ export function useConfigHistory(id: string) {
   return useQuery({
     queryKey: ['config-history', id],
     queryFn: () => fetchConfigHistory(id),
+  });
+}
+
+export function useDeviceTestData(id: string) {
+  return useQuery({
+    queryKey: ['device-test-data', id],
+    queryFn: () => getDeviceTestData(id),
+    enabled: Boolean(id),
+  });
+}
+
+export function useTestDataHistory(id: string) {
+  return useQuery({
+    queryKey: ['test-data-history', id],
+    queryFn: () => getTestDataHistory(id),
+    enabled: Boolean(id),
+  });
+}
+
+export function useReplaceDeviceTestData(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DeviceTestData) => replaceDeviceTestData(id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device-test-data', id] });
+      queryClient.invalidateQueries({ queryKey: ['test-data-history', id] });
+    },
+  });
+}
+
+export function useMergeDeviceTestData(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DeviceTestData) => mergeDeviceTestData(id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device-test-data', id] });
+      queryClient.invalidateQueries({ queryKey: ['test-data-history', id] });
+    },
   });
 }
 

@@ -55,10 +55,12 @@ def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -
 @router.post("", response_model=RunCreateResponse, status_code=201)
 async def create_run(
     data: RunCreate,
-    include: str | None = Query(None, description="Comma-separated: config (capabilities not supported on reserve)"),
+    include: str | None = Query(
+        None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> RunCreateResponse:
-    includes = run_service.parse_includes(include, allowed={"config", "capabilities"})
+    includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
     if "capabilities" in includes:
         raise HTTPException(
             status_code=422,
@@ -269,11 +271,11 @@ async def force_release(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 async def claim_device(
     run_id: uuid.UUID,
     data: ClaimRequest | None = Body(default=None),
-    include: str | None = Query(None, description="Comma-separated: config,capabilities"),
+    include: str | None = Query(None, description="Comma-separated: config,capabilities,test_data"),
     db: AsyncSession = Depends(get_db),
 ) -> ClaimResponse:
     payload = data or ClaimRequest()
-    includes = run_service.parse_includes(include, allowed={"config", "capabilities"})
+    includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
 
     try:
         info = await run_service.claim_device(db, run_id, worker_id=payload.worker_id)
@@ -337,6 +339,7 @@ async def claim_device(
         claimed_at=info.claimed_at,
         config=info.config,
         live_capabilities=info.live_capabilities,
+        test_data=info.test_data,
         unavailable_includes=info.unavailable_includes,
     )
 

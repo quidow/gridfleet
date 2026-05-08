@@ -125,6 +125,7 @@ class Device(Base):
     )
     hardware_telemetry_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     device_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict, server_default="{}")
+    test_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     lifecycle_policy_state: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, default=dict, server_default="{}"
     )

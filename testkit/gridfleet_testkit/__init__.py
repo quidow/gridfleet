@@ -29,6 +29,7 @@ from .appium import (
     create_appium_driver,
     get_connection_target_from_driver,
     get_device_config_for_driver,
+    get_device_test_data_for_driver,
 )
 from .client import (
     GRID_URL,
@@ -63,6 +64,7 @@ __all__ = [
     "create_appium_driver",
     "get_connection_target_from_driver",
     "get_device_config_for_driver",
+    "get_device_test_data_for_driver",
     "hydrate_allocated_device",
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",

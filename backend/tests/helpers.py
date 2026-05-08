@@ -69,6 +69,7 @@ async def create_device_record(
     auto_manage: bool = True,
     ip_address: str | None = None,
     roku_password: str | None = None,
+    test_data: dict[str, Any] | None = None,
     **overrides: object,
 ) -> Device:
     resolved_device_type = DeviceType(device_type)
@@ -104,6 +105,8 @@ async def create_device_record(
         device_config["roku_password"] = roku_password
         device_config["appium_caps"] = {"appium:password": roku_password}
 
+    resolved_test_data: dict[str, Any] = dict(test_data) if test_data else {}
+
     # Allow caller to override any of the resolved fields explicitly.
     extra = dict(overrides)
 
@@ -125,6 +128,7 @@ async def create_device_record(
         tags=tags,
         auto_manage=auto_manage,
         device_config=device_config,
+        test_data=resolved_test_data,
     )
     device.operational_state = (
         operational_state

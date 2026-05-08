@@ -27,6 +27,7 @@ const EVENT_QUERY_MAP: Record<string, string[][]> = {
   'run.cancelled': [['runs'], ['run'], ['devices'], ['sessions']],
   'run.expired': [['runs'], ['run'], ['devices'], ['sessions']],
   'config.updated': [['device-config'], ['config-history'], ['device'], ['devices']],
+  'test_data.updated': [['device-test-data'], ['test-data-history'], ['device'], ['devices']],
   'bulk.operation_completed': [['devices'], ['device'], ['device-groups'], ['device-group']],
   'device_group.updated': [['device-groups'], ['device-group'], ['devices']],
   'device_group.members_changed': [['device-groups'], ['device-group'], ['devices']],

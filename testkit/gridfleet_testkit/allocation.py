@@ -39,6 +39,7 @@ class AllocatedDevice:
     claimed_at: str
     config: dict[str, Any] | None
     live_capabilities: dict[str, Any] | None
+    test_data: dict[str, Any] | None = None
     unavailable_includes: tuple[UnavailableInclude, ...] = ()
 
     @property
@@ -120,6 +121,7 @@ def hydrate_allocated_device(
     client: GridFleetClient,
     fetch_config: bool = True,
     fetch_capabilities: bool = False,
+    fetch_test_data: bool = False,
 ) -> AllocatedDevice:
     """Combine a claim response with optional static config and live capabilities.
 
@@ -153,6 +155,14 @@ def hydrate_allocated_device(
     else:
         live_capabilities = None
 
+    inline_test_data = payload.get("test_data")
+    if isinstance(inline_test_data, dict):
+        test_data: dict[str, Any] | None = inline_test_data
+    elif fetch_test_data and "test_data" not in unavailable_set:
+        test_data = client.get_device_test_data(device_id)
+    else:
+        test_data = None
+
     return AllocatedDevice(
         run_id=run_id,
         device_id=device_id,
@@ -172,6 +182,7 @@ def hydrate_allocated_device(
         claimed_at=_string_value(payload, "claimed_at"),
         config=config,
         live_capabilities=live_capabilities,
+        test_data=test_data,
         unavailable_includes=unavailable_includes,
     )
 

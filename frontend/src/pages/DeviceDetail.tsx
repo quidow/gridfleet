@@ -49,6 +49,7 @@ import {
 } from './deviceDetail/deviceDetailTriage';
 
 const DeviceConfigEditor = lazy(() => import('../components/deviceDetail/DeviceConfigEditor'));
+const DeviceTestDataEditor = lazy(() => import('../components/deviceDetail/DeviceTestDataEditor'));
 
 const TABS = [
   { id: 'triage', label: 'Triage' },
@@ -382,6 +383,14 @@ export default function DeviceDetail() {
                   </Suspense>
                 </SectionErrorBoundary>
               </div>
+            </section>
+
+            <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+              <SectionErrorBoundary scope="device-test-data-editor">
+                <Suspense fallback={<LoadingSpinner />}>
+                  <DeviceTestDataEditor device={device} />
+                </Suspense>
+              </SectionErrorBoundary>
             </section>
 
             <section

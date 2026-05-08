@@ -106,6 +106,12 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("device_id", "device_name", "changed_by"),
     ),
     PublicEventDefinition(
+        name="test_data.updated",
+        category="device_and_node_lifecycle",
+        description="Operator-attached device test_data changed.",
+        typical_data_fields=("device_id", "device_name", "changed_by"),
+    ),
+    PublicEventDefinition(
         name="host.registered",
         category="host_and_discovery",
         description="Host registered or re-registered with the manager.",

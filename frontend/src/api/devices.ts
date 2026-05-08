@@ -15,6 +15,8 @@ import type {
   DeviceVerificationCreate,
   DeviceVerificationJob,
   DeviceVerificationUpdate,
+  DeviceTestData,
+  TestDataAuditEntry,
 } from '../types';
 import type { PaginatedResponse } from '../types/shared';
 
@@ -130,6 +132,35 @@ export async function fetchDeviceConfig(id: string): Promise<Record<string, unkn
 
 export async function fetchConfigHistory(id: string, limit = 50): Promise<ConfigAuditEntry[]> {
   const { data } = await api.get(`/devices/${id}/config/history`, { params: { limit } });
+  return data;
+}
+
+export async function getDeviceTestData(id: string): Promise<DeviceTestData> {
+  const { data } = await api.get(`/devices/${id}/test_data`);
+  return data;
+}
+
+export async function replaceDeviceTestData(
+  id: string,
+  body: DeviceTestData,
+): Promise<DeviceTestData> {
+  const { data } = await api.put(`/devices/${id}/test_data`, body);
+  return data;
+}
+
+export async function mergeDeviceTestData(
+  id: string,
+  body: DeviceTestData,
+): Promise<DeviceTestData> {
+  const { data } = await api.patch(`/devices/${id}/test_data`, body);
+  return data;
+}
+
+export async function getTestDataHistory(
+  id: string,
+  limit = 50,
+): Promise<TestDataAuditEntry[]> {
+  const { data } = await api.get(`/devices/${id}/test_data/history`, { params: { limit } });
   return data;
 }
 

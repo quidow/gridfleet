@@ -10,6 +10,7 @@ import pytest
 from .appium import (
     build_appium_options,
     get_device_config_for_driver,
+    get_device_test_data_for_driver,
 )
 from .client import GRID_URL, GridFleetClient
 from .sessions import build_error_session_payload
@@ -125,6 +126,16 @@ def device_config(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict
     """
     try:
         return get_device_config_for_driver(appium_driver, gridfleet_client=gridfleet_client)
+    except ValueError as exc:
+        pytest.skip("Could not determine device connection target from session capabilities")
+        raise RuntimeError("unreachable: pytest.skip did not raise") from exc
+
+
+@pytest.fixture
+def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict[str, Any]:
+    """Fetch operator-attached test_data after the Grid assigns a runtime connection target."""
+    try:
+        return get_device_test_data_for_driver(appium_driver, gridfleet_client=gridfleet_client)
     except ValueError as exc:
         pytest.skip("Could not determine device connection target from session capabilities")
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc

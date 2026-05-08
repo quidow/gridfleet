@@ -9,6 +9,7 @@ from app.models.device import Device
 from app.models.device_event import DeviceEvent
 from app.models.device_group import DeviceGroup, DeviceGroupMembership
 from app.models.device_reservation import DeviceReservation
+from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
 from app.models.driver_pack import (
     DriverPack,
     DriverPackFeature,
@@ -46,6 +47,7 @@ __all__ = [
     "DeviceGroup",
     "DeviceGroupMembership",
     "DeviceReservation",
+    "DeviceTestDataAuditLog",
     "DriverPack",
     "DriverPackFeature",
     "DriverPackPlatform",

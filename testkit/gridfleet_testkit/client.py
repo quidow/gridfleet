@@ -283,8 +283,8 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
-    def get_device_config(self, connection_target: str) -> dict[str, Any]:
-        """Fetch device config by looking up the current runtime connection target."""
+    def resolve_device_id_by_connection_target(self, connection_target: str) -> str:
+        """Look up the backend device id for a runtime connection target."""
         resp = httpx.get(
             f"{self.base_url}/devices",
             params={"connection_target": connection_target},
@@ -295,7 +295,11 @@ class GridFleetClient:
         devices = cast("list[dict[str, Any]]", resp.json())
         if not devices:
             raise ValueError(f"No device found with connection target: {connection_target}")
-        device_id = devices[0]["id"]
+        return cast("str", devices[0]["id"])
+
+    def get_device_config(self, connection_target: str) -> dict[str, Any]:
+        """Fetch device config by looking up the current runtime connection target."""
+        device_id = self.resolve_device_id_by_connection_target(connection_target)
         config_resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/config",
             timeout=10,
@@ -308,6 +312,38 @@ class GridFleetClient:
         """Fetch the current Appium capabilities for a specific device."""
         resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/capabilities",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def get_device_test_data(self, device_id: str) -> dict[str, Any]:
+        """Fetch operator-attached free-form test data for a specific device."""
+        resp = httpx.get(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def replace_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Replace device test_data with the supplied object."""
+        resp = httpx.put(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            json=body,
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def merge_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Deep-merge into device test_data."""
+        resp = httpx.patch(
+            f"{self.base_url}/devices/{device_id}/test_data",
+            json=body,
             timeout=10,
             auth=self._auth,
         )
