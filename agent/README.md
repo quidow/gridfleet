@@ -164,7 +164,7 @@ launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"   # restart
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `gridfleet-agent install` raises `PermissionError` on `/opt/gridfleet-agent` | Ran without `sudo` | Re-run with `sudo` and `--user "$USER"` |
-| `update` exits `1` with `agent registration pending` | Manager requires manual approval or auth | Approve in the manager UI, or pass `--manager-auth-username/--password` |
+| `install` ends with `WARNING: agent registration pending` | Manager requires manual approval or machine auth | Approve in the manager UI, or pass `--manager-auth-username` / `--manager-auth-password` |
 | `update` exits `1` with `uv not found for operator …` | Operator's `~/.local/bin/uv` missing | Run `curl -LsSf https://astral.sh/uv/install.sh \| sh` as the operator, or pass `--uv-bin` |
 | `update` exits `1` with `update drain timed out` | Sessions still active | Stop new sessions, wait, retry; do not pass `--force` (not implemented) |
 | `launchctl print` returns "Could not find service" | Wrong `gui/<uid>` (not the operator) | Run `gridfleet-agent status` to see the resolved operator uid |
