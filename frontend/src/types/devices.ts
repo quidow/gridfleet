@@ -219,6 +219,16 @@ export interface ConfigAuditEntry {
   changed_at: string;
 }
 
+export type DeviceTestData = Record<string, unknown>;
+
+export interface TestDataAuditEntry {
+  id: string;
+  previous_test_data: DeviceTestData | null;
+  new_test_data: DeviceTestData;
+  changed_by: string | null;
+  changed_at: string;
+}
+
 export interface DeviceHealth {
   pack_id: string;
   platform_id: string;
