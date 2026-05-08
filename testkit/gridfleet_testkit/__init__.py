@@ -18,7 +18,6 @@ this package because run-state sharing is consumer policy.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from . import client as _client_mod
 from .allocation import (
     AllocatedDevice,
     UnavailableInclude,
@@ -39,6 +38,8 @@ from .client import (
     NoClaimableDevicesError,
     ReserveCapabilitiesUnsupportedError,
     UnknownIncludeError,
+    _default_api_url,
+    _default_grid_url,
     register_run_cleanup,
 )
 from .sessions import build_error_session_payload
@@ -72,7 +73,9 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> object:
-    if name in {"GRID_URL", "GRIDFLEET_API_URL"}:
-        return getattr(_client_mod, name)
+def __getattr__(name: str) -> str:
+    if name == "GRID_URL":
+        return _default_grid_url()
+    if name == "GRIDFLEET_API_URL":
+        return _default_api_url()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
