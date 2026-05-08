@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import atexit
-import contextlib
 import logging
 import os
 import signal
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from types import FrameType
 
 import httpx
 
@@ -627,22 +628,57 @@ class GridFleetClient:
         return thread
 
 
+RunCleanupPolicy = Literal["complete", "cancel", "noop"]
+RunCleanup = Callable[[], None]
+
+
+def _apply_run_cleanup_policy(client: GridFleetClient, run_id: str, policy: RunCleanupPolicy) -> None:
+    if policy == "complete":
+        client.complete_run(run_id)
+    elif policy == "cancel":
+        client.cancel_run(run_id)
+
+
 def register_run_cleanup(
     client: GridFleetClient,
     run_id: str,
     heartbeat_thread: HeartbeatThread | None = None,
-) -> None:
-    """Register exit and signal handlers that release reserved devices."""
+    *,
+    on_exit: RunCleanupPolicy = "noop",
+    on_signal: RunCleanupPolicy = "cancel",
+    install_signal_handlers: bool = False,
+    chain_signals: bool = True,
+    join_timeout_sec: float | None = 5.0,
+) -> RunCleanup:
+    """Register exit cleanup for a run and optionally install signal handlers.
 
-    def cleanup(*_args: object) -> None:
+    Normal process exit defaults to ``noop`` because atexit cannot know whether
+    the run succeeded. Callers that know outcome should explicitly complete or
+    cancel the run, or pass ``on_exit=`` when legacy auto-finalization is wanted.
+    """
+
+    def cleanup(policy: RunCleanupPolicy = on_exit) -> None:
         if heartbeat_thread:
             heartbeat_thread.stop()
+            heartbeat_thread.join(timeout=join_timeout_sec)
+            if heartbeat_thread.is_alive():
+                logger.warning("Heartbeat thread for run %s did not stop within %s seconds", run_id, join_timeout_sec)
         try:
-            client.complete_run(run_id)
+            _apply_run_cleanup_policy(client, run_id, policy)
         except Exception:
-            with contextlib.suppress(Exception):
-                client.cancel_run(run_id)
+            logger.warning("Failed to apply %s cleanup policy for run %s", policy, run_id, exc_info=True)
+
+    def signal_cleanup(sig: int, frame: FrameType | None) -> None:
+        cleanup(on_signal)
+        if chain_signals:
+            previous = previous_handlers.get(signal.Signals(sig))
+            if callable(previous):
+                previous(sig, frame)
 
     atexit.register(cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
-    signal.signal(signal.SIGINT, cleanup)
+    previous_handlers: dict[signal.Signals, Any] = {}
+    if install_signal_handlers:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, signal_cleanup)
+    return cleanup
