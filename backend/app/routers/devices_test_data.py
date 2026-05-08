@@ -41,7 +41,7 @@ async def merge_test_data(
 @router.get("/{device_id}/test_data/history")
 async def get_history(
     device_id: uuid.UUID,
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     await get_device_or_404(device_id, db)

@@ -161,6 +161,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
         {
             "sessions_deleted": sessions_deleted,
             "audit_entries_deleted": audit_deleted,
+            "test_data_audit_entries_deleted": test_data_audit_deleted,
             "device_events_deleted": events_deleted,
             "host_resource_samples_deleted": host_resource_samples_deleted,
             "capacity_snapshots_deleted": capacity_snapshots_deleted,
