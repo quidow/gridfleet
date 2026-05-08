@@ -196,7 +196,11 @@ async def hydrate_reserved_device_info(
             unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))
 
     if "test_data" in includes:
-        info.test_data = device.test_data or {}
+        try:
+            info.test_data = device.test_data or {}
+        except Exception as exc:
+            info.test_data = None
+            unavailable.append(UnavailableInclude(include="test_data", reason=type(exc).__name__))
 
     info.unavailable_includes = unavailable or None
 
