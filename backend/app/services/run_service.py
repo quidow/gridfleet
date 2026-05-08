@@ -195,6 +195,9 @@ async def hydrate_reserved_device_info(
             info.live_capabilities = None
             unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))
 
+    if "test_data" in includes:
+        info.test_data = device.test_data or {}
+
     info.unavailable_includes = unavailable or None
 
 
@@ -221,10 +224,12 @@ def mark_reserved_device_info_includes_unavailable(
         info.config = None
     if "capabilities" in includes:
         info.live_capabilities = None
+    if "test_data" in includes:
+        info.test_data = None
 
     unavailable = list(info.unavailable_includes or [])
     existing = {item.include for item in unavailable}
-    for include in ("config", "capabilities"):
+    for include in ("config", "capabilities", "test_data"):
         if include in includes and include not in existing:
             unavailable.append(UnavailableInclude(include=include, reason=reason))
     info.unavailable_includes = unavailable or None

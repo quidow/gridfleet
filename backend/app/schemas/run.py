@@ -79,6 +79,7 @@ class ReservedDeviceInfo(BaseModel):
     claimed_at: str | None = None
     config: dict[str, Any] | None = None
     live_capabilities: dict[str, Any] | None = None
+    test_data: dict[str, Any] | None = None
     unavailable_includes: list[UnavailableInclude] | None = None
 
 
@@ -169,6 +170,7 @@ class ClaimResponse(BaseModel):
     claimed_at: str
     config: dict[str, Any] | None = None
     live_capabilities: dict[str, Any] | None = None
+    test_data: dict[str, Any] | None = None
     unavailable_includes: list[UnavailableInclude] | None = None
 
 
