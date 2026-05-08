@@ -18,6 +18,7 @@ this package because run-state sharing is consumer policy.
 
 from importlib.metadata import PackageNotFoundError, version
 
+from . import client as _client_mod
 from .allocation import (
     AllocatedDevice,
     UnavailableInclude,
@@ -32,8 +33,7 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import (
-    GRID_URL,
-    GRIDFLEET_API_URL,
+    CooldownResult,
     GridFleetClient,
     HeartbeatThread,
     NoClaimableDevicesError,
@@ -52,6 +52,7 @@ __all__ = [
     "GRIDFLEET_API_URL",
     "GRID_URL",
     "AllocatedDevice",
+    "CooldownResult",
     "GridFleetClient",
     "HeartbeatThread",
     "NoClaimableDevicesError",
@@ -69,3 +70,9 @@ __all__ = [
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name in {"GRID_URL", "GRIDFLEET_API_URL"}:
+        return getattr(_client_mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

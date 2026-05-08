@@ -211,3 +211,13 @@ def test_get_device_config_for_driver_uses_runtime_connection_target() -> None:
         "target": "SERIAL123",
     }
     assert client.calls == ["SERIAL123"]
+
+
+def test_create_appium_driver_reads_grid_url_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: list[tuple[str, dict[str, object]]] = []
+    install_fake_appium(monkeypatch, created)
+    monkeypatch.setenv("GRID_URL", "http://env-grid:4444")
+
+    create_appium_driver(capabilities={"platformName": "Android"})
+
+    assert created[0][0] == "http://env-grid:4444"

@@ -6,6 +6,8 @@ from typing import Any
 import httpx
 import pytest
 
+import gridfleet_testkit
+import gridfleet_testkit.client as client_mod
 from gridfleet_testkit.client import (
     GridFleetClient,
     HeartbeatThread,
@@ -314,11 +316,11 @@ def test_run_state_methods_hit_expected_endpoints(monkeypatch):
     monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
 
     client = GridFleetClient("http://manager/api")
-    client.signal_ready("run-1")
-    client.signal_active("run-1")
+    assert client.signal_ready("run-1") == {"ok": True}
+    assert client.signal_active("run-1") == {"ok": True}
     assert client.heartbeat("run-1") == {"state": "active"}
-    client.complete_run("run-1")
-    client.cancel_run("run-1")
+    assert client.complete_run("run-1") == {"ok": True}
+    assert client.cancel_run("run-1") == {"ok": True}
 
     assert calls == [
         ("POST", "http://manager/api/runs/run-1/ready", 10),
@@ -1052,15 +1054,15 @@ def test_register_run_cleanup_is_idempotent(monkeypatch):
 
 
 def test_default_auth_returns_none_when_env_unset(monkeypatch):
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", None)
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", None)
+    monkeypatch.delenv("GRIDFLEET_TESTKIT_USERNAME", raising=False)
+    monkeypatch.delenv("GRIDFLEET_TESTKIT_PASSWORD", raising=False)
 
     assert _default_auth() is None
 
 
 def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
     auth = _default_auth()
     assert isinstance(auth, httpx.BasicAuth)
@@ -1069,8 +1071,8 @@ def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
 def test_client_threads_default_auth_into_requests(monkeypatch):
     captured: dict[str, Any] = {}
 
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
     def fake_post(
         url: str,
@@ -1094,8 +1096,8 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
 def test_client_explicit_auth_overrides_env_default(monkeypatch):
     captured: dict[str, Any] = {}
 
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
-    monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", "shhh")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
 
     def fake_post(
         url: str,
@@ -1444,3 +1446,104 @@ def test_release_device_with_cooldown_returns_escalated_response(
     )
     assert result["status"] == "maintenance_escalated"
     assert result["cooldown_count"] == 3
+
+
+# --- Step 2: preparation-failure suppress test ---
+
+
+def test_report_preparation_failure_can_suppress_errors(monkeypatch, caplog):
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        raise httpx.ConnectError("network down")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://manager/api")
+
+    assert (
+        client.report_preparation_failure(
+            "run-1",
+            "dev-1",
+            "setup failed",
+            suppress_errors=True,
+        )
+        is None
+    )
+
+
+# --- Step 3: next_available_at retry test ---
+
+
+def test_claim_device_with_retry_uses_next_available_at_when_present(monkeypatch):
+    sleeps: list[int] = []
+    responses = iter(
+        [
+            DummyResponse(
+                {
+                    "error": {
+                        "message": "No unclaimed devices available in this run",
+                        "details": {
+                            "error": "no_claimable_devices",
+                            "retry_after_sec": 30,
+                            "next_available_at": "2026-05-08T12:00:05+00:00",
+                        },
+                    }
+                },
+                status_code=409,
+            ),
+            DummyResponse({"device_id": "dev-1", "claimed_by": "gw0", "claimed_at": "2026-05-08T12:00:05Z"}),
+        ]
+    )
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        params: list[tuple[str, str]] | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return next(responses)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    monkeypatch.setattr("gridfleet_testkit.client.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr("gridfleet_testkit.client.time.time", lambda: 1778241600.0)
+
+    client = GridFleetClient("http://manager/api")
+    assert client.claim_device_with_retry("run-123", worker_id="gw0", max_wait_sec=60)["device_id"] == "dev-1"
+    assert sleeps == [5]
+
+
+# --- Step 4: lazy environment tests ---
+
+
+def test_client_default_base_url_reads_environment_lazily(monkeypatch):
+    monkeypatch.setenv("GRIDFLEET_API_URL", "http://env-manager/api")
+
+    client = GridFleetClient()
+
+    assert client.base_url == "http://env-manager/api"
+
+
+def test_default_auth_reads_environment_lazily(monkeypatch):
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
+    monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "secret")
+
+    assert isinstance(_default_auth(), httpx.BasicAuth)
+
+
+def test_module_grid_url_reads_environment_lazily(monkeypatch):
+    monkeypatch.setenv("GRID_URL", "http://lazy-grid:4444")
+    assert gridfleet_testkit.GRID_URL == "http://lazy-grid:4444"
+    assert client_mod.GRID_URL == "http://lazy-grid:4444"
+
+
+def test_module_api_url_reads_environment_lazily(monkeypatch):
+    monkeypatch.setenv("GRIDFLEET_API_URL", "http://lazy-manager/api")
+    assert gridfleet_testkit.GRIDFLEET_API_URL == "http://lazy-manager/api"
+    assert client_mod.GRIDFLEET_API_URL == "http://lazy-manager/api"

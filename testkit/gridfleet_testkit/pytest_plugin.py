@@ -12,11 +12,17 @@ from .appium import (
     get_device_config_for_driver,
     get_device_test_data_for_driver,
 )
-from .client import GRID_URL, GridFleetClient
+from .client import GridFleetClient, _default_grid_url
 from .sessions import build_error_session_payload
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+
+def __getattr__(name: str) -> str:
+    if name == "GRID_URL":
+        return _default_grid_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _normalize_usage_error_message(message: str) -> str:
@@ -61,7 +67,7 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
     from appium import webdriver  # noqa: PLC0415
 
     try:
-        driver = webdriver.Remote(GRID_URL, options=options)
+        driver = webdriver.Remote(_default_grid_url(), options=options)
     except Exception as exc:
         # Driver creation failed before a Grid session was established (e.g.
         # SessionNotCreatedException). Register a device-less error session so the

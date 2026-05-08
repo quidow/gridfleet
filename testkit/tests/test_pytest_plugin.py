@@ -288,3 +288,30 @@ def test_private_session_helpers_are_not_exported() -> None:
     assert not hasattr(pytest_plugin, "_report_session_status")
     assert not hasattr(pytest_plugin, "_register_error_session")
     assert not hasattr(pytest_plugin, "_build_error_session_payload")
+
+
+def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
+    """appium_driver uses the current GRID_URL env, not a stale import-time value."""
+    created_drivers: list[tuple[str, dict[str, object], object]] = []
+    install_fake_appium(monkeypatch, created_drivers)
+    monkeypatch.setenv("GRID_URL", "http://lazy-plugin-grid:4444")
+
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    request = FakeRequest(
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+        },
+        test_name="test_lazy",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client)
+    next(generator)
+
+    assert created_drivers[0][0] == "http://lazy-plugin-grid:4444"
+
+    with pytest.raises(StopIteration):
+        next(generator)
