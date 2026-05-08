@@ -90,6 +90,8 @@ async def get_android_properties(adb: str, udid: str) -> dict[str, str]:
         "hardware": "ro.hardware",
         "serial_number": "ro.serialno",
         "boot_serial": "ro.boot.serialno",
+        "oem_key": "ro.oem.key1",
+        "brand": "ro.product.brand",
     }
     values = [await run_cmd([adb, "-s", udid, "shell", "getprop", prop]) for prop in prop_keys.values()]
     return {key: value for key, value in zip(prop_keys.keys(), values, strict=True) if value}

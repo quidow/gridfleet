@@ -107,7 +107,7 @@ async def test_normalize_firetv_keeps_model_code_as_model_number(monkeypatch: py
     )
 
     assert result.os_version == "6.0"
-    assert result.model == "Fire TV Stick 4K"
+    assert result.model == "Fire TV Stick 4K (1st Gen)"
     assert result.model_number == "AFTMM"
     assert result.software_versions == {
         "fire_os": "Fire OS 6.7.1.1",

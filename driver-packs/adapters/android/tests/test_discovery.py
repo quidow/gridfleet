@@ -70,9 +70,9 @@ async def test_discover_firetv_keeps_model_code_as_model_number(mock_props: Asyn
 
     assert len(candidates) == 1
     candidate = candidates[0]
-    assert candidate.suggested_name == "Fire TV Stick 4K"
+    assert candidate.suggested_name == "Fire TV Stick 4K (1st Gen)"
     assert candidate.detected_properties["os_version"] == "6.0"
-    assert candidate.detected_properties["model"] == "Fire TV Stick 4K"
+    assert candidate.detected_properties["model"] == "Fire TV Stick 4K (1st Gen)"
     assert candidate.detected_properties["model_number"] == "AFTMM"
     assert candidate.detected_properties["software_versions"] == {
         "fire_os": "Fire OS 6.7.1.1",
