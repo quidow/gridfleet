@@ -1016,6 +1016,41 @@ def test_register_run_cleanup_warns_when_heartbeat_does_not_join(monkeypatch, ca
     assert "Heartbeat thread for run run-stuck did not stop" in caplog.text
 
 
+def test_register_run_cleanup_is_idempotent(monkeypatch):
+    registered: list[Any] = []
+    installed: dict[signal.Signals, Any] = {}
+
+    monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
+    monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_DFL)
+    monkeypatch.setattr("gridfleet_testkit.client.signal.signal", lambda sig, fn: installed.__setitem__(sig, fn))
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def cancel_run(self, run_id: str) -> dict[str, Any]:
+            self.calls.append(f"cancel:{run_id}")
+            return {"state": "cancelled"}
+
+        def complete_run(self, run_id: str) -> dict[str, Any]:
+            self.calls.append(f"complete:{run_id}")
+            return {"state": "completed"}
+
+    client = FakeClient()
+    register_run_cleanup(
+        client,
+        "run-idem",
+        install_signal_handlers=True,
+        on_exit="complete",
+        on_signal="cancel",
+    )
+
+    installed[signal.SIGTERM](int(signal.SIGTERM), None)
+    registered[0]()
+
+    assert client.calls == ["cancel:run-idem"]
+
+
 def test_default_auth_returns_none_when_env_unset(monkeypatch):
     monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_USERNAME", None)
     monkeypatch.setattr("gridfleet_testkit.client.GRIDFLEET_TESTKIT_PASSWORD", None)

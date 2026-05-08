@@ -657,7 +657,14 @@ def register_run_cleanup(
     cancel the run, or pass ``on_exit=`` when legacy auto-finalization is wanted.
     """
 
+    called = False
+    previous_handlers: dict[signal.Signals, Any] = {}
+
     def cleanup(policy: RunCleanupPolicy = on_exit) -> None:
+        nonlocal called
+        if called:
+            return
+        called = True
         if heartbeat_thread:
             heartbeat_thread.stop()
             heartbeat_thread.join(timeout=join_timeout_sec)
@@ -676,7 +683,6 @@ def register_run_cleanup(
                 previous(sig, frame)
 
     atexit.register(cleanup)
-    previous_handlers: dict[signal.Signals, Any] = {}
     if install_signal_handlers:
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous_handlers[sig] = signal.getsignal(sig)
