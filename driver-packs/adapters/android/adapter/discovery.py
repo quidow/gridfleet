@@ -18,9 +18,9 @@ def _platform_from_props(props: dict[str, str]) -> tuple[str, str]:
     android_version = props.get("android_version", "unknown")
     if fireos_version:
         return "firetv", fireos_version
-    characteristics = props.get("characteristics", "")
+    characteristics = props.get("characteristics", "").lower()
     oem_key = props.get("oem_key", "")
-    if "tv" in characteristics or "mbx" in characteristics or oem_key.startswith("ATV"):
+    if "tv" in characteristics or "mbx" in characteristics or oem_key.upper().startswith("ATV"):
         return "android_tv", android_version
     return "android_mobile", android_version
 
