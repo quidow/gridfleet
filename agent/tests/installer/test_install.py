@@ -126,7 +126,9 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     ]
 
 
-def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: Path) -> None:
+def test_install_no_start_aligns_linux_writable_paths_to_service_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
         config_dir=str(tmp_path / "etc/gridfleet-agent"),
@@ -137,6 +139,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: 
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     ownership: list[tuple[Path, str]] = []
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
 
     install_no_start(
         config,
@@ -618,7 +621,7 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path, os
     assert captured["auth"] == ("ops", "secret")
 
 
-def test_install_no_start_chowns_on_darwin(tmp_path: Path) -> None:
+def test_install_no_start_chowns_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     chown_calls: list[tuple[Path, str]] = []
 
     def fake_chown(path: Path, login: str) -> None:
@@ -631,6 +634,7 @@ def test_install_no_start_chowns_on_darwin(tmp_path: Path) -> None:
         user="ops",
     )
     discovery = ToolDiscovery()
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
     install_no_start(
         config,
         discovery,
