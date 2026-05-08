@@ -332,7 +332,7 @@ def test_gridfleet_worker_id_defaults_to_controller() -> None:
     assert pytest_plugin._gridfleet_worker_id(request) == "controller"
 
 
-def test_gridfleet_worker_id_fixture_resolves_by_public_name(pytester) -> None:
+def test_gridfleet_worker_id_fixture_resolves_by_public_name(pytester: pytest.Pytester) -> None:
     """Regression: gridfleet_worker_id is registered under the assignment name, not the
     private function name _gridfleet_worker_id.  pytest.fixture(fn) uses the attribute
     name from FixtureManager.parsefactories, so consumers requesting gridfleet_worker_id

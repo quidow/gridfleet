@@ -1569,10 +1569,13 @@ def test_register_run_cleanup_chains_sig_dfl_by_re_raising(monkeypatch):
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
     monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_DFL)
-    monkeypatch.setattr(
-        "gridfleet_testkit.client.signal.signal",
-        lambda sig, fn: (installed.__setitem__(sig, fn), re_set.append((sig, fn)))[0],
-    )
+
+    def fake_signal(sig: signal.Signals, fn: object) -> object:
+        installed[sig] = fn
+        re_set.append((int(sig), fn))
+        return None
+
+    monkeypatch.setattr("gridfleet_testkit.client.signal.signal", fake_signal)
     monkeypatch.setattr("gridfleet_testkit.client.signal.raise_signal", lambda sig: raises.append(sig))
 
     class FakeClient:
