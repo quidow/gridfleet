@@ -38,7 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--start", action="store_true", help="Enable and start the service after writing files.")
     install.add_argument("--manager-url", default="http://localhost:8000")
     install.add_argument("--port", type=int, default=agent_settings.agent_port)
-    install.add_argument("--user", default=None)
+    install.add_argument("--user", default=None, help="Operator login that should own the agent install.")
     install.add_argument("--manager-auth-username", default=None)
     install.add_argument("--manager-auth-password", default=None)
     install.add_argument("--api-auth-username", default=None)
@@ -51,17 +51,29 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--enable-web-terminal", action="store_true")
     install.add_argument("--terminal-token", default=None)
 
-    subparsers.add_parser("status", help="Show local GridFleet agent installation and health status.")
+    status_parser = subparsers.add_parser("status", help="Show local GridFleet agent installation and health status.")
+    status_parser.add_argument(
+        "--user", default=None, help="Operator login override; defaults to SUDO_USER or current user."
+    )
 
     uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall the GridFleet agent host service.")
     uninstall_parser.add_argument("--yes", action="store_true", help="Confirm removal of service and agent files.")
     uninstall_parser.add_argument("--keep-config", action="store_true", help="Leave /etc/gridfleet-agent in place.")
     uninstall_parser.add_argument("--keep-agent-dir", action="store_true", help="Leave /opt/gridfleet-agent in place.")
+    uninstall_parser.add_argument(
+        "--user", default=None, help="Operator login override; defaults to SUDO_USER or current user."
+    )
 
     update_parser = subparsers.add_parser("update", help="Upgrade the installed GridFleet agent package and restart.")
     update_parser.add_argument("--to", default=None, help="Upgrade to an exact gridfleet-agent version.")
     update_parser.add_argument(
         "--dry-run", action="store_true", help="Render the update plan without changing anything."
+    )
+    update_parser.add_argument(
+        "--user", default=None, help="Operator login override; defaults to SUDO_USER or current user."
+    )
+    update_parser.add_argument(
+        "--uv-bin", default=None, help="Explicit path to uv binary to use for upgrade (advanced)."
     )
 
     return parser

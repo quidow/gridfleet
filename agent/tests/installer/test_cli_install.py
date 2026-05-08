@@ -313,6 +313,36 @@ def test_install_parser_accepts_api_auth_flags() -> None:
     assert ns.api_auth_password == "secret"
 
 
+def test_status_accepts_user_flag() -> None:
+    from agent_app.cli import _build_parser
+
+    args = _build_parser().parse_args(["status", "--user", "alice"])
+    assert args.command == "status"
+    assert args.user == "alice"
+
+
+def test_uninstall_accepts_user_flag() -> None:
+    from agent_app.cli import _build_parser
+
+    args = _build_parser().parse_args(["uninstall", "--yes", "--user", "alice"])
+    assert args.user == "alice"
+
+
+def test_update_accepts_user_and_uv_bin() -> None:
+    from agent_app.cli import _build_parser
+
+    args = _build_parser().parse_args(["update", "--user", "alice", "--uv-bin", "/opt/uv/bin/uv"])
+    assert args.user == "alice"
+    assert args.uv_bin == "/opt/uv/bin/uv"
+
+
+def test_install_user_default_is_none_until_resolved() -> None:
+    from agent_app.cli import _build_parser
+
+    args = _build_parser().parse_args(["install", "--start", "--manager-url", "http://m"])
+    assert args.user is None
+
+
 def test_install_main_threads_api_auth_into_install_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """`cli.main` must construct an `InstallConfig` carrying the API auth fields."""
     from agent_app import cli
