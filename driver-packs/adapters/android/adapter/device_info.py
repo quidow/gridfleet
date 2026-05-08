@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 _FIRE_TV_MODEL_NAMES: dict[str, str] = {
-    "AFTMM": "Fire TV Stick 4K",
-    "mantis": "Fire TV Stick 4K",
-    "FIRETVSTICK2018": "Fire TV Stick 4K",
+    "AFTB": "Fire TV (1st Gen)",
+    "AFTS": "Fire TV (2nd Gen)",
+    "AFTN": "Fire TV (3rd Gen)",
+    "AFTM": "Fire TV Stick (1st Gen)",
+    "AFTT": "Fire TV Stick (2nd Gen)",
+    "AFTSSS": "Fire TV Stick (3rd Gen)",
+    "AFTSS": "Fire TV Stick Lite (3rd Gen)",
+    "AFTMM": "Fire TV Stick 4K (1st Gen)",
+    "AFTKM": "Fire TV Stick 4K (2nd Gen)",
+    "AFTKA": "Fire TV Stick 4K Max (1st Gen)",
+    "AFTKRT": "Fire TV Stick 4K Max (2nd Gen)",
+    "AFTMA08C15": "Fire TV Stick 4K Plus",
+    "AFTA": "Fire TV Cube (1st Gen)",
+    "AFTR": "Fire TV Cube (2nd Gen)",
+    "AFTGAZL": "Fire TV Cube (3rd Gen)",
+    "B0CQN8PP9G": "Fire TV Stick HD",
 }
 
 
@@ -40,7 +53,7 @@ def model_name(props: dict[str, str]) -> str:
         value = props.get(key, "")
         if value and value != model_number(props):
             return value
-    return ""
+    return props.get("product_model", "")
 
 
 def software_versions(props: dict[str, str]) -> dict[str, str]:
