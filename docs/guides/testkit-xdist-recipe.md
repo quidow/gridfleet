@@ -30,12 +30,17 @@ export GRIDFLEET_RUN_NAME="${CI_JOB_NAME:-local-xdist}"
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pytest import StashKey
 
 from gridfleet_testkit import GridFleetClient, register_run_cleanup
 
+GRIDFLEET_RUN: StashKey[dict] = StashKey()
+GRIDFLEET_CLIENT: StashKey[GridFleetClient] = StashKey()
+GRIDFLEET_CLEANUP: StashKey[Callable[[], None]] = StashKey()
 
 RUN_STATE_PATH = Path(
     os.environ.get(
@@ -50,8 +55,8 @@ RUN_STATE_PATH = Path(
 
 def pytest_configure(config: pytest.Config) -> None:
     if hasattr(config, "workerinput"):
-        config._gridfleet_run = json.loads(RUN_STATE_PATH.read_text())
-        config._gridfleet_client = GridFleetClient()
+        config.stash[GRIDFLEET_RUN] = json.loads(RUN_STATE_PATH.read_text())
+        config.stash[GRIDFLEET_CLIENT] = GridFleetClient()
         return
 
     client = GridFleetClient()
@@ -63,18 +68,34 @@ def pytest_configure(config: pytest.Config) -> None:
     RUN_STATE_PATH.write_text(json.dumps(run))
 
     heartbeat = client.start_heartbeat(run["id"])
-    register_run_cleanup(client, run["id"], heartbeat)
+    cleanup = register_run_cleanup(client, run["id"], heartbeat)
     client.signal_ready(run["id"])
 
-    config._gridfleet_run = run
-    config._gridfleet_client = client
+    config.stash[GRIDFLEET_RUN] = run
+    config.stash[GRIDFLEET_CLIENT] = client
+    config.stash[GRIDFLEET_CLEANUP] = cleanup
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
     config = session.config
     if hasattr(config, "workerinput"):
         return
-    config._gridfleet_client.signal_active(config._gridfleet_run["id"])
+    config.stash[GRIDFLEET_CLIENT].signal_active(config.stash[GRIDFLEET_RUN]["id"])
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    config = session.config
+    if hasattr(config, "workerinput"):
+        return
+    run_id = config.stash[GRIDFLEET_RUN]["id"]
+    client = config.stash[GRIDFLEET_CLIENT]
+    if exitstatus == 0:
+        client.complete_run(run_id)
+    else:
+        client.cancel_run(run_id)
+    cleanup = config.stash.get(GRIDFLEET_CLEANUP, None)
+    if cleanup is not None:
+        cleanup()
 ```
 
 Tune this:
@@ -83,7 +104,9 @@ Tune this:
 - Set `GRIDFLEET_RUN_STATE_PATH` explicitly in CI when your launcher controls shared workspace paths.
 - The `os.getpid()` fallback prevents non-xdist tempfile collisions; it is not the worker-sharing contract.
 - The controller writes the run-state file once before workers read it. Do not write run state from workers.
-- This recipe attaches `_gridfleet_run` and `_gridfleet_client` to `pytest.Config` for brevity. For stricter suites, prefer `config.stash` on pytest 7+.
+- Use `config.stash` with typed `StashKey` instances rather than private `config._...` attributes for all new recipe state. This avoids collisions with pytest internals and is the supported pattern on pytest 7+.
+- `register_run_cleanup` returns the cleanup callable. Store it in the stash so `pytest_sessionfinish` can call it after the explicit complete/cancel.
+- Explicit `complete_run`/`cancel_run` in `pytest_sessionfinish` is preferred over `on_exit=` because `exitstatus` gives a known outcome. The atexit registered by `register_run_cleanup` uses `on_exit="noop"` by default and only stops the heartbeat thread.
 
 ## Per-Test Claim And Release
 
@@ -131,8 +154,8 @@ def _is_device_level(exc: Exception) -> bool:
 @pytest.fixture
 def appium_session(request: pytest.FixtureRequest):
     config = request.config
-    run = config._gridfleet_run
-    client = config._gridfleet_client
+    run = config.stash[GRIDFLEET_RUN]
+    client = config.stash[GRIDFLEET_CLIENT]
     worker_id = getattr(config, "workerinput", {}).get("workerid", "controller")
 
     with claim_for_test(client, run["id"], worker_id) as allocated:

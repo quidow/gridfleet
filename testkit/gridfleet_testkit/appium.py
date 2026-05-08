@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-from .client import GRID_URL, GridFleetClient
+from .client import GridFleetClient, _default_grid_url
 
 
 def _catalog_payload(catalog_client: Any | None) -> dict[str, Any]:
@@ -127,7 +127,7 @@ def create_appium_driver(
     platform_id: str | None = None,
     capabilities: Mapping[str, Any] | None = None,
     test_name: str | None = None,
-    grid_url: str = GRID_URL,
+    grid_url: str | None = None,
     catalog_client: Any | None = None,
 ) -> Any:
     """Create an Appium remote driver through Selenium Grid."""
@@ -142,7 +142,7 @@ def create_appium_driver(
         test_name=test_name,
         catalog_client=catalog_client,
     )
-    return webdriver.Remote(grid_url, options=options)
+    return webdriver.Remote(grid_url or _default_grid_url(), options=options)
 
 
 def get_connection_target_from_driver(driver: Any) -> str:

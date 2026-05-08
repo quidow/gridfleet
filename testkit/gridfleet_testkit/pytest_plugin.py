@@ -12,11 +12,17 @@ from .appium import (
     get_device_config_for_driver,
     get_device_test_data_for_driver,
 )
-from .client import GRID_URL, GridFleetClient
+from .client import GridFleetClient, _default_grid_url
 from .sessions import build_error_session_payload
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+
+def __getattr__(name: str) -> str:
+    if name == "GRID_URL":
+        return _default_grid_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _normalize_usage_error_message(message: str) -> str:
@@ -61,7 +67,7 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
     from appium import webdriver  # noqa: PLC0415
 
     try:
-        driver = webdriver.Remote(GRID_URL, options=options)
+        driver = webdriver.Remote(_default_grid_url(), options=options)
     except Exception as exc:
         # Driver creation failed before a Grid session was established (e.g.
         # SessionNotCreatedException). Register a device-less error session so the
@@ -139,3 +145,16 @@ def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> d
     except ValueError as exc:
         pytest.skip("Could not determine device connection target from session capabilities")
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
+
+
+def _gridfleet_worker_id(request: pytest.FixtureRequest) -> str:
+    """Return pytest-xdist worker id, or controller for non-worker processes."""
+    workerinput = getattr(request.config, "workerinput", None)
+    if isinstance(workerinput, dict):
+        value = workerinput.get("workerid")
+        if isinstance(value, str) and value:
+            return value
+    return "controller"
+
+
+gridfleet_worker_id = pytest.fixture(_gridfleet_worker_id)

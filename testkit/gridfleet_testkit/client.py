@@ -3,25 +3,41 @@
 from __future__ import annotations
 
 import atexit
-import contextlib
 import logging
 import os
 import signal
 import threading
 import time
+from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from types import FrameType
 
 import httpx
 
-GRID_URL = os.getenv("GRID_URL", "http://localhost:4444")
-GRIDFLEET_API_URL = os.getenv("GRIDFLEET_API_URL", "http://localhost:8000/api")
-GRIDFLEET_TESTKIT_USERNAME = os.getenv("GRIDFLEET_TESTKIT_USERNAME")
-GRIDFLEET_TESTKIT_PASSWORD = os.getenv("GRIDFLEET_TESTKIT_PASSWORD")
+DEFAULT_GRID_URL = "http://localhost:4444"
+DEFAULT_GRIDFLEET_API_URL = "http://localhost:8000/api"
 
 logger = logging.getLogger("gridfleet_testkit")
+
+
+def _default_grid_url() -> str:
+    return os.getenv("GRID_URL", DEFAULT_GRID_URL)
+
+
+def _default_api_url() -> str:
+    return os.getenv("GRIDFLEET_API_URL", DEFAULT_GRIDFLEET_API_URL)
+
+
+def __getattr__(name: str) -> str:
+    if name == "GRID_URL":
+        return _default_grid_url()
+    if name == "GRIDFLEET_API_URL":
+        return _default_api_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class CooldownSetResult(TypedDict):
@@ -51,8 +67,8 @@ CooldownResult = CooldownSetResult | CooldownEscalatedResult
 
 def _default_auth() -> httpx.BasicAuth | None:
     """Build httpx Basic auth from env vars, or return None when unset."""
-    username = GRIDFLEET_TESTKIT_USERNAME
-    password = GRIDFLEET_TESTKIT_PASSWORD
+    username = os.getenv("GRIDFLEET_TESTKIT_USERNAME")
+    password = os.getenv("GRIDFLEET_TESTKIT_PASSWORD")
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
@@ -175,6 +191,20 @@ def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> Non
     logger.warning("Failed to %s with GridFleet: %s", operation, exc)
 
 
+def _parse_next_available_delay(next_available_at: str | None) -> int | None:
+    if not next_available_at:
+        return None
+    value = next_available_at.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delay = int(parsed.timestamp() - time.time())
+    return max(1, delay) if delay > 0 else 1
+
+
 class HeartbeatThread(threading.Thread):
     """Background thread that sends periodic heartbeat pings for an active test run."""
 
@@ -217,10 +247,10 @@ class GridFleetClient:
 
     def __init__(
         self,
-        base_url: str = GRIDFLEET_API_URL,
+        base_url: str | None = None,
         auth: httpx.BasicAuth | None = None,
     ):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or _default_api_url()).rstrip("/")
         self._auth = auth if auth is not None else _default_auth()
 
     def list_devices(
@@ -392,19 +422,23 @@ class GridFleetClient:
         _raise_for_status(resp, run_id="")
         return cast("dict[str, Any]", resp.json())
 
-    def signal_ready(self, run_id: str) -> None:
-        httpx.post(
+    def signal_ready(self, run_id: str) -> dict[str, Any]:
+        resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/ready",
             timeout=10,
             auth=self._auth,
-        ).raise_for_status()
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
-    def signal_active(self, run_id: str) -> None:
-        httpx.post(
+    def signal_active(self, run_id: str) -> dict[str, Any]:
+        resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/active",
             timeout=10,
             auth=self._auth,
-        ).raise_for_status()
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
     def heartbeat(self, run_id: str) -> dict[str, Any]:
         resp = httpx.post(
@@ -495,7 +529,8 @@ class GridFleetClient:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise
-                time.sleep(min(exc.retry_after_sec, max(1, int(remaining))))
+                sleep_for = _parse_next_available_delay(exc.next_available_at) or exc.retry_after_sec
+                time.sleep(min(sleep_for, max(1, int(remaining))))
 
     def report_preparation_failure(
         self,
@@ -503,14 +538,20 @@ class GridFleetClient:
         device_id: str,
         message: str,
         source: str = "ci_preparation",
-    ) -> dict[str, Any]:
-        resp = httpx.post(
-            f"{self.base_url}/runs/{run_id}/devices/{device_id}/preparation-failed",
-            json={"message": message, "source": source},
-            timeout=10,
-            auth=self._auth,
-        )
-        resp.raise_for_status()
+        *,
+        suppress_errors: bool = False,
+    ) -> dict[str, Any] | None:
+        try:
+            resp = httpx.post(
+                f"{self.base_url}/runs/{run_id}/devices/{device_id}/preparation-failed",
+                json={"message": message, "source": source},
+                timeout=10,
+                auth=self._auth,
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            _raise_or_warn("report preparation failure", suppress_errors, exc)
+            return None
         return cast("dict[str, Any]", resp.json())
 
     def register_session(
@@ -607,19 +648,23 @@ class GridFleetClient:
             suppress_errors=suppress_errors,
         )
 
-    def complete_run(self, run_id: str) -> None:
-        httpx.post(
+    def complete_run(self, run_id: str) -> dict[str, Any]:
+        resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/complete",
             timeout=10,
             auth=self._auth,
-        ).raise_for_status()
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
-    def cancel_run(self, run_id: str) -> None:
-        httpx.post(
+    def cancel_run(self, run_id: str) -> dict[str, Any]:
+        resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/cancel",
             timeout=10,
             auth=self._auth,
-        ).raise_for_status()
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
 
     def start_heartbeat(self, run_id: str, interval: int = 30) -> HeartbeatThread:
         thread = HeartbeatThread(self.base_url, run_id, interval, auth=self._auth)
@@ -627,22 +672,71 @@ class GridFleetClient:
         return thread
 
 
+RunCleanupPolicy = Literal["complete", "cancel", "noop"]
+RunCleanup = Callable[[], None]
+
+
+def _apply_run_cleanup_policy(client: GridFleetClient, run_id: str, policy: RunCleanupPolicy) -> None:
+    if policy == "complete":
+        client.complete_run(run_id)
+    elif policy == "cancel":
+        client.cancel_run(run_id)
+
+
 def register_run_cleanup(
     client: GridFleetClient,
     run_id: str,
     heartbeat_thread: HeartbeatThread | None = None,
-) -> None:
-    """Register exit and signal handlers that release reserved devices."""
+    *,
+    on_exit: RunCleanupPolicy = "noop",
+    on_signal: RunCleanupPolicy = "cancel",
+    install_signal_handlers: bool = False,
+    chain_signals: bool = True,
+    join_timeout_sec: float | None = 5.0,
+) -> RunCleanup:
+    """Register exit cleanup for a run and optionally install signal handlers.
 
-    def cleanup(*_args: object) -> None:
+    Normal process exit defaults to ``noop`` because atexit cannot know whether
+    the run succeeded. Callers that know outcome should explicitly complete or
+    cancel the run, or pass ``on_exit=`` when legacy auto-finalization is wanted.
+    """
+
+    called_lock = threading.Lock()
+    called = False
+    previous_handlers: dict[signal.Signals, Any] = {}
+
+    def cleanup(policy: RunCleanupPolicy = on_exit) -> None:
+        nonlocal called
+        with called_lock:
+            if called:
+                return
+            called = True
         if heartbeat_thread:
             heartbeat_thread.stop()
+            heartbeat_thread.join(timeout=join_timeout_sec)
+            if heartbeat_thread.is_alive():
+                logger.warning("Heartbeat thread for run %s did not stop within %s seconds", run_id, join_timeout_sec)
         try:
-            client.complete_run(run_id)
+            _apply_run_cleanup_policy(client, run_id, policy)
         except Exception:
-            with contextlib.suppress(Exception):
-                client.cancel_run(run_id)
+            logger.warning("Failed to apply %s cleanup policy for run %s", policy, run_id, exc_info=True)
+
+    def signal_cleanup(sig: int, frame: FrameType | None) -> None:
+        cleanup(on_signal)
+        if not chain_signals:
+            return
+        previous = previous_handlers.get(signal.Signals(sig))
+        if callable(previous):
+            previous(sig, frame)
+        elif previous is signal.SIG_DFL:
+            # Restore default and re-raise so the kernel applies it (e.g. SIGTERM terminates).
+            signal.signal(sig, signal.SIG_DFL)
+            signal.raise_signal(sig)
+        # SIG_IGN: do nothing (intentional drop).
 
     atexit.register(cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
-    signal.signal(signal.SIGINT, cleanup)
+    if install_signal_handlers:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, signal_cleanup)
+    return cleanup

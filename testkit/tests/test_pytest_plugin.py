@@ -8,6 +8,9 @@ import pytest
 
 from gridfleet_testkit import pytest_plugin
 
+# Required for the pytester fixture (sub-pytest session runner).
+pytest_plugins = ("pytester",)
+
 
 class FakeOptions:
     def __init__(self):
@@ -288,3 +291,62 @@ def test_private_session_helpers_are_not_exported() -> None:
     assert not hasattr(pytest_plugin, "_report_session_status")
     assert not hasattr(pytest_plugin, "_register_error_session")
     assert not hasattr(pytest_plugin, "_build_error_session_payload")
+
+
+def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
+    """appium_driver uses the current GRID_URL env, not a stale import-time value."""
+    created_drivers: list[tuple[str, dict[str, object], object]] = []
+    install_fake_appium(monkeypatch, created_drivers)
+    monkeypatch.setenv("GRID_URL", "http://lazy-plugin-grid:4444")
+
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    request = FakeRequest(
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+        },
+        test_name="test_lazy",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client)
+    next(generator)
+
+    assert created_drivers[0][0] == "http://lazy-plugin-grid:4444"
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
+def test_gridfleet_worker_id_returns_xdist_worker_id() -> None:
+    request = types.SimpleNamespace(config=types.SimpleNamespace(workerinput={"workerid": "gw2"}))
+
+    assert pytest_plugin._gridfleet_worker_id(request) == "gw2"
+
+
+def test_gridfleet_worker_id_defaults_to_controller() -> None:
+    request = types.SimpleNamespace(config=types.SimpleNamespace())
+
+    assert pytest_plugin._gridfleet_worker_id(request) == "controller"
+
+
+def test_gridfleet_worker_id_fixture_resolves_by_public_name(pytester: pytest.Pytester) -> None:
+    """Regression: gridfleet_worker_id is registered under the assignment name, not the
+    private function name _gridfleet_worker_id.  pytest.fixture(fn) uses the attribute
+    name from FixtureManager.parsefactories, so consumers requesting gridfleet_worker_id
+    must be able to resolve it through pytest's normal fixture-resolution path.
+
+    The plugin is already installed via the `pytest11` entry-point so the subprocess
+    sub-session picks it up automatically — no extra pytest_plugins= line needed.
+    """
+    pytester.makepyfile(
+        test_uses_public_name="""
+        def test_x(gridfleet_worker_id):
+            assert isinstance(gridfleet_worker_id, str)
+        """
+    )
+    # Use subprocess mode so the sub-session has a clean, isolated plugin registry.
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=1)

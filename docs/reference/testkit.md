@@ -7,9 +7,11 @@
 - Supported public package: `gridfleet-testkit`
 - Supported import root: `gridfleet_testkit`
 - Supported pytest plugin: `gridfleet_testkit.pytest_plugin`
-- Supported public Appium helpers: `build_appium_options`, `create_appium_driver`
-- Supported direct-driver helpers: `get_connection_target_from_driver`, `get_device_config_for_driver`
+- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `device_config`, `device_test_data`, `gridfleet_worker_id`
+- Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_connection_target_from_driver`, `get_device_config_for_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
+- Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `CooldownResult`, `build_error_session_payload`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`
+- Supported public exceptions: `NoClaimableDevicesError`, `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
 - Manual hardware examples live under `testkit/examples/`
 
@@ -88,9 +90,12 @@ The plugin:
 - creates an Appium session through `GRID_URL`
 - injects `gridfleet:testName` with the pytest test name
 - reports final session status back to `GRIDFLEET_API_URL`
-- registers driver-creation setup failures as device-less terminal error sessions, including requested lane metadata and the raw attempted capabilities map
 - exposes `device_config` for post-session device-config lookup using live `appium:udid`
+- exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
+- exposes `gridfleet_worker_id` which returns the pytest-xdist worker id, or `"controller"` for non-worker processes
 - relies on manager-owned session target isolation for driver-sensitive ports and XCUITest build paths on managed nodes
+
+If Appium driver creation fails before a Grid session exists, the pytest fixture registers a device-less terminal error session with an `error-<uuid>` session id, attempted capabilities, requested pack/platform metadata when available, and exception details, then re-raises the original exception. These rows make setup failures visible in the GridFleet Sessions view.
 
 ## Direct Appium Usage
 
@@ -125,26 +130,81 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 
 | Helper | Purpose |
 | --- | --- |
+| `GridFleetClient.list_devices(*, pack_id=None, status=None, host_id=None, ...)` | List devices using backend keyword filters (pack_id, platform_id, status, host_id, connection_target, tags, ...) |
+| `GridFleetClient.get_device(device_id)` | Fetch one full device detail row by backend device id |
 | `GridFleetClient.get_device_config(connection_target)` | Look up a device by active connection target, then fetch its config |
+| `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
+| `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
+| `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
+| `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |
+| `GridFleetClient.resolve_device_id_by_connection_target(connection_target)` | Resolve the backend device id for a runtime connection target |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
+| `GridFleetClient.claim_device(run_id, worker_id=...)` | Claim one reserved device for a worker |
+| `GridFleetClient.claim_device_with_retry(run_id, worker_id=..., max_wait_sec=300)` | Claim one reserved device, sleeping according to server `Retry-After` responses |
+| `GridFleetClient.release_device(run_id, device_id=..., worker_id=...)` | Release a worker claim without cooldown |
+| `GridFleetClient.release_device_safe(run_id, device_id=..., worker_id=...)` | Return `True` when release is accepted, `False` when the run is gone or the claim is already unclaimed, and raise on wrong-worker conflicts or unsafe errors |
+| `GridFleetClient.release_device_with_cooldown(run_id, device_id=..., worker_id=..., reason=..., ttl_seconds=...)` | Release a worker claim and keep that run from reclaiming the device until cooldown expires |
 | `GridFleetClient.signal_ready(run_id)` | Move a run to `ready` |
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
+| `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
+| `GridFleetClient.register_session_from_driver(driver, fields)` | Extract session id and capabilities from an Appium driver and register the session |
+| `GridFleetClient.update_session_status(session_id, status)` | Report final session status |
 | `GridFleetClient.complete_run(run_id)` | Complete a run |
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
-| `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit`/signal cleanup that completes or cancels a run |
+| `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
+| `hydrate_allocated_device(claim_response, run_id, client)` | Combine a claim response with optional device config and live capabilities |
+| `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
+| `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
 Public Appium helpers:
 
 | Helper | Purpose |
 | --- | --- |
-| `build_appium_options(pack_id, platform_id, capabilities=None, test_name=None)` | Build an Appium options object for an explicit driver-pack platform |
-| `create_appium_driver(pack_id, platform_id, capabilities=None, test_name=None, grid_url=GRID_URL)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
+| `build_appium_options(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, catalog_client=None)` | Build an Appium options object for an explicit driver-pack platform |
+| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
 | `get_connection_target_from_driver(driver)` | Read the active connection target from a live Appium session |
 | `get_device_config_for_driver(driver, gridfleet_client=None)` | Fetch device config for a live Appium session using its active connection target |
+| `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
+
+## Run Cleanup Policy
+
+`register_run_cleanup(...)` registers an atexit cleanup callable and returns it. By default it stops the heartbeat thread but does not complete or cancel the run, because process exit alone does not prove test success. Prefer explicit `client.complete_run(run_id)` after successful orchestration and `client.cancel_run(run_id)` for known failures. Pass `on_exit="complete"` or `on_exit="cancel"` only when that policy is correct for your script. Signal handlers are opt-in with `install_signal_handlers=True`; signal cleanup defaults to cancellation.
+
+## Device Test Data
+
+The `device_test_data` fixture returns the operator-attached free-form test_data for the device assigned to the current test:
+
+```python
+def test_uses_operator_data(appium_driver, device_test_data):
+    assert "account" in device_test_data
+```
+
+Outside of pytest, use the client directly:
+
+```python
+test_data = client.get_device_test_data(device_id)
+```
+
+Or use the driver helper after a session is up:
+
+```python
+from gridfleet_testkit import get_device_test_data_for_driver
+
+test_data = get_device_test_data_for_driver(driver)
+```
+
+Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` inline. The `test_data` field is also present directly on the claim response when the manager inlines it.
+
+## Errors and Result Types
+
+- `NoClaimableDevicesError(RuntimeError)`: raised when the manager reports no run devices are claimable yet. Exposes `run_id`, `retry_after_sec`, and `next_available_at`. The `RuntimeError` base is part of the contract — consumers can rely on it.
+- `UnknownIncludeError(ValueError)`: raised when the backend rejects one or more `?include=` keys. Exposes `values` with the rejected key names. The `ValueError` base is part of the contract.
+- `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
+- `CooldownResult`: union response type from `release_device_with_cooldown`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
 
 ## Example Reservation Flow
 
@@ -171,7 +231,9 @@ run = client.reserve_devices(
 run_id = run["id"]
 worker_count = len(run["devices"])
 heartbeat_thread = client.start_heartbeat(run_id, interval=30)
-register_run_cleanup(client, run_id, heartbeat_thread)
+cleanup = register_run_cleanup(client, run_id, heartbeat_thread)
+# cleanup() runs at process exit; call client.complete_run(run_id) on success
+# or client.cancel_run(run_id) on failure to set the run state explicitly.
 
 client.report_preparation_failure(
     run_id,
@@ -188,7 +250,7 @@ Use `count` for exact reservations. Use `allocation: "all_available"` when CI sh
 
 ## Reduced HTTP round-trips on claim
 
-`gridfleet-testkit` 0.4.0 lets the manager inline the device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
+The manager can inline device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
 
 ```python
 from gridfleet_testkit import GridFleetClient, hydrate_allocated_device
@@ -199,7 +261,7 @@ allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
 # zero follow-up GETs; allocated.config / allocated.live_capabilities populated inline
 ```
 
-Inline `config` is returned verbatim — all values are present as stored. The manager auth gate (`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary protecting these values.
+`device_config` and inline `config` payloads are returned verbatim from the manager. The testkit does not perform client-side secret masking or reveal toggles. Protect device config with manager authentication, operator access control, and your lab's secret-handling policy.
 
 `reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound. Pass `include=` on the per-worker `claim_device` call instead.
 
@@ -214,7 +276,7 @@ Baseline screenshot examples:
 - `testkit/examples/test_android_mobile_screenshot.py`
 - `testkit/examples/test_android_tv_screenshot.py`
 - `testkit/examples/test_firetv_screenshot.py`
-- `testkit/examples/test_ios_screenshot.py`
+- `testkit/examples/test_ios_simulator_screenshot.py`
 - `testkit/examples/test_tvos_screenshot.py`
 - `testkit/examples/test_roku_screenshot.py`
 

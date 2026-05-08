@@ -32,13 +32,14 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import (
-    GRID_URL,
-    GRIDFLEET_API_URL,
+    CooldownResult,
     GridFleetClient,
     HeartbeatThread,
     NoClaimableDevicesError,
     ReserveCapabilitiesUnsupportedError,
     UnknownIncludeError,
+    _default_api_url,
+    _default_grid_url,
     register_run_cleanup,
 )
 from .sessions import build_error_session_payload
@@ -52,6 +53,7 @@ __all__ = [
     "GRIDFLEET_API_URL",
     "GRID_URL",
     "AllocatedDevice",
+    "CooldownResult",
     "GridFleetClient",
     "HeartbeatThread",
     "NoClaimableDevicesError",
@@ -69,3 +71,11 @@ __all__ = [
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
 ]
+
+
+def __getattr__(name: str) -> str:
+    if name == "GRID_URL":
+        return _default_grid_url()
+    if name == "GRIDFLEET_API_URL":
+        return _default_api_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
