@@ -165,7 +165,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "status":
-        print(format_status(collect_status(InstallConfig())))
+        try:
+            operator = resolve_operator_identity(login=args.user)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        config = InstallConfig()
+        uv_runtime = discover_uv(operator=operator, override=None)
+        print(format_status(collect_status(config, operator=operator, uv_runtime=uv_runtime)))
         return 0
 
     if args.command == "uninstall":

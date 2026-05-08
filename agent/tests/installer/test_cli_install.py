@@ -217,12 +217,17 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_status_prints_collected_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    sentinel = object()
+    from agent_app.installer.uv_runtime import UvRuntime
 
-    def fake_collect_status(config: InstallConfig) -> object:
+    sentinel = object()
+    fake_runtime = UvRuntime(bin_path=None, source="missing", searched=())
+
+    def fake_collect_status(config: InstallConfig, **kwargs: object) -> object:
         assert isinstance(config, InstallConfig)
         return sentinel
 
+    _patch_operator(monkeypatch)
+    monkeypatch.setattr(cli, "discover_uv", lambda **kw: fake_runtime)
     monkeypatch.setattr(cli, "collect_status", fake_collect_status)
     monkeypatch.setattr(cli, "format_status", lambda status: "status text" if status is sentinel else "wrong")
 
