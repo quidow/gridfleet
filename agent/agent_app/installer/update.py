@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import shutil
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -15,11 +14,47 @@ from agent_app.installer.install import (
     _run_command,
     poll_agent_health,
 )
+from agent_app.installer.uv_runtime import UvRuntime, build_upgrade_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agent_app.installer.identity import OperatorIdentity
     from agent_app.installer.plan import InstallConfig
+
+
+# ---------------------------------------------------------------------------
+# Typed exception hierarchy
+# ---------------------------------------------------------------------------
+
+
+class UpdateError(RuntimeError):
+    """Base for update lifecycle failures."""
+
+
+class UpdateDrainError(UpdateError):
+    """Active local nodes prevented the upgrade."""
+
+
+class UvNotFoundError(UpdateError):
+    """No usable uv binary discovered for the operator."""
+
+
+class UpdateUpgradeError(UpdateError):
+    """`uv tool upgrade` failed."""
+
+
+class UpdateRestartError(UpdateError):
+    """systemctl/launchctl restart failed."""
+
+
+class UpdateHealthError(UpdateError):
+    """Post-restart health poll failed."""
+
+
+# ---------------------------------------------------------------------------
+# Data types
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -41,26 +76,20 @@ class UpdateResult:
     health: HealthCheckResult
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
 def _agent_package_spec(to_version: str | None) -> str:
     return f"gridfleet-agent=={to_version}" if to_version else "gridfleet-agent"
 
 
-def _uv_upgrade_command(to_version: str | None) -> list[str]:
-    return ["uv", "tool", "upgrade", _agent_package_spec(to_version)]
-
-
-def _restart_command(os_name: str, *, uid: int | None = None) -> list[str]:
+def _restart_command(os_name: str, *, operator_uid: int) -> list[str]:
     if os_name == "Linux":
         return ["systemctl", "restart", "gridfleet-agent"]
     if os_name == "Darwin":
-        sudo_uid = os.environ.get("SUDO_UID")
-        if uid is not None:
-            resolved_uid = uid
-        elif sudo_uid and sudo_uid.isdecimal():
-            resolved_uid = int(sudo_uid)
-        else:
-            resolved_uid = os.getuid()
-        return ["launchctl", "kickstart", "-k", f"gui/{resolved_uid}/com.gridfleet.agent"]
+        return ["launchctl", "kickstart", "-k", f"gui/{operator_uid}/com.gridfleet.agent"]
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
@@ -68,21 +97,54 @@ def _health_url(config: InstallConfig) -> str:
     return f"http://localhost:{config.port}/agent/health"
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def format_update_dry_run(
     config: InstallConfig,
     *,
+    operator: OperatorIdentity,
+    uv_runtime: UvRuntime,
     to_version: str | None = None,
     os_name: str | None = None,
-    uid: int | None = None,
+    current_uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
-    uv_command = " ".join(_uv_upgrade_command(to_version))
+    resolved_uid = current_uid if current_uid is not None else os.getuid()
+    package_spec = _agent_package_spec(to_version)
+
+    # Resolve uv path display
+    if uv_runtime.bin_path is not None:
+        uv_path_display = str(uv_runtime.bin_path)
+    else:
+        searched_str = ", ".join(uv_runtime.searched) if uv_runtime.searched else "(none)"
+        uv_path_display = f"not found (searched: {searched_str})"
+
+    # Resolve upgrade command
     try:
-        restart_command = " ".join(_restart_command(resolved_os, uid=uid))
+        upgrade_cmd = build_upgrade_command(
+            uv_runtime,
+            operator=operator,
+            package_spec=package_spec,
+            os_name=resolved_os,
+            current_uid=resolved_uid,
+        )
+        uv_command = " ".join(upgrade_cmd)
+    except RuntimeError as exc:
+        uv_command = f"uv missing — {exc}"
+
+    # Resolve restart command
+    try:
+        restart_command = " ".join(_restart_command(resolved_os, operator_uid=operator.uid))
     except RuntimeError as exc:
         restart_command = str(exc).replace("Unsupported OS", "unsupported OS", 1)
 
     return f"""GridFleet Agent update dry run
+
+Operator: {operator.login} (uid={operator.uid}, home={operator.home})
+uv binary: {uv_path_display}
 
 Actions:
   - Wait for active local nodes to drain: {_health_url(config)}
@@ -140,18 +202,17 @@ def wait_for_update_drain(
 def update_agent(
     config: InstallConfig,
     *,
+    operator: OperatorIdentity,
+    uv_runtime: UvRuntime,
     to_version: str | None = None,
     os_name: str | None = None,
+    current_uid: int | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
     drain_check: DrainCheckCallable = wait_for_update_drain,
     health_check: HealthCheckCallable = poll_agent_health,
-    uid: int | None = None,
 ) -> UpdateResult:
     resolved_os = os_name or platform.system()
     health_url = _health_url(config)
-
-    if not shutil.which("uv"):
-        raise RuntimeError("uv is not installed. Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh")
 
     api_auth = (
         (config.api_auth_username, config.api_auth_password)
@@ -161,10 +222,35 @@ def update_agent(
 
     drain = drain_check(health_url, auth=api_auth) if api_auth else drain_check(health_url)
     if not drain.ok:
-        raise RuntimeError(drain.message)
+        raise UpdateDrainError(drain.message)
 
-    run_command(_uv_upgrade_command(to_version))
-    run_command(_restart_command(resolved_os, uid=uid))
-    health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
+    package_spec = _agent_package_spec(to_version)
+    try:
+        upgrade_cmd = build_upgrade_command(
+            uv_runtime,
+            operator=operator,
+            package_spec=package_spec,
+            os_name=resolved_os,
+            current_uid=current_uid if current_uid is not None else os.getuid(),
+        )
+    except RuntimeError as exc:
+        raise UvNotFoundError(str(exc)) from exc
+
+    try:
+        run_command(upgrade_cmd)
+    except (RuntimeError, OSError) as exc:
+        raise UpdateUpgradeError(str(exc)) from exc
+
+    try:
+        run_command(_restart_command(resolved_os, operator_uid=operator.uid))
+    except (RuntimeError, OSError) as exc:
+        raise UpdateRestartError(str(exc)) from exc
+
+    try:
+        health = health_check(health_url, auth=api_auth) if api_auth else health_check(health_url)
+    except Exception as exc:  # symmetric with the other wrappers
+        raise UpdateHealthError(str(exc)) from exc
+    if not health.ok:
+        raise UpdateHealthError(health.message)
 
     return UpdateResult(to_version=to_version, restarted=True, drain=drain, health=health)

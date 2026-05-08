@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import (
     HealthCheckResult,
     InstallResult,
@@ -28,6 +29,23 @@ def _make_config(tmp_path: Path) -> InstallConfig:
         manager_url="https://manager.example.com",
         port=5200,
     )
+
+
+def _make_operator(
+    config: InstallConfig | None = None,
+    *,
+    login: str = "testoperator",
+    uid: int = 4242,
+    home: Path | None = None,
+) -> OperatorIdentity:
+    """Build a deterministic OperatorIdentity for tests.
+
+    Default login is "testoperator" (a non-current user), so the chown gate in
+    install_no_start fires and exercises the chown callable. Pass
+    ``login=config.user`` explicitly when you intentionally want operator.login
+    to match config.user (e.g., to skip chown).
+    """
+    return OperatorIdentity(login=login, uid=uid, home=home or Path("/tmp"))
 
 
 def test_resolve_bin_path_returns_resolved_executable(tmp_path: Path) -> None:
@@ -70,6 +88,7 @@ def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.
 
 def test_install_no_start_writes_config_runtime_dir_service_and_downloads_selenium(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -82,6 +101,7 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     result = install_no_start(
         config,
         ToolDiscovery(java_bin="/usr/bin/java"),
+        operator=operator,
         os_name="Linux",
         executable=executable,
         download=fake_download,
@@ -106,37 +126,45 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     ]
 
 
-def test_install_no_start_aligns_linux_writable_paths_to_service_user(tmp_path: Path) -> None:
+def test_install_no_start_aligns_linux_writable_paths_to_service_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
         config_dir=str(tmp_path / "etc/gridfleet-agent"),
         user="gridfleet",
     )
+    operator = OperatorIdentity(login="gridfleet", uid=1001, home=Path("/home/gridfleet"))
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     ownership: list[tuple[Path, str]] = []
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
 
     install_no_start(
         config,
         ToolDiscovery(),
+        operator=operator,
         os_name="Linux",
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         chown=lambda path, user: ownership.append((path, user)),
     )
 
+    service_file = Path(config.config_dir).parent / "systemd/system/gridfleet-agent.service"
     assert ownership == [
         (Path(config.agent_dir), "gridfleet"),
         (Path(config.agent_dir) / "runtimes", "gridfleet"),
         (Path(config.config_dir), "gridfleet"),
         (Path(config.config_env_path), "gridfleet"),
         (Path(config.selenium_jar), "gridfleet"),
+        (service_file, "gridfleet"),
     ]
 
 
 def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -150,6 +178,7 @@ def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
     install_no_start(
         config,
         ToolDiscovery(),
+        operator=operator,
         os_name="Linux",
         executable=executable,
         download=fail_download,
@@ -178,6 +207,7 @@ def test_macos_service_path_resolves_sudo_user_home(monkeypatch: pytest.MonkeyPa
 def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
+    operator = _make_operator(home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -185,9 +215,11 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
     result = install_no_start(
         config,
         ToolDiscovery(),
+        operator=operator,
         os_name="Darwin",
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
+        chown=lambda path, user: None,
     )
 
     assert result.service_file == tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
@@ -198,6 +230,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
 
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -221,6 +254,7 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
     result = install_with_start(
         config,
         ToolDiscovery(),
+        operator=operator,
         os_name="Linux",
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
@@ -239,8 +273,10 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
     assert health_urls == ["http://localhost:5200/agent/health"]
 
 
-def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -249,7 +285,8 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
     result = install_with_start(
         config,
         ToolDiscovery(),
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
@@ -263,8 +300,10 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
     assert registration_checks == [config]
 
 
-def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -275,7 +314,8 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
     result = install_with_start(
         config,
         ToolDiscovery(),
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
@@ -289,6 +329,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
 def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
+    operator = _make_operator(login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -297,6 +338,7 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytes
     result = install_with_start(
         config,
         ToolDiscovery(),
+        operator=operator,
         os_name="Darwin",
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
@@ -374,20 +416,23 @@ def test_poll_manager_registration_explains_auth_required_on_401() -> None:
     assert "--manager-auth-password" in result.message
 
 
-def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_raises_when_service_command_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
     def fail_command(_command: list[str]) -> None:
-        raise RuntimeError("systemctl failed")
+        raise RuntimeError("service command failed")
 
-    with pytest.raises(RuntimeError, match="systemctl failed"):
+    with pytest.raises(RuntimeError, match="service command failed"):
         install_with_start(
             config,
             ToolDiscovery(),
-            os_name="Linux",
+            operator=operator,
+            os_name=os_name,
             executable=executable,
             download=lambda _url, dest: dest.write_text("selenium"),
             run_command=fail_command,
@@ -485,6 +530,30 @@ def test_download_selenium_cleans_up_temp_file_on_failure(tmp_path: Path) -> Non
     assert not list(tmp_path.glob("*.download"))
 
 
+def test_install_no_start_uses_operator_identity_for_systemd_user(tmp_path: Path) -> None:
+    from agent_app.installer.identity import OperatorIdentity
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user=operator.login,
+    )
+    discovery = ToolDiscovery()
+    result = install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Linux",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=lambda path, login: None,
+    )
+    rendered = result.service_file.read_text()
+    assert "User=ops" in rendered
+    assert "User=root" not in rendered
+    assert tmp_path in result.service_file.parents
+
+
 def test_poll_agent_health_passes_basic_auth() -> None:
     from agent_app.installer.install import HealthCheckResult, poll_agent_health
 
@@ -519,7 +588,8 @@ def test_poll_agent_health_passes_basic_auth() -> None:
     assert captured["auth"] == ("ops", "secret")
 
 
-def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path, os_name: str) -> None:
     from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
     from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
@@ -536,10 +606,12 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) ->
         api_auth_username="ops",
         api_auth_password="secret",
     )
+    op = _make_operator(config, login=config.user, home=tmp_path)
     install_with_start(
         config,
         ToolDiscovery(),
-        os_name="Linux",
+        operator=op,
+        os_name=os_name,
         download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,
@@ -549,7 +621,94 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) ->
     assert captured["auth"] == ("ops", "secret")
 
 
-def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
+def test_install_no_start_chowns_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    discovery = ToolDiscovery()
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Darwin",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    paths = {path for path, login in chown_calls}
+    assert any("config.env" in str(p) for p in paths)
+    assert any("selenium-server.jar" in str(p) for p in paths)
+    assert any("LaunchAgents/com.gridfleet.agent.plist" in str(p) for p in paths)
+    assert all(login == "ops" for _, login in chown_calls)
+
+
+def test_install_no_start_chowns_when_root_even_if_login_matches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Under sudo -E getpass.getuser() may match operator.login while euid is 0.
+
+    The chown gate must rely on euid, not login, so /opt artefacts are still chowned.
+    """
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: 0)
+    monkeypatch.setattr("agent_app.installer.install.getpass.getuser", lambda: "ops")
+    discovery = ToolDiscovery()
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Linux",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    assert chown_calls, "chown must fire when running as root even if login matches"
+
+
+def test_install_no_start_skips_chown_when_already_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chown_calls: list[tuple[Path, str]] = []
+
+    def fake_chown(path: Path, login: str) -> None:
+        chown_calls.append((path, login))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "opt" / "gridfleet-agent"),
+        config_dir=str(tmp_path / "etc" / "gridfleet-agent"),
+        user="ops",
+    )
+    monkeypatch.setattr("agent_app.installer.install.os.geteuid", lambda: operator.uid)
+    discovery = ToolDiscovery()
+    install_no_start(
+        config,
+        discovery,
+        operator=operator,
+        os_name="Linux",
+        download=lambda url, dest: dest.write_text("jar"),
+        chown=fake_chown,
+    )
+    assert chown_calls == []
+
+
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_omits_auth_when_unset(tmp_path: Path, os_name: str) -> None:
     from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
     from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
@@ -564,10 +723,12 @@ def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
         agent_dir=str(tmp_path / "agent"),
         config_dir=str(tmp_path / "etc"),
     )
+    op = _make_operator(config, login=config.user, home=tmp_path)
     install_with_start(
         config,
         ToolDiscovery(),
-        os_name="Linux",
+        operator=op,
+        os_name=os_name,
         download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,

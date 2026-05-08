@@ -29,6 +29,8 @@ from agent_app.installer.plan import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agent_app.installer.identity import OperatorIdentity
+
 
 @dataclass(frozen=True)
 class HealthCheckResult:
@@ -122,14 +124,15 @@ def _resolve_uid(uid: int | None = None) -> int:
     return os.getuid()
 
 
-def _service_file_path(config: InstallConfig, os_name: str) -> Path:
+def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
     if os_name == "Linux":
         config_dir = Path(config.config_dir)
         if str(config_dir).startswith("/etc/"):
             return Path("/etc/systemd/system/gridfleet-agent.service")
         return config_dir.parent / "systemd/system/gridfleet-agent.service"
     if os_name == "Darwin":
-        return _operator_home_darwin() / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        home = operator.home if operator is not None else _operator_home_darwin()
+        return home / "Library/LaunchAgents/com.gridfleet.agent.plist"
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
@@ -140,10 +143,24 @@ def _chown_to_user(path: Path, user: str) -> None:
         raise RuntimeError(f"failed to set owner of {path} to {user}: {exc}") from exc
 
 
+def _should_chown(operator: OperatorIdentity) -> bool:
+    """Whether install artefacts need a chown to the operator.
+
+    Skip only when the current process is already running as the operator
+    (same euid). Don't compare logins — under sudo -E the env-derived login
+    can match the operator while euid is still 0, leaving artefacts root-owned.
+    """
+    try:
+        return os.geteuid() != operator.uid
+    except AttributeError:  # pragma: no cover — non-POSIX platforms
+        return operator.login != getpass.getuser()
+
+
 def install_no_start(
     config: InstallConfig,
     discovery: ToolDiscovery,
     *,
+    operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
     download: Callable[[str, Path], None] = _download_selenium,
@@ -164,7 +181,7 @@ def install_no_start(
     config_dir = Path(config.config_dir)
     runtime_dir = agent_dir / "runtimes"
     selenium_jar = Path(config.selenium_jar)
-    service_file = _service_file_path(config, resolved_os)
+    service_file = _service_file_path(config, resolved_os, operator)
 
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -176,9 +193,6 @@ def install_no_start(
     config_env = Path(config.config_env_path)
     config_env.write_text(render_config_env(config, discovery))
     os.chmod(config_env, 0o600)
-    if resolved_os == "Linux" and config.user != getpass.getuser():
-        for path in (agent_dir, runtime_dir, config_dir, config_env, selenium_jar):
-            chown(path, config.user)
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
     elif resolved_os == "Darwin":
@@ -186,6 +200,12 @@ def install_no_start(
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
     os.chmod(service_file, 0o600)
+
+    chown_targets = (agent_dir, runtime_dir, config_dir, config_env, selenium_jar, service_file)
+    if _should_chown(operator):
+        for path in chown_targets:
+            if path.exists():
+                chown(path, operator.login)
 
     return InstallResult(
         config_env=Path(config.config_env_path),
@@ -203,10 +223,6 @@ def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
-
-
-def _run_pip_command(command: list[str]) -> None:
-    _run_command(command, timeout=300)
 
 
 def _start_service(
@@ -315,6 +331,7 @@ def install_with_start(
     config: InstallConfig,
     discovery: ToolDiscovery,
     *,
+    operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
     download: Callable[[str, Path], None] = _download_selenium,
@@ -327,11 +344,13 @@ def install_with_start(
     result = install_no_start(
         config,
         discovery,
+        operator=operator,
         os_name=resolved_os,
         executable=executable,
         download=download,
     )
-    _start_service(resolved_os, result.service_file, run_command=run_command, uid=uid)
+    resolved_uid = uid if uid is not None else operator.uid
+    _start_service(resolved_os, result.service_file, run_command=run_command, uid=resolved_uid)
 
     api_auth = (
         (config.api_auth_username, config.api_auth_password)

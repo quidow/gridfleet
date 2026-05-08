@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
+
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.plan import InstallConfig
 from agent_app.installer.uninstall import UninstallResult, uninstall
 
-if TYPE_CHECKING:
-    import pytest
+_LINUX_OPERATOR = OperatorIdentity(login="ops", uid=1000, home=Path("/home/ops"))
 
 
 def _make_config(tmp_path: Path) -> InstallConfig:
@@ -30,6 +31,7 @@ def test_uninstall_linux_stops_disables_removes_files_and_reloads(tmp_path: Path
 
     result = uninstall(
         config,
+        operator=_LINUX_OPERATOR,
         os_name="Linux",
         run_command=lambda command, *, check=True: commands.append((command, check)),
     )
@@ -50,10 +52,7 @@ def test_uninstall_linux_stops_disables_removes_files_and_reloads(tmp_path: Path
     assert not service_file.exists()
 
 
-def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
@@ -64,11 +63,12 @@ def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
     service_file.write_text("<plist />\n")
     commands: list[tuple[list[str], bool]] = []
 
+    darwin_operator = OperatorIdentity(login="ops", uid=501, home=tmp_path)
     result = uninstall(
         config,
+        operator=darwin_operator,
         os_name="Darwin",
         run_command=lambda command, *, check=True: commands.append((command, check)),
-        uid=501,
     )
 
     assert result.removed_service_file is True
@@ -79,16 +79,19 @@ def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
     assert not service_file.exists()
 
 
-def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
     agent_dir.mkdir(parents=True)
     config_dir.mkdir(parents=True)
+    operator = OperatorIdentity(login="ops", uid=1000, home=tmp_path)
 
     result = uninstall(
         config,
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         run_command=lambda _command, *, check=True: None,
         remove_agent_dir=False,
         remove_config_dir=False,
@@ -100,15 +103,37 @@ def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path) -> 
     assert config_dir.exists()
 
 
-def test_uninstall_is_idempotent_when_files_are_missing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_uninstall_is_idempotent_when_files_are_missing(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
+    operator = OperatorIdentity(login="ops", uid=1000, home=tmp_path)
 
     result = uninstall(
         config,
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         run_command=lambda _command, *, check=True: None,
     )
 
     assert result.removed_service_file is False
     assert result.removed_agent_dir is False
     assert result.removed_config_dir is False
+
+
+def test_uninstall_uses_operator_uid_for_bootout() -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, check: bool = True) -> None:
+        calls.append(list(cmd))
+
+    operator = OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops"))
+    config = InstallConfig(user="ops")
+    uninstall(
+        config,
+        operator=operator,
+        os_name="Darwin",
+        run_command=fake_run,
+        remove_agent_dir=False,
+        remove_config_dir=False,
+    )
+    assert any("gui/1001" in arg for cmd in calls for arg in cmd)

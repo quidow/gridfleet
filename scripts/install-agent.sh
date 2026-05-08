@@ -32,6 +32,24 @@ if [ "$HAS_INSTALL_MODE" -eq 0 ]; then
     set -- --start "$@"
 fi
 
+# Inject --user so the service does not run as root when the caller omitted it.
+HAS_USER=0
+for arg in "$@"; do
+    case "$arg" in
+        --user|--user=*)
+            HAS_USER=1
+            break
+            ;;
+    esac
+done
+
+if [ "$HAS_USER" -eq 0 ]; then
+    OPERATOR_USER="${SUDO_USER:-${USER:-}}"
+    if [ -n "$OPERATOR_USER" ] && [ "$OPERATOR_USER" != "root" ]; then
+        set -- "$@" --user "$OPERATOR_USER"
+    fi
+fi
+
 echo "=== GridFleet Agent Installer ==="
 echo "Package: $PACKAGE_SPEC"
 echo ""

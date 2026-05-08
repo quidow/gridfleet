@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
+
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
 from agent_app.installer.status import _run_status_command, collect_status, format_status, parse_config_env
+from agent_app.installer.uv_runtime import UvRuntime
 
-if TYPE_CHECKING:
-    import pytest
+_DEFAULT_OPERATOR = OperatorIdentity(login="testop", uid=9999, home=Path("/home/testop"))
+_DEFAULT_UV = UvRuntime(bin_path=None, source="missing", searched=())
+
+
+def _stub_health(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
+    return HealthCheckResult(ok=True, message="stubbed")
 
 
 def _make_config(tmp_path: Path) -> InstallConfig:
@@ -49,6 +56,8 @@ def test_collect_status_reads_files_service_state_and_health(tmp_path: Path) -> 
 
     status = collect_status(
         config,
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         run_command=fake_command,
         health_check=lambda url: HealthCheckResult(ok=True, message=f"healthy at {url}"),
@@ -67,12 +76,15 @@ def test_collect_status_reads_files_service_state_and_health(tmp_path: Path) -> 
     ]
 
 
-def test_collect_status_handles_missing_config_without_health_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_collect_status_handles_missing_config_without_health_check(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
 
     status = collect_status(
         config,
-        os_name="Linux",
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
+        os_name=os_name,
         run_command=lambda _command: "inactive\n",
         health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
     )
@@ -97,6 +109,8 @@ def test_collect_status_reports_unreadable_config_env(monkeypatch: pytest.Monkey
 
     status = collect_status(
         config,
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         run_command=lambda _command: "inactive\n",
         health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
@@ -127,17 +141,21 @@ def test_collect_status_uses_launchctl_on_macos(monkeypatch: pytest.MonkeyPatch,
 
     collect_status(
         config,
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Darwin",
         run_command=lambda command: commands.append(command) or "123\t0\tcom.gridfleet.agent\n",
         health_check=lambda _url: HealthCheckResult(ok=False, message="down"),
     )
 
-    assert commands == [["launchctl", "list", "com.gridfleet.agent"]]
+    assert commands == [["launchctl", "print", f"gui/{_DEFAULT_OPERATOR.uid}/com.gridfleet.agent"]]
 
 
 def test_format_status_redacts_secrets() -> None:
     status = collect_status(
         InstallConfig(),
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         env={
             "AGENT_MANAGER_URL": "https://manager.example.com",
@@ -177,6 +195,8 @@ def test_format_status_redacts_secrets() -> None:
 def test_format_status_reports_missing_config_as_not_read(tmp_path: Path) -> None:
     status = collect_status(
         _make_config(tmp_path),
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         run_command=lambda _command: "inactive\n",
         health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
@@ -204,6 +224,8 @@ def test_collect_status_passes_api_auth_to_health_check() -> None:
     config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
     collect_status(
         config,
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         env={
             "AGENT_AGENT_PORT": "5100",
@@ -224,6 +246,8 @@ def test_collect_status_redacts_api_auth_password() -> None:
     config = InstallConfig(api_auth_username="ops", api_auth_password="secret")
     status = collect_status(
         config,
+        operator=_DEFAULT_OPERATOR,
+        uv_runtime=_DEFAULT_UV,
         os_name="Linux",
         env={
             "AGENT_AGENT_PORT": "5100",
@@ -236,3 +260,60 @@ def test_collect_status_redacts_api_auth_password() -> None:
     formatted = "\n".join(_format_env(status.env))
     assert "AGENT_API_AUTH_PASSWORD=<redacted>" in formatted
     assert "AGENT_API_AUTH_USERNAME=ops" in formatted
+
+
+def test_status_reports_operator_and_uv(tmp_path: Path) -> None:
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    runtime = UvRuntime(
+        bin_path=Path("/home/ops/.local/bin/uv"),
+        source="operator_home",
+        searched=("/home/ops/.local/bin/uv",),
+    )
+    config = InstallConfig(user="ops")
+    status = collect_status(
+        config,
+        operator=operator,
+        uv_runtime=runtime,
+        os_name="Linux",
+        env={"AGENT_AGENT_PORT": "5100"},
+        run_command=lambda cmd: "active",
+        health_check=_stub_health,
+    )
+    rendered = format_status(status)
+    assert "Operator: ops (uid 1001" in rendered
+    assert "uv path: /home/ops/.local/bin/uv" in rendered
+
+
+def test_collect_status_uses_operator_home_for_macos_plist(tmp_path: Path) -> None:
+    operator = OperatorIdentity(login="alice", uid=2002, home=tmp_path / "Users" / "alice")
+    runtime = UvRuntime(bin_path=None, source="missing", searched=())
+    config = InstallConfig(user="alice")
+    status = collect_status(
+        config,
+        operator=operator,
+        uv_runtime=runtime,
+        os_name="Darwin",
+        env={},
+        run_command=lambda cmd: "",
+        health_check=_stub_health,
+    )
+    expected = operator.home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+    assert status.service_file == expected
+
+
+def test_status_reports_uv_missing(tmp_path: Path) -> None:
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
+    runtime = UvRuntime(bin_path=None, source="missing", searched=("/x", "/y"))
+    config = InstallConfig(user="ops")
+    status = collect_status(
+        config,
+        operator=operator,
+        uv_runtime=runtime,
+        os_name="Linux",
+        env={},
+        run_command=lambda cmd: "",
+        health_check=_stub_health,
+    )
+    rendered = format_status(status)
+    assert "uv path: not found" in rendered
+    assert "/x" in rendered and "/y" in rendered

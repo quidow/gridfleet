@@ -11,7 +11,9 @@ from agent_app.installer.install import HealthCheckCallable, HealthCheckResult, 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from agent_app.installer.identity import OperatorIdentity
     from agent_app.installer.plan import InstallConfig
+    from agent_app.installer.uv_runtime import UvRuntime
 
 
 SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_TERMINAL_TOKEN", "AGENT_API_AUTH_PASSWORD"}
@@ -27,6 +29,8 @@ class AgentStatus:
     service_active: str
     service_enabled: str
     health: HealthCheckResult
+    operator: OperatorIdentity
+    uv: UvRuntime
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -64,14 +68,20 @@ def _run_status_command(command: list[str]) -> str:
     return result.stdout.strip()
 
 
-def _service_state(os_name: str, *, run_command: Callable[[list[str]], str]) -> tuple[str, str]:
+def _service_state(
+    os_name: str,
+    *,
+    run_command: Callable[[list[str]], str],
+    operator: OperatorIdentity,
+) -> tuple[str, str]:
     if os_name == "Linux":
         return (
             run_command(["systemctl", "is-active", "gridfleet-agent"]).strip(),
             run_command(["systemctl", "is-enabled", "gridfleet-agent"]).strip(),
         )
     if os_name == "Darwin":
-        state = run_command(["launchctl", "list", "com.gridfleet.agent"]).strip()
+        target = f"gui/{operator.uid}/com.gridfleet.agent"
+        state = run_command(["launchctl", "print", target]).strip()
         return (state or "not loaded", "launchd")
     return (f"unsupported OS: {os_name}", "unknown")
 
@@ -83,6 +93,8 @@ def _status_health_check(url: str, *, auth: tuple[str, str] | None = None) -> He
 def collect_status(
     config: InstallConfig,
     *,
+    operator: OperatorIdentity,
+    uv_runtime: UvRuntime,
     os_name: str | None = None,
     env: Mapping[str, str] | None = None,
     run_command: Callable[[list[str]], str] = _run_status_command,
@@ -95,8 +107,8 @@ def collect_status(
         parsed_env = dict(env)
     else:
         parsed_env, config_error = _parse_config_env_with_error(config_env)
-    service_file = _service_file_path(config, resolved_os)
-    service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
+    service_file = _service_file_path(config, resolved_os, operator)
+    service_active, service_enabled = _service_state(resolved_os, run_command=run_command, operator=operator)
 
     api_auth_username = parsed_env.get("AGENT_API_AUTH_USERNAME") or config.api_auth_username
     api_auth_password = parsed_env.get("AGENT_API_AUTH_PASSWORD") or config.api_auth_password
@@ -124,6 +136,8 @@ def collect_status(
         service_active=service_active,
         service_enabled=service_enabled,
         health=health,
+        operator=operator,
+        uv=uv_runtime,
         env=parsed_env,
     )
 
@@ -156,6 +170,13 @@ def _format_version_guidance(details: Mapping[str, object]) -> list[str]:
     return lines
 
 
+def _format_uv(uv: UvRuntime) -> str:
+    if uv.bin_path is not None:
+        return f"uv path: {uv.bin_path}"
+    searched_str = ", ".join(repr(s) for s in uv.searched)
+    return f"uv path: not found; searched: [{searched_str}]"
+
+
 def format_status(status: AgentStatus) -> str:
     health_state = "ok" if status.health.ok else "failed"
     if status.config_error:
@@ -164,6 +185,7 @@ def format_status(status: AgentStatus) -> str:
         config_read = "ok"
     else:
         config_read = "skipped - config.env missing"
+    op = status.operator
     lines = [
         "GridFleet Agent status",
         "",
@@ -174,6 +196,9 @@ def format_status(status: AgentStatus) -> str:
         f"Service enabled: {status.service_enabled}",
         f"Local health: {health_state} - {status.health.message}",
         *_format_version_guidance(status.health.details),
+        "",
+        f"Operator: {op.login} (uid {op.uid}, home {op.home})",
+        _format_uv(status.uv),
         "",
         "Configured environment:",
         *_format_env(status.env),
