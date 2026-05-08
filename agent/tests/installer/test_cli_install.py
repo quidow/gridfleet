@@ -363,6 +363,36 @@ def test_install_user_default_is_none_until_resolved() -> None:
     assert args.user is None
 
 
+def test_install_exit_zero_when_registration_pending_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    _patch_operator(monkeypatch)
+    fake_result = SimpleNamespace(
+        started=True,
+        health=SimpleNamespace(ok=True, message="ok", details={}),
+        registration=SimpleNamespace(ok=False, message="not yet"),
+    )
+    monkeypatch.setattr("agent_app.cli.install_with_start", lambda *a, **kw: fake_result)
+    monkeypatch.setattr("agent_app.cli.discover_tools", lambda: None)
+    rc = cli.main(["install", "--start", "--manager-url", "http://m"])
+    assert rc == 0
+
+
+def test_install_exit_one_when_health_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    _patch_operator(monkeypatch)
+    fake_result = SimpleNamespace(
+        started=True,
+        health=SimpleNamespace(ok=False, message="bad", details={}),
+        registration=None,
+    )
+    monkeypatch.setattr("agent_app.cli.install_with_start", lambda *a, **kw: fake_result)
+    monkeypatch.setattr("agent_app.cli.discover_tools", lambda: None)
+    rc = cli.main(["install", "--start", "--manager-url", "http://m"])
+    assert rc == 1
+
+
 def test_install_main_threads_api_auth_into_install_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """`cli.main` must construct an `InstallConfig` carrying the API auth fields."""
     from agent_app import cli
