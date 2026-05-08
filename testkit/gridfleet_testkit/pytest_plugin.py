@@ -145,3 +145,16 @@ def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> d
     except ValueError as exc:
         pytest.skip("Could not determine device connection target from session capabilities")
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
+
+
+def _gridfleet_worker_id(request: pytest.FixtureRequest) -> str:
+    """Return pytest-xdist worker id, or controller for non-worker processes."""
+    workerinput = getattr(request.config, "workerinput", None)
+    if isinstance(workerinput, dict):
+        value = workerinput.get("workerid")
+        if isinstance(value, str) and value:
+            return value
+    return "controller"
+
+
+gridfleet_worker_id = pytest.fixture(_gridfleet_worker_id)

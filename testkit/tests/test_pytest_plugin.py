@@ -315,3 +315,15 @@ def test_appium_driver_fixture_uses_current_grid_url_env(monkeypatch):
 
     with pytest.raises(StopIteration):
         next(generator)
+
+
+def test_gridfleet_worker_id_returns_xdist_worker_id() -> None:
+    request = types.SimpleNamespace(config=types.SimpleNamespace(workerinput={"workerid": "gw2"}))
+
+    assert pytest_plugin._gridfleet_worker_id(request) == "gw2"
+
+
+def test_gridfleet_worker_id_defaults_to_controller() -> None:
+    request = types.SimpleNamespace(config=types.SimpleNamespace())
+
+    assert pytest_plugin._gridfleet_worker_id(request) == "controller"
