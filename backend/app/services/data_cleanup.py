@@ -12,6 +12,7 @@ from app.database import async_session
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device_event import DeviceEvent
+from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
 from app.models.host_resource_sample import HostResourceSample
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop, schedule_background_loop
@@ -30,6 +31,7 @@ MAX_BATCHES_PER_TABLE = 10
 CleanupModel = (
     type[Session]
     | type[ConfigAuditLog]
+    | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
     | type[HostResourceSample]
     | type[AnalyticsCapacitySnapshot]
@@ -69,6 +71,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
     now = datetime.now(UTC)
     sessions_deleted = 0
     audit_deleted = 0
+    test_data_audit_deleted = 0
     events_deleted = 0
     host_resource_samples_deleted = 0
     capacity_snapshots_deleted = 0
@@ -98,6 +101,18 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             timestamp_column=ConfigAuditLog.changed_at,
             cutoff=cutoff,
         )
+
+    # DeviceTestDataAuditLog (reuses retention.audit_log_days)
+    if audit_days > 0:
+        cutoff = now - timedelta(days=audit_days)
+        test_data_audit_deleted = await _delete_in_batches(
+            db,
+            model=DeviceTestDataAuditLog,
+            timestamp_column=DeviceTestDataAuditLog.changed_at,
+            cutoff=cutoff,
+        )
+    else:
+        test_data_audit_deleted = 0
 
     # DeviceEvent
     events_days: int = settings_service.get("retention.device_events_days")
@@ -132,10 +147,11 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
         )
 
     logger.info(
-        "Data cleanup completed: sessions=%d, audit_logs=%d, device_events=%d, "
-        "host_resource_samples=%d, capacity_snapshots=%d",
+        "Data cleanup completed: sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
+        "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d",
         sessions_deleted,
         audit_deleted,
+        test_data_audit_deleted,
         events_deleted,
         host_resource_samples_deleted,
         capacity_snapshots_deleted,
