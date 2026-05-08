@@ -10,9 +10,7 @@ import LoadingSpinner from '../LoadingSpinner';
 import SetupVerificationModal from '../../pages/devices/SetupVerificationModal';
 import Button from '../ui/Button';
 import type { ConfigAuditEntry, DeviceDetail } from '../../types';
-import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import { findPlatformDescriptor } from '../../hooks/usePlatformDescriptor';
-import { formatDate, managedDeviceConfigKeys, omitManagedDeviceConfig, restoreManagedDeviceConfig } from './utils';
+import { formatDate } from './utils';
 
 interface Props {
   device: DeviceDetail;
@@ -24,12 +22,6 @@ export default function DeviceConfigEditor({ device }: Props) {
   const { id: deviceId } = device;
   const { data: config, refetch } = useDeviceConfig(deviceId);
   const { data: history } = useConfigHistory(deviceId);
-  const { data: catalog = [] } = useDriverPackCatalog();
-  const descriptor = findPlatformDescriptor(catalog, device.pack_id, device.platform_id);
-  const managedKeys = useMemo(
-    () => managedDeviceConfigKeys(descriptor?.deviceFieldsSchema ?? []),
-    [descriptor],
-  );
 
   const [editorValue, setEditorValue] = useState('');
   const [isValid, setIsValid] = useState(true);
@@ -40,14 +32,17 @@ export default function DeviceConfigEditor({ device }: Props) {
   const [pendingVerificationConfig, setPendingVerificationConfig] = useState<Record<string, unknown> | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  const editableConfig = useMemo(() => omitManagedDeviceConfig(config, managedKeys), [config, managedKeys]);
+  const editableCaps = useMemo(
+    () => (config?.appium_caps as Record<string, unknown> | undefined) ?? {},
+    [config],
+  );
   const syncedEditorValue = useMemo(
-    () => (editableConfig !== undefined ? JSON.stringify(editableConfig, null, 2) : ''),
-    [editableConfig],
+    () => (config !== undefined ? JSON.stringify(editableCaps, null, 2) : ''),
+    [config, editableCaps],
   );
   const activeEditorValue = isDirty ? editorValue : syncedEditorValue;
   const activeIsValid = isDirty ? isValid : true;
-  const hasNoOverrides = config !== undefined && Object.keys(config).length === 0 && !isDirty;
+  const hasNoOverrides = config !== undefined && Object.keys(editableCaps).length === 0 && !isDirty;
   const editorVisible = !hasNoOverrides || showEmptyEditor;
 
   const handleEditorMount: OnMount = (editor) => {
@@ -83,7 +78,7 @@ export default function DeviceConfigEditor({ device }: Props) {
   async function handleSave() {
     try {
       const parsed = JSON.parse(activeEditorValue) as Record<string, unknown>;
-      setPendingVerificationConfig(restoreManagedDeviceConfig(parsed, config, managedKeys));
+      setPendingVerificationConfig({ appium_caps: parsed });
       setShowConfirm(false);
     } catch {
       // JSON parse error — shouldn't happen since we validate
@@ -116,7 +111,7 @@ export default function DeviceConfigEditor({ device }: Props) {
           <div className="flex flex-col gap-4 rounded-lg border border-dashed border-border-strong bg-surface-2 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-text-1">No config overrides</p>
-              <p className="mt-1 text-sm text-text-2">This device uses platform defaults until custom Appium JSON is added.</p>
+              <p className="mt-1 text-sm text-text-2">No Appium capability overrides set for this device.</p>
             </div>
             <Button
               size="sm"
@@ -249,7 +244,7 @@ export default function DeviceConfigEditor({ device }: Props) {
           initialExistingForm={{
             host_id: device.host_id,
             device_config: pendingVerificationConfig,
-            replace_device_config: true,
+            replace_device_config: false,
           }}
           handoffMessage="Configuration changes affect device behavior and must pass guided re-verification before they are saved."
           title="Save Config & Verify"
