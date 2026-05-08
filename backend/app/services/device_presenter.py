@@ -47,6 +47,12 @@ def build_reservation_read(
         exclusion_reason=reservation_entry.exclusion_reason if reservation_entry else None,
         excluded_until=reservation_entry.excluded_until if reservation_entry else None,
         cooldown_remaining_sec=_cooldown_remaining_sec(reservation_entry),
+        cooldown_count=reservation_entry.cooldown_count if reservation_entry else 0,
+        cooldown_escalated=bool(
+            reservation_entry
+            and reservation_entry.exclusion_reason
+            and reservation_entry.exclusion_reason.startswith("Exceeded cooldown threshold ")
+        ),
     )
 
 

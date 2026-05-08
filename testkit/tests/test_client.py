@@ -1253,3 +1253,33 @@ def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypa
     # The 422 then exercises the defense-in-depth path through _raise_for_status.
     with pytest.raises(ReserveCapabilitiesUnsupportedError):
         client.reserve_devices(name="r", requirements=[], include=("config",))
+
+
+def test_release_device_with_cooldown_returns_escalated_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any],
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        return DummyResponse(
+            {
+                "status": "maintenance_escalated",
+                "reservation": {"device_id": "abc", "cooldown_count": 3},
+                "device_operational_state": "online",
+                "device_hold": "maintenance",
+                "cooldown_count": 3,
+                "threshold": 3,
+            }
+        )
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+    client = GridFleetClient(base_url="http://x")
+    result = client.release_device_with_cooldown(
+        "run-id", device_id="abc", worker_id="w1", reason="flake", ttl_seconds=1
+    )
+    assert result["status"] == "maintenance_escalated"
+    assert result["cooldown_count"] == 3

@@ -9,7 +9,7 @@ import os
 import signal
 import threading
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,6 +22,31 @@ GRIDFLEET_TESTKIT_USERNAME = os.getenv("GRIDFLEET_TESTKIT_USERNAME")
 GRIDFLEET_TESTKIT_PASSWORD = os.getenv("GRIDFLEET_TESTKIT_PASSWORD")
 
 logger = logging.getLogger("gridfleet_testkit")
+
+
+class CooldownSetResult(TypedDict):
+    """Response shape when a cooldown is applied without reaching the escalation threshold."""
+
+    status: Literal["cooldown_set"]
+    reservation: dict[str, Any]
+    device_operational_state: str
+    device_hold: str | None
+    retry_after_sec: int
+    excluded_until: str
+
+
+class CooldownEscalatedResult(TypedDict):
+    """Response shape when the cooldown count reaches the threshold and the device is escalated to maintenance."""
+
+    status: Literal["maintenance_escalated"]
+    reservation: dict[str, Any]
+    device_operational_state: str
+    device_hold: str | None
+    cooldown_count: int
+    threshold: int
+
+
+CooldownResult = CooldownSetResult | CooldownEscalatedResult
 
 
 def _default_auth() -> httpx.BasicAuth | None:
@@ -407,7 +432,7 @@ class GridFleetClient:
         worker_id: str,
         reason: str,
         ttl_seconds: int,
-    ) -> dict[str, Any]:
+    ) -> CooldownResult:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/devices/{device_id}/release-with-cooldown",
             json={"worker_id": worker_id, "reason": reason, "ttl_seconds": ttl_seconds},
@@ -415,7 +440,7 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("CooldownResult", resp.json())
 
     def claim_device_with_retry(
         self,

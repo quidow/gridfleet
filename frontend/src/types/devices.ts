@@ -23,6 +23,8 @@ export interface DeviceReservation {
   exclusion_reason: string | null;
   excluded_until: string | null;
   cooldown_remaining_sec: number | null;
+  cooldown_count: number;
+  cooldown_escalated: boolean;
 }
 
 export interface DeviceRead {

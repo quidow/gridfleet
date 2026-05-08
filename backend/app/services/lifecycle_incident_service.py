@@ -25,6 +25,7 @@ LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_run_excluded: "Run Excluded",
     DeviceEventType.lifecycle_run_restored: "Run Restored",
     DeviceEventType.lifecycle_run_cooldown_set: "Run Cooldown",
+    DeviceEventType.lifecycle_run_cooldown_escalated: "Run Cooldown Escalated",
 }
 
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)

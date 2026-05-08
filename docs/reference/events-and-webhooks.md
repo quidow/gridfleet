@@ -151,6 +151,7 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 - `lifecycle_recovered`
 - `lifecycle_run_excluded`
 - `lifecycle_run_restored`
+- `lifecycle_run_cooldown_escalated` — recorded when a device's release-with-cooldown count for a single run reaches the configured threshold and the device is moved to maintenance. The `details` JSON column carries: `cooldown_count`, `threshold`, `reason`, `worker_id`, `run_id`, `run_name`.
 
 ## Notes
 

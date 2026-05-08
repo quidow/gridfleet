@@ -229,7 +229,10 @@ Release is owner-checked: `worker_id` must match the active claim owner. Wrong o
 }
 ```
 
-Release with cooldown is also owner-checked. It clears `claimed_by` and `claimed_at`, sets `excluded_until`, and leaves `released_at` null so the same run can reclaim the reservation after the TTL expires. Cooldowns are run-scoped in v1: completing or cancelling the run releases the physical device normally and does not quarantine it across future runs.
+Release with cooldown is also owner-checked. It clears `claimed_by` / `claimed_at` and increments `cooldown_count` on the reservation row. The response is a discriminated union on `status`:
+
+- `"cooldown_set"` (default) — sets `excluded_until = now + ttl_seconds`. The same run can reclaim the reservation after the TTL expires. Cooldowns are run-scoped in v1: completing or cancelling the run releases the physical device normally and does not quarantine it across future runs.
+- `"maintenance_escalated"` — fired when `cooldown_count` reaches `general.device_cooldown_escalation_threshold` (default `3`, set to `0` to disable). The reservation is permanently excluded (`excluded_until = null`), the device is moved to maintenance, and the response includes `cooldown_count` and `threshold` instead of `excluded_until`.
 
 ## Sessions
 

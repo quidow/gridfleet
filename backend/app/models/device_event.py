@@ -28,6 +28,7 @@ class DeviceEventType(enum.StrEnum):
     lifecycle_run_excluded = "lifecycle_run_excluded"
     lifecycle_run_restored = "lifecycle_run_restored"
     lifecycle_run_cooldown_set = "lifecycle_run_cooldown_set"
+    lifecycle_run_cooldown_escalated = "lifecycle_run_cooldown_escalated"
 
 
 class DeviceEvent(Base):

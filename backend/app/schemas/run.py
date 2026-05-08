@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -73,6 +73,8 @@ class ReservedDeviceInfo(BaseModel):
     excluded_at: str | None = None
     excluded_until: str | None = None
     cooldown_remaining_sec: int | None = None
+    cooldown_count: int = 0
+    cooldown_escalated: bool = False
     claimed_by: str | None = None
     claimed_at: str | None = None
     config: dict[str, Any] | None = None
@@ -192,6 +194,21 @@ class ReleaseWithCooldownResponse(BaseModel):
     device_hold: str | None
     retry_after_sec: int
     excluded_until: datetime
+
+
+class ReleaseEscalatedToMaintenanceResponse(BaseModel):
+    status: Literal["maintenance_escalated"]
+    reservation: ReservedDeviceInfo
+    device_operational_state: str
+    device_hold: str | None
+    cooldown_count: int
+    threshold: int
+
+
+ReleaseWithCooldownResult = Annotated[
+    ReleaseWithCooldownResponse | ReleaseEscalatedToMaintenanceResponse,
+    Field(discriminator="status"),
+]
 
 
 class NoClaimableDevicesDetail(BaseModel):

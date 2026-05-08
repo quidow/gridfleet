@@ -31,6 +31,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -38,6 +39,11 @@ from app.services.pack_platform_resolver import assert_runnable
 from app.services.settings_service import settings_service
 
 logger = logging.getLogger(__name__)
+
+# Prefix written into exclusion_reason by the escalation path.
+# Must match exactly what release_claimed_device_with_cooldown writes so that
+# cooldown_escalated can be derived by a simple startswith() check.
+_COOLDOWN_ESCALATION_REASON_PREFIX = "Exceeded cooldown threshold "
 
 
 class _UnmetRequirementError(Exception):
@@ -247,6 +253,10 @@ def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceIn
         excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
         excluded_until=entry.excluded_until.isoformat() if entry.excluded_until is not None else None,
         cooldown_remaining_sec=_cooldown_remaining_sec(entry.excluded_until),
+        cooldown_count=entry.cooldown_count,
+        cooldown_escalated=bool(
+            entry.exclusion_reason and entry.exclusion_reason.startswith(_COOLDOWN_ESCALATION_REASON_PREFIX)
+        ),
         claimed_by=entry.claimed_by,
         claimed_at=entry.claimed_at.isoformat() if entry.claimed_at is not None else None,
     )
@@ -955,7 +965,15 @@ async def release_claimed_device_with_cooldown(
     worker_id: str,
     reason: str,
     ttl_seconds: int,
-) -> tuple[ReservedDeviceInfo, DeviceOperationalState, DeviceHold | None, datetime]:
+) -> tuple[
+    ReservedDeviceInfo,
+    DeviceOperationalState,
+    DeviceHold | None,
+    datetime | None,
+    int,  # cooldown_count after this call
+    bool,  # escalated to maintenance?
+    int,  # threshold (for response payload)
+]:
     max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
     if ttl_seconds > max_ttl:
         raise ValueError(f"ttl_seconds must be <= {max_ttl}")
@@ -963,6 +981,19 @@ async def release_claimed_device_with_cooldown(
     if not clean_reason:
         raise ValueError("Cooldown reason is required")
 
+    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
+
+    excluded_until: datetime | None = None
+    escalate = False
+    cooldown_count_after = 0
+    # These are assigned in exactly one of the two branches below; the
+    # initializer placeholders prevent mypy possibly-unbound warnings.
+    reservation_payload: ReservedDeviceInfo
+    next_operational_state: DeviceOperationalState
+    device_hold: DeviceHold | None
+
+    # Tx 1: locked-write phase — validates, increments cooldown_count, clears the
+    # claim, and fully completes the cooldown branch when not escalating.
     async with db.begin():
         run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
         run = run_result.scalar_one_or_none()
@@ -993,35 +1024,191 @@ async def release_claimed_device_with_cooldown(
         if entry.claimed_by != worker_id:
             raise ValueError(f"Device {device_id} is claimed by another worker")
 
-        excluded_at = now_utc()
-        excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
-        entry.excluded = True
-        entry.exclusion_reason = clean_reason
-        entry.excluded_at = excluded_at
-        entry.excluded_until = excluded_until
+        entry.cooldown_count += 1
         entry.claimed_by = None
         entry.claimed_at = None
 
-        next_operational_state = await ready_operational_state(db, device)
-        await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
+        cooldown_count_after = entry.cooldown_count
+        escalate = threshold > 0 and entry.cooldown_count >= threshold
 
+        if escalate:
+            # Mark the row unclaimable atomically inside Tx1 so that concurrent
+            # claim_device calls (which filter excluded==False) cannot re-pick
+            # this device during the gap between Tx1 commit and the escalation
+            # phase that runs outside the transaction.
+            entry.excluded = True
+            entry.excluded_at = now_utc()
+            entry.excluded_until = None
+            entry.exclusion_reason = (
+                f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
+            )
+
+        if not escalate:
+            excluded_at = now_utc()
+            excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
+            entry.excluded = True
+            entry.exclusion_reason = clean_reason
+            entry.excluded_at = excluded_at
+            entry.excluded_until = excluded_until
+
+            next_operational_state = await ready_operational_state(db, device)
+            await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
+
+            await lifecycle_incident_service.record_lifecycle_incident(
+                db,
+                device,
+                event_type=DeviceEventType.lifecycle_run_cooldown_set,
+                summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                reason=clean_reason,
+                detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
+                source="testkit",
+                run_id=run.id,
+                run_name=run.name,
+                ttl_seconds=ttl_seconds,
+                worker_id=worker_id,
+                expires_at=excluded_until,
+            )
+            reservation_payload = _reservation_to_claim_response(entry)
+            device_hold = device.hold
+
+    # Tx 1 has committed (or raised). Cooldown branch is fully done at this point.
+
+    if escalate:
+        # Tx 2+: escalation path — mirrors complete_auto_stop which also calls
+        # exclude_run_if_needed followed by db.commit() without an enclosing
+        # db.begin() block. exclude_run_if_needed internally calls
+        # enter_maintenance which calls stop_node; stop_node commits
+        # unconditionally when the node is running, so we must not nest this
+        # inside an outer async with db.begin(): block.
+        #
+        # escalation_reason was already written into entry.exclusion_reason in Tx1
+        # (Fix 2 — atomic exclusion), so we derive it from there rather than
+        # rebuilding the string, ensuring both are identical.
+        escalation_reason = entry.exclusion_reason or (
+            f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
+        )
+
+        # Before re-locking the device for escalation work, verify the device's
+        # CURRENT active reservation still belongs to this run.  A concurrent
+        # complete_run / cancel_run / force_release may have released the old
+        # reservation (setting released_at) between Tx1 committing and here, and
+        # a new run could have reserved the same device — in that case we MUST NOT
+        # put the new run's device into maintenance.
+        async with db.begin():
+            _current_run, current_entry = await run_reservation_service.get_device_reservation_with_entry(db, device_id)
+            if current_entry is None or str(current_entry.run_id) != str(run_id):
+                logger.warning(
+                    "device.cooldown.escalation.skipped_after_reassignment",
+                    extra={
+                        "device_id": str(device_id),
+                        "original_run_id": str(run_id),
+                        "current_run_id": str(current_entry.run_id) if current_entry else None,
+                    },
+                )
+                # Tx1 already incremented cooldown_count and excluded the old
+                # reservation; the device just won't enter maintenance because it
+                # is no longer ours.  Return the escalation response for the OLD
+                # reservation — its exclusion IS permanent, the device simply
+                # wasn't put into maintenance on this path.
+                return (
+                    _reservation_to_claim_response(entry),
+                    entry.device.operational_state if entry.device is not None else DeviceOperationalState.offline,
+                    None,  # no maintenance hold was applied
+                    None,  # excluded_until (permanent exclusion has no TTL)
+                    cooldown_count_after,
+                    True,  # escalated — the OLD reservation IS excluded permanently
+                    threshold,
+                )
+        # Reassignment check passed: active reservation still belongs to this run.
+
+        # Re-lock device for a fresh row after Tx 1 committed.
+        device = await device_locking.lock_device(db, device_id, load_sessions=True)
+        run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
+        run_obj = run_for_event.scalar_one()
+
+        await record_event(
+            db,
+            device.id,
+            DeviceEventType.lifecycle_run_cooldown_escalated,
+            {
+                "cooldown_count": cooldown_count_after,
+                "threshold": threshold,
+                "reason": clean_reason,
+                "worker_id": worker_id,
+                "run_id": str(run_obj.id),
+                "run_name": run_obj.name,
+            },
+        )
+
+        # Because we pre-set excluded=True in Tx1 (Fix 2), exclude_run_if_needed
+        # will see was_excluded=True and skip the lifecycle incident and
+        # enter_maintenance calls that normally follow inside it.  We therefore
+        # invoke those two steps explicitly here so the device always ends up in
+        # maintenance and the lifecycle_run_excluded event always fires.
+        await lifecycle_policy_actions.exclude_run_if_needed(
+            db,
+            device,
+            reason=escalation_reason,
+            source="testkit",
+        )
+        # Fire the lifecycle incident and enter maintenance explicitly — these are
+        # skipped by exclude_run_if_needed when the row was already excluded (Tx1).
+        # Reuse run_obj fetched above (same transaction / session).
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,
-            event_type=DeviceEventType.lifecycle_run_cooldown_set,
+            DeviceEventType.lifecycle_run_excluded,
             summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=clean_reason,
-            detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
+            reason=escalation_reason,
+            detail=f"Excluded from {run_obj.name}",
             source="testkit",
-            run_id=run.id,
-            run_name=run.name,
-            ttl_seconds=ttl_seconds,
-            worker_id=worker_id,
-            expires_at=excluded_until,
+            run_id=run_obj.id,
+            run_name=run_obj.name,
         )
+        if "appium_node" not in device.__dict__:
+            await db.refresh(device, ["appium_node"])
+        await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
+        # enter_maintenance + exclude_run_if_needed leave mutations in the session; commit them.
+        await db.commit()
+        # Refresh device so the response reflects post-maintenance state.
+        # enter_maintenance may have committed mid-flight via stop_node and
+        # re-set the hold, so we need fresh values here.
+        await db.refresh(device, ["operational_state", "hold"])
+        # Re-fetch entry because exclude_device_from_run may have mutated
+        # excluded_at and exclusion_reason further. Use scalar_one_or_none so
+        # that a concurrent complete_run/cancel_run/force_release that sets
+        # released_at between our db.commit() and this re-fetch does not raise
+        # NoResultFound (Fix 3). Fall back to the in-memory entry from Tx1.
+        result = await db.execute(
+            select(DeviceReservation)
+            .options(selectinload(DeviceReservation.device))
+            .where(DeviceReservation.run_id == run_id)
+            .where(DeviceReservation.device_id == device_id)
+            .where(DeviceReservation.released_at.is_(None))
+            .limit(1)
+        )
+        fresh_entry = result.scalar_one_or_none()
+        if fresh_entry is not None:
+            entry = fresh_entry  # reflects exclude_device_from_run's mutations
+        # else: entry retains the in-memory state from Tx1 (excluded=True,
+        # exclusion_reason set, cooldown_count incremented) which is correct.
+        reservation_payload = _reservation_to_claim_response(entry)
+        next_operational_state = device.operational_state
+        device_hold = device.hold
 
-    logger.info("device.cooldown.set")
-    return _reservation_to_claim_response(entry), next_operational_state, device.hold, excluded_until
+    if escalate:
+        logger.info("device.cooldown.escalated")
+    else:
+        logger.info("device.cooldown.set")
+    return (
+        reservation_payload,
+        next_operational_state,
+        device_hold,
+        excluded_until,
+        cooldown_count_after,
+        escalate,
+        threshold,
+    )
 
 
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
