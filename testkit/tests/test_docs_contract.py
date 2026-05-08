@@ -53,9 +53,9 @@ def test_documented_example_paths_exist() -> None:
     assert missing == []
 
 
-def test_manual_examples_compile() -> None:
+def test_manual_examples_collect_without_starting_sessions() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "compileall", "-q", "examples"],
+        [sys.executable, "-m", "pytest", "--collect-only", "-p", "no:gridfleet", "-q", "examples"],
         cwd=TESTKIT_ROOT,
         text=True,
         stdout=subprocess.PIPE,
