@@ -17,6 +17,53 @@ interface Props {
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
+const TEST_DATA_MAX_BYTES = 64 * 1024;
+
+type ValidationResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; error: string };
+
+function validatePayload(raw: string): ValidationResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'Invalid JSON — fix syntax errors before saving.' };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'Root must be a JSON object (e.g. {"key": "value"}).' };
+  }
+  const size = new TextEncoder().encode(raw).length;
+  if (size > TEST_DATA_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `Payload is ${size} bytes; limit is ${TEST_DATA_MAX_BYTES} bytes.`,
+    };
+  }
+  return { ok: true, payload: parsed as Record<string, unknown> };
+}
+
+function formatMutationError(err: unknown): string {
+  if (typeof err === 'object' && err !== null) {
+    const maybeAxios = err as {
+      response?: { status?: number; data?: { detail?: unknown; error?: { message?: string } } };
+      message?: string;
+    };
+    const status = maybeAxios.response?.status;
+    const detail = maybeAxios.response?.data?.detail;
+    const errorMessage = maybeAxios.response?.data?.error?.message;
+    if (status === 422) {
+      const reason = typeof detail === 'string' ? detail : JSON.stringify(detail ?? errorMessage ?? '');
+      return `Server rejected payload (422): ${reason}`;
+    }
+    if (status) {
+      return `Save failed (${status}): ${errorMessage ?? maybeAxios.message ?? 'unknown error'}`;
+    }
+    if (maybeAxios.message) return `Save failed: ${maybeAxios.message}`;
+  }
+  return 'Save failed: unknown error.';
+}
+
 export default function DeviceTestDataEditor({ device }: Props) {
   const { id: deviceId } = device;
   const { data: testData, refetch } = useDeviceTestData(deviceId);
@@ -24,7 +71,8 @@ export default function DeviceTestDataEditor({ device }: Props) {
   const replaceMutation = useReplaceDeviceTestData(deviceId);
 
   const [editorValue, setEditorValue] = useState('');
-  const [isValid, setIsValid] = useState(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -34,24 +82,22 @@ export default function DeviceTestDataEditor({ device }: Props) {
     [testData],
   );
   const activeValue = isDirty ? editorValue : syncedValue;
-  const activeIsValid = isDirty ? isValid : true;
+  const activeError = isDirty ? validationError : null;
 
   function handleEditorChange(value: string | undefined) {
     const val = value ?? '';
     setEditorValue(val);
     setIsDirty(val !== syncedValue);
-    try {
-      JSON.parse(val);
-      setIsValid(true);
-    } catch {
-      setIsValid(false);
-    }
+    setSubmitError(null);
+    const result = validatePayload(val);
+    setValidationError(result.ok ? null : result.error);
   }
 
   function handleReset() {
     setEditorValue(syncedValue);
     setIsDirty(false);
-    setIsValid(true);
+    setValidationError(null);
+    setSubmitError(null);
   }
 
   function handleFormat() {
@@ -59,13 +105,18 @@ export default function DeviceTestDataEditor({ device }: Props) {
   }
 
   async function handleSave() {
+    const result = validatePayload(activeValue);
+    if (!result.ok) {
+      setValidationError(result.error);
+      return;
+    }
+    setSubmitError(null);
     try {
-      const parsed = JSON.parse(activeValue) as Record<string, unknown>;
-      await replaceMutation.mutateAsync(parsed);
+      await replaceMutation.mutateAsync(result.payload);
       setIsDirty(false);
       refetch();
-    } catch {
-      // parse guarded above by activeIsValid; nothing to do
+    } catch (err) {
+      setSubmitError(formatMutationError(err));
     }
   }
 
@@ -90,7 +141,7 @@ export default function DeviceTestDataEditor({ device }: Props) {
         </Button>
       </div>
 
-      <div className={`border-b ${!activeIsValid ? 'border-danger-strong' : 'border-border'}`}>
+      <div className={`border-b ${activeError ? 'border-danger-strong' : 'border-border'}`}>
         <Suspense fallback={<LoadingSpinner />}>
           <MonacoEditor
             height="240px"
@@ -111,9 +162,14 @@ export default function DeviceTestDataEditor({ device }: Props) {
         </Suspense>
       </div>
 
-      {!activeIsValid && (
+      {activeError && (
         <div className="border-b border-danger-strong bg-danger-soft px-5 py-2 text-xs text-danger-foreground">
-          Invalid JSON — fix errors before saving.
+          {activeError}
+        </div>
+      )}
+      {submitError && (
+        <div className="border-b border-danger-strong bg-danger-soft px-5 py-2 text-xs text-danger-foreground">
+          {submitError}
         </div>
       )}
 
@@ -122,7 +178,7 @@ export default function DeviceTestDataEditor({ device }: Props) {
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!activeIsValid || !isDirty}
+            disabled={activeError !== null || !isDirty || replaceMutation.isPending}
             leadingIcon={<Save size={14} />}
           >
             Save
