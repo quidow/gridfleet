@@ -101,7 +101,7 @@ def collect_status(
         parsed_env = dict(env)
     else:
         parsed_env, config_error = _parse_config_env_with_error(config_env)
-    service_file = _service_file_path(config, resolved_os)
+    service_file = _service_file_path(config, resolved_os, operator)
     service_active, service_enabled = _service_state(resolved_os, run_command=run_command)
 
     api_auth_username = parsed_env.get("AGENT_API_AUTH_USERNAME") or config.api_auth_username

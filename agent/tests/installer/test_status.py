@@ -279,6 +279,22 @@ def test_status_reports_operator_and_uv(tmp_path: Path) -> None:
     assert "uv path: /home/ops/.local/bin/uv" in rendered
 
 
+def test_collect_status_uses_operator_home_for_macos_plist(tmp_path: Path) -> None:
+    operator = OperatorIdentity(login="alice", uid=2002, home=tmp_path / "Users" / "alice")
+    runtime = UvRuntime(bin_path=None, source="missing", searched=())
+    config = InstallConfig(user="alice")
+    status = collect_status(
+        config,
+        operator=operator,
+        uv_runtime=runtime,
+        os_name="Darwin",
+        env={},
+        run_command=lambda cmd: "",
+    )
+    expected = operator.home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+    assert status.service_file == expected
+
+
 def test_status_reports_uv_missing(tmp_path: Path) -> None:
     operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
     runtime = UvRuntime(bin_path=None, source="missing", searched=("/x", "/y"))

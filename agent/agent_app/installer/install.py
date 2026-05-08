@@ -212,10 +212,6 @@ def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
-def _run_pip_command(command: list[str]) -> None:
-    _run_command(command, timeout=300)
-
-
 def _start_service(
     os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None], uid: int | None = None
 ) -> None:
