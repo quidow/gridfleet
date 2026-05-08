@@ -163,8 +163,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("ERROR: uninstall requires --yes.", file=sys.stderr)
             return 2
         try:
+            operator = resolve_operator_identity(login=args.user)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        try:
             uninstall(
                 InstallConfig(),
+                operator=operator,
                 remove_agent_dir=not args.keep_agent_dir,
                 remove_config_dir=not args.keep_config,
             )

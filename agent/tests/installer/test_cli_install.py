@@ -239,14 +239,17 @@ def test_uninstall_requires_confirmation(capsys: pytest.CaptureFixture[str]) -> 
 
 def test_uninstall_invokes_uninstaller(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     captured: dict[str, object] = {}
+    _patch_operator(monkeypatch)
 
     def fake_uninstall(
         config: InstallConfig,
         *,
+        operator: OperatorIdentity,
         remove_agent_dir: bool = True,
         remove_config_dir: bool = True,
     ) -> object:
         captured["config"] = config
+        captured["operator"] = operator
         captured["remove_agent_dir"] = remove_agent_dir
         captured["remove_config_dir"] = remove_config_dir
         return object()
@@ -256,6 +259,7 @@ def test_uninstall_invokes_uninstaller(monkeypatch: pytest.MonkeyPatch, capsys: 
     assert cli.main(["uninstall", "--yes", "--keep-config", "--keep-agent-dir"]) == 0
 
     assert isinstance(captured["config"], InstallConfig)
+    assert captured["operator"] == _TEST_OPERATOR
     assert captured["remove_agent_dir"] is False
     assert captured["remove_config_dir"] is False
     assert "GridFleet agent uninstalled" in capsys.readouterr().out
