@@ -20,9 +20,7 @@ def test_sudo_user_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_pw = pwd.struct_passwd(("alice", "x", 1002, 1002, "Alice", "/home/alice", "/bin/sh"))
     with patch("agent_app.installer.identity.pwd.getpwnam", return_value=fake_pw):
         identity = resolve_operator_identity(login=None)
-    assert identity.login == "alice"
-    assert identity.uid == 1002
-    assert identity.home == Path("/home/alice")
+    assert identity == OperatorIdentity(login="alice", uid=1002, home=Path("/home/alice"))
 
 
 def test_current_process_when_no_sudo(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +38,6 @@ def test_unknown_login_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SUDO_USER", raising=False)
     with (
         patch("agent_app.installer.identity.pwd.getpwnam", side_effect=KeyError("nope")),
-        pytest.raises(ValueError, match="unknown login"),
+        pytest.raises(ValueError, match=r"unknown login: 'nobody'"),
     ):
         resolve_operator_identity(login="nobody")

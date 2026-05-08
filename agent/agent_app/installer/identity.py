@@ -18,6 +18,6 @@ def resolve_operator_identity(login: str | None = None) -> OperatorIdentity:
     target_login = login or os.environ.get("SUDO_USER") or getpass.getuser()
     try:
         record = pwd.getpwnam(target_login)
-    except KeyError as exc:
+    except (KeyError, OSError) as exc:
         raise ValueError(f"unknown login: {target_login!r}") from exc
     return OperatorIdentity(login=record.pw_name, uid=record.pw_uid, home=Path(record.pw_dir))
