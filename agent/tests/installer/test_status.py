@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
 from agent_app.installer.status import _run_status_command, collect_status, format_status, parse_config_env
 from agent_app.installer.uv_runtime import UvRuntime
-
-if TYPE_CHECKING:
-    import pytest
-
 
 _DEFAULT_OPERATOR = OperatorIdentity(login="testop", uid=9999, home=Path("/home/testop"))
 _DEFAULT_UV = UvRuntime(bin_path=None, source="missing", searched=())
@@ -75,14 +72,15 @@ def test_collect_status_reads_files_service_state_and_health(tmp_path: Path) -> 
     ]
 
 
-def test_collect_status_handles_missing_config_without_health_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_collect_status_handles_missing_config_without_health_check(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
 
     status = collect_status(
         config,
         operator=_DEFAULT_OPERATOR,
         uv_runtime=_DEFAULT_UV,
-        os_name="Linux",
+        os_name=os_name,
         run_command=lambda _command: "inactive\n",
         health_check=lambda _url: HealthCheckResult(ok=True, message="should not run"),
     )

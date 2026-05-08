@@ -178,7 +178,8 @@ def test_update_agent_uses_operator_uid_for_launchd_restart_on_macos(tmp_path: P
     assert commands[1] == ["launchctl", "kickstart", "-k", "gui/501/com.gridfleet.agent"]
 
 
-def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
     operator = _make_operator(tmp_path)
@@ -190,7 +191,7 @@ def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path) ->
             operator=operator,
             uv_runtime=uv_runtime,
             to_version="0.3.0",
-            os_name="Linux",
+            os_name=os_name,
             current_uid=1001,
             run_command=lambda command: commands.append(command),
             drain_check=lambda _url, *, auth=None: DrainResult(ok=False, message="active local nodes remain"),
@@ -200,7 +201,8 @@ def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path) ->
     assert commands == []
 
 
-def test_update_agent_raises_when_uv_not_installed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_update_agent_raises_when_uv_not_installed(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     # bin_path=None → build_upgrade_command raises RuntimeError → UvNotFoundError
     uv_runtime = UvRuntime(bin_path=None, source="missing", searched=("/usr/local/bin/uv",))
@@ -212,7 +214,7 @@ def test_update_agent_raises_when_uv_not_installed(tmp_path: Path) -> None:
             operator=operator,
             uv_runtime=uv_runtime,
             to_version="0.3.0",
-            os_name="Linux",
+            os_name=os_name,
             current_uid=1001,
             run_command=lambda _command: None,
             drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
@@ -419,7 +421,8 @@ def test_cli_update_exit_code_for_restart_failure(monkeypatch: pytest.MonkeyPatc
     assert rc == 2
 
 
-def test_update_health_failure_raises_typed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_update_health_failure_raises_typed(tmp_path: Path, os_name: str) -> None:
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
@@ -431,7 +434,7 @@ def test_update_health_failure_raises_typed(tmp_path: Path) -> None:
             InstallConfig(user="ops"),
             operator=operator,
             uv_runtime=runtime,
-            os_name="Linux",
+            os_name=os_name,
             run_command=lambda cmd: None,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
             health_check=lambda url, **kw: HealthCheckResult(ok=False, message="unhealthy"),

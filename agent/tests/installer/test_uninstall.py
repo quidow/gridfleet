@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.plan import InstallConfig
 from agent_app.installer.uninstall import UninstallResult, uninstall
@@ -77,17 +79,19 @@ def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(tmp_path: Pa
     assert not service_file.exists()
 
 
-def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
     agent_dir.mkdir(parents=True)
     config_dir.mkdir(parents=True)
+    operator = OperatorIdentity(login="ops", uid=1000, home=tmp_path)
 
     result = uninstall(
         config,
-        operator=_LINUX_OPERATOR,
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         run_command=lambda _command, *, check=True: None,
         remove_agent_dir=False,
         remove_config_dir=False,
@@ -99,13 +103,15 @@ def test_uninstall_keep_flags_preserve_agent_and_config_dirs(tmp_path: Path) -> 
     assert config_dir.exists()
 
 
-def test_uninstall_is_idempotent_when_files_are_missing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_uninstall_is_idempotent_when_files_are_missing(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
+    operator = OperatorIdentity(login="ops", uid=1000, home=tmp_path)
 
     result = uninstall(
         config,
-        operator=_LINUX_OPERATOR,
-        os_name="Linux",
+        operator=operator,
+        os_name=os_name,
         run_command=lambda _command, *, check=True: None,
     )
 

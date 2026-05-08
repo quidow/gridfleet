@@ -270,9 +270,10 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
     assert health_urls == ["http://localhost:5200/agent/health"]
 
 
-def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -282,7 +283,7 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
         config,
         ToolDiscovery(),
         operator=operator,
-        os_name="Linux",
+        os_name=os_name,
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
@@ -296,9 +297,10 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
     assert registration_checks == [config]
 
 
-def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -310,7 +312,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
         config,
         ToolDiscovery(),
         operator=operator,
-        os_name="Linux",
+        os_name=os_name,
         executable=executable,
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda _command: None,
@@ -411,22 +413,23 @@ def test_poll_manager_registration_explains_auth_required_on_401() -> None:
     assert "--manager-auth-password" in result.message
 
 
-def test_install_with_start_raises_when_service_command_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_raises_when_service_command_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
     def fail_command(_command: list[str]) -> None:
-        raise RuntimeError("systemctl failed")
+        raise RuntimeError("service command failed")
 
-    with pytest.raises(RuntimeError, match="systemctl failed"):
+    with pytest.raises(RuntimeError, match="service command failed"):
         install_with_start(
             config,
             ToolDiscovery(),
             operator=operator,
-            os_name="Linux",
+            os_name=os_name,
             executable=executable,
             download=lambda _url, dest: dest.write_text("selenium"),
             run_command=fail_command,
@@ -582,7 +585,8 @@ def test_poll_agent_health_passes_basic_auth() -> None:
     assert captured["auth"] == ("ops", "secret")
 
 
-def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path, os_name: str) -> None:
     from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
     from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
@@ -599,12 +603,12 @@ def test_install_with_start_forwards_api_auth_to_health_check(tmp_path: Path) ->
         api_auth_username="ops",
         api_auth_password="secret",
     )
-    op = _make_operator(config, login=config.user)
+    op = _make_operator(config, login=config.user, home=tmp_path)
     install_with_start(
         config,
         ToolDiscovery(),
         operator=op,
-        os_name="Linux",
+        os_name=os_name,
         download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,
@@ -642,7 +646,8 @@ def test_install_no_start_chowns_on_darwin(tmp_path: Path) -> None:
     assert all(login == "ops" for _, login in chown_calls)
 
 
-def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_install_with_start_omits_auth_when_unset(tmp_path: Path, os_name: str) -> None:
     from agent_app.installer.install import HealthCheckResult, RegistrationCheckResult, install_with_start
     from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
@@ -657,12 +662,12 @@ def test_install_with_start_omits_auth_when_unset(tmp_path: Path) -> None:
         agent_dir=str(tmp_path / "agent"),
         config_dir=str(tmp_path / "etc"),
     )
-    op = _make_operator(config, login=config.user)
+    op = _make_operator(config, login=config.user, home=tmp_path)
     install_with_start(
         config,
         ToolDiscovery(),
         operator=op,
-        os_name="Linux",
+        os_name=os_name,
         download=lambda _url, _dest: None,
         run_command=lambda _cmd: None,
         health_check=_hc,
