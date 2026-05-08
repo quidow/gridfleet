@@ -6,12 +6,17 @@ import DeviceConfigEditor from './DeviceConfigEditor';
 import * as api from '../../api/devices';
 import * as driverPacksApi from '../../api/driverPacks';
 import { AuthContext, type AuthContextValue, DEFAULT_SESSION } from '../../context/auth';
+import type { DeviceDetail } from '../../types';
 
 vi.mock('../../api/devices');
 vi.mock('../../api/driverPacks');
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange }: any) => (
-    <textarea data-testid="monaco" value={value} onChange={(e: any) => onChange(e.target.value)} />
+  default: ({ value, onChange }: { value: string; onChange: (next: string) => void }) => (
+    <textarea
+      data-testid="monaco"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
   ),
 }));
 
@@ -38,7 +43,7 @@ function wrap(ui: React.ReactNode) {
   );
 }
 
-const minimalDevice: any = {
+const minimalDevice = {
   id: 'abc',
   host_id: 'host1',
   pack_id: null,
@@ -46,7 +51,7 @@ const minimalDevice: any = {
   name: 'Test Device',
   readiness_state: 'verified',
   missing_setup_fields: [],
-};
+} as unknown as DeviceDetail;
 
 describe('DeviceConfigEditor narrowed to appium_caps', () => {
   it('shows only appium_caps subkey in editor', async () => {

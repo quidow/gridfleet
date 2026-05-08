@@ -6,7 +6,7 @@ import * as api from '../../api/devices';
 
 vi.mock('../../api/devices');
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ value, onChange }: any) => (
+  default: ({ value, onChange }: { value: string; onChange: (next: string) => void }) => (
     <textarea data-testid="monaco" value={value} onChange={(e) => onChange(e.target.value)} />
   ),
 }));
@@ -21,7 +21,13 @@ it('saves through replaceDeviceTestData and does not open verification modal', a
   vi.mocked(api.getTestDataHistory).mockResolvedValueOnce([]);
   vi.mocked(api.replaceDeviceTestData).mockResolvedValueOnce({ k: 'v' });
 
-  render(wrap(<DeviceTestDataEditor device={{ id: 'abc' } as any} />));
+  render(
+    wrap(
+      <DeviceTestDataEditor
+        device={{ id: 'abc' } as unknown as Parameters<typeof DeviceTestDataEditor>[0]['device']}
+      />,
+    ),
+  );
 
   await waitFor(() => screen.getByTestId('monaco'));
   fireEvent.change(screen.getByTestId('monaco'), { target: { value: '{"k":"v"}' } });
