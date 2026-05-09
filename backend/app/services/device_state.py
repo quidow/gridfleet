@@ -16,6 +16,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.observability import get_logger
+from app.services.device_health_view import device_allows_allocation
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_event_for_session
 
@@ -89,7 +90,7 @@ async def set_hold(
 
 async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOperationalState:
     """Project readiness into the operational axis."""
-    if await is_ready_for_use_async(db, device):
+    if await is_ready_for_use_async(db, device) and device_allows_allocation(device):
         return DeviceOperationalState.available
     return DeviceOperationalState.offline
 
