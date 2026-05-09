@@ -132,6 +132,12 @@ def record_recovery_recovered(next_state: dict[str, Any]) -> None:
     set_action(next_state, "auto_recovered")
 
 
+def record_maintenance_exited(next_state: dict[str, Any]) -> None:
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    set_action(next_state, "maintenance_exited")
+
+
 def set_backoff(next_state: dict[str, Any], *, base_seconds: int, max_seconds: int) -> str:
     attempts = int(next_state.get("recovery_backoff_attempts") or 0) + 1
     next_state["recovery_backoff_attempts"] = attempts
