@@ -415,12 +415,18 @@ async def register_session(
         await db.refresh(session)
         return session
 
+    # Pin ``started_at`` and ``ended_at`` to the same Python timestamp so a
+    # late-registered terminal session never persists with ``ended_at <
+    # started_at`` (the column default is ``server_default=func.now()`` which
+    # fires later than ``datetime.now(UTC)``, producing negative durations).
+    now = datetime.now(UTC)
     session = Session(
         session_id=session_id,
         device_id=device.id if device is not None else None,
         test_name=test_name,
         status=status,
-        ended_at=datetime.now(UTC),
+        started_at=now,
+        ended_at=now,
         requested_pack_id=requested_pack_id,
         requested_platform_id=requested_platform_id,
         requested_device_type=requested_device_type,

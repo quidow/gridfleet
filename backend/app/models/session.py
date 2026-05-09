@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,7 +28,7 @@ class Session(Base):
             "ux_sessions_session_id_running",
             "session_id",
             unique=True,
-            postgresql_where="status = 'running' AND ended_at IS NULL",
+            postgresql_where=text("status = 'running' AND ended_at IS NULL"),
         ),
     )
 

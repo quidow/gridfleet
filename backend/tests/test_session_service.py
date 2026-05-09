@@ -272,12 +272,14 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
 async def test_register_session_running_returns_existing_on_conflict(
     db_session: AsyncSession,
     default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Concurrent registrants for the same ``session_id`` must converge.
 
-    The partial unique index ``ux_sessions_session_id_running`` blocks a
-    second running insert; ``register_session`` must surface the winner's
-    row instead of crashing on IntegrityError.
+    Stubs the ``get_session`` pre-check so the second call cannot
+    short-circuit before reaching ``INSERT ... ON CONFLICT DO NOTHING``.
+    Without the conflict-handling branch the second call would either
+    raise ``IntegrityError`` or persist a duplicate ``running`` row.
     """
     device = await create_device_record(
         db_session,
@@ -297,11 +299,19 @@ async def test_register_session_running_returns_existing_on_conflict(
     )
     assert first.test_name == "first"
 
-    # The pre-check returns the existing row for the same session_id, so the
-    # ON CONFLICT path is exercised by clearing it from the session cache and
-    # invoking register_session again with different metadata. The conflict
-    # must short-circuit and return the original row, not raise.
-    db_session.expunge_all()
+    real_get_session = session_service.get_session
+    pre_check_calls = {"n": 0}
+
+    async def patched_get_session(db: AsyncSession, sid: str) -> Session | None:
+        pre_check_calls["n"] += 1
+        # Bypass only the pre-check (first call). The post-conflict refetch
+        # (second call) must see the real winner row.
+        if pre_check_calls["n"] == 1:
+            return None
+        return await real_get_session(db, sid)
+
+    monkeypatch.setattr(session_service, "get_session", patched_get_session)
+
     second = await session_service.register_session(
         db_session,
         session_id="sess-conflict",
@@ -309,8 +319,11 @@ async def test_register_session_running_returns_existing_on_conflict(
         device_id=device.id,
         connection_target="conflict-target",
     )
-    assert second.test_name == "first"
+    # Conflict short-circuit returns the winner's row; loser's metadata is
+    # discarded.
     assert second.id == first.id
+    assert second.test_name == "first"
+    assert pre_check_calls["n"] >= 2, "post-conflict refetch must run"
 
     rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-conflict"))).scalars().all()
     assert len(rows) == 1
