@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.services.heartbeat as hb
 from app.services.heartbeat_outcomes import (
     ClientMode,
     HeartbeatOutcome,
@@ -27,16 +28,12 @@ def _skip_leader_fencing() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _reset_last_cycle_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.services.heartbeat as hb
-
     monkeypatch.setattr(hb, "_LAST_CYCLE_MONOTONIC", None)
 
 
 def test_resume_guard_helper() -> None:
-    from app.services.heartbeat import _resume_guard_active
-
     assert (
-        _resume_guard_active(
+        hb._resume_guard_active(
             last_cycle_monotonic=100.0,
             now_monotonic=350.0,
             interval_sec=15.0,
@@ -45,7 +42,7 @@ def test_resume_guard_helper() -> None:
         is True
     )
     assert (
-        _resume_guard_active(
+        hb._resume_guard_active(
             last_cycle_monotonic=300.0,
             now_monotonic=320.0,
             interval_sec=15.0,
@@ -54,7 +51,7 @@ def test_resume_guard_helper() -> None:
         is False
     )
     assert (
-        _resume_guard_active(
+        hb._resume_guard_active(
             last_cycle_monotonic=None,
             now_monotonic=100.0,
             interval_sec=15.0,
@@ -64,7 +61,7 @@ def test_resume_guard_helper() -> None:
     )
     # Equality boundary: gap == interval * max_missed → guard NOT active (genuine miss).
     assert (
-        _resume_guard_active(
+        hb._resume_guard_active(
             last_cycle_monotonic=300.0,
             now_monotonic=345.0,
             interval_sec=15.0,
@@ -107,8 +104,6 @@ async def test_long_gap_then_recovery_does_not_emit_offline(
     """Set _LAST_CYCLE_MONOTONIC to (now - 10*interval). Cycle 1: timeout; guard active.
     Cycle 2: success. No host.status_changed online->offline event must appear."""
     from sqlalchemy.ext.asyncio import AsyncSession
-
-    import app.services.heartbeat as hb
 
     assert isinstance(db_session, AsyncSession)
 
