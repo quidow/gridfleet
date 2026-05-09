@@ -30,13 +30,13 @@ from app.services.lifecycle_policy_actions import (
     restore_run_if_needed,
 )
 from app.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
     loaded_node,
     now,
     parse_iso,
     record_backoff_suppressed,
-    record_maintenance_exited,
     record_recovery_failed,
     record_recovery_recovered,
     record_recovery_started,
@@ -197,7 +197,7 @@ async def handle_health_failure(
             current_state,
             source=source,
             reason=reason,
-            suppression_reason="Device is in maintenance mode",
+            suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
             run=None,
         )
         return "suppressed"
@@ -364,7 +364,7 @@ async def attempt_auto_recovery(
             current_state,
             source=source,
             reason=reason,
-            suppression_reason="Device is in maintenance mode",
+            suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
             run=run,
         )
     if current_state.get("stop_pending"):
@@ -597,25 +597,6 @@ async def attempt_auto_recovery(
     )
     await db.commit()
     return True
-
-
-def clear_maintenance_recovery_suppression(device: Device) -> None:
-    """Clear lifecycle suppression that ``handle_health_failure`` records when
-    a device fails a probe while held in maintenance.
-
-    The suppression reason ("Device is in maintenance mode") is tautologically
-    tied to the maintenance hold, but no path resets it on its own once the
-    operator clears the hold — ``attempt_auto_recovery`` only fires while the
-    device is still ``offline`` and never runs once the device is back to
-    ``available``. Without this clear the device renders as
-    ``recovery_state="suppressed"`` ("Unhealthy") on the devices list even when
-    every live signal is green.
-
-    Caller must hold the device row lock and is responsible for the commit.
-    """
-    next_state = policy_state(device)
-    record_maintenance_exited(next_state)
-    write_state(device, next_state)
 
 
 session_viability.configure_health_failure_handler(handle_health_failure)

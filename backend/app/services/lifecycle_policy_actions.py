@@ -21,6 +21,7 @@ from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
     set_action,
@@ -339,7 +340,7 @@ async def record_ci_preparation_failed(
     fresh["last_failure_source"] = source
     fresh["last_failure_reason"] = reason
     clear_deferred_stop(fresh)
-    fresh["recovery_suppressed_reason"] = "Device is in maintenance mode"
+    fresh["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
     clear_backoff(fresh)
     set_action(fresh, "ci_preparation_failed")
     write_state(device, fresh)
