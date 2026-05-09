@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host
-from app.services.maintenance_service import enter_maintenance
+from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -61,3 +61,90 @@ async def test_enter_maintenance_succeeds_for_available_device(
     result = await enter_maintenance(db_session, device, drain=True)
 
     assert result.hold == DeviceHold.maintenance
+
+
+async def test_exit_maintenance_clears_maintenance_recovery_suppression(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Exiting maintenance must clear lifecycle_policy_state.recovery_suppressed_reason
+    set by handle_health_failure while the device was held in maintenance.
+
+    Without this, devices stay rendered as Unhealthy (recovery_state="suppressed")
+    on the devices list even after the operator brought them back and the live
+    checks pass — see the "Device is in maintenance mode" suppression set by
+    lifecycle_policy.handle_health_failure.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="exit-clears-suppression",
+        hold=DeviceHold.maintenance,
+        lifecycle_policy_state={
+            "last_action": "recovery_suppressed",
+            "last_action_at": "2026-05-09T21:14:19+00:00",
+            "last_failure_reason": "Failed checks: ping, ecp",
+            "last_failure_source": "device_checks",
+            "recovery_suppressed_reason": "Device is in maintenance mode",
+            "recovery_backoff_attempts": 0,
+            "backoff_until": None,
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+        },
+    )
+    await db_session.commit()
+
+    await exit_maintenance(db_session, device)
+    await db_session.refresh(device)
+
+    assert device.hold is None
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") is None
+    assert device.lifecycle_policy_state.get("backoff_until") is None
+    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 0
+    assert device.lifecycle_policy_state.get("last_action") == "maintenance_exited"
+
+
+async def test_exit_maintenance_preserves_non_maintenance_suppression(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Suppressions whose cause is independent of the maintenance hold
+    (``"Auto-manage is disabled"``, ``"Node restart failed"``,
+    ``"Recovery probe failed"``, an active backoff window, ...) describe a
+    real condition that survives operator-driven maintenance exit and must
+    NOT be silently wiped along with the maintenance-tautology reason.
+    """
+    backoff_until = "2027-01-01T00:00:00+00:00"
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="exit-preserves-auto-manage-suppression",
+        hold=DeviceHold.maintenance,
+        auto_manage=False,
+        lifecycle_policy_state={
+            "last_action": "recovery_suppressed",
+            "last_action_at": "2026-05-09T21:14:19+00:00",
+            "last_failure_reason": "Max node health failures reached",
+            "last_failure_source": "node_health",
+            "recovery_suppressed_reason": "Auto-manage is disabled",
+            "recovery_backoff_attempts": 3,
+            "backoff_until": backoff_until,
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+        },
+    )
+    await db_session.commit()
+
+    await exit_maintenance(db_session, device)
+    await db_session.refresh(device)
+
+    assert device.hold is None
+    assert device.lifecycle_policy_state is not None
+    # Suppression unrelated to the maintenance hold must persist.
+    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") == "Auto-manage is disabled"
+    assert device.lifecycle_policy_state.get("backoff_until") == backoff_until
+    assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 3
+    assert device.lifecycle_policy_state.get("last_action") == "recovery_suppressed"

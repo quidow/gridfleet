@@ -6,6 +6,7 @@ from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.services import device_locking
 from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
+from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
 
@@ -60,6 +61,8 @@ async def exit_maintenance(
 
     await set_hold(device, None, reason="Operator exited maintenance")
     await set_operational_state(device, DeviceOperationalState.offline, reason="Operator exited maintenance")
+    clear_maintenance_recovery_suppression(device)
+
     if commit:
         await db.commit()
         await db.refresh(device)

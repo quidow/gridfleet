@@ -132,6 +132,33 @@ def record_recovery_recovered(next_state: dict[str, Any]) -> None:
     set_action(next_state, "auto_recovered")
 
 
+MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
+
+
+def clear_maintenance_recovery_suppression(device: Device) -> None:
+    """Clear lifecycle suppression that ``handle_health_failure`` records when a
+    device fails a probe while held in maintenance.
+
+    Only clears the maintenance-tautology reason
+    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``). Other suppressions
+    (``"Auto-manage is disabled"``, ``"Node restart failed"``,
+    ``"Recovery probe failed"``, an active backoff window, etc.) describe a
+    real condition that is independent of the maintenance hold and must
+    survive an operator-driven exit. No-op when those are present.
+
+    Caller must hold the device row lock and is responsible for the commit;
+    this helper performs an in-memory read-modify-write through ``write_state``
+    and does not lock or touch the database directly.
+    """
+    next_state = state(device)
+    if next_state.get("recovery_suppressed_reason") != MAINTENANCE_HOLD_SUPPRESSION_REASON:
+        return
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    set_action(next_state, "maintenance_exited")
+    write_state(device, next_state)
+
+
 def set_backoff(next_state: dict[str, Any], *, base_seconds: int, max_seconds: int) -> str:
     attempts = int(next_state.get("recovery_backoff_attempts") or 0) + 1
     next_state["recovery_backoff_attempts"] = attempts

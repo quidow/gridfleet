@@ -30,6 +30,7 @@ from app.services.lifecycle_policy_actions import (
     restore_run_if_needed,
 )
 from app.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
     loaded_node,
@@ -196,7 +197,7 @@ async def handle_health_failure(
             current_state,
             source=source,
             reason=reason,
-            suppression_reason="Device is in maintenance mode",
+            suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
             run=None,
         )
         return "suppressed"
@@ -363,7 +364,7 @@ async def attempt_auto_recovery(
             current_state,
             source=source,
             reason=reason,
-            suppression_reason="Device is in maintenance mode",
+            suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
             run=run,
         )
     if current_state.get("stop_pending"):
