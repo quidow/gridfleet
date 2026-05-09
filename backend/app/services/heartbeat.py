@@ -191,12 +191,32 @@ def _emit_heartbeat_log(
 
 
 _LOOP_ITERATION = 0
+_LAST_CYCLE_MONOTONIC: float | None = None
 
 
 def _next_loop_iteration() -> int:
     global _LOOP_ITERATION
     _LOOP_ITERATION += 1
     return _LOOP_ITERATION
+
+
+def _resume_guard_active(
+    *,
+    last_cycle_monotonic: float | None,
+    now_monotonic: float,
+    interval_sec: float,
+    max_missed: int,
+) -> bool:
+    """Return True when the gap since the last cycle exceeds the missed-heartbeat threshold.
+
+    A True result means the backend itself was paused (preemption, debugger,
+    system-clock block) — not that hosts are offline.  The offline branch MUST be
+    suppressed in that case to avoid flapping healthy hosts.
+    """
+    if last_cycle_monotonic is None:
+        return False
+    threshold = interval_sec * max_missed
+    return (now_monotonic - last_cycle_monotonic) > threshold
 
 
 def _coerce_int(value: object) -> int | None:
@@ -481,6 +501,18 @@ async def _check_hosts(db: AsyncSession) -> None:
     iteration = _next_loop_iteration()
     leader_id = str(control_plane_leader.holder_id)
 
+    interval = float(settings_service.get("general.heartbeat_interval_sec"))
+    max_missed = int(settings_service.get("general.max_missed_heartbeats"))
+    global _LAST_CYCLE_MONOTONIC
+    now_mono = time.monotonic()
+    guard_active = _resume_guard_active(
+        last_cycle_monotonic=_LAST_CYCLE_MONOTONIC,
+        now_monotonic=now_mono,
+        interval_sec=interval,
+        max_missed=max_missed,
+    )
+    _LAST_CYCLE_MONOTONIC = now_mono
+
     for host in hosts:
         host_key = str(host.id)
         ping_result = await _ping_agent(host.ip, host.agent_port)
@@ -536,60 +568,63 @@ async def _check_hosts(db: AsyncSession) -> None:
                 await _persist_appium_processes_snapshot(db, host, health_data)
                 await _ingest_appium_restart_events(db, host, health_data)
         else:
-            count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
-            logger.warning(
-                "Host %s (%s) heartbeat failed (%d/%d)",
-                host.hostname,
-                host.ip,
-                count,
-                settings_service.get("general.max_missed_heartbeats"),
-            )
+            if guard_active:
+                logger.warning("heartbeat_resume_guard_swallowed_miss", host_id=str(host.id))
+            else:
+                count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
+                logger.warning(
+                    "Host %s (%s) heartbeat failed (%d/%d)",
+                    host.hostname,
+                    host.ip,
+                    count,
+                    settings_service.get("general.max_missed_heartbeats"),
+                )
 
-            if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
-                logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-                queue_event_for_session(
-                    db,
-                    "host.status_changed",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "old_status": host.status.value,
-                        "new_status": "offline",
-                    },
-                )
-                queue_event_for_session(
-                    db,
-                    "host.heartbeat_lost",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "missed_count": count,
-                    },
-                )
-                host.status = HostStatus.offline
-                # Mark all devices on this host as offline. lock_devices
-                # acquires SELECT FOR UPDATE on each row in id order so
-                # operational_state writes serialize against concurrent writers.
-                device_id_stmt = select(Device.id).where(Device.host_id == host.id)
-                device_ids = list((await db.execute(device_id_stmt)).scalars().all())
-                for device in await device_locking.lock_devices(db, device_ids):
-                    await record_event(
+                if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+                    logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
+                    queue_event_for_session(
                         db,
-                        device.id,
-                        DeviceEventType.connectivity_lost,
-                        {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
+                        "host.status_changed",
+                        {
+                            "host_id": str(host.id),
+                            "hostname": host.hostname,
+                            "old_status": host.status.value,
+                            "new_status": "offline",
+                        },
                     )
-                    await device_health.update_device_checks(
+                    queue_event_for_session(
                         db,
-                        device,
-                        healthy=False,
-                        summary=f"Host {host.hostname} offline",
+                        "host.heartbeat_lost",
+                        {
+                            "host_id": str(host.id),
+                            "hostname": host.hostname,
+                            "missed_count": count,
+                        },
                     )
-                    await set_operational_state(
-                        device,
-                        DeviceOperationalState.offline,
-                        reason=f"Host {host.hostname} offline",
-                    )
+                    host.status = HostStatus.offline
+                    # Mark all devices on this host as offline. lock_devices
+                    # acquires SELECT FOR UPDATE on each row in id order so
+                    # operational_state writes serialize against concurrent writers.
+                    device_id_stmt = select(Device.id).where(Device.host_id == host.id)
+                    device_ids = list((await db.execute(device_id_stmt)).scalars().all())
+                    for device in await device_locking.lock_devices(db, device_ids):
+                        await record_event(
+                            db,
+                            device.id,
+                            DeviceEventType.connectivity_lost,
+                            {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
+                        )
+                        await device_health.update_device_checks(
+                            db,
+                            device,
+                            healthy=False,
+                            summary=f"Host {host.hostname} offline",
+                        )
+                        await set_operational_state(
+                            device,
+                            DeviceOperationalState.offline,
+                            reason=f"Host {host.hostname} offline",
+                        )
 
     await db.commit()
 
