@@ -910,6 +910,17 @@ async def claim_device(
     candidate.claimed_by = worker_id or _generated_worker_id()
     candidate.claimed_at = now
     info = _reservation_to_claim_response(candidate)
+    # Flip operational_state -> busy under the device row lock so the device
+    # chip reflects in-use immediately. Without this, devices stay
+    # operational_state=available (chip="reserved") until session_sync_loop
+    # detects the Grid session (~5s default) or the testkit's POST /sessions
+    # registers, leaving an intermittent reserved/busy mismatch in the UI.
+    locked_device = await device_locking.lock_device(db, candidate.device_id)
+    await set_operational_state(
+        locked_device,
+        DeviceOperationalState.busy,
+        reason=f"Claimed by worker '{candidate.claimed_by}' for run '{run.name}'",
+    )
     await db.commit()
     return info
 

@@ -133,6 +133,21 @@ async def test_claim_device_success(db_session: AsyncSession, default_host_id: s
     assert info2.claimed_by == "gw1"
 
 
+async def test_claim_device_marks_operational_state_busy(db_session: AsyncSession, default_host_id: str) -> None:
+    """claim_device must flip operational_state -> busy so the device chip
+    reflects in-use immediately, closing the race window between Grid session
+    start and session_sync_loop's busy write."""
+    device = await _make_device(db_session, default_host_id, "claim-busy-001")
+    run = await create_reserved_run(db_session, name="claim-busy-run", devices=[device])
+
+    assert device.operational_state == DeviceOperationalState.available
+
+    await run_service.claim_device(db_session, run.id, worker_id="gw0")
+
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
+
+
 async def test_claim_device_no_free_devices(db_session: AsyncSession, default_host_id: str) -> None:
     d1 = await _make_device(db_session, default_host_id, "claim-full-001")
     run = await create_reserved_run(db_session, name="claim-full-run", devices=[d1])
