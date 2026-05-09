@@ -138,6 +138,68 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     assert device.operational_state == DeviceOperationalState.available
 
 
+async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db_host: Host) -> None:
+    """Two Session rows share the same session_id with status=running.
+
+    Reproduces the production crash where session_sync.scalar_one_or_none()
+    raised MultipleResultsFound, deadlocking the loop and leaving devices
+    stuck busy. ``ux_sessions_session_id_running`` now blocks new duplicates,
+    but rows that pre-date the migration can still exist; the loop must
+    survive them and end every matching row.
+    """
+    from sqlalchemy import text
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-dup",
+        connection_target="dev-dup",
+        name="Duplicate Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # Drop the partial unique index just for this test so we can simulate the
+    # pre-migration state where two ``running`` rows shared a ``session_id``.
+    await db_session.execute(text("DROP INDEX ux_sessions_session_id_running"))
+    try:
+        dup_a = Session(session_id="sess-dup", device_id=device.id, status=SessionStatus.running)
+        dup_b = Session(session_id="sess-dup", device_id=device.id, status=SessionStatus.running)
+        db_session.add_all([dup_a, dup_b])
+        await db_session.commit()
+
+        grid_data = _grid_response([])
+
+        with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+            await _sync_sessions(db_session)
+
+        result = await db_session.execute(select(Session).where(Session.session_id == "sess-dup"))
+        rows = result.scalars().all()
+        assert len(rows) == 2
+        for row in rows:
+            assert row.status == SessionStatus.passed
+            assert row.ended_at is not None
+
+        await db_session.refresh(device)
+        assert device.operational_state == DeviceOperationalState.available
+    finally:
+        await db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX ux_sessions_session_id_running ON sessions (session_id) "
+                "WHERE status = 'running' AND ended_at IS NULL"
+            )
+        )
+        await db_session.commit()
+
+
 async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",

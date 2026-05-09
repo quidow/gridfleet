@@ -2,7 +2,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, and_, asc, desc, func, or_, select
+from sqlalchemy import Select, and_, asc, desc, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
@@ -239,9 +240,18 @@ async def list_sessions(
 
 
 async def get_session(db: AsyncSession, session_id: str) -> Session | None:
-    stmt = select(Session).where(Session.session_id == session_id).options(selectinload(Session.device))
+    # ``session_id`` is unique-by-running via partial index, but historical
+    # rows may share the same ``session_id`` across terminal records. Tolerate
+    # duplicates by returning the most recently started match.
+    stmt = (
+        select(Session)
+        .where(Session.session_id == session_id)
+        .options(selectinload(Session.device))
+        .order_by(Session.started_at.desc(), Session.id.desc())
+        .limit(1)
+    )
     result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def _resolve_device_for_session(
@@ -351,12 +361,66 @@ async def register_session(
         if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry):
             reservation_run_id = reservation_run.id
 
+    # Insert idempotently. Only ``running`` rows are guarded by the partial
+    # unique index, so for non-running registrations we fall back to a plain
+    # ORM add (the historical races only matter for live sessions).
+    if status == SessionStatus.running:
+        insert_stmt = (
+            pg_insert(Session)
+            .values(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                device_id=device.id if device is not None else None,
+                test_name=test_name,
+                status=status,
+                ended_at=None,
+                requested_pack_id=requested_pack_id,
+                requested_platform_id=requested_platform_id,
+                requested_device_type=requested_device_type,
+                requested_connection_type=requested_connection_type,
+                requested_capabilities=requested_capabilities,
+                error_type=error_type,
+                error_message=error_message,
+                run_id=reservation_run_id,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[Session.session_id],
+                index_where=text("status = 'running' AND ended_at IS NULL"),
+            )
+            .returning(Session.id)
+        )
+        inserted_id = (await db.execute(insert_stmt)).scalar_one_or_none()
+        if inserted_id is None:
+            # Concurrent registrant won; commit our reservation lookup work
+            # (no state mutations were queued yet) and return their row.
+            await db.commit()
+            existing_after_race = await get_session(db, session_id)
+            if existing_after_race is not None:
+                return existing_after_race
+            raise ValueError("Session insert conflicted but no existing row found")
+
+        session = await db.get(Session, inserted_id)
+        assert session is not None
+        activated_run = None
+        if device is not None:
+            await set_operational_state(device, DeviceOperationalState.busy, publish_event=False)
+            activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
+        queue_session_started_event(
+            db,
+            session,
+            device=device,
+            run_id=str(activated_run.id) if activated_run is not None else None,
+        )
+        await db.commit()
+        await db.refresh(session)
+        return session
+
     session = Session(
         session_id=session_id,
         device_id=device.id if device is not None else None,
         test_name=test_name,
         status=status,
-        ended_at=datetime.now(UTC) if status != SessionStatus.running else None,
+        ended_at=datetime.now(UTC),
         requested_pack_id=requested_pack_id,
         requested_platform_id=requested_platform_id,
         requested_device_type=requested_device_type,
@@ -367,21 +431,11 @@ async def register_session(
         run_id=reservation_run_id,
     )
     db.add(session)
-    activated_run = None
-    if device is not None and status == SessionStatus.running:
-        await set_operational_state(device, DeviceOperationalState.busy, publish_event=False)
-        activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
-    queue_session_started_event(
-        db,
-        session,
-        device=device,
-        run_id=str(activated_run.id) if activated_run is not None else None,
-    )
-    if status != SessionStatus.running:
-        queue_session_ended_event(db, session, device=device)
+    queue_session_started_event(db, session, device=device, run_id=None)
+    queue_session_ended_event(db, session, device=device)
     await db.commit()
     await db.refresh(session)
-    if status != SessionStatus.running and device is not None:
+    if device is not None:
         await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
     return session
 

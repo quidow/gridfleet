@@ -22,7 +22,15 @@ class SessionStatus(enum.StrEnum):
 
 class Session(Base):
     __tablename__ = "sessions"
-    __table_args__ = (Index("ix_sessions_device_id_started_at", "device_id", "started_at"),)
+    __table_args__ = (
+        Index("ix_sessions_device_id_started_at", "device_id", "started_at"),
+        Index(
+            "ux_sessions_session_id_running",
+            "session_id",
+            unique=True,
+            postgresql_where="status = 'running' AND ended_at IS NULL",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)

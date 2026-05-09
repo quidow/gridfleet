@@ -267,3 +267,50 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
         "update_session_status must clear stop_pending even when device availability is no longer busy"
     )
+
+
+async def test_register_session_running_returns_existing_on_conflict(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Concurrent registrants for the same ``session_id`` must converge.
+
+    The partial unique index ``ux_sessions_session_id_running`` blocks a
+    second running insert; ``register_session`` must surface the winner's
+    row instead of crashing on IntegrityError.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="android-conflict",
+        connection_target="conflict-target",
+        name="Conflict Phone",
+    )
+    await db_session.commit()
+
+    first = await session_service.register_session(
+        db_session,
+        session_id="sess-conflict",
+        test_name="first",
+        device_id=device.id,
+        connection_target="conflict-target",
+    )
+    assert first.test_name == "first"
+
+    # The pre-check returns the existing row for the same session_id, so the
+    # ON CONFLICT path is exercised by clearing it from the session cache and
+    # invoking register_session again with different metadata. The conflict
+    # must short-circuit and return the original row, not raise.
+    db_session.expunge_all()
+    second = await session_service.register_session(
+        db_session,
+        session_id="sess-conflict",
+        test_name="second",
+        device_id=device.id,
+        connection_target="conflict-target",
+    )
+    assert second.test_name == "first"
+    assert second.id == first.id
+
+    rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-conflict"))).scalars().all()
+    assert len(rows) == 1

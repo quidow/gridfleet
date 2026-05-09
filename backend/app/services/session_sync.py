@@ -4,7 +4,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -154,16 +155,42 @@ async def _sync_sessions(db: AsyncSession) -> None:
             else None
         )
 
-        # Create session record
-        session = Session(
-            session_id=sid,
-            device_id=device.id,
-            test_name=info.get("test_name"),
-            status=SessionStatus.running,
-            requested_capabilities=info.get("requested_capabilities"),
-            run_id=reservation_run_id,
+        # Insert the session record idempotently. The partial unique index
+        # ``ux_sessions_session_id_running`` enforces single-active-row per
+        # ``session_id``, so a concurrent registrant (testkit POST /sessions)
+        # racing this loop cannot create a duplicate. ON CONFLICT DO NOTHING
+        # short-circuits cleanly; we then refetch the existing row and skip
+        # the device-state flip (the other writer already owns it).
+        insert_stmt = (
+            pg_insert(Session)
+            .values(
+                id=uuid.uuid4(),
+                session_id=sid,
+                device_id=device.id,
+                test_name=info.get("test_name"),
+                status=SessionStatus.running,
+                requested_capabilities=info.get("requested_capabilities"),
+                run_id=reservation_run_id,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[Session.session_id],
+                index_where=text("status = 'running' AND ended_at IS NULL"),
+            )
+            .returning(Session.id)
         )
-        db.add(session)
+        inserted_id = (await db.execute(insert_stmt)).scalar_one_or_none()
+        if inserted_id is None:
+            logger.info(
+                "Skipping new session %s; concurrent writer already inserted a running row",
+                sid,
+            )
+            continue
+
+        session = await db.get(Session, inserted_id)
+        if session is None:
+            # Row vanished between INSERT RETURNING and SELECT — should not
+            # happen, but bail rather than crash the whole sync cycle.
+            continue
 
         # Mark device busy under row lock
         locked_device = await device_locking.lock_device(db, device.id)
@@ -188,9 +215,12 @@ async def _sync_sessions(db: AsyncSession) -> None:
             .where(Session.session_id == sid, Session.status == SessionStatus.running)
         )
         sess_result = await db.execute(sess_stmt)
-        ended_session = sess_result.scalar_one_or_none()
+        # Tolerate duplicate ``session_id`` rows that slipped past the partial
+        # unique index (older data, or pre-migration writes). Crashing on
+        # MultipleResultsFound stalls the whole loop and leaves devices busy.
+        ended_sessions = list(sess_result.scalars().all())
 
-        if ended_session:
+        for ended_session in ended_sessions:
             ended_device = ended_session.device
             ended_session.ended_at = datetime.now(UTC)
             attached_run = ended_session.run
@@ -239,7 +269,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
                         Session.status == SessionStatus.running,
                         Session.ended_at.is_(None),
                     )
-                    fresh_running = (await db.execute(fresh_running_stmt)).scalar_one_or_none()
+                    fresh_running = (await db.execute(fresh_running_stmt)).first()
                     if fresh_running is None:
                         await set_operational_state(
                             locked_device,
