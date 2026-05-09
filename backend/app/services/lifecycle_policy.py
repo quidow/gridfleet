@@ -327,6 +327,27 @@ async def attempt_auto_recovery(
 ) -> bool:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
+
+    # D4: a stale ``stop_pending`` traps the device permanently when nothing
+    # else clears it (no session row to fire ``handle_session_finished``).
+    # If the device is already offline OR no client session is actually
+    # running, the deferred-stop intent is moot — clear it under the same
+    # row lock and let the rest of the recovery gates run.
+    if current_state.get("stop_pending") and (
+        device.operational_state == DeviceOperationalState.offline
+        or not await has_running_client_session(db, device.id)
+    ):
+        await clear_pending_auto_stop_on_recovery(
+            db,
+            device,
+            source=current_state.get("last_failure_source") or source,
+            reason="Cleared stale deferred stop before recovery",
+            action="auto_stop_cleared",
+            record_incident=False,
+        )
+        device = await _reload_device(db, device)
+        current_state = policy_state(device)
+
     run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     node = loaded_node(device)
     if (
