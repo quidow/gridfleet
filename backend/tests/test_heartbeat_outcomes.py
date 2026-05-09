@@ -50,6 +50,22 @@ def test_result_alive_property() -> None:
     assert fail.alive is False
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [o for o in HeartbeatOutcome if o is not HeartbeatOutcome.success],
+)
+def test_alive_is_false_for_all_failure_outcomes(outcome: HeartbeatOutcome) -> None:
+    result = HeartbeatPingResult(
+        outcome=outcome,
+        payload=None,
+        duration_ms=1,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category=None,
+    )
+    assert result.alive is False
+
+
 def test_result_is_frozen() -> None:
     result = HeartbeatPingResult(
         outcome=HeartbeatOutcome.success,
