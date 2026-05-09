@@ -330,9 +330,6 @@ async def attempt_auto_recovery(
 
     # D4: a stale ``stop_pending`` traps the device permanently when nothing
     # else clears it (no session row to fire ``handle_session_finished``).
-    # If the device is already offline OR no client session is actually
-    # running, the deferred-stop intent is moot — clear it under the same
-    # row lock and let the rest of the recovery gates run.
     if current_state.get("stop_pending") and (
         device.operational_state == DeviceOperationalState.offline
         or not await has_running_client_session(db, device.id)
@@ -345,6 +342,9 @@ async def attempt_auto_recovery(
             action="auto_stop_cleared",
             record_incident=False,
         )
+        # Reload because the helper internally re-locks via _reload_device, returning a
+        # different Device instance — our local reference is stale even though the writes
+        # are already visible in the SQLAlchemy session.
         device = await _reload_device(db, device)
         current_state = policy_state(device)
 
