@@ -191,6 +191,18 @@ async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db
         await db_session.refresh(device)
         assert device.operational_state == DeviceOperationalState.available
     finally:
+        # Force any lingering duplicate ``running`` rows to a terminal state
+        # before recreating the partial unique index. Without this, a failure
+        # in the test body (e.g. the loop tolerance regression returns) would
+        # leave duplicates in place and the CREATE INDEX below would raise
+        # IntegrityError, masking the original assertion error.
+        await db_session.rollback()
+        await db_session.execute(
+            text(
+                "UPDATE sessions SET status = 'error', ended_at = NOW() "
+                "WHERE session_id = 'sess-dup' AND status = 'running' AND ended_at IS NULL"
+            )
+        )
         await db_session.execute(
             text(
                 "CREATE UNIQUE INDEX ux_sessions_session_id_running ON sessions (session_id) "
