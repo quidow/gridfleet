@@ -104,7 +104,44 @@ def test_emit_heartbeat_log_records_full_schema() -> None:
 
     record = next(e for e in cap if e.get("event") == "heartbeat_ping")
     assert record.get("host_id") == "host-uuid"
+    assert record.get("host_ip") == "192.168.88.249"
+    assert record.get("agent_port") == 5100
     assert record.get("outcome") == "timeout"
     assert record.get("client_mode") == "pooled"
     assert record.get("duration_ms") == 4999
+    assert record.get("http_status") is None
+    assert record.get("error_category") == "ReadTimeout"
+    assert record.get("leader_id") == "leader-uuid"
     assert record.get("loop_iteration") == 42
+
+
+def test_emit_heartbeat_log_success_renders_none_fields() -> None:
+    from app.services.heartbeat import _emit_heartbeat_log
+    from app.services.heartbeat_outcomes import (
+        ClientMode,
+        HeartbeatOutcome,
+        HeartbeatPingResult,
+    )
+
+    ping_result = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload={"status": "ok"},
+        duration_ms=12,
+        client_mode=ClientMode.pooled,
+        http_status=200,
+        error_category=None,
+    )
+    with structlog.testing.capture_logs() as cap:
+        _emit_heartbeat_log(
+            host_id="host-uuid",
+            host_ip="10.0.0.5",
+            agent_port=5100,
+            result=ping_result,
+            leader_id="leader-uuid",
+            loop_iteration=7,
+        )
+
+    record = next(e for e in cap if e.get("event") == "heartbeat_ping")
+    assert record.get("outcome") == "success"
+    assert record.get("http_status") == 200
+    assert record.get("error_category") is None
