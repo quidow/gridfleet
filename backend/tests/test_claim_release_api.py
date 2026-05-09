@@ -5,10 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceOperationalState
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState
 from app.schemas.run import ClaimRequest, ClaimResponse, ReleaseRequest, ReservedDeviceInfo
@@ -133,6 +133,57 @@ async def test_claim_device_success(db_session: AsyncSession, default_host_id: s
     assert info2.claimed_by == "gw1"
 
 
+async def test_claim_device_marks_operational_state_busy(db_session: AsyncSession, default_host_id: str) -> None:
+    """claim_device must flip operational_state -> busy so the device chip
+    reflects in-use immediately, closing the race window between Grid session
+    start and session_sync_loop's busy write."""
+    device = await _make_device(db_session, default_host_id, "claim-busy-001")
+    run = await create_reserved_run(db_session, name="claim-busy-run", devices=[device])
+
+    assert device.operational_state == DeviceOperationalState.available
+
+    await run_service.claim_device(db_session, run.id, worker_id="gw0")
+
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
+
+
+async def test_claim_device_skips_busy_flip_for_maintenance_device(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If an operator forces maintenance on a device after it's reserved, the
+    claim must not flip operational_state -> busy. _release_devices
+    short-circuits for maintenance-held devices and would never restore the
+    state, leaving the device stuck `busy` until manual intervention."""
+    device = await _make_device(db_session, default_host_id, "claim-maint-001")
+    run = await create_reserved_run(db_session, name="claim-maint-run", devices=[device])
+    device.hold = DeviceHold.maintenance
+    await db_session.commit()
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    assert info.device_id == str(device.id)
+
+    await db_session.refresh(device, ["operational_state", "hold"])
+    assert device.operational_state == DeviceOperationalState.available
+    assert device.hold == DeviceHold.maintenance
+
+
+async def test_claim_device_translates_missing_device_to_noclaimable(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If the Device row is gone (manual cleanup or delete race) while a
+    reservation still references it, claim_device must surface
+    NoClaimableDevicesError instead of letting NoResultFound bubble out as a
+    500 from the /runs/{id}/claim endpoint."""
+    device = await _make_device(db_session, default_host_id, "claim-gone-001")
+    run = await create_reserved_run(db_session, name="claim-gone-run", devices=[device])
+    await db_session.execute(delete(Device).where(Device.id == device.id))
+    await db_session.commit()
+
+    with pytest.raises(run_service.NoClaimableDevicesError):
+        await run_service.claim_device(db_session, run.id, worker_id="gw0")
+
+
 async def test_claim_device_no_free_devices(db_session: AsyncSession, default_host_id: str) -> None:
     d1 = await _make_device(db_session, default_host_id, "claim-full-001")
     run = await create_reserved_run(db_session, name="claim-full-run", devices=[d1])
@@ -255,6 +306,64 @@ async def test_release_claimed_device_success(db_session: AsyncSession, default_
     reclaimed = await run_service.claim_device(db_session, run.id, worker_id="gw1")
     assert reclaimed.device_id == info.device_id
     assert reclaimed.claimed_by == "gw1"
+
+
+async def test_release_claimed_device_restores_operational_state_when_no_session(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """release_claimed_device must restore operational_state to ready when
+    the device has no live Grid session. Otherwise the busy flip from
+    claim_device leaves the device stuck busy while the reservation is
+    immediately re-claimable, contradicting the /release contract."""
+    device = await _make_device(db_session, default_host_id, "rel-restore-001")
+    run = await create_reserved_run(db_session, name="rel-restore-run", devices=[device])
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
+
+    await run_service.release_claimed_device(
+        db_session,
+        run.id,
+        device_id=uuid.UUID(info.device_id),
+        worker_id="gw0",
+    )
+    await db_session.refresh(device, ["operational_state"])
+    # ready_operational_state returns offline when the device is not
+    # ready_for_use (no appium_node, no readiness signals); the key
+    # invariant is that the state moved off busy.
+    assert device.operational_state != DeviceOperationalState.busy
+
+
+async def test_release_claimed_device_keeps_busy_when_session_running(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If a Grid session is still live (release-without-stop), the release
+    path must leave operational_state=busy so session_sync / session_service
+    own the off-busy transition when the session ends."""
+    from app.models.session import Session, SessionStatus
+
+    device = await _make_device(db_session, default_host_id, "rel-keep-001")
+    run = await create_reserved_run(db_session, name="rel-keep-run", devices=[device])
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    db_session.add(
+        Session(
+            session_id="grid-sess-keep-001",
+            device_id=device.id,
+            status=SessionStatus.running,
+        )
+    )
+    await db_session.commit()
+
+    await run_service.release_claimed_device(
+        db_session,
+        run.id,
+        device_id=uuid.UUID(info.device_id),
+        worker_id="gw0",
+    )
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 async def test_release_claimed_device_rejects_wrong_worker(

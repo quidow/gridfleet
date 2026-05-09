@@ -884,34 +884,93 @@ async def claim_device(
         .values(claimed_by=None, claimed_at=None)
     )
 
-    candidate_result = await db.execute(
-        select(DeviceReservation)
-        .options(selectinload(DeviceReservation.device))
-        .where(DeviceReservation.run_id == run_id)
-        .where(DeviceReservation.released_at.is_(None))
-        .where(_reservation_claimable_expr(now))
-        .where(DeviceReservation.claimed_by.is_(None))
-        .order_by(DeviceReservation.created_at, DeviceReservation.id)
-        .with_for_update(skip_locked=True)
-        .limit(1)
-    )
-    candidate = candidate_result.scalar_one_or_none()
-    if candidate is None:
-        retry_after_sec = int(settings_service.get("general.claim_default_retry_after_sec"))
-        next_available_at = await _next_claimable_cooldown_at(db, run_id, now)
-        await db.rollback()
-        raise NoClaimableDevicesError(
-            "No unclaimed devices available in this run",
-            retry_after_sec=retry_after_sec,
-            next_available_at=next_available_at,
+    # Probe for claimable candidates without locking the reservation row.
+    # We then lock the device first (matching the Device → Reservation order
+    # used by ``_release_devices`` to avoid AB-BA deadlocks) and claim the
+    # reservation atomically via UPDATE...WHERE. If a peer worker beats us to
+    # the row, the UPDATE matches 0 rows and we loop to the next candidate.
+    skip_reservation_ids: set[uuid.UUID] = set()
+    while True:
+        probe_stmt = (
+            select(DeviceReservation.id, DeviceReservation.device_id)
+            .where(DeviceReservation.run_id == run_id)
+            .where(DeviceReservation.released_at.is_(None))
+            .where(_reservation_claimable_expr(now))
+            .where(DeviceReservation.claimed_by.is_(None))
+            .order_by(DeviceReservation.created_at, DeviceReservation.id)
+            .limit(1)
         )
+        if skip_reservation_ids:
+            probe_stmt = probe_stmt.where(DeviceReservation.id.not_in(skip_reservation_ids))
+        probe = (await db.execute(probe_stmt)).first()
+        if probe is None:
+            retry_after_sec = int(settings_service.get("general.claim_default_retry_after_sec"))
+            next_available_at = await _next_claimable_cooldown_at(db, run_id, now)
+            await db.rollback()
+            raise NoClaimableDevicesError(
+                "No unclaimed devices available in this run",
+                retry_after_sec=retry_after_sec,
+                next_available_at=next_available_at,
+            )
 
-    _clear_expired_cooldown(candidate, now)
-    candidate.claimed_by = worker_id or _generated_worker_id()
-    candidate.claimed_at = now
-    info = _reservation_to_claim_response(candidate)
-    await db.commit()
-    return info
+        reservation_id, device_id = probe.id, probe.device_id
+
+        try:
+            locked_device = await device_locking.lock_device(db, device_id)
+        except NoResultFound:
+            # Device row vanished (manual cleanup, race with delete). Treat
+            # this reservation as unclaimable for this attempt and try the
+            # next candidate so we surface NoClaimableDevicesError instead of
+            # a 500 from an uncaught NoResultFound.
+            skip_reservation_ids.add(reservation_id)
+            continue
+
+        claimed_by = worker_id or _generated_worker_id()
+        claim_stmt = (
+            update(DeviceReservation)
+            .where(DeviceReservation.id == reservation_id)
+            .where(DeviceReservation.released_at.is_(None))
+            .where(DeviceReservation.claimed_by.is_(None))
+            .where(_reservation_claimable_expr(now))
+            .values(claimed_by=claimed_by, claimed_at=now)
+            .returning(DeviceReservation.id)
+        )
+        if (await db.execute(claim_stmt)).scalar_one_or_none() is None:
+            # Lost the race to a concurrent worker; try the next candidate.
+            skip_reservation_ids.add(reservation_id)
+            continue
+
+        candidate = (
+            await db.execute(
+                select(DeviceReservation)
+                .options(selectinload(DeviceReservation.device))
+                .where(DeviceReservation.id == reservation_id)
+            )
+        ).scalar_one()
+        _clear_expired_cooldown(candidate, now)
+        info = _reservation_to_claim_response(candidate)
+
+        # Flip operational_state -> busy under the device row lock so the
+        # device chip reflects in-use immediately. Without this, devices stay
+        # operational_state=available (chip="reserved") until
+        # session_sync_loop detects the Grid session (~5s default) or the
+        # testkit's POST /sessions registers, leaving an intermittent
+        # reserved/busy mismatch in the UI.
+        #
+        # Skip the flip when the device is held in maintenance — overwriting
+        # operational_state would leave the device "stuck busy" because
+        # ``_release_devices`` short-circuits for maintenance-held devices
+        # (see line ``if device.hold == DeviceHold.maintenance``) and never
+        # restores operational_state. Maintenance hold is rare for an active
+        # reservation but possible if an operator forces it after reserve.
+        if locked_device.hold != DeviceHold.maintenance:
+            await set_operational_state(
+                locked_device,
+                DeviceOperationalState.busy,
+                reason=f"Claimed by worker '{claimed_by}' for run '{run.name}'",
+            )
+        await db.commit()
+        return info
 
 
 async def _next_claimable_cooldown_at(db: AsyncSession, run_id: uuid.UUID, now: datetime) -> datetime | None:
@@ -938,6 +997,15 @@ async def release_claimed_device(
         await db.rollback()
         raise ValueError("Run not found")
 
+    # Lock device first to match the Device → Reservation order used by
+    # ``_release_devices`` (avoids AB-BA deadlock with concurrent run-release
+    # paths). Missing device row → treat as "not reserved by this run".
+    try:
+        locked_device = await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        await db.rollback()
+        raise ValueError(f"Device {device_id} is not reserved by this run") from None
+
     result = await db.execute(
         select(DeviceReservation)
         .where(DeviceReservation.run_id == run_id)
@@ -963,6 +1031,26 @@ async def release_claimed_device(
 
     entry.claimed_by = None
     entry.claimed_at = None
+
+    # Restore operational_state when no live Grid session remains. claim_device
+    # flips operational_state -> busy; without a matching restore here the
+    # device would stay busy after a release-without-session and the
+    # reservation would simultaneously be claimable again, contradicting the
+    # /release contract. Mirrors the non-escalating cooldown release path.
+    # Skip the restore when a Grid session is still running (session_sync /
+    # session_service own that transition) and when the device is held in
+    # maintenance (handled by the lifecycle cleanup path).
+    if (
+        locked_device.operational_state == DeviceOperationalState.busy
+        and locked_device.hold != DeviceHold.maintenance
+        and not await _device_has_running_session(db, device_id)
+    ):
+        await set_operational_state(
+            locked_device,
+            await ready_operational_state(db, locked_device),
+            reason=f"Released by worker '{worker_id}' from run '{run.name}'",
+        )
+
     await db.commit()
 
 
