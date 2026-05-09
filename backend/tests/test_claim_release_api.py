@@ -265,6 +265,45 @@ async def test_concurrent_claims_get_distinct_devices(
     assert sorted(r.claimed_by for r in reservations) == ["gw0", "gw1", "gw2", "gw3"]
 
 
+async def test_stale_claim_cleanup_restores_unselected_devices(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """TTL cleanup must restore ``operational_state`` on every device whose
+    claim it clears, not just on the one the same call re-claims.
+
+    Reproduces the regression introduced by #138: ``claim_device`` flipped
+    the device to ``busy`` on claim, but the stale-claim cleanup only nulled
+    the reservation row. A worker dying after claim left the device stuck
+    busy with ``claimed_by=NULL`` whenever no follow-up call re-picked it.
+    """
+    d1 = await _make_device(db_session, default_host_id, "ttl-stuck-001")
+    d2 = await _make_device(db_session, default_host_id, "ttl-stuck-002")
+    run = await create_reserved_run(db_session, name="ttl-stuck-run", devices=[d1, d2])
+
+    first = await run_service.claim_device(db_session, run.id, worker_id="gw_dead")
+    second = await run_service.claim_device(db_session, run.id, worker_id="gw_dead")
+    assert {first.device_id, second.device_id} == {str(d1.id), str(d2.id)}
+
+    await settings_service.update(db_session, "reservations.claim_ttl_seconds", 10)
+    result = await db_session.execute(select(DeviceReservation).where(DeviceReservation.run_id == run.id))
+    for reservation in result.scalars().all():
+        reservation.claimed_at = datetime.now(UTC) - timedelta(seconds=11)
+    await db_session.commit()
+
+    third = await run_service.claim_device(db_session, run.id, worker_id="gw_alive")
+    selected_id = uuid.UUID(third.device_id)
+    other_id = d1.id if selected_id == d2.id else d2.id
+
+    other = await db_session.get(Device, other_id)
+    assert other is not None
+    await db_session.refresh(other, ["operational_state"])
+    assert other.operational_state != DeviceOperationalState.busy, (
+        "Stale claim cleanup must move ``operational_state`` off busy when the"
+        " freed reservation has no live Grid session"
+    )
+
+
 async def test_claim_expires_after_configured_ttl(
     db_session: AsyncSession,
     default_host_id: str,

@@ -870,7 +870,7 @@ async def claim_device(
     ttl_seconds = int(settings_service.get("reservations.claim_ttl_seconds"))
     stale_before = now - timedelta(seconds=ttl_seconds)
 
-    await db.execute(
+    stale_cleanup = await db.execute(
         update(DeviceReservation)
         .where(DeviceReservation.run_id == run_id)
         .where(DeviceReservation.released_at.is_(None))
@@ -882,7 +882,30 @@ async def claim_device(
             )
         )
         .values(claimed_by=None, claimed_at=None)
+        .returning(DeviceReservation.device_id)
     )
+    # ``claim_device`` flips ``operational_state`` -> busy on claim; the TTL
+    # cleanup above must mirror the ``release_claimed_device`` restore so a
+    # device whose worker died does not stay stuck busy when no follow-up
+    # claim picks it up. Skip the restore when the device is held in
+    # maintenance or still has a live Grid session — those cases are owned
+    # by lifecycle / session_sync.
+    stale_device_ids = sorted({device_id for (device_id,) in stale_cleanup.all()})
+    for stale_device_id in stale_device_ids:
+        try:
+            locked_stale = await device_locking.lock_device(db, stale_device_id)
+        except NoResultFound:
+            continue
+        if (
+            locked_stale.operational_state == DeviceOperationalState.busy
+            and locked_stale.hold != DeviceHold.maintenance
+            and not await _device_has_running_session(db, stale_device_id)
+        ):
+            await set_operational_state(
+                locked_stale,
+                await ready_operational_state(db, locked_stale),
+                reason="Stale claim expired",
+            )
 
     # Probe for claimable candidates without locking the reservation row.
     # We then lock the device first (matching the Device → Reservation order

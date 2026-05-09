@@ -138,6 +138,162 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     assert device.operational_state == DeviceOperationalState.available
 
 
+async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db_host: Host) -> None:
+    """Two Session rows share the same session_id with status=running.
+
+    Reproduces the production crash where session_sync.scalar_one_or_none()
+    raised MultipleResultsFound, deadlocking the loop and leaving devices
+    stuck busy. ``ux_sessions_session_id_running`` now blocks new duplicates,
+    but rows that pre-date the migration can still exist; the loop must
+    survive them and end every matching row.
+    """
+    from sqlalchemy import text
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-dup",
+        connection_target="dev-dup",
+        name="Duplicate Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # Drop the partial unique index just for this test so we can simulate the
+    # pre-migration state where two ``running`` rows shared a ``session_id``.
+    await db_session.execute(text("DROP INDEX ux_sessions_session_id_running"))
+    try:
+        dup_a = Session(session_id="sess-dup", device_id=device.id, status=SessionStatus.running)
+        dup_b = Session(session_id="sess-dup", device_id=device.id, status=SessionStatus.running)
+        db_session.add_all([dup_a, dup_b])
+        await db_session.commit()
+
+        grid_data = _grid_response([])
+
+        with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+            await _sync_sessions(db_session)
+
+        result = await db_session.execute(select(Session).where(Session.session_id == "sess-dup"))
+        rows = result.scalars().all()
+        assert len(rows) == 2
+        for row in rows:
+            assert row.status == SessionStatus.passed
+            assert row.ended_at is not None
+
+        await db_session.refresh(device)
+        assert device.operational_state == DeviceOperationalState.available
+    finally:
+        # Force any lingering duplicate ``running`` rows to a terminal state
+        # before recreating the partial unique index. Without this, a failure
+        # in the test body (e.g. the loop tolerance regression returns) would
+        # leave duplicates in place and the CREATE INDEX below would raise
+        # IntegrityError, masking the original assertion error.
+        await db_session.rollback()
+        await db_session.execute(
+            text(
+                "UPDATE sessions SET status = 'error', ended_at = NOW() "
+                "WHERE session_id = 'sess-dup' AND status = 'running' AND ended_at IS NULL"
+            )
+        )
+        await db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX ux_sessions_session_id_running ON sessions (session_id) "
+                "WHERE status = 'running' AND ended_at IS NULL"
+            )
+        )
+        await db_session.commit()
+
+
+async def test_sync_ends_duplicate_running_sessions_across_devices(db_session: AsyncSession, db_host: Host) -> None:
+    """Two ``running`` rows share a ``session_id`` but reference different devices.
+
+    Even though ``ux_sessions_session_id_running`` blocks this in fresh
+    installs, legacy data (pre-migration races, agent reassignments) can
+    leave a single ``session_id`` mapped to multiple device rows. The
+    ended-session sweep must move ``operational_state`` off busy on every
+    affected device, not only on the one that ``known_running`` happened
+    to retain after dict overwrite.
+    """
+    from sqlalchemy import text
+
+    device_a = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-dup-multi-a",
+        connection_target="dev-dup-multi-a",
+        name="Duplicate Phone A",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    device_b = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-dup-multi-b",
+        connection_target="dev-dup-multi-b",
+        name="Duplicate Phone B",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add_all([device_a, device_b])
+    await db_session.flush()
+
+    await db_session.execute(text("DROP INDEX ux_sessions_session_id_running"))
+    try:
+        dup_a = Session(session_id="sess-dup-multi", device_id=device_a.id, status=SessionStatus.running)
+        dup_b = Session(session_id="sess-dup-multi", device_id=device_b.id, status=SessionStatus.running)
+        db_session.add_all([dup_a, dup_b])
+        await db_session.commit()
+
+        with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+            await _sync_sessions(db_session)
+
+        rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-dup-multi"))).scalars().all()
+        assert len(rows) == 2
+        assert all(row.ended_at is not None for row in rows)
+
+        await db_session.refresh(device_a)
+        await db_session.refresh(device_b)
+        assert device_a.operational_state != DeviceOperationalState.busy, (
+            "every device referenced by a duplicate ended session must move off busy"
+        )
+        assert device_b.operational_state != DeviceOperationalState.busy
+    finally:
+        await db_session.rollback()
+        await db_session.execute(
+            text(
+                "UPDATE sessions SET status = 'error', ended_at = NOW() "
+                "WHERE session_id = 'sess-dup-multi' AND status = 'running' AND ended_at IS NULL"
+            )
+        )
+        await db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX ux_sessions_session_id_running ON sessions (session_id) "
+                "WHERE status = 'running' AND ended_at IS NULL"
+            )
+        )
+        await db_session.commit()
+
+
 async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
