@@ -8,7 +8,7 @@ import httpx
 from httpx._types import HeaderTypes, QueryParamTypes
 
 from app.config import settings as _settings
-from app.errors import AgentUnreachableError, CircuitOpenError
+from app.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
 from app.metrics import record_agent_call
 from app.observability import REQUEST_ID_HEADER, get_request_id
 from app.services.agent_circuit_breaker import agent_circuit_breaker
@@ -95,6 +95,7 @@ async def request(
     *,
     endpoint: str,
     host: str,
+    client_mode: str = "fresh",
     client: AgentHttpClient | None = None,
     client_factory: AgentClientFactory = httpx.AsyncClient,
     headers: dict[str, str] | None = None,
@@ -117,7 +118,13 @@ async def request(
     outcome = "success"
     retry_after = await agent_circuit_breaker.before_request(host)
     if retry_after is not None:
-        record_agent_call(host=host, endpoint=endpoint, outcome="circuit_open", duration_seconds=0.0)
+        record_agent_call(
+            host=host,
+            endpoint=endpoint,
+            outcome="circuit_open",
+            client_mode="skipped_circuit_open",
+            duration_seconds=0.0,
+        )
         raise CircuitOpenError(host, retry_after_seconds=retry_after)
     try:
         response: httpx.Response
@@ -137,8 +144,20 @@ async def request(
             await agent_circuit_breaker.record_success(host)
         return response
     except httpx.HTTPError as exc:
-        outcome = "transport_error"
+        outcome_label, error_category = classify_httpx_transport(exc)
         await agent_circuit_breaker.record_failure(host, error=str(exc))
-        raise AgentUnreachableError(host, f"Cannot reach agent host {host}: {exc}") from exc
+        outcome = outcome_label
+        raise AgentUnreachableError(
+            host,
+            f"Cannot reach agent host {host}: {exc}",
+            transport_outcome=outcome_label,
+            error_category=error_category,
+        ) from exc
     finally:
-        record_agent_call(host=host, endpoint=endpoint, outcome=outcome, duration_seconds=perf_counter() - started)
+        record_agent_call(
+            host=host,
+            endpoint=endpoint,
+            outcome=outcome,
+            client_mode=client_mode,
+            duration_seconds=perf_counter() - started,
+        )

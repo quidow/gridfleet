@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.errors import AgentCallError
+from app.errors import (
+    AgentCallError,
+    AgentResponseError,
+    AgentUnreachableError,
+    CircuitOpenError,
+)
+from app.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
@@ -26,10 +33,15 @@ from app.services import (
     plugin_service,
 )
 from app.services.agent_operations import agent_health
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
+from app.services.heartbeat_outcomes import (
+    ClientMode,
+    HeartbeatOutcome,
+    HeartbeatPingResult,
+)
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.settings_service import settings_service
 from app.type_defs import AsyncTaskFactory
@@ -79,11 +91,141 @@ async def shutdown_background_tasks(timeout: float = BACKGROUND_TASK_DRAIN_TIMEO
     _background_tasks.clear()
 
 
-async def _ping_agent(ip: str, port: int) -> dict[str, Any] | None:
+_TRANSPORT_TO_OUTCOME = {
+    "timeout": HeartbeatOutcome.timeout,
+    "connect_error": HeartbeatOutcome.connect_error,
+    "dns_error": HeartbeatOutcome.dns_error,
+}
+
+
+def _heartbeat_client_mode() -> ClientMode:
     try:
-        return await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
-    except AgentCallError:
-        return None
+        return ClientMode.pooled if bool(settings_service.get("agent.http_pool_enabled")) else ClientMode.fresh
+    except (KeyError, RuntimeError):
+        return ClientMode.fresh
+
+
+async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
+    started = time.monotonic()
+    client_mode = _heartbeat_client_mode()
+    try:
+        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
+    except CircuitOpenError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.circuit_open,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.skipped_circuit_open,
+            http_status=None,
+            error_category=type(exc).__name__,
+        )
+    except AgentResponseError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.http_error,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=client_mode,
+            http_status=exc.http_status,
+            error_category=type(exc).__name__,
+        )
+    except AgentUnreachableError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        outcome = _TRANSPORT_TO_OUTCOME.get(
+            exc.transport_outcome or "",
+            HeartbeatOutcome.unexpected_error,
+        )
+        return HeartbeatPingResult(
+            outcome=outcome,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=client_mode,
+            http_status=None,
+            error_category=exc.error_category or type(exc).__name__,
+        )
+    except AgentCallError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.unexpected_error,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=client_mode,
+            http_status=None,
+            error_category=type(exc).__name__,
+        )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if payload is None:
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.invalid_payload,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=client_mode,
+            http_status=None,
+            error_category=None,
+        )
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload=payload,
+        duration_ms=duration_ms,
+        client_mode=client_mode,
+        http_status=200,
+        error_category=None,
+    )
+
+
+def _emit_heartbeat_log(
+    *,
+    host_id: str,
+    host_ip: str,
+    agent_port: int,
+    result: HeartbeatPingResult,
+    leader_id: str,
+    loop_iteration: int,
+) -> None:
+    logger.info(
+        "heartbeat_ping",
+        host_id=host_id,
+        host_ip=host_ip,
+        agent_port=agent_port,
+        client_mode=result.client_mode.value,
+        duration_ms=result.duration_ms,
+        outcome=result.outcome.value,
+        http_status=result.http_status,
+        error_category=result.error_category,
+        leader_id=leader_id,
+        loop_iteration=loop_iteration,
+    )
+
+
+_LOOP_ITERATION = 0
+_LAST_CYCLE_MONOTONIC: float | None = None
+_HEARTBEAT_PARALLELISM = 8
+
+
+def _next_loop_iteration() -> int:
+    global _LOOP_ITERATION
+    _LOOP_ITERATION += 1
+    return _LOOP_ITERATION
+
+
+def _resume_guard_active(
+    *,
+    last_cycle_monotonic: float | None,
+    now_monotonic: float,
+    interval_sec: float,
+    max_missed: int,
+) -> bool:
+    """Return True when the gap since the last cycle exceeds the missed-heartbeat threshold.
+
+    A True result means the backend itself was paused (preemption, debugger,
+    system-clock block) — not that hosts are offline.  The offline branch MUST be
+    suppressed in that case to avoid flapping healthy hosts.
+    """
+    if last_cycle_monotonic is None:
+        return False
+    threshold = interval_sec * max_missed
+    return (now_monotonic - last_cycle_monotonic) > threshold
 
 
 def _coerce_int(value: object) -> int | None:
@@ -360,116 +502,209 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
 
 
-async def _check_hosts(db: AsyncSession) -> None:
-    stmt = select(Host).where(Host.status != HostStatus.pending)
-    result = await db.execute(stmt)
-    hosts = result.scalars().all()
+async def _apply_host_ping_result(
+    db: AsyncSession,
+    host: Host,
+    result: HeartbeatPingResult,
+    *,
+    guard_active: bool,
+    guard_gap_sec: float | None = None,
+    guard_threshold_sec: float | None = None,
+) -> None:
+    """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
-    for host in hosts:
-        host_key = str(host.id)
-        health_data = await _ping_agent(host.ip, host.agent_port)
-        alive = health_data is not None
+    Pre-conditions: caller has already emitted the structured log and the heartbeat metric.
+    When guard_active=True, caller MUST also supply guard_gap_sec and guard_threshold_sec
+    so the swallowed-miss log carries diagnostic context.
+    Post-conditions: caller commits the session.
+    """
+    if guard_active and (guard_gap_sec is None or guard_threshold_sec is None):
+        raise AssertionError(
+            "_apply_host_ping_result: guard_active=True requires guard_gap_sec and guard_threshold_sec"
+        )
+    host_key = str(host.id)
+    health_data = result.payload
 
-        # Fence: drop any writes from a stale leader that lost the advisory lock
-        # while we were awaiting _ping_agent. assert_current_leader raises
-        # LeadershipLost when another backend now owns the heartbeat row.
-        await assert_current_leader(db)
+    if result.alive:
+        # ─── alive branch ───
+        await control_plane_state_store.delete_value(db, HEARTBEAT_NAMESPACE, host_key)
+        # Update agent version if reported
+        agent_version = health_data.get("version") if health_data else None
+        if agent_version and host.agent_version != agent_version:
+            host.agent_version = agent_version
+        if host.status != HostStatus.online:
+            logger.info("Host %s (%s) is back online", host.hostname, host.ip)
+            queue_event_for_session(
+                db,
+                "host.status_changed",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "old_status": host.status.value,
+                    "new_status": "online",
+                },
+            )
+            host.status = HostStatus.online
+            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
+        host.last_heartbeat = datetime.now(UTC)
+        if health_data is not None:
+            if "missing_prerequisites" in health_data:
+                host_service.update_missing_prerequisites_from_health(host, health_data.get("missing_prerequisites"))
+            await _persist_appium_processes_snapshot(db, host, health_data)
+            await _ingest_appium_restart_events(db, host, health_data)
+        return
 
-        if alive:
-            await control_plane_state_store.delete_value(db, HEARTBEAT_NAMESPACE, host_key)
-            # Update agent version if reported
-            agent_version = health_data.get("version") if health_data else None
-            if agent_version and host.agent_version != agent_version:
-                host.agent_version = agent_version
-            if host.status != HostStatus.online:
-                logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-                queue_event_for_session(
-                    db,
-                    "host.status_changed",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "old_status": host.status.value,
-                        "new_status": "online",
-                    },
-                )
-                host.status = HostStatus.online
-                _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
-            host.last_heartbeat = datetime.now(UTC)
-            if health_data is not None:
-                if "missing_prerequisites" in health_data:
-                    host_service.update_missing_prerequisites_from_health(
-                        host, health_data.get("missing_prerequisites")
-                    )
-                await _persist_appium_processes_snapshot(db, host, health_data)
-                await _ingest_appium_restart_events(db, host, health_data)
-        else:
-            count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
-            logger.warning(
-                "Host %s (%s) heartbeat failed (%d/%d)",
-                host.hostname,
-                host.ip,
-                count,
-                settings_service.get("general.max_missed_heartbeats"),
+    if guard_active:
+        logger.warning(
+            "heartbeat_resume_guard_swallowed_miss",
+            host_id=str(host.id),
+            gap_sec=guard_gap_sec,
+            threshold_sec=guard_threshold_sec,
+        )
+        return
+
+    # ─── offline branch ───
+    count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
+    logger.warning(
+        "Host %s (%s) heartbeat failed (%d/%d)",
+        host.hostname,
+        host.ip,
+        count,
+        settings_service.get("general.max_missed_heartbeats"),
+    )
+
+    if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+        logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
+        queue_event_for_session(
+            db,
+            "host.status_changed",
+            {
+                "host_id": str(host.id),
+                "hostname": host.hostname,
+                "old_status": host.status.value,
+                "new_status": "offline",
+            },
+        )
+        queue_event_for_session(
+            db,
+            "host.heartbeat_lost",
+            {
+                "host_id": str(host.id),
+                "hostname": host.hostname,
+                "missed_count": count,
+            },
+        )
+        host.status = HostStatus.offline
+        # Mark all devices on this host as offline. lock_devices
+        # acquires SELECT FOR UPDATE on each row in id order so
+        # operational_state writes serialize against concurrent writers.
+        device_id_stmt = select(Device.id).where(Device.host_id == host.id)
+        device_ids = list((await db.execute(device_id_stmt)).scalars().all())
+        for device in await device_locking.lock_devices(db, device_ids):
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.connectivity_lost,
+                {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
+            )
+            await device_health.update_device_checks(
+                db,
+                device,
+                healthy=False,
+                summary=f"Host {host.hostname} offline",
+            )
+            await set_operational_state(
+                device,
+                DeviceOperationalState.offline,
+                reason=f"Host {host.hostname} offline",
             )
 
-            if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
-                logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-                queue_event_for_session(
-                    db,
-                    "host.status_changed",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "old_status": host.status.value,
-                        "new_status": "offline",
-                    },
-                )
-                queue_event_for_session(
-                    db,
-                    "host.heartbeat_lost",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "missed_count": count,
-                    },
-                )
-                host.status = HostStatus.offline
-                # Mark all devices on this host as offline. lock_devices
-                # acquires SELECT FOR UPDATE on each row in id order so
-                # operational_state writes serialize against concurrent writers.
-                device_id_stmt = select(Device.id).where(Device.host_id == host.id)
-                device_ids = list((await db.execute(device_id_stmt)).scalars().all())
-                for device in await device_locking.lock_devices(db, device_ids):
-                    await record_event(
-                        db,
-                        device.id,
-                        DeviceEventType.connectivity_lost,
-                        {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
-                    )
-                    await device_health.update_device_checks(
-                        db,
-                        device,
-                        healthy=False,
-                        summary=f"Host {host.hostname} offline",
-                    )
-                    await set_operational_state(
-                        device,
-                        DeviceOperationalState.offline,
-                        reason=f"Host {host.hostname} offline",
-                    )
 
-    await db.commit()
+async def _check_hosts(db: AsyncSession) -> None:
+    """Ping all non-pending hosts in parallel.
+
+    ``db`` is used only to fetch the host id list; per-host work runs in fresh
+    sessions opened via ``async_session`` and commits independently.
+    """
+    iteration = _next_loop_iteration()
+    leader_id = str(control_plane_leader.holder_id)
+
+    interval = float(settings_service.get("general.heartbeat_interval_sec"))
+    max_missed = int(settings_service.get("general.max_missed_heartbeats"))
+    global _LAST_CYCLE_MONOTONIC
+    now_mono = time.monotonic()
+    prev_mono = _LAST_CYCLE_MONOTONIC
+    guard_active = _resume_guard_active(
+        last_cycle_monotonic=prev_mono,
+        now_monotonic=now_mono,
+        interval_sec=interval,
+        max_missed=max_missed,
+    )
+    _LAST_CYCLE_MONOTONIC = now_mono
+    guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
+    guard_threshold_sec = interval * max_missed
+
+    stmt = select(Host.id).where(Host.status != HostStatus.pending)
+    host_ids = list((await db.execute(stmt)).scalars().all())
+
+    semaphore = asyncio.Semaphore(_HEARTBEAT_PARALLELISM)
+
+    async def guarded(host_id: uuid.UUID) -> None:
+        async with semaphore:
+            try:
+                async with async_session() as host_db:
+                    host = await host_db.get(Host, host_id)
+                    if host is None:
+                        return
+                    ping_result = await _ping_agent(host.ip, host.agent_port)
+                    _emit_heartbeat_log(
+                        host_id=str(host.id),
+                        host_ip=host.ip,
+                        agent_port=host.agent_port,
+                        result=ping_result,
+                        leader_id=leader_id,
+                        loop_iteration=iteration,
+                    )
+                    record_heartbeat_ping(
+                        host_id=str(host.id),
+                        outcome=ping_result.outcome.value,
+                        client_mode=ping_result.client_mode.value,
+                        duration_seconds=ping_result.duration_ms / 1000.0,
+                    )
+                    # Fence: drop any writes from a stale leader that lost the advisory lock
+                    # while we were awaiting _ping_agent. assert_current_leader raises
+                    # LeadershipLost when another backend now owns the heartbeat row.
+                    await assert_current_leader(host_db)
+                    await _apply_host_ping_result(
+                        host_db,
+                        host,
+                        ping_result,
+                        guard_active=guard_active,
+                        guard_gap_sec=guard_gap_sec,
+                        guard_threshold_sec=guard_threshold_sec,
+                    )
+                    await host_db.commit()
+            except LeadershipLost:
+                raise
+            except Exception:
+                logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
+
+    await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
 
 async def heartbeat_loop() -> None:
     """Background loop that pings all host agents."""
     while True:
         interval = float(settings_service.get("general.heartbeat_interval_sec"))
+        cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_hosts(db)
         except LeadershipLost as exc:
+            record_heartbeat_cycle(
+                time.monotonic() - cycle_start,
+                interval_seconds=interval,
+            )
             logger.error(
                 "heartbeat_loop_leadership_lost",
                 reason=str(exc),
@@ -478,4 +713,9 @@ async def heartbeat_loop() -> None:
             os._exit(70)
         except Exception:
             logger.exception("Heartbeat check failed")
+        finally:
+            record_heartbeat_cycle(
+                time.monotonic() - cycle_start,
+                interval_seconds=interval,
+            )
         await asyncio.sleep(interval)

@@ -60,6 +60,7 @@ async def _send_request(
             url,
             endpoint=endpoint,
             host=host,
+            client_mode="pooled",
             client=_as_agent_client(client),
             params=params,
             json_body=json_body,
@@ -74,6 +75,7 @@ async def _send_request(
             url,
             endpoint=endpoint,
             host=host,
+            client_mode="fresh",
             client=_as_agent_client(fresh_client),
             params=params,
             json_body=json_body,
@@ -156,8 +158,7 @@ async def agent_health(
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
-    if response.status_code != 200:
-        return None
+    _raise_for_status(response, host=host, action="health check")
     return _as_dict(response.json())
 
 

@@ -490,6 +490,24 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=5,
         max_value=600,
     ),
+    SettingDefinition(
+        key="agent.circuit_breaker_failure_threshold",
+        category="agent",
+        setting_type="int",
+        default=5,
+        description="Consecutive backend->agent failures before the circuit opens",
+        min_value=1,
+        max_value=50,
+    ),
+    SettingDefinition(
+        key="agent.circuit_breaker_cooldown_seconds",
+        category="agent",
+        setting_type="int",
+        default=30,
+        description="Seconds the circuit stays open before a probe is allowed",
+        min_value=5,
+        max_value=600,
+    ),
     # ── Reservations ──
     SettingDefinition(
         key="reservations.default_ttl_minutes",

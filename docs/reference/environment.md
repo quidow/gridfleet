@@ -76,7 +76,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
 | `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First relay-node port assigned on the host |
 | `AGENT_ADB_RECONNECT_PORT` | `5555` | agent process | Default Android reconnect port |
-| `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable IP advertised by the agent |
+| `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration. Accepts **any DNS name or IP** the backend can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from the backend container (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
 | `AGENT_ENABLE_WEB_TERMINAL` | `false` | agent process | Opt-in flag for the host web terminal. When `true`, the agent accepts authenticated `WS /agent/terminal` connections from the manager. |
 | `AGENT_TERMINAL_TOKEN` | unset | agent process | Shared secret that must match `GRIDFLEET_AGENT_TERMINAL_TOKEN`. Required when `AGENT_ENABLE_WEB_TERMINAL=true`. |
 | `AGENT_TERMINAL_SHELL` | unset | agent process | Optional override for the PTY shell program. Defaults to the `SHELL` env var or `/bin/sh`. |

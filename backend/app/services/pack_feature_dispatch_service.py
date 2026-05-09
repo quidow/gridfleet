@@ -162,6 +162,7 @@ async def _call_agent(
                 url,
                 endpoint="pack_feature_action",
                 host=host,
+                client_mode="fresh",
                 client=_as_agent_client(client),
                 json_body=body,
                 timeout=timeout,

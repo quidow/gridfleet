@@ -15,12 +15,12 @@ HTTP_REQUESTS_TOTAL = Counter(
 AGENT_CALL_DURATION_SECONDS = Histogram(
     "agent_call_duration_seconds",
     "Agent HTTP call duration in seconds.",
-    labelnames=("host", "endpoint"),
+    labelnames=("host", "endpoint", "client_mode"),
 )
 AGENT_CALLS_TOTAL = Counter(
     "agent_calls_total",
     "Total backend-to-agent HTTP calls.",
-    labelnames=("host", "endpoint", "outcome"),
+    labelnames=("host", "endpoint", "outcome", "client_mode"),
 )
 BACKGROUND_LOOP_DURATION_SECONDS = Histogram(
     "background_loop_duration_seconds",
@@ -80,9 +80,16 @@ def record_http_request(method: str, path: str, status_code: int, duration_secon
     HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration_seconds)
 
 
-def record_agent_call(host: str, endpoint: str, outcome: str, duration_seconds: float) -> None:
-    AGENT_CALLS_TOTAL.labels(host=host, endpoint=endpoint, outcome=outcome).inc()
-    AGENT_CALL_DURATION_SECONDS.labels(host=host, endpoint=endpoint).observe(duration_seconds)
+def record_agent_call(
+    *,
+    host: str,
+    endpoint: str,
+    outcome: str,
+    client_mode: str,
+    duration_seconds: float,
+) -> None:
+    AGENT_CALLS_TOTAL.labels(host=host, endpoint=endpoint, outcome=outcome, client_mode=client_mode).inc()
+    AGENT_CALL_DURATION_SECONDS.labels(host=host, endpoint=endpoint, client_mode=client_mode).observe(duration_seconds)
 
 
 def record_background_loop_run(loop_name: str, duration_seconds: float) -> None:
@@ -103,3 +110,42 @@ def record_webhook_delivery(status: str, count: int = 1) -> None:
 
 def record_event_published(event_type: str) -> None:
     EVENTS_PUBLISHED_TOTAL.labels(event_type=event_type).inc()
+
+
+HEARTBEAT_PING_DURATION_SECONDS = Histogram(
+    "gridfleet_agent_heartbeat_duration_seconds",
+    "Backend->agent heartbeat ping duration in seconds.",
+    labelnames=("host_id", "outcome", "client_mode"),
+)
+HEARTBEAT_PING_TOTAL = Counter(
+    "gridfleet_agent_heartbeat_total",
+    "Total backend->agent heartbeat pings.",
+    labelnames=("host_id", "outcome", "client_mode"),
+)
+HEARTBEAT_CYCLE_DURATION_SECONDS = Histogram(
+    "gridfleet_heartbeat_cycle_duration_seconds",
+    "Wall clock duration of one full _check_hosts iteration.",
+)
+HEARTBEAT_CYCLE_OVERRUN_TOTAL = Counter(
+    "gridfleet_heartbeat_cycle_overrun_total",
+    "Heartbeat cycles whose duration exceeded heartbeat_interval_sec.",
+)
+
+
+def record_heartbeat_ping(
+    *,
+    host_id: str,
+    outcome: str,
+    client_mode: str,
+    duration_seconds: float,
+) -> None:
+    HEARTBEAT_PING_TOTAL.labels(host_id=host_id, outcome=outcome, client_mode=client_mode).inc()
+    HEARTBEAT_PING_DURATION_SECONDS.labels(host_id=host_id, outcome=outcome, client_mode=client_mode).observe(
+        duration_seconds
+    )
+
+
+def record_heartbeat_cycle(duration_seconds: float, *, interval_seconds: float) -> None:
+    HEARTBEAT_CYCLE_DURATION_SECONDS.observe(duration_seconds)
+    if duration_seconds > interval_seconds:
+        HEARTBEAT_CYCLE_OVERRUN_TOTAL.inc()

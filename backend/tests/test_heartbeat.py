@@ -1,11 +1,13 @@
 import asyncio
 import uuid
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -20,16 +22,42 @@ from app.services.heartbeat import (
     _schedule_background_task,
     shutdown_background_tasks,
 )
+from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.node_health import _check_nodes
 
 
+def _ok_result(payload: dict[str, Any]) -> HeartbeatPingResult:
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload=payload,
+        duration_ms=0,
+        client_mode=ClientMode.pooled,
+        http_status=200,
+        error_category=None,
+    )
+
+
+def _dead_result() -> HeartbeatPingResult:
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.connect_error,
+        payload=None,
+        duration_ms=0,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category=None,
+    )
+
+
 @pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    """No-op assert_current_leader so unit tests don't need a real leader row."""
+async def _skip_leader_fencing(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[None]:
+    """No-op the leader fence and redirect per-host sessions to the test schema engine."""
     with (
         patch("app.services.heartbeat.assert_current_leader"),
         patch("app.services.node_health.assert_current_leader"),
+        patch("app.services.heartbeat.async_session", db_session_maker),
     ):
         yield
 
@@ -54,7 +82,7 @@ async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
     with (
         patch(
             "app.services.heartbeat._ping_agent",
-            return_value={"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"},
+            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
         patch(
             "app.services.heartbeat._schedule_background_task",
@@ -81,13 +109,15 @@ async def test_heartbeat_updates_missing_prerequisites(db_session: AsyncSession)
 
     with patch(
         "app.services.heartbeat._ping_agent",
-        return_value={
-            "status": "ok",
-            "hostname": "prereq-host",
-            "os_type": "linux",
-            "version": "0.1.0",
-            "missing_prerequisites": [],
-        },
+        return_value=_ok_result(
+            {
+                "status": "ok",
+                "hostname": "prereq-host",
+                "os_type": "linux",
+                "version": "0.1.0",
+                "missing_prerequisites": [],
+            }
+        ),
     ):
         await _check_hosts(db_session)
 
@@ -117,7 +147,7 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     db_session.add(device)
     await db_session.commit()
 
-    with patch("app.services.heartbeat._ping_agent", return_value=None):
+    with patch("app.services.heartbeat._ping_agent", return_value=_dead_result()):
         await _check_hosts(db_session)  # failure 1
         await _check_hosts(db_session)  # failure 2
         await _check_hosts(db_session)  # failure 3
@@ -165,7 +195,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     db_session.add(device)
     await db_session.commit()
 
-    with patch("app.services.heartbeat._ping_agent", return_value=None):
+    with patch("app.services.heartbeat._ping_agent", return_value=_dead_result()):
         await _check_hosts(db_session)
         await _check_hosts(db_session)
         await _check_hosts(db_session)
@@ -197,7 +227,7 @@ async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
     with (
         patch(
             "app.services.heartbeat._ping_agent",
-            return_value={"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"},
+            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
         patch(
             "app.services.heartbeat._schedule_background_task",
@@ -223,7 +253,7 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
     with (
         patch(
             "app.services.heartbeat._ping_agent",
-            return_value={"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"},
+            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
         patch("app.services.heartbeat._schedule_background_task", side_effect=capture_task),
     ):
@@ -266,7 +296,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
     with (
         patch(
             "app.services.heartbeat._ping_agent",
-            return_value={"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"},
+            return_value=_ok_result({"status": "ok", "hostname": "test-host", "os_type": "linux", "version": "0.1.0"}),
         ),
         patch("app.services.heartbeat._auto_sync_plugins_on_recovery", new=blocking_sync),
     ):
@@ -351,7 +381,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     }
 
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=payload),
+        patch("app.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.services.heartbeat._schedule_background_task"),
     ):
         await _check_hosts(db_session)
@@ -395,7 +425,13 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    assert device_health.build_public_summary(device)["healthy"] is True
+    # Re-query device with appium_node loaded: per-host session committed the change;
+    # the test's device object needs an eager reload so build_public_summary can access
+    # device.appium_node without triggering a lazy-load outside an async greenlet.
+    device_reloaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
 
 
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
@@ -457,7 +493,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     }
 
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=exhausted_payload),
+        patch("app.services.heartbeat._ping_agent", return_value=_ok_result(exhausted_payload)),
         patch("app.services.heartbeat._schedule_background_task"),
     ):
         await _check_hosts(db_session)
@@ -567,7 +603,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     }
 
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=payload),
+        patch("app.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.services.heartbeat._schedule_background_task"),
     ):
         await _check_hosts(db_session)
@@ -595,7 +631,13 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    assert device_health.build_public_summary(device)["healthy"] is True
+    # Re-query device with appium_node loaded: per-host session committed the change;
+    # the test's device object needs an eager reload so build_public_summary can access
+    # device.appium_node without triggering a lazy-load outside an async greenlet.
+    device_reloaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
 
 
 async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
@@ -661,7 +703,7 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
     }
 
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=payload),
+        patch("app.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.services.heartbeat._schedule_background_task"),
     ):
         await _check_hosts(db_session)
