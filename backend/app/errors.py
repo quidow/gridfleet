@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -18,11 +19,21 @@ class AgentCallError(Exception):
     error_code = "AGENT_UNREACHABLE"
     status_code = 502
 
-    def __init__(self, host: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        host: str,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        transport_outcome: str | None = None,
+        error_category: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.host = host
         self.message = message
         self.details = details or {"host": host}
+        self.transport_outcome = transport_outcome
+        self.error_category = error_category
 
 
 class AgentUnreachableError(AgentCallError):
@@ -171,6 +182,19 @@ def _http_error_payload(exc: HTTPException) -> tuple[str, object | None]:
     if isinstance(detail, list):
         return "Request validation failed", detail
     return "Request failed", detail
+
+
+def classify_httpx_transport(exc: Exception) -> tuple[str, str]:
+    """Return (transport_outcome, error_category) for an httpx exception."""
+    category = type(exc).__name__
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout", category
+    if isinstance(exc, httpx.ConnectError):
+        message = str(exc).lower()
+        if "name resolution" in message or "temporary failure" in message or "nodename nor servname" in message:
+            return "dns_error", category
+        return "connect_error", category
+    return "unexpected_error", category
 
 
 def register_exception_handlers(app: FastAPI) -> None:

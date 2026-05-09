@@ -119,7 +119,8 @@ async def test_agent_request_forwards_request_id_and_records_metrics() -> None:
     client.get.assert_awaited_once()
     assert client.get.await_args.kwargs["headers"][REQUEST_ID_HEADER] == "req-agent-1"
     metrics_text = render_metrics().decode()
-    assert 'agent_calls_total{endpoint="agent_health",host="10.0.0.1",outcome="success"}' in metrics_text
+    expected_label = 'agent_calls_total{client_mode="fresh",endpoint="agent_health",host="10.0.0.1",outcome="success"}'
+    assert expected_label in metrics_text
 
 
 def test_structured_logs_include_request_and_loop_context(capsys: pytest.CaptureFixture[str]) -> None:
