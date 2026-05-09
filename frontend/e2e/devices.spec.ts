@@ -5,6 +5,9 @@ import { fulfillJson } from './helpers/routes';
 const DEVICE_ROW_SELECTOR = '[data-testid^="device-row-"]';
 
 function deviceChipStatus(device: { operational_state: string; hold?: string | null }) {
+  if (device.operational_state === 'busy') {
+    return 'busy';
+  }
   return device.hold ?? device.operational_state;
 }
 
