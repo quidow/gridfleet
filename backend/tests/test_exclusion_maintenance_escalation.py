@@ -79,10 +79,13 @@ async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tup
     return device, run
 
 
-async def test_exclude_run_if_needed_enters_maintenance(
+async def test_exclude_run_if_needed_excludes_without_maintenance(
     db_session: AsyncSession,
     device_with_active_run: tuple[Device, TestRun],
 ) -> None:
+    """Auto-paths (health/connectivity failures) must NOT escalate the device
+    into maintenance. Only the operator UI, ``report_preparation_failure``,
+    and cooldown-threshold escalation are allowed to flip the hold."""
     device, _run = device_with_active_run
 
     returned_run, entry = await exclude_run_if_needed(db_session, device, reason="Undetectable issue", source="test")
@@ -90,10 +93,12 @@ async def test_exclude_run_if_needed_enters_maintenance(
     assert returned_run is not None
     assert entry is not None
     assert entry.excluded is True
-    assert device.hold == DeviceHold.maintenance
+    # Device started with hold=reserved and must keep that hold — auto-exclusion
+    # must not silently escalate to maintenance.
+    assert device.hold == DeviceHold.reserved
 
 
-async def test_exclude_run_if_needed_no_run_skips_maintenance(
+async def test_exclude_run_if_needed_no_run_is_noop(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -109,16 +114,17 @@ async def test_exclude_run_if_needed_no_run_skips_maintenance(
 
     assert returned_run is None
     assert device.operational_state == DeviceOperationalState.available
+    assert device.hold is None
 
 
-async def test_exclude_run_if_needed_already_excluded_stays_maintenance(
+async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
     db_session: AsyncSession,
     device_with_active_run: tuple[Device, TestRun],
 ) -> None:
     device, _run = device_with_active_run
 
     await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.hold == DeviceHold.maintenance
+    assert device.hold == DeviceHold.reserved
 
     await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.hold == DeviceHold.maintenance
+    assert device.hold == DeviceHold.reserved

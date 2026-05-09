@@ -1261,18 +1261,22 @@ async def release_claimed_device_with_cooldown(
         )
 
         # Because we pre-set excluded=True in Tx1 (Fix 2), exclude_run_if_needed
-        # will see was_excluded=True and skip the lifecycle incident and
-        # enter_maintenance calls that normally follow inside it.  We therefore
-        # invoke those two steps explicitly here so the device always ends up in
-        # maintenance and the lifecycle_run_excluded event always fires.
+        # sees was_excluded=True and skips the lifecycle_run_excluded incident
+        # that it would otherwise emit. We therefore re-emit the incident
+        # explicitly below. ``exclude_run_if_needed`` deliberately does NOT
+        # escalate to maintenance — only the cooldown threshold path is allowed
+        # to do that — so the explicit ``enter_maintenance`` call further down
+        # carries that responsibility.
         await lifecycle_policy_actions.exclude_run_if_needed(
             db,
             device,
             reason=escalation_reason,
             source="testkit",
         )
-        # Fire the lifecycle incident and enter maintenance explicitly — these are
-        # skipped by exclude_run_if_needed when the row was already excluded (Tx1).
+        # Re-emit the lifecycle_run_excluded incident skipped above and put the
+        # device in maintenance — cooldown escalation is one of the three
+        # sanctioned auto-maintenance entry points (operator UI / preparation
+        # failure / cooldown threshold).
         # Reuse run_obj fetched above (same transaction / session).
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -1288,7 +1292,7 @@ async def release_claimed_device_with_cooldown(
         if "appium_node" not in device.__dict__:
             await db.refresh(device, ["appium_node"])
         await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
-        # enter_maintenance + exclude_run_if_needed leave mutations in the session; commit them.
+        # exclude_run_if_needed + enter_maintenance leave mutations in the session; commit them.
         await db.commit()
         # Refresh device so the response reflects post-maintenance state.
         # enter_maintenance may have committed mid-flight via stop_node and

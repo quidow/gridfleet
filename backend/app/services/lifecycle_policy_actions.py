@@ -14,7 +14,6 @@ from app.services import (
     appium_node_locking,
     device_locking,
     lifecycle_incident_service,
-    maintenance_service,
     run_reservation_service,
 )
 from app.services.device_event_service import record_event
@@ -82,6 +81,18 @@ async def exclude_run_if_needed(
     reason: str,
     source: str,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
+    """Exclude the device from its active run reservation and emit the
+    ``lifecycle_run_excluded`` incident.
+
+    Does NOT escalate the device into maintenance. Auto-escalation to
+    maintenance from health/connectivity failures is intentionally absent —
+    only three paths are allowed to flip ``hold`` to ``maintenance``:
+    operator-driven UI actions, ``report_preparation_failure`` (testkit
+    pre-run signal), and ``release_claimed_device_with_cooldown`` after the
+    cooldown threshold is exceeded. Anything else is treated as a regression.
+    Callers that need the device parked in maintenance must call
+    ``maintenance_service.enter_maintenance`` themselves.
+    """
     run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     if run is None:
         return None, entry
@@ -101,9 +112,6 @@ async def exclude_run_if_needed(
             run_id=run.id,
             run_name=run.name,
         )
-        if "appium_node" not in device.__dict__:
-            await db.refresh(device, ["appium_node"])
-        await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
     return run, entry
 
 
