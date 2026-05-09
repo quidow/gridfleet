@@ -505,8 +505,14 @@ async def _apply_host_ping_result(
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
     Pre-conditions: caller has already emitted the structured log and the heartbeat metric.
+    When guard_active=True, caller MUST also supply guard_gap_sec and guard_threshold_sec
+    so the swallowed-miss log carries diagnostic context.
     Post-conditions: caller commits the session.
     """
+    if guard_active and (guard_gap_sec is None or guard_threshold_sec is None):
+        raise AssertionError(
+            "_apply_host_ping_result: guard_active=True requires guard_gap_sec and guard_threshold_sec"
+        )
     host_key = str(host.id)
     health_data = result.payload
 

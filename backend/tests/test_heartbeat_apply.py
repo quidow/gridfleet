@@ -62,7 +62,14 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         error_category="ReadTimeout",
     )
     prior_status = db_host.status
-    await _apply_host_ping_result(db_session, db_host, timeout_result, guard_active=True)
+    await _apply_host_ping_result(
+        db_session,
+        db_host,
+        timeout_result,
+        guard_active=True,
+        guard_gap_sec=150.0,
+        guard_threshold_sec=45.0,
+    )
     await db_session.commit()
     await db_session.refresh(db_host)
     assert db_host.status == prior_status
