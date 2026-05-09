@@ -15,13 +15,15 @@ if TYPE_CHECKING:
 
 
 async def _persisted_device(db: AsyncSession, host_id: str) -> Device:
-    return await create_device_record(
+    device = await create_device_record(
         db,
         host_id=host_id,
         identity_value=f"state-{id(db)}",
         connection_target=f"state-{id(db)}",
         name="State Test",
     )
+    await db.refresh(device, attribute_names=["appium_node"])
+    return device
 
 
 @pytest.mark.db
@@ -119,6 +121,65 @@ async def test_ready_operational_state_returns_offline_when_not_ready(
 
     monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ready_operational_state_returns_offline_when_health_failed(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale device_checks_healthy=False must block the available projection.
+
+    Regression: callers like node_service `Node started` flipped a device to
+    available via ready_operational_state without consulting health, leaving
+    UI showing available + unhealthy until the next probe cleared the signal.
+    """
+    device = await _persisted_device(db_session, default_host_id)
+    device.device_checks_healthy = False
+    device.device_checks_summary = "Disconnected"
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ready_operational_state_returns_offline_when_session_viability_failed(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await _persisted_device(db_session, default_host_id)
+    device.session_viability_status = "failed"
+    device.session_viability_error = "probe failed"
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ready_operational_state_returns_available_when_signals_unset(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No probes yet (None signals) must not block the available projection."""
+    device = await _persisted_device(db_session, default_host_id)
+    assert device.device_checks_healthy is None
+    assert device.session_viability_status is None
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.available
 
 
 def test_operational_state_and_hold_value_sets_are_disjoint() -> None:

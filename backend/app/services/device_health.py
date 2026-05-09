@@ -7,10 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.observability import get_logger
 from app.services import appium_node_locking, device_locking
+from app.services.device_health_view import (
+    build_public_summary,
+    device_allows_allocation,
+    node_running_signal,
+    node_summary_label,
+)
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -20,74 +26,18 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+__all__ = [
+    "apply_node_state_transition",
+    "build_public_summary",
+    "device_allows_allocation",
+    "update_device_checks",
+    "update_emulator_state",
+    "update_session_viability",
+]
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _node_running_signal(node: AppiumNode) -> bool:
-    if node.health_running is not None:
-        return node.health_running
-    return node.state == NodeState.running
-
-
-def _node_summary_label(node: AppiumNode) -> str:
-    return node.health_state or node.state.value
-
-
-def _summary_parts(device: Device) -> list[str]:
-    parts: list[str] = []
-    if device.device_checks_summary:
-        parts.append(device.device_checks_summary)
-    node = device.appium_node
-    if node is not None:
-        parts.append(f"Node: {_node_summary_label(node)}")
-    if device.session_viability_status == "failed":
-        err = device.session_viability_error
-        parts.append(f"Session: failed ({err})" if err else "Session: failed")
-    elif device.session_viability_status == "passed":
-        parts.append("Session: passed")
-    return parts
-
-
-def build_public_summary(device: Device) -> dict[str, Any]:
-    node = device.appium_node
-    healthy: bool | None = True
-    has_signal = False
-
-    if isinstance(device.device_checks_healthy, bool):
-        healthy = healthy and device.device_checks_healthy
-        has_signal = True
-
-    if node is not None:
-        healthy = healthy and _node_running_signal(node)
-        has_signal = True
-
-    if device.session_viability_status in {"passed", "failed"}:
-        healthy = healthy and device.session_viability_status == "passed"
-        has_signal = True
-
-    parts = _summary_parts(device)
-    summary_text = " | ".join(parts) if parts else ("Healthy" if healthy and has_signal else "Unknown")
-
-    timestamps: list[datetime] = []
-    if device.device_checks_checked_at is not None:
-        timestamps.append(device.device_checks_checked_at)
-    if device.session_viability_checked_at is not None:
-        timestamps.append(device.session_viability_checked_at)
-    if node is not None and node.last_health_checked_at is not None:
-        timestamps.append(node.last_health_checked_at)
-    last_checked = max(timestamps) if timestamps else None
-
-    return {
-        "healthy": healthy if has_signal else None,
-        "summary": summary_text,
-        "last_checked_at": last_checked.isoformat() if last_checked is not None else None,
-    }
-
-
-def device_allows_allocation(device: Device) -> bool:
-    return build_public_summary(device).get("healthy") is not False
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
@@ -228,8 +178,8 @@ async def apply_node_state_transition(
     if mark_offline:
         await _mark_offline_for_failed_signal(
             locked,
-            failed=not _node_running_signal(locked_node),
-            reason=reason or f"Node: {_node_summary_label(locked_node)}",
+            failed=not node_running_signal(locked_node),
+            reason=reason or f"Node: {node_summary_label(locked_node)}",
         )
     await _restore_available_for_healthy_signal(db, locked)
     _maybe_emit_health_changed(db, locked, previous)
