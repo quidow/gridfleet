@@ -32,7 +32,7 @@ from app.services import (
     plugin_service,
 )
 from app.services.agent_operations import agent_health
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
@@ -163,6 +163,39 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
         http_status=200,
         error_category=None,
     )
+
+
+def _emit_heartbeat_log(
+    *,
+    host_id: str,
+    host_ip: str,
+    agent_port: int,
+    result: HeartbeatPingResult,
+    leader_id: str,
+    loop_iteration: int,
+) -> None:
+    logger.info(
+        "heartbeat_ping",
+        host_id=host_id,
+        host_ip=host_ip,
+        agent_port=agent_port,
+        client_mode=result.client_mode.value,
+        duration_ms=result.duration_ms,
+        outcome=result.outcome.value,
+        http_status=result.http_status,
+        error_category=result.error_category,
+        leader_id=leader_id,
+        loop_iteration=loop_iteration,
+    )
+
+
+_LOOP_ITERATION = 0
+
+
+def _next_loop_iteration() -> int:
+    global _LOOP_ITERATION
+    _LOOP_ITERATION += 1
+    return _LOOP_ITERATION
 
 
 def _coerce_int(value: object) -> int | None:
@@ -444,11 +477,23 @@ async def _check_hosts(db: AsyncSession) -> None:
     result = await db.execute(stmt)
     hosts = result.scalars().all()
 
+    iteration = _next_loop_iteration()
+    leader_id = str(control_plane_leader.holder_id)
+
     for host in hosts:
         host_key = str(host.id)
         ping_result = await _ping_agent(host.ip, host.agent_port)
         alive = ping_result.alive
         health_data = ping_result.payload
+
+        _emit_heartbeat_log(
+            host_id=str(host.id),
+            host_ip=host.ip,
+            agent_port=host.agent_port,
+            result=ping_result,
+            leader_id=leader_id,
+            loop_iteration=iteration,
+        )
 
         # Fence: drop any writes from a stale leader that lost the advisory lock
         # while we were awaiting _ping_agent. assert_current_leader raises

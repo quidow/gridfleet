@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import structlog.testing
 
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.services.heartbeat import _ping_agent
@@ -73,3 +74,37 @@ async def test_ping_invalid_payload_classified() -> None:
     with patch("app.services.heartbeat.agent_health", new=AsyncMock(return_value=None)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.invalid_payload
+
+
+def test_emit_heartbeat_log_records_full_schema() -> None:
+    from app.services.heartbeat import _emit_heartbeat_log
+    from app.services.heartbeat_outcomes import (
+        ClientMode,
+        HeartbeatOutcome,
+        HeartbeatPingResult,
+    )
+
+    ping_result = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.timeout,
+        payload=None,
+        duration_ms=4_999,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category="ReadTimeout",
+    )
+    with structlog.testing.capture_logs() as cap:
+        _emit_heartbeat_log(
+            host_id="host-uuid",
+            host_ip="192.168.88.249",
+            agent_port=5100,
+            result=ping_result,
+            leader_id="leader-uuid",
+            loop_iteration=42,
+        )
+
+    record = next(e for e in cap if e.get("event") == "heartbeat_ping")
+    assert record.get("host_id") == "host-uuid"
+    assert record.get("outcome") == "timeout"
+    assert record.get("client_mode") == "pooled"
+    assert record.get("duration_ms") == 4999
+    assert record.get("loop_iteration") == 42
