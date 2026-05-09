@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 import structlog.testing
 
@@ -11,7 +12,13 @@ from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
 
 
 @pytest.mark.asyncio
-async def test_ping_success_returns_payload_and_pooled_mode() -> None:
+async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_setting(key: str) -> object:
+        if key == "agent.http_pool_enabled":
+            return True
+        raise KeyError(key)
+
+    monkeypatch.setattr("app.services.settings_service.settings_service.get", fake_setting)
     with patch(
         "app.services.heartbeat.agent_health",
         new=AsyncMock(return_value={"status": "ok", "version": "1.2.3"}),
@@ -22,6 +29,26 @@ async def test_ping_success_returns_payload_and_pooled_mode() -> None:
     assert result.alive is True
     assert result.client_mode is ClientMode.pooled
     assert result.duration_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_ping_success_reports_fresh_mode_when_pool_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_setting(key: str) -> object:
+        if key == "agent.http_pool_enabled":
+            return False
+        raise KeyError(key)
+
+    monkeypatch.setattr("app.services.agent_operations.settings_service.get", fake_setting)
+    response = httpx.Response(
+        200,
+        json={"status": "ok"},
+        request=httpx.Request("GET", "http://1.2.3.4:5100/agent/health"),
+    )
+    with patch("app.services.agent_operations.agent_request", new=AsyncMock(return_value=response)):
+        result = await _ping_agent("1.2.3.4", 5100)
+
+    assert result.outcome is HeartbeatOutcome.success
+    assert result.client_mode is ClientMode.fresh
 
 
 @pytest.mark.asyncio

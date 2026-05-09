@@ -98,8 +98,16 @@ _TRANSPORT_TO_OUTCOME = {
 }
 
 
+def _heartbeat_client_mode() -> ClientMode:
+    try:
+        return ClientMode.pooled if bool(settings_service.get("agent.http_pool_enabled")) else ClientMode.fresh
+    except (KeyError, RuntimeError):
+        return ClientMode.fresh
+
+
 async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
     started = time.monotonic()
+    client_mode = _heartbeat_client_mode()
     try:
         payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
     except CircuitOpenError as exc:
@@ -118,7 +126,7 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
             outcome=HeartbeatOutcome.http_error,
             payload=None,
             duration_ms=duration_ms,
-            client_mode=ClientMode.pooled,
+            client_mode=client_mode,
             http_status=exc.http_status,
             error_category=type(exc).__name__,
         )
@@ -132,7 +140,7 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
             outcome=outcome,
             payload=None,
             duration_ms=duration_ms,
-            client_mode=ClientMode.pooled,
+            client_mode=client_mode,
             http_status=None,
             error_category=exc.error_category or type(exc).__name__,
         )
@@ -142,7 +150,7 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
             outcome=HeartbeatOutcome.unexpected_error,
             payload=None,
             duration_ms=duration_ms,
-            client_mode=ClientMode.pooled,
+            client_mode=client_mode,
             http_status=None,
             error_category=type(exc).__name__,
         )
@@ -152,7 +160,7 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
             outcome=HeartbeatOutcome.invalid_payload,
             payload=None,
             duration_ms=duration_ms,
-            client_mode=ClientMode.pooled,
+            client_mode=client_mode,
             http_status=None,
             error_category=None,
         )
@@ -160,7 +168,7 @@ async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
         outcome=HeartbeatOutcome.success,
         payload=payload,
         duration_ms=duration_ms,
-        client_mode=ClientMode.pooled,
+        client_mode=client_mode,
         http_status=200,
         error_category=None,
     )
