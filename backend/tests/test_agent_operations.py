@@ -103,6 +103,30 @@ async def test_agent_health_get_request_omits_json_body() -> None:
     )
 
     assert payload == {"status": "ok"}
+
+
+async def test_agent_health_raises_response_error_on_http_500() -> None:
+    """5xx must surface as AgentResponseError with http_status, not silently return None."""
+    from app.errors import AgentResponseError
+
+    client = StrictAgentClient(
+        get_response=_response(
+            "GET",
+            "http://10.0.0.5:5100/agent/health",
+            status_code=503,
+            payload={"detail": "agent boot in progress"},
+        )
+    )
+
+    with pytest.raises(AgentResponseError) as caught:
+        await agent_operations.agent_health(
+            "10.0.0.5",
+            5100,
+            http_client_factory=_strict_client_factory(client),
+            timeout=5,
+        )
+
+    assert caught.value.http_status == 503
     assert client.get_calls == [
         (
             "http://10.0.0.5:5100/agent/health",

@@ -189,18 +189,21 @@ async def test_appium_status_returns_none_for_non_200() -> None:
     assert payload is None
 
 
-async def test_agent_health_returns_none_for_non_200() -> None:
+async def test_agent_health_raises_response_error_for_non_200() -> None:
+    from app.errors import AgentResponseError
+
     client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/health", status_code=503, payload={"detail": "down"})
     )
 
-    payload = await agent_operations.agent_health(
-        "10.0.0.5",
-        5100,
-        http_client_factory=_strict_client_factory(client),
-    )
+    with pytest.raises(AgentResponseError) as caught:
+        await agent_operations.agent_health(
+            "10.0.0.5",
+            5100,
+            http_client_factory=_strict_client_factory(client),
+        )
 
-    assert payload is None
+    assert caught.value.http_status == 503
 
 
 async def test_agent_host_telemetry_returns_payload() -> None:

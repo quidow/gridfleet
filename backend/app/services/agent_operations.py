@@ -158,8 +158,7 @@ async def agent_health(
         http_client_factory=http_client_factory,
         timeout=timeout,
     )
-    if response.status_code != 200:
-        return None
+    _raise_for_status(response, host=host, action="health check")
     return _as_dict(response.json())
 
 

@@ -58,6 +58,11 @@ async def probe_once(client: httpx.AsyncClient, target: str, port: int, mode: st
         }
 
 
+async def _fresh_probe(target: str, port: int) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=5.0) as fresh:
+        return await probe_once(fresh, target, port, "fresh")
+
+
 async def run(args: argparse.Namespace) -> None:
     keepalive_clients: dict[str, httpx.AsyncClient] = {
         target: httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(keepalive_expiry=60))
@@ -74,14 +79,21 @@ async def run(args: argparse.Namespace) -> None:
         )
         writer.writeheader()
         while asyncio.get_event_loop().time() < deadline:
+            cycle_start = asyncio.get_event_loop().time()
+            tasks: list[asyncio.Task[dict[str, Any]]] = []
             for target in args.target:
-                async with httpx.AsyncClient(timeout=5.0) as fresh:
-                    fresh_row = await probe_once(fresh, target, args.port, "fresh")
-                writer.writerow(fresh_row)
-                pooled_row = await probe_once(keepalive_clients[target], target, args.port, "pooled")
-                writer.writerow(pooled_row)
+                tasks.append(asyncio.create_task(_fresh_probe(target, args.port)))
+                tasks.append(
+                    asyncio.create_task(
+                        probe_once(keepalive_clients[target], target, args.port, "pooled")
+                    )
+                )
+            rows = await asyncio.gather(*tasks)
+            for row in rows:
+                writer.writerow(row)
             f.flush()
-            await asyncio.sleep(args.interval)
+            elapsed = asyncio.get_event_loop().time() - cycle_start
+            await asyncio.sleep(max(0.0, args.interval - elapsed))
 
     for client in keepalive_clients.values():
         await client.aclose()
