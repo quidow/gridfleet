@@ -191,7 +191,13 @@ def classify_httpx_transport(exc: Exception) -> tuple[str, str]:
         return "timeout", category
     if isinstance(exc, httpx.ConnectError):
         message = str(exc).lower()
-        if "name resolution" in message or "temporary failure" in message or "nodename nor servname" in message:
+        dns_markers = (
+            "name resolution",
+            "temporary failure",
+            "nodename nor servname",
+            "name or service not known",
+        )
+        if any(marker in message for marker in dns_markers):
             return "dns_error", category
         return "connect_error", category
     return "unexpected_error", category

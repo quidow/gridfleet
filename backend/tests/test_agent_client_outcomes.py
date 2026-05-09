@@ -70,6 +70,23 @@ async def test_dns_error_classified_as_dns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dns_error_musl_pattern_classified_as_dns() -> None:
+    factory = _factory_raising(
+        httpx.ConnectError("[Errno -2] Name or service not known"),
+    )
+    with pytest.raises(AgentUnreachableError) as caught:
+        await agent_request(
+            "GET",
+            "http://no-such.invalid:5100/agent/health",
+            endpoint="agent_health",
+            host="no-such.invalid",
+            client_factory=factory,
+            client_mode="fresh",
+        )
+    assert caught.value.transport_outcome == "dns_error"
+
+
+@pytest.mark.asyncio
 async def test_circuit_open_path_unaffected() -> None:
     with (
         patch("app.agent_client.agent_circuit_breaker.before_request", new=AsyncMock(return_value=10.0)),
