@@ -5,10 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceOperationalState
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState
 from app.schemas.run import ClaimRequest, ClaimResponse, ReleaseRequest, ReservedDeviceInfo
@@ -146,6 +146,42 @@ async def test_claim_device_marks_operational_state_busy(db_session: AsyncSessio
 
     await db_session.refresh(device, ["operational_state"])
     assert device.operational_state == DeviceOperationalState.busy
+
+
+async def test_claim_device_skips_busy_flip_for_maintenance_device(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If an operator forces maintenance on a device after it's reserved, the
+    claim must not flip operational_state -> busy. _release_devices
+    short-circuits for maintenance-held devices and would never restore the
+    state, leaving the device stuck `busy` until manual intervention."""
+    device = await _make_device(db_session, default_host_id, "claim-maint-001")
+    run = await create_reserved_run(db_session, name="claim-maint-run", devices=[device])
+    device.hold = DeviceHold.maintenance
+    await db_session.commit()
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    assert info.device_id == str(device.id)
+
+    await db_session.refresh(device, ["operational_state", "hold"])
+    assert device.operational_state == DeviceOperationalState.available
+    assert device.hold == DeviceHold.maintenance
+
+
+async def test_claim_device_translates_missing_device_to_noclaimable(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If the Device row is gone (manual cleanup or delete race) while a
+    reservation still references it, claim_device must surface
+    NoClaimableDevicesError instead of letting NoResultFound bubble out as a
+    500 from the /runs/{id}/claim endpoint."""
+    device = await _make_device(db_session, default_host_id, "claim-gone-001")
+    run = await create_reserved_run(db_session, name="claim-gone-run", devices=[device])
+    await db_session.execute(delete(Device).where(Device.id == device.id))
+    await db_session.commit()
+
+    with pytest.raises(run_service.NoClaimableDevicesError):
+        await run_service.claim_device(db_session, run.id, worker_id="gw0")
 
 
 async def test_claim_device_no_free_devices(db_session: AsyncSession, default_host_id: str) -> None:
