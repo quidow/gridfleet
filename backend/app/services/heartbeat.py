@@ -18,6 +18,7 @@ from app.errors import (
     AgentUnreachableError,
     CircuitOpenError,
 )
+from app.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
@@ -494,6 +495,12 @@ async def _check_hosts(db: AsyncSession) -> None:
             leader_id=leader_id,
             loop_iteration=iteration,
         )
+        record_heartbeat_ping(
+            host_id=str(host.id),
+            outcome=ping_result.outcome.value,
+            client_mode=ping_result.client_mode.value,
+            duration_seconds=ping_result.duration_ms / 1000.0,
+        )
 
         # Fence: drop any writes from a stale leader that lost the advisory lock
         # while we were awaiting _ping_agent. assert_current_leader raises
@@ -591,6 +598,7 @@ async def heartbeat_loop() -> None:
     """Background loop that pings all host agents."""
     while True:
         interval = float(settings_service.get("general.heartbeat_interval_sec"))
+        cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_hosts(db)
@@ -603,4 +611,9 @@ async def heartbeat_loop() -> None:
             os._exit(70)
         except Exception:
             logger.exception("Heartbeat check failed")
+        finally:
+            record_heartbeat_cycle(
+                time.monotonic() - cycle_start,
+                interval_seconds=interval,
+            )
         await asyncio.sleep(interval)
