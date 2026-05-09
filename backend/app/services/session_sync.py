@@ -204,11 +204,17 @@ async def _sync_sessions(db: AsyncSession) -> None:
         )
         logger.info("Tracked new session %s on device %s (%s)", sid, device.name, connection_target)
 
-    # Process ended sessions
+    # Process ended sessions. Pass A: end every duplicate ``running`` row
+    # for each disappeared session_id and collect the distinct device_ids
+    # that need a busy → ready check. ``known_running`` collapses to a single
+    # device_id per session_id (dict overwrite), so legacy rows pointing at
+    # different devices for the same session_id would only restore one
+    # device if we relied on it. Walking ``ended_sessions.device_id``
+    # ensures every affected device is considered.
     ended_sids = [sid for sid in known_running if sid not in active]
-    for sid in ended_sids:
-        device_id_str = known_running[sid]
+    device_ids_to_restore: set[uuid.UUID] = set()
 
+    for sid in ended_sids:
         sess_stmt = (
             select(Session)
             .options(selectinload(Session.device), joinedload(Session.run))
@@ -232,50 +238,58 @@ async def _sync_sessions(db: AsyncSession) -> None:
                 ended_session.status = SessionStatus.passed  # default; pytest helper can override
             session_service.queue_session_ended_event(db, ended_session, device=ended_device)
             logger.info("Session %s ended", sid)
+            if ended_session.device_id is not None:
+                device_ids_to_restore.add(ended_session.device_id)
 
-        # Check if device has other running sessions
+    # Pass B: per-device still_running check + lifecycle handler + restore.
+    # Sorted so concurrent loops acquire device row locks in a consistent
+    # order (matches ``device_locking.lock_devices``).
+    for device_id in sorted(device_ids_to_restore):
         count_stmt = select(Session).where(
-            Session.device_id == device_id_str,
+            Session.device_id == device_id,
             Session.status == SessionStatus.running,
             Session.ended_at.is_(None),
         )
         count_result = await db.execute(count_stmt)
-        still_running = count_result.scalars().first() is not None
-        if not still_running:
-            dev_stmt = select(Device).where(Device.id == device_id_str)
-            dev_result = await db.execute(dev_stmt)
-            device = dev_result.scalar_one_or_none()
-            if device is not None:
-                outcome = await lifecycle_policy.handle_session_finished(db, device)
-                if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
-                    continue
-                if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
-                    # A fresh client session arrived between our running-set
-                    # check and the locked check inside the helper; leave the
-                    # device busy so the new session keeps it.
-                    continue
-            if device and device.operational_state == DeviceOperationalState.busy:
-                locked_device = await device_locking.lock_device(db, device.id)
-                if locked_device.operational_state == DeviceOperationalState.busy:
-                    # Authoritative recheck under the row lock. ``handle_session_finished``
-                    # only does the locked running-session check when ``stop_pending``
-                    # is set; in the common no-deferred-stop path it returns NO_PENDING
-                    # without ever consulting the Session table under lock, so a fresh
-                    # session inserted between the outer ``still_running`` check and
-                    # this restore could be skipped past. Re-check here so we never
-                    # restore a device that now hosts a new running session.
-                    fresh_running_stmt = select(Session.id).where(
-                        Session.device_id == locked_device.id,
-                        Session.status == SessionStatus.running,
-                        Session.ended_at.is_(None),
-                    )
-                    fresh_running = (await db.execute(fresh_running_stmt)).first()
-                    if fresh_running is None:
-                        await set_operational_state(
-                            locked_device,
-                            await ready_operational_state(db, locked_device),
-                            reason="Session ended",
-                        )
+        if count_result.scalars().first() is not None:
+            continue
+        dev_stmt = select(Device).where(Device.id == device_id)
+        dev_result = await db.execute(dev_stmt)
+        device = dev_result.scalar_one_or_none()
+        if device is None:
+            continue
+        outcome = await lifecycle_policy.handle_session_finished(db, device)
+        if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
+            continue
+        if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
+            # A fresh client session arrived between our running-set check
+            # and the locked check inside the helper; leave the device busy
+            # so the new session keeps it.
+            continue
+        if device.operational_state != DeviceOperationalState.busy:
+            continue
+        locked_device = await device_locking.lock_device(db, device.id)
+        if locked_device.operational_state != DeviceOperationalState.busy:
+            continue
+        # Authoritative recheck under the row lock. ``handle_session_finished``
+        # only does the locked running-session check when ``stop_pending`` is
+        # set; in the common no-deferred-stop path it returns NO_PENDING
+        # without ever consulting the Session table under lock, so a fresh
+        # session inserted between the outer ``still_running`` check and
+        # this restore could be skipped past. Re-check here so we never
+        # restore a device that now hosts a new running session.
+        fresh_running_stmt = select(Session.id).where(
+            Session.device_id == locked_device.id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+        )
+        fresh_running = (await db.execute(fresh_running_stmt)).first()
+        if fresh_running is None:
+            await set_operational_state(
+                locked_device,
+                await ready_operational_state(db, locked_device),
+                reason="Session ended",
+            )
 
     await _sweep_stale_stop_pending(db)
     await db.commit()
