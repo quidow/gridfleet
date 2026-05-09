@@ -613,6 +613,11 @@ async def _apply_host_ping_result(
 
 
 async def _check_hosts(db: AsyncSession) -> None:
+    """Ping all non-pending hosts in parallel.
+
+    ``db`` is used only to fetch the host id list; per-host work runs in fresh
+    sessions opened via ``async_session`` and commits independently.
+    """
     iteration = _next_loop_iteration()
     leader_id = str(control_plane_leader.holder_id)
 

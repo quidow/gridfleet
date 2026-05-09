@@ -229,7 +229,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
 @pytest_asyncio.fixture
 async def populated_hosts_4_slow(
     db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession], None]:
     """Yield an async context manager that opens a session seeded with 4 online hosts.
 
     IPs: 10.10.10.1 through 10.10.10.4. Intended for parallelism timing tests.
@@ -268,7 +268,7 @@ async def populated_hosts_4_slow(
 @pytest_asyncio.fixture
 async def populated_hosts_one_slow_one_fast(
     db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession], None]:
     """Yield an async context manager seeded with 2 hosts: slow (1.1.1.1) and fast (2.2.2.2).
 
     Used for testing that parallel execution logs the fast host before the slow one.
