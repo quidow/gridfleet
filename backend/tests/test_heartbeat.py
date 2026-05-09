@@ -1,12 +1,13 @@
 import asyncio
 import uuid
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -49,11 +50,14 @@ def _dead_result() -> HeartbeatPingResult:
 
 
 @pytest.fixture(autouse=True)
-def _skip_leader_fencing() -> Iterator[None]:
-    """No-op assert_current_leader so unit tests don't need a real leader row."""
+async def _skip_leader_fencing(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[None]:
+    """No-op the leader fence and redirect per-host sessions to the test schema engine."""
     with (
         patch("app.services.heartbeat.assert_current_leader"),
         patch("app.services.node_health.assert_current_leader"),
+        patch("app.services.heartbeat.async_session", db_session_maker),
     ):
         yield
 
@@ -421,7 +425,13 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    assert device_health.build_public_summary(device)["healthy"] is True
+    # Re-query device with appium_node loaded: per-host session committed the change;
+    # the test's device object needs an eager reload so build_public_summary can access
+    # device.appium_node without triggering a lazy-load outside an async greenlet.
+    device_reloaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
 
 
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
@@ -621,7 +631,13 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     await db_session.refresh(node)
     assert node.health_running is None
     assert node.health_state is None
-    assert device_health.build_public_summary(device)["healthy"] is True
+    # Re-query device with appium_node loaded: per-host session committed the change;
+    # the test's device object needs an eager reload so build_public_summary can access
+    # device.appium_node without triggering a lazy-load outside an async greenlet.
+    device_reloaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
 
 
 async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(

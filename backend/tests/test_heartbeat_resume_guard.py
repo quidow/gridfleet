@@ -100,6 +100,7 @@ def _timeout() -> HeartbeatPingResult:
 async def test_long_gap_then_recovery_does_not_emit_offline(
     monkeypatch: pytest.MonkeyPatch,
     db_session: object,
+    db_session_maker: object,
     db_host: Host,
     event_bus_capture: list[tuple[str, dict[str, object]]],
 ) -> None:
@@ -114,13 +115,15 @@ async def test_long_gap_then_recovery_does_not_emit_offline(
     # Pre-position the cycle counter as if we paused for 10 intervals (10 * 15 = 150s gap).
     monkeypatch.setattr(hb, "_LAST_CYCLE_MONOTONIC", time.monotonic() - 10 * 15.0)
 
-    # Cycle 1: agent times out but guard is active — should NOT mark host offline.
-    with patch("app.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
-        await hb._check_hosts(db_session)
+    # Redirect per-host sessions to the test schema engine.
+    with patch("app.services.heartbeat.async_session", db_session_maker):
+        # Cycle 1: agent times out but guard is active — should NOT mark host offline.
+        with patch("app.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
+            await hb._check_hosts(db_session)
 
-    # Cycle 2: agent comes back online.
-    with patch("app.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
-        await hb._check_hosts(db_session)
+        # Cycle 2: agent comes back online.
+        with patch("app.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
+            await hb._check_hosts(db_session)
 
     # Yield to the event loop so any after-commit publish tasks can run.
     import asyncio

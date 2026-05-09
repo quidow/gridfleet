@@ -1,6 +1,7 @@
+import contextlib
 import os
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 import pytest
@@ -223,3 +224,81 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
 
     monkeypatch.setattr("app.services.event_bus.event_bus.publish", _fake_publish)
     return captured
+
+
+@pytest_asyncio.fixture
+async def populated_hosts_4_slow(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
+    """Yield an async context manager that opens a session seeded with 4 online hosts.
+
+    IPs: 10.10.10.1 through 10.10.10.4. Intended for parallelism timing tests.
+    Usage: ``async with populated_hosts_4_slow as db: await _check_hosts(db)``
+    """
+    hosts: list[Host] = []
+    async with db_session_maker() as seed_db:
+        for i in range(1, 5):
+            host = Host(
+                hostname=f"slow-host-{i}",
+                ip=f"10.10.10.{i}",
+                os_type=OSType.linux,
+                agent_port=5100,
+                status=HostStatus.online,
+            )
+            seed_db.add(host)
+            hosts.append(host)
+        await seed_db.commit()
+
+    @contextlib.asynccontextmanager
+    async def _ctx() -> AsyncIterator[AsyncSession]:
+        async with db_session_maker() as db:
+            yield db
+
+    yield _ctx()
+
+    # Cleanup
+    async with db_session_maker() as cleanup_db:
+        for host in hosts:
+            h = await cleanup_db.get(Host, host.id)
+            if h is not None:
+                await cleanup_db.delete(h)
+        await cleanup_db.commit()
+
+
+@pytest_asyncio.fixture
+async def populated_hosts_one_slow_one_fast(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[contextlib.AbstractAsyncContextManager[AsyncSession]]:
+    """Yield an async context manager seeded with 2 hosts: slow (1.1.1.1) and fast (2.2.2.2).
+
+    Used for testing that parallel execution logs the fast host before the slow one.
+    Usage: ``async with populated_hosts_one_slow_one_fast as db: await _check_hosts(db)``
+    """
+    hosts: list[Host] = []
+    async with db_session_maker() as seed_db:
+        for ip, name in [("1.1.1.1", "slow-host"), ("2.2.2.2", "fast-host")]:
+            host = Host(
+                hostname=name,
+                ip=ip,
+                os_type=OSType.linux,
+                agent_port=5100,
+                status=HostStatus.online,
+            )
+            seed_db.add(host)
+            hosts.append(host)
+        await seed_db.commit()
+
+    @contextlib.asynccontextmanager
+    async def _ctx() -> AsyncIterator[AsyncSession]:
+        async with db_session_maker() as db:
+            yield db
+
+    yield _ctx()
+
+    # Cleanup
+    async with db_session_maker() as cleanup_db:
+        for host in hosts:
+            h = await cleanup_db.get(Host, host.id)
+            if h is not None:
+                await cleanup_db.delete(h)
+        await cleanup_db.commit()

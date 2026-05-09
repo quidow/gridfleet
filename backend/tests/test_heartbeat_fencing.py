@@ -15,7 +15,18 @@ from app.services.heartbeat import _check_hosts
 from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+
+@pytest.fixture(autouse=True)
+async def _patch_heartbeat_session(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[None]:
+    """Redirect per-host sessions to the test schema engine for fencing tests."""
+    with patch("app.services.heartbeat.async_session", db_session_maker):
+        yield
 
 
 @pytest.mark.db
