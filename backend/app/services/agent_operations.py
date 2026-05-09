@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Final, cast
 from urllib.parse import quote
 
 import httpx
@@ -21,6 +21,17 @@ from app.services.settings_service import settings_service
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
+
+# Backend per-call timeout for endpoints whose handlers invoke a driver-pack
+# adapter probe via `dispatch_*`. Must stay above the agent's
+# ADAPTER_HOOK_TIMEOUT_SECONDS (currently 30s in
+# agent/agent_app/pack/adapter_dispatch.py); otherwise the backend
+# ReadTimeouts before the agent finishes a slow probe, which trips the
+# per-host circuit breaker even though the agent eventually returns 200.
+# The 5s headroom over the 30s adapter ceiling covers HTTP overhead between
+# the agent's adapter timer expiry and FastAPI returning the 504 to the
+# backend. If ADAPTER_HOOK_TIMEOUT_SECONDS is raised, raise this in lockstep.
+_PACK_ADAPTER_BACKEND_TIMEOUT: Final[int] = 35
 
 
 def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
@@ -444,7 +455,7 @@ async def get_pack_device_properties(
     pack_id: str,
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 10,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -471,7 +482,7 @@ async def normalize_pack_device(
     platform_id: str,
     raw_input: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 15,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "POST",
@@ -507,7 +518,7 @@ async def pack_device_health(
     allow_boot: bool = False,
     headless: bool | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 10,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -549,7 +560,7 @@ async def pack_device_telemetry(
     connection_type: str | None,
     ip_address: str | None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 10,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any] | None:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -586,7 +597,7 @@ async def pack_device_lifecycle_action(
     action: str,
     args: dict[str, Any] | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 15,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
