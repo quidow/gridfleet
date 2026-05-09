@@ -603,6 +603,10 @@ async def heartbeat_loop() -> None:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_hosts(db)
         except LeadershipLost as exc:
+            record_heartbeat_cycle(
+                time.monotonic() - cycle_start,
+                interval_seconds=interval,
+            )
             logger.error(
                 "heartbeat_loop_leadership_lost",
                 reason=str(exc),
