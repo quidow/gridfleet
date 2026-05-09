@@ -62,6 +62,16 @@ def test_resume_guard_helper() -> None:
         )
         is False
     )
+    # Equality boundary: gap == interval * max_missed → guard NOT active (genuine miss).
+    assert (
+        _resume_guard_active(
+            last_cycle_monotonic=300.0,
+            now_monotonic=345.0,
+            interval_sec=15.0,
+            max_missed=3,
+        )
+        is False
+    )
 
 
 def _ok() -> HeartbeatPingResult:
@@ -111,6 +121,11 @@ async def test_long_gap_then_recovery_does_not_emit_offline(
     # Cycle 2: agent comes back online.
     with patch("app.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
         await hb._check_hosts(db_session)
+
+    # Yield to the event loop so any after-commit publish tasks can run.
+    import asyncio
+
+    await asyncio.sleep(0)
 
     offline_events = [
         (name, payload)

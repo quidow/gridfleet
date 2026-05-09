@@ -505,13 +505,16 @@ async def _check_hosts(db: AsyncSession) -> None:
     max_missed = int(settings_service.get("general.max_missed_heartbeats"))
     global _LAST_CYCLE_MONOTONIC
     now_mono = time.monotonic()
+    prev_mono = _LAST_CYCLE_MONOTONIC
     guard_active = _resume_guard_active(
-        last_cycle_monotonic=_LAST_CYCLE_MONOTONIC,
+        last_cycle_monotonic=prev_mono,
         now_monotonic=now_mono,
         interval_sec=interval,
         max_missed=max_missed,
     )
     _LAST_CYCLE_MONOTONIC = now_mono
+    guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
+    guard_threshold_sec = interval * max_missed
 
     for host in hosts:
         host_key = str(host.id)
@@ -569,7 +572,12 @@ async def _check_hosts(db: AsyncSession) -> None:
                 await _ingest_appium_restart_events(db, host, health_data)
         else:
             if guard_active:
-                logger.warning("heartbeat_resume_guard_swallowed_miss", host_id=str(host.id))
+                logger.warning(
+                    "heartbeat_resume_guard_swallowed_miss",
+                    host_id=str(host.id),
+                    gap_sec=guard_gap_sec,
+                    threshold_sec=guard_threshold_sec,
+                )
             else:
                 count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
                 logger.warning(
