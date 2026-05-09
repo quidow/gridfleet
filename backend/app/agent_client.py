@@ -145,7 +145,9 @@ async def request(
         return response
     except httpx.HTTPError as exc:
         outcome_label, error_category = classify_httpx_transport(exc)
-        await agent_circuit_breaker.record_failure(host, error=str(exc))
+        exc_message = str(exc)
+        breaker_error = f"{type(exc).__name__}: {exc_message}" if exc_message else type(exc).__name__
+        await agent_circuit_breaker.record_failure(host, error=breaker_error)
         outcome = outcome_label
         raise AgentUnreachableError(
             host,
