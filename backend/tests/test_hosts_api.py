@@ -254,7 +254,8 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
     )
     await db_session.commit()
 
-    for _ in range(agent_circuit_breaker.failure_threshold):
+    threshold = agent_circuit_breaker.failure_threshold()
+    for _ in range(threshold):
         await agent_circuit_breaker.record_failure(host["ip"], error="timeout")
 
     resp = await client.get(f"/api/hosts/{host['id']}/diagnostics")
@@ -262,7 +263,7 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
 
     data = resp.json()
     assert data["circuit_breaker"]["status"] == "open"
-    assert data["circuit_breaker"]["consecutive_failures"] == agent_circuit_breaker.failure_threshold
+    assert data["circuit_breaker"]["consecutive_failures"] == threshold
     assert data["circuit_breaker"]["retry_after_seconds"] is not None
     assert len(data["appium_processes"]["running_nodes"]) == 2
 

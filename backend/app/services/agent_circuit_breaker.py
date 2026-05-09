@@ -7,6 +7,7 @@ from typing import Any
 
 from app.observability import get_logger
 from app.services.event_bus import event_bus
+from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
 
@@ -21,11 +22,23 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, failure_threshold: int = 5, cooldown_seconds: float = 30.0) -> None:
-        self.failure_threshold = failure_threshold
-        self.cooldown_seconds = cooldown_seconds
+    def __init__(self) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
+
+    def _failure_threshold(self) -> int:
+        return int(settings_service.get("agent.circuit_breaker_failure_threshold"))
+
+    def _cooldown_seconds(self) -> float:
+        return float(settings_service.get("agent.circuit_breaker_cooldown_seconds"))
+
+    def failure_threshold(self) -> int:
+        """Public read accessor for the current failure threshold (reads from settings)."""
+        return self._failure_threshold()
+
+    def cooldown_seconds(self) -> float:
+        """Public read accessor for the current cooldown duration (reads from settings)."""
+        return self._cooldown_seconds()
 
     async def before_request(self, host: str) -> float | None:
         async with self._lock:
@@ -71,6 +84,8 @@ class AgentCircuitBreaker:
     async def record_failure(self, host: str, *, error: str) -> None:
         publish_opened = False
         failure_count = 0
+        threshold = self._failure_threshold()
+        cooldown = self._cooldown_seconds()
         async with self._lock:
             state = self._states.setdefault(host, CircuitState())
             state.last_error = error
@@ -78,18 +93,18 @@ class AgentCircuitBreaker:
 
             if state.status == "half_open":
                 state.status = "open"
-                state.opened_until = now + self.cooldown_seconds
+                state.opened_until = now + cooldown
                 state.probe_in_flight = False
-                state.consecutive_failures = self.failure_threshold
+                state.consecutive_failures = threshold
                 publish_opened = True
             elif state.status == "open":
-                state.opened_until = now + self.cooldown_seconds
+                state.opened_until = now + cooldown
                 state.probe_in_flight = False
             else:
                 state.consecutive_failures += 1
-                if state.consecutive_failures >= self.failure_threshold:
+                if state.consecutive_failures >= threshold:
                     state.status = "open"
-                    state.opened_until = now + self.cooldown_seconds
+                    state.opened_until = now + cooldown
                     state.probe_in_flight = False
                     publish_opened = True
 
@@ -100,7 +115,7 @@ class AgentCircuitBreaker:
                 "Agent circuit breaker opened",
                 host=host,
                 consecutive_failures=failure_count,
-                cooldown_seconds=self.cooldown_seconds,
+                cooldown_seconds=cooldown,
                 error=error,
             )
             await event_bus.publish(
@@ -108,7 +123,7 @@ class AgentCircuitBreaker:
                 {
                     "host": host,
                     "consecutive_failures": failure_count,
-                    "cooldown_seconds": self.cooldown_seconds,
+                    "cooldown_seconds": cooldown,
                     "last_error": error,
                 },
             )
@@ -134,7 +149,7 @@ class AgentCircuitBreaker:
         return {
             "status": state.status,
             "consecutive_failures": state.consecutive_failures,
-            "cooldown_seconds": self.cooldown_seconds,
+            "cooldown_seconds": self._cooldown_seconds(),
             "retry_after_seconds": retry_after_seconds,
             "probe_in_flight": state.probe_in_flight,
             "last_error": state.last_error,

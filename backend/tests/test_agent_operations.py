@@ -333,10 +333,13 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
         get_exception=httpx.ConnectTimeout("boom", request=httpx.Request("GET", "http://10.0.0.8:5100/agent/health"))
     )
 
+    threshold = 5  # default agent.circuit_breaker_failure_threshold
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.services.agent_circuit_breaker.monotonic", fake_monotonic)
+        monkeypatch.setattr(agent_circuit_breaker, "_failure_threshold", lambda: threshold)
+        monkeypatch.setattr(agent_circuit_breaker, "_cooldown_seconds", lambda: 30.0)
 
-        for _ in range(agent_circuit_breaker.failure_threshold):
+        for _ in range(threshold):
             with pytest.raises(AgentUnreachableError):
                 await agent_operations.agent_health(
                     "10.0.0.8",
@@ -345,7 +348,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                     timeout=5,
                 )
 
-        assert len(client.get_calls) == agent_circuit_breaker.failure_threshold
+        assert len(client.get_calls) == threshold
 
         with pytest.raises(CircuitOpenError):
             await agent_operations.agent_health(
@@ -355,7 +358,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                 timeout=5,
             )
 
-    assert len(client.get_calls) == agent_circuit_breaker.failure_threshold
+    assert len(client.get_calls) == threshold
 
 
 async def test_get_pack_devices_raises_response_error_on_http_500() -> None:

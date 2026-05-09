@@ -32,11 +32,15 @@ async def test_agent_circuit_breaker_opens_then_recovers() -> None:
 
     publish_mock = AsyncMock()
 
+    _threshold = 5  # default agent.circuit_breaker_failure_threshold
+    _cooldown = 30  # default agent.circuit_breaker_cooldown_seconds
     with (
         patch("app.services.agent_circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch("app.services.agent_circuit_breaker.event_bus.publish", new=publish_mock),
+        patch.object(agent_circuit_breaker, "_failure_threshold", return_value=_threshold),
+        patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=float(_cooldown)),
     ):
-        for _ in range(agent_circuit_breaker.failure_threshold):
+        for _ in range(_threshold):
             await agent_circuit_breaker.record_failure("10.0.0.31", error="boom")
 
         snapshot = agent_circuit_breaker.snapshot("10.0.0.31")
@@ -45,7 +49,7 @@ async def test_agent_circuit_breaker_opens_then_recovers() -> None:
         retry_after = await agent_circuit_breaker.before_request("10.0.0.31")
         assert retry_after is not None
 
-        current_time += agent_circuit_breaker.cooldown_seconds
+        current_time += _cooldown
         assert await agent_circuit_breaker.before_request("10.0.0.31") is None
         assert await agent_circuit_breaker.before_request("10.0.0.31") == 0.0
 
@@ -64,8 +68,12 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
     def fake_monotonic() -> float:
         return current_time
 
-    with patch("app.services.agent_circuit_breaker.monotonic", side_effect=fake_monotonic):
-        for _ in range(agent_circuit_breaker.failure_threshold):
+    with (
+        patch("app.services.agent_circuit_breaker.monotonic", side_effect=fake_monotonic),
+        patch.object(agent_circuit_breaker, "_failure_threshold", return_value=5),
+        patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=30.0),
+    ):
+        for _ in range(5):
             await agent_circuit_breaker.record_failure("10.0.0.32", error="boom")
 
         client = AsyncMock()

@@ -123,6 +123,14 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     event_bus.reset()
     agent_circuit_breaker.reset()
     shutdown_coordinator.reset()
+    # Ensure circuit-breaker settings are always present even without a DB session.
+    for key in (
+        "agent.circuit_breaker_failure_threshold",
+        "agent.circuit_breaker_cooldown_seconds",
+    ):
+        if key not in settings_service._cache:
+            defn = SETTINGS_REGISTRY[key]
+            settings_service._cache[key] = resolve_default(defn)
     yield
     await _shutdown_control_plane_services()
     event_bus.reset()
