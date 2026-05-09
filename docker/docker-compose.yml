@@ -43,6 +43,8 @@ services:
         condition: service_healthy
     volumes:
       - driver-pack-storage:/var/lib/gridfleet/driver-packs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
