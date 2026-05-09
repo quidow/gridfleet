@@ -358,6 +358,9 @@ async def attempt_auto_recovery(
     ):
         return False
 
+    # Defensive: current callers (device_connectivity_loop) pre-filter on
+    # auto_manage. Kept so callers added later (e.g. the recovery-on-
+    # exit-maintenance scheduler) do not re-derive the gate.
     if not device.auto_manage:
         return await record_recovery_suppressed(
             db,
