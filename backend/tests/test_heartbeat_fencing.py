@@ -12,6 +12,7 @@ import pytest
 from app.models.host import Host, HostStatus, OSType
 from app.services.control_plane_leader import LeadershipLost
 from app.services.heartbeat import _check_hosts
+from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,8 +32,16 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
     db_session.add(host)
     await db_session.commit()
 
+    dead_result = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.connect_error,
+        payload=None,
+        duration_ms=0,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category=None,
+    )
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=None),
+        patch("app.services.heartbeat._ping_agent", return_value=dead_result),
         patch(
             "app.services.heartbeat.assert_current_leader",
             side_effect=LeadershipLost("test"),
@@ -70,8 +79,16 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         "appium_processes": {"running_nodes": [], "recent_restart_events": []},
     }
 
+    ok_result = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload=healthy_payload,
+        duration_ms=0,
+        client_mode=ClientMode.pooled,
+        http_status=200,
+        error_category=None,
+    )
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=healthy_payload),
+        patch("app.services.heartbeat._ping_agent", return_value=ok_result),
         patch(
             "app.services.heartbeat.assert_current_leader",
             side_effect=LeadershipLost("test"),

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, heartbeat
+from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.services.settings_service import settings_service
 from tests.helpers import create_device
 
@@ -61,9 +62,18 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             publish_event=publish_event,
         )
 
+    _dead_result = HeartbeatPingResult(
+        outcome=HeartbeatOutcome.connect_error,
+        payload=None,
+        duration_ms=0,
+        client_mode=ClientMode.pooled,
+        http_status=None,
+        error_category=None,
+    )
+
     async def heartbeat_caller() -> None:
         with (
-            patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=None)),
+            patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=_dead_result)),
             patch.object(heartbeat, "set_operational_state", new=gated_set_operational_state),
             patch.object(heartbeat, "assert_current_leader", new=AsyncMock()),
         ):

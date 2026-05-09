@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.errors import AgentCallError
+from app.errors import (
+    AgentCallError,
+    AgentResponseError,
+    AgentUnreachableError,
+    CircuitOpenError,
+)
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
@@ -30,6 +36,11 @@ from app.services.control_plane_leader import LeadershipLost, assert_current_lea
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
+from app.services.heartbeat_outcomes import (
+    ClientMode,
+    HeartbeatOutcome,
+    HeartbeatPingResult,
+)
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services.settings_service import settings_service
 from app.type_defs import AsyncTaskFactory
@@ -79,11 +90,79 @@ async def shutdown_background_tasks(timeout: float = BACKGROUND_TASK_DRAIN_TIMEO
     _background_tasks.clear()
 
 
-async def _ping_agent(ip: str, port: int) -> dict[str, Any] | None:
+_TRANSPORT_TO_OUTCOME = {
+    "timeout": HeartbeatOutcome.timeout,
+    "connect_error": HeartbeatOutcome.connect_error,
+    "dns_error": HeartbeatOutcome.dns_error,
+}
+
+
+async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
+    started = time.monotonic()
     try:
-        return await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
-    except AgentCallError:
-        return None
+        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
+    except CircuitOpenError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.circuit_open,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.skipped_circuit_open,
+            http_status=None,
+            error_category=type(exc).__name__,
+        )
+    except AgentResponseError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.http_error,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.pooled,
+            http_status=exc.http_status,
+            error_category=type(exc).__name__,
+        )
+    except AgentUnreachableError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        outcome = _TRANSPORT_TO_OUTCOME.get(
+            exc.transport_outcome or "",
+            HeartbeatOutcome.unexpected_error,
+        )
+        return HeartbeatPingResult(
+            outcome=outcome,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.pooled,
+            http_status=None,
+            error_category=exc.error_category or type(exc).__name__,
+        )
+    except AgentCallError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.unexpected_error,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.pooled,
+            http_status=None,
+            error_category=type(exc).__name__,
+        )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if payload is None:
+        return HeartbeatPingResult(
+            outcome=HeartbeatOutcome.invalid_payload,
+            payload=None,
+            duration_ms=duration_ms,
+            client_mode=ClientMode.pooled,
+            http_status=None,
+            error_category=None,
+        )
+    return HeartbeatPingResult(
+        outcome=HeartbeatOutcome.success,
+        payload=payload,
+        duration_ms=duration_ms,
+        client_mode=ClientMode.pooled,
+        http_status=200,
+        error_category=None,
+    )
 
 
 def _coerce_int(value: object) -> int | None:
@@ -367,8 +446,9 @@ async def _check_hosts(db: AsyncSession) -> None:
 
     for host in hosts:
         host_key = str(host.id)
-        health_data = await _ping_agent(host.ip, host.agent_port)
-        alive = health_data is not None
+        ping_result = await _ping_agent(host.ip, host.agent_port)
+        alive = ping_result.alive
+        health_data = ping_result.payload
 
         # Fence: drop any writes from a stale leader that lost the advisory lock
         # while we were awaiting _ping_agent. assert_current_leader raises
