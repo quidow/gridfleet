@@ -308,6 +308,64 @@ async def test_release_claimed_device_success(db_session: AsyncSession, default_
     assert reclaimed.claimed_by == "gw1"
 
 
+async def test_release_claimed_device_restores_operational_state_when_no_session(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """release_claimed_device must restore operational_state to ready when
+    the device has no live Grid session. Otherwise the busy flip from
+    claim_device leaves the device stuck busy while the reservation is
+    immediately re-claimable, contradicting the /release contract."""
+    device = await _make_device(db_session, default_host_id, "rel-restore-001")
+    run = await create_reserved_run(db_session, name="rel-restore-run", devices=[device])
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
+
+    await run_service.release_claimed_device(
+        db_session,
+        run.id,
+        device_id=uuid.UUID(info.device_id),
+        worker_id="gw0",
+    )
+    await db_session.refresh(device, ["operational_state"])
+    # ready_operational_state returns offline when the device is not
+    # ready_for_use (no appium_node, no readiness signals); the key
+    # invariant is that the state moved off busy.
+    assert device.operational_state != DeviceOperationalState.busy
+
+
+async def test_release_claimed_device_keeps_busy_when_session_running(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """If a Grid session is still live (release-without-stop), the release
+    path must leave operational_state=busy so session_sync / session_service
+    own the off-busy transition when the session ends."""
+    from app.models.session import Session, SessionStatus
+
+    device = await _make_device(db_session, default_host_id, "rel-keep-001")
+    run = await create_reserved_run(db_session, name="rel-keep-run", devices=[device])
+
+    info = await run_service.claim_device(db_session, run.id, worker_id="gw0")
+    db_session.add(
+        Session(
+            session_id="grid-sess-keep-001",
+            device_id=device.id,
+            status=SessionStatus.running,
+        )
+    )
+    await db_session.commit()
+
+    await run_service.release_claimed_device(
+        db_session,
+        run.id,
+        device_id=uuid.UUID(info.device_id),
+        worker_id="gw0",
+    )
+    await db_session.refresh(device, ["operational_state"])
+    assert device.operational_state == DeviceOperationalState.busy
+
+
 async def test_release_claimed_device_rejects_wrong_worker(
     db_session: AsyncSession,
     default_host_id: str,

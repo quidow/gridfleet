@@ -997,6 +997,15 @@ async def release_claimed_device(
         await db.rollback()
         raise ValueError("Run not found")
 
+    # Lock device first to match the Device → Reservation order used by
+    # ``_release_devices`` (avoids AB-BA deadlock with concurrent run-release
+    # paths). Missing device row → treat as "not reserved by this run".
+    try:
+        locked_device = await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        await db.rollback()
+        raise ValueError(f"Device {device_id} is not reserved by this run") from None
+
     result = await db.execute(
         select(DeviceReservation)
         .where(DeviceReservation.run_id == run_id)
@@ -1022,6 +1031,26 @@ async def release_claimed_device(
 
     entry.claimed_by = None
     entry.claimed_at = None
+
+    # Restore operational_state when no live Grid session remains. claim_device
+    # flips operational_state -> busy; without a matching restore here the
+    # device would stay busy after a release-without-session and the
+    # reservation would simultaneously be claimable again, contradicting the
+    # /release contract. Mirrors the non-escalating cooldown release path.
+    # Skip the restore when a Grid session is still running (session_sync /
+    # session_service own that transition) and when the device is held in
+    # maintenance (handled by the lifecycle cleanup path).
+    if (
+        locked_device.operational_state == DeviceOperationalState.busy
+        and locked_device.hold != DeviceHold.maintenance
+        and not await _device_has_running_session(db, device_id)
+    ):
+        await set_operational_state(
+            locked_device,
+            await ready_operational_state(db, locked_device),
+            reason=f"Released by worker '{worker_id}' from run '{run.name}'",
+        )
+
     await db.commit()
 
 
