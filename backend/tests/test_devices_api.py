@@ -424,6 +424,49 @@ async def test_list_devices_filter_status(
 
 
 @pytest.mark.asyncio
+async def test_list_devices_filter_status_busy_overrides_reserved_hold(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Device reserved by a run AND running a session must surface as busy, not reserved."""
+    busy_reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="busy-reserved-1",
+        connection_target="busy-reserved-1",
+        name="Busy Reserved Device",
+    )
+    plain_reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="reserved-only-1",
+        connection_target="reserved-only-1",
+        name="Reserved Only Device",
+    )
+
+    from app.models.device import DeviceHold, DeviceOperationalState
+
+    busy_reserved.operational_state = DeviceOperationalState.busy
+    busy_reserved.hold = DeviceHold.reserved
+    plain_reserved.operational_state = DeviceOperationalState.available
+    plain_reserved.hold = DeviceHold.reserved
+    await db_session.commit()
+
+    busy_resp = await client.get("/api/devices", params={"status": "busy"})
+    assert busy_resp.status_code == 200
+    busy_ids = {item["id"] for item in busy_resp.json()}
+    assert str(busy_reserved.id) in busy_ids
+    assert str(plain_reserved.id) not in busy_ids
+
+    reserved_resp = await client.get("/api/devices", params={"status": "reserved"})
+    assert reserved_resp.status_code == 200
+    reserved_ids = {item["id"] for item in reserved_resp.json()}
+    assert str(plain_reserved.id) in reserved_ids
+    assert str(busy_reserved.id) not in reserved_ids
+
+
+@pytest.mark.asyncio
 async def test_get_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)

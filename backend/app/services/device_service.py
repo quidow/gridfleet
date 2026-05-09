@@ -122,13 +122,19 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         if filters.status == "available":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
         elif filters.status == "busy":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.busy, Device.hold.is_(None))
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.busy)
         elif filters.status == "offline":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None))
         elif filters.status == "maintenance":
-            stmt = stmt.where(Device.hold == DeviceHold.maintenance)
+            stmt = stmt.where(
+                Device.hold == DeviceHold.maintenance,
+                Device.operational_state != DeviceOperationalState.busy,
+            )
         elif filters.status == "reserved":
-            stmt = stmt.where(Device.hold == DeviceHold.reserved)
+            stmt = stmt.where(
+                Device.hold == DeviceHold.reserved,
+                Device.operational_state != DeviceOperationalState.busy,
+            )
     if filters.host_id is not None:
         stmt = stmt.where(Device.host_id == filters.host_id)
     if filters.identity_value is not None:
@@ -161,9 +167,9 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
 def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
     direction = asc if filters.sort_dir == "asc" else desc
     chip_case = case(
-        (Device.hold == DeviceHold.maintenance, 4),
-        (Device.hold == DeviceHold.reserved, 3),
-        (Device.operational_state == DeviceOperationalState.busy, 2),
+        (Device.operational_state == DeviceOperationalState.busy, 4),
+        (Device.hold == DeviceHold.maintenance, 3),
+        (Device.hold == DeviceHold.reserved, 2),
         (Device.operational_state == DeviceOperationalState.offline, 1),
         else_=0,
     )

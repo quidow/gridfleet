@@ -8,5 +8,8 @@ export function deviceChipStatus(device: {
   operational_state: DeviceOperationalState;
   hold: DeviceHold | null;
 }): DeviceChipStatus {
+  if (device.operational_state === 'busy') {
+    return 'busy';
+  }
   return device.hold ?? device.operational_state;
 }
