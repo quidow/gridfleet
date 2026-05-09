@@ -37,6 +37,8 @@ services:
       - "${GRID_PUBLISH_PORT:-4442}:4442"
       - "${GRID_SUBSCRIBE_PORT:-4443}:4443"
       - "${GRID_HUB_PORT:-4444}:4444"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
       - public

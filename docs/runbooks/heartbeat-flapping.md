@@ -13,7 +13,7 @@ Operators see clusters of `host.heartbeat_lost`, `host.status_changed online→o
 2. From the backend container, run `scripts/diagnose_heartbeat_probe.py` against:
    - the host's currently registered IP (e.g. `192.168.88.249`)
    - the docker bridge gateway (`172.17.0.1` on default bridge — confirm via `ip route`)
-   - `host.docker.internal` (must resolve thanks to `extra_hosts: host-gateway` on the backend service)
+   - `host.docker.internal` (must resolve thanks to `extra_hosts: host-gateway` on the backend and Selenium Hub services)
 3. Save CSV under `.superpowers/diagnostics/` (gitignored, local-only investigator notes).
 
 ## Phase A — Quick CSV Interpretation
@@ -47,7 +47,7 @@ If 48 hours pass without a dominant boundary: do **not** implement B1/B2/B3.
 
 Agents on the same host as the backend container should set `AGENT_ADVERTISE_IP` to a container-reachable address. Acceptable values: any DNS name or IP that the backend container can resolve, including:
 
-- `host.docker.internal` (preferred; `extra_hosts: host-gateway` is wired into `docker/docker-compose.yml`)
+- `host.docker.internal` (preferred; `extra_hosts: host-gateway` is wired into the backend and Selenium Hub services in `docker/docker-compose.yml`)
 - `172.17.0.1` (default docker0 gateway on Linux)
 - The host's stable LAN IP (only if hairpin routing is reliable)
 
