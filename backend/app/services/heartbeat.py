@@ -493,6 +493,118 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
 
 
+async def _apply_host_ping_result(
+    db: AsyncSession,
+    host: Host,
+    result: HeartbeatPingResult,
+    *,
+    guard_active: bool,
+    guard_gap_sec: float | None = None,
+    guard_threshold_sec: float | None = None,
+) -> None:
+    """Apply the result of a single heartbeat ping to a host row using the supplied session.
+
+    Pre-conditions: caller has already emitted the structured log and the heartbeat metric.
+    Post-conditions: caller commits the session.
+    """
+    host_key = str(host.id)
+    health_data = result.payload
+
+    if result.alive:
+        # ─── alive branch ───
+        await control_plane_state_store.delete_value(db, HEARTBEAT_NAMESPACE, host_key)
+        # Update agent version if reported
+        agent_version = health_data.get("version") if health_data else None
+        if agent_version and host.agent_version != agent_version:
+            host.agent_version = agent_version
+        if host.status != HostStatus.online:
+            logger.info("Host %s (%s) is back online", host.hostname, host.ip)
+            queue_event_for_session(
+                db,
+                "host.status_changed",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "old_status": host.status.value,
+                    "new_status": "online",
+                },
+            )
+            host.status = HostStatus.online
+            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
+        host.last_heartbeat = datetime.now(UTC)
+        if health_data is not None:
+            if "missing_prerequisites" in health_data:
+                host_service.update_missing_prerequisites_from_health(host, health_data.get("missing_prerequisites"))
+            await _persist_appium_processes_snapshot(db, host, health_data)
+            await _ingest_appium_restart_events(db, host, health_data)
+        return
+
+    if guard_active:
+        logger.warning(
+            "heartbeat_resume_guard_swallowed_miss",
+            host_id=str(host.id),
+            gap_sec=guard_gap_sec,
+            threshold_sec=guard_threshold_sec,
+        )
+        return
+
+    # ─── offline branch ───
+    count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
+    logger.warning(
+        "Host %s (%s) heartbeat failed (%d/%d)",
+        host.hostname,
+        host.ip,
+        count,
+        settings_service.get("general.max_missed_heartbeats"),
+    )
+
+    if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+        logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
+        queue_event_for_session(
+            db,
+            "host.status_changed",
+            {
+                "host_id": str(host.id),
+                "hostname": host.hostname,
+                "old_status": host.status.value,
+                "new_status": "offline",
+            },
+        )
+        queue_event_for_session(
+            db,
+            "host.heartbeat_lost",
+            {
+                "host_id": str(host.id),
+                "hostname": host.hostname,
+                "missed_count": count,
+            },
+        )
+        host.status = HostStatus.offline
+        # Mark all devices on this host as offline. lock_devices
+        # acquires SELECT FOR UPDATE on each row in id order so
+        # operational_state writes serialize against concurrent writers.
+        device_id_stmt = select(Device.id).where(Device.host_id == host.id)
+        device_ids = list((await db.execute(device_id_stmt)).scalars().all())
+        for device in await device_locking.lock_devices(db, device_ids):
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.connectivity_lost,
+                {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
+            )
+            await device_health.update_device_checks(
+                db,
+                device,
+                healthy=False,
+                summary=f"Host {host.hostname} offline",
+            )
+            await set_operational_state(
+                device,
+                DeviceOperationalState.offline,
+                reason=f"Host {host.hostname} offline",
+            )
+
+
 async def _check_hosts(db: AsyncSession) -> None:
     stmt = select(Host).where(Host.status != HostStatus.pending)
     result = await db.execute(stmt)
@@ -517,11 +629,7 @@ async def _check_hosts(db: AsyncSession) -> None:
     guard_threshold_sec = interval * max_missed
 
     for host in hosts:
-        host_key = str(host.id)
         ping_result = await _ping_agent(host.ip, host.agent_port)
-        alive = ping_result.alive
-        health_data = ping_result.payload
-
         _emit_heartbeat_log(
             host_id=str(host.id),
             host_ip=host.ip,
@@ -542,97 +650,14 @@ async def _check_hosts(db: AsyncSession) -> None:
         # LeadershipLost when another backend now owns the heartbeat row.
         await assert_current_leader(db)
 
-        if alive:
-            await control_plane_state_store.delete_value(db, HEARTBEAT_NAMESPACE, host_key)
-            # Update agent version if reported
-            agent_version = health_data.get("version") if health_data else None
-            if agent_version and host.agent_version != agent_version:
-                host.agent_version = agent_version
-            if host.status != HostStatus.online:
-                logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-                queue_event_for_session(
-                    db,
-                    "host.status_changed",
-                    {
-                        "host_id": str(host.id),
-                        "hostname": host.hostname,
-                        "old_status": host.status.value,
-                        "new_status": "online",
-                    },
-                )
-                host.status = HostStatus.online
-                _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
-            host.last_heartbeat = datetime.now(UTC)
-            if health_data is not None:
-                if "missing_prerequisites" in health_data:
-                    host_service.update_missing_prerequisites_from_health(
-                        host, health_data.get("missing_prerequisites")
-                    )
-                await _persist_appium_processes_snapshot(db, host, health_data)
-                await _ingest_appium_restart_events(db, host, health_data)
-        else:
-            if guard_active:
-                logger.warning(
-                    "heartbeat_resume_guard_swallowed_miss",
-                    host_id=str(host.id),
-                    gap_sec=guard_gap_sec,
-                    threshold_sec=guard_threshold_sec,
-                )
-            else:
-                count = await control_plane_state_store.increment_counter(db, HEARTBEAT_NAMESPACE, host_key)
-                logger.warning(
-                    "Host %s (%s) heartbeat failed (%d/%d)",
-                    host.hostname,
-                    host.ip,
-                    count,
-                    settings_service.get("general.max_missed_heartbeats"),
-                )
-
-                if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
-                    logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-                    queue_event_for_session(
-                        db,
-                        "host.status_changed",
-                        {
-                            "host_id": str(host.id),
-                            "hostname": host.hostname,
-                            "old_status": host.status.value,
-                            "new_status": "offline",
-                        },
-                    )
-                    queue_event_for_session(
-                        db,
-                        "host.heartbeat_lost",
-                        {
-                            "host_id": str(host.id),
-                            "hostname": host.hostname,
-                            "missed_count": count,
-                        },
-                    )
-                    host.status = HostStatus.offline
-                    # Mark all devices on this host as offline. lock_devices
-                    # acquires SELECT FOR UPDATE on each row in id order so
-                    # operational_state writes serialize against concurrent writers.
-                    device_id_stmt = select(Device.id).where(Device.host_id == host.id)
-                    device_ids = list((await db.execute(device_id_stmt)).scalars().all())
-                    for device in await device_locking.lock_devices(db, device_ids):
-                        await record_event(
-                            db,
-                            device.id,
-                            DeviceEventType.connectivity_lost,
-                            {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
-                        )
-                        await device_health.update_device_checks(
-                            db,
-                            device,
-                            healthy=False,
-                            summary=f"Host {host.hostname} offline",
-                        )
-                        await set_operational_state(
-                            device,
-                            DeviceOperationalState.offline,
-                            reason=f"Host {host.hostname} offline",
-                        )
+        await _apply_host_ping_result(
+            db,
+            host,
+            ping_result,
+            guard_active=guard_active,
+            guard_gap_sec=guard_gap_sec,
+            guard_threshold_sec=guard_threshold_sec,
+        )
 
     await db.commit()
 
