@@ -107,7 +107,7 @@ async def test_proxy_websocket_pipes_frames() -> None:
     port = server.sockets[0].getsockname()[1]
 
     async def proxy_endpoint(websocket: WebSocket) -> None:
-        await proxy_websocket(websocket, upstream=f"ws://127.0.0.1:{port}")
+        await proxy_websocket(websocket, upstream=f"http://127.0.0.1:{port}")
 
     app = Starlette(routes=[WebSocketRoute("/session/{session_id}/se/cdp", proxy_endpoint)])
 

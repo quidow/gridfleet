@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import websockets
 from starlette.responses import Response
+from websockets.exceptions import ConnectionClosed
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -70,7 +72,7 @@ async def proxy_request(
 
 async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
     await websocket.accept()
-    target = f"{upstream}{websocket.url.path}"
+    target = f"{_websocket_upstream(upstream)}{websocket.url.path}"
     if websocket.url.query:
         target = f"{target}?{websocket.url.query}"
     async with websockets.connect(target) as remote:
@@ -98,7 +100,17 @@ async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
         for task in pending:
             task.cancel()
         for task in done:
-            task.result()
+            with contextlib.suppress(ConnectionClosed):
+                task.result()
         for task in pending:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+
+
+def _websocket_upstream(upstream: str) -> str:
+    parsed = urlsplit(upstream)
+    if parsed.scheme == "http":
+        return urlunsplit(("ws", parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    if parsed.scheme == "https":
+        return urlunsplit(("wss", parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    return upstream.rstrip("/")
