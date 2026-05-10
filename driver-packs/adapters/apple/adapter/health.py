@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from agent_app.pack.adapter_types import HealthCheckResult, HealthContext
-from agent_app.pack.adapter_utils import run_cmd
+from agent_app.pack.adapter_utils import icmp_reachable, run_cmd
 
 
 async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
@@ -23,7 +23,19 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
                 detail="Device is not visible to xcrun devicectl",
             )
         ]
-    return _real_device_health_results(details, platform_id=getattr(ctx, "platform_id", None))
+    results = _real_device_health_results(details, platform_id=getattr(ctx, "platform_id", None))
+    if getattr(ctx, "connection_type", None) == "usb" and getattr(ctx, "ip_address", None):
+        timeout = float(getattr(ctx, "ip_ping_timeout_sec", None) or 2.0)
+        count = int(getattr(ctx, "ip_ping_count", None) or 1)
+        reachable = await icmp_reachable(ctx.ip_address, timeout=timeout, count=count)
+        results.append(
+            HealthCheckResult(
+                check_id="ip_ping",
+                ok=reachable,
+                detail="" if reachable else "ICMP echo unanswered",
+            )
+        )
+    return results
 
 
 def _real_device_health_results(details: dict[str, object], *, platform_id: str | None) -> list[HealthCheckResult]:
