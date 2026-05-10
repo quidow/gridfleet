@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database import async_session
 from app.metrics_recorders import (
@@ -25,7 +25,7 @@ from app.metrics_recorders import (
     APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
     APPIUM_RECONCILER_ORPHANS_STOPPED,
 )
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -73,23 +73,24 @@ def detect_orphans(
 ) -> list[OrphanAppiumNode]:
     """Return entries running on the agent that no DB row claims.
 
-    `db_running_rows` is a list of dicts with the keys
+    `db_running_rows` is a list of dicts with keys
     `host_id`, `device_connection_target`, `node_port`, `node_state`.
-    The caller is responsible for the SQL — this function is pure
-    so it can be unit-tested without a database fixture.
+    Pass all AppiumNode rows for the host (any state) — classification
+    needs the full picture to surface stopped-row desyncs as
+    `db_state_not_running` rather than `no_db_row`.
     """
-    rows_by_target: dict[str, dict[str, object]] = {}
+    rows_by_target: dict[str, list[dict[str, object]]] = {}
     for db_row in db_running_rows:
         if db_row.get("host_id") != host_id:
             continue
         target = db_row.get("device_connection_target")
         if isinstance(target, str):
-            rows_by_target[target] = db_row
+            rows_by_target.setdefault(target, []).append(db_row)
 
     orphans: list[OrphanAppiumNode] = []
     for entry in agent_running:
-        matched_row = rows_by_target.get(entry.connection_target)
-        if matched_row is None:
+        matched_rows = rows_by_target.get(entry.connection_target, [])
+        if not matched_rows:
             orphans.append(
                 OrphanAppiumNode(
                     host_id=host_id,
@@ -99,17 +100,10 @@ def detect_orphans(
                 )
             )
             continue
-        if matched_row.get("node_state") != "running":
-            orphans.append(
-                OrphanAppiumNode(
-                    host_id=host_id,
-                    port=entry.port,
-                    connection_target=entry.connection_target,
-                    reason=_ORPHAN_REASON_DB_NOT_RUNNING,
-                )
-            )
+        running_rows = [r for r in matched_rows if r.get("node_state") == "running"]
+        if any(r.get("node_port") == entry.port for r in running_rows):
             continue
-        if matched_row.get("node_port") != entry.port:
+        if running_rows:
             orphans.append(
                 OrphanAppiumNode(
                     host_id=host_id,
@@ -118,6 +112,15 @@ def detect_orphans(
                     reason=_ORPHAN_REASON_PORT_MISMATCH,
                 )
             )
+            continue
+        orphans.append(
+            OrphanAppiumNode(
+                host_id=host_id,
+                port=entry.port,
+                connection_target=entry.connection_target,
+                reason=_ORPHAN_REASON_DB_NOT_RUNNING,
+            )
+        )
     return orphans
 
 
@@ -216,7 +219,7 @@ async def appium_reconciler_loop() -> None:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await assert_current_leader(db)
                 hosts = await _fetch_online_hosts(db)
-                rows = await _fetch_running_node_rows(db)
+                rows = await _fetch_node_rows(db)
             # Agent IO and stops happen outside the DB session — no point holding it open.
             await _reconcile_all(hosts, rows)
         except LeadershipLost as exc:
@@ -287,22 +290,19 @@ async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:
     return [{"id": row.id, "ip": row.ip, "agent_port": row.agent_port} for row in result.all()]
 
 
-async def _fetch_running_node_rows(db: AsyncSession) -> list[dict[str, object]]:
-    stmt = (
-        select(
-            Device.host_id,
-            Device.connection_target,
-            AppiumNode.port,
-            AppiumNode.state,
-        )
-        .join(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(AppiumNode.state == NodeState.running)
-    )
+async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
+    target_expr = func.coalesce(Device.connection_target, Device.identity_value)
+    stmt = select(
+        Device.host_id,
+        target_expr.label("device_connection_target"),
+        AppiumNode.port,
+        AppiumNode.state,
+    ).join(AppiumNode, AppiumNode.device_id == Device.id)
     result = await db.execute(stmt)
     return [
         {
             "host_id": row.host_id,
-            "device_connection_target": row.connection_target,
+            "device_connection_target": row.device_connection_target,
             "node_port": row.port,
             "node_state": row.state.value,
         }

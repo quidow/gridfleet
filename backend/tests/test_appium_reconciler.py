@@ -102,6 +102,30 @@ def test_detect_orphans_flags_port_mismatch() -> None:
     ]
 
 
+def test_detect_orphans_disambiguates_multiple_rows_with_same_target() -> None:
+    host_id = uuid.uuid4()
+    agent_nodes = [
+        _running_node(target="shared-target", port=5001),
+        _running_node(target="shared-target", port=5002),
+    ]
+    db_rows = [
+        {
+            "host_id": host_id,
+            "device_connection_target": "shared-target",
+            "node_port": 5001,
+            "node_state": "running",
+        },
+        {
+            "host_id": host_id,
+            "device_connection_target": "shared-target",
+            "node_port": 5002,
+            "node_state": "running",
+        },
+    ]
+
+    assert detect_orphans(host_id=host_id, agent_running=agent_nodes, db_running_rows=db_rows) == []
+
+
 @pytest.mark.asyncio
 async def test_reconcile_host_orphans_stops_each_orphan() -> None:
     host_id = uuid.uuid4()
