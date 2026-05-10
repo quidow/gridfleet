@@ -7,16 +7,36 @@ from app.services.settings_service import settings_service
 
 logger = logging.getLogger(__name__)
 
+# A single httpx.AsyncClient is reused across all calls (leader loops poll the
+# hub every few seconds — `session_sync_loop`, `node_health_loop`,
+# `fleet_capacity_collector_loop`). Instantiating per call leaks ~0.8 MB of
+# native state on macOS that aclose() does not release.
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient()
+    return _client
+
+
+async def close() -> None:
+    """Close the shared client. Call from app shutdown."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+
 
 async def get_grid_status() -> dict[str, Any]:
     """Fetch Selenium Grid /status and return parsed JSON."""
     url = f"{settings_service.get('grid.hub_url')}/status"
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=5)
-            resp.raise_for_status()
-            result: dict[str, Any] = resp.json()
-            return result
+        resp = await _get_client().get(url, timeout=5)
+        resp.raise_for_status()
+        result: dict[str, Any] = resp.json()
+        return result
     except httpx.HTTPError as e:
         logger.warning("Failed to reach Grid hub at %s: %s", url, e)
         return {"ready": False, "error": "grid_unreachable"}
@@ -30,12 +50,11 @@ async def terminate_grid_session(session_id: str) -> bool:
     """
     url = f"{settings_service.get('grid.hub_url')}/session/{session_id}"
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.delete(url, timeout=10)
-            if resp.status_code == 404:
-                return True
-            resp.raise_for_status()
+        resp = await _get_client().delete(url, timeout=10)
+        if resp.status_code == 404:
             return True
+        resp.raise_for_status()
+        return True
     except httpx.HTTPError as exc:
         logger.warning("Failed to terminate Grid session %s at %s: %s", session_id, url, exc)
         return False
