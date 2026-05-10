@@ -242,6 +242,7 @@ Release with cooldown is also owner-checked. It clears `claimed_by` / `claimed_a
 | `GET` | `/api/sessions/{session_id}` | Read one recorded session | path `session_id` | `SessionDetail` |
 | `POST` | `/api/sessions` | Create or register a tracked session attempt, including device-less setup failures | `SessionCreate` | `SessionRead` |
 | `PATCH` | `/api/sessions/{session_id}/status` | Write final session status from an external test harness | `SessionStatusUpdate` | `SessionRead` |
+| `POST` | `/api/sessions/{session_id}/finished` | Push-notify session end from testkit `driver.quit`; stamps `ended_at` without touching `status`; idempotent | path `session_id` (WebDriver token string) | 204 No Content |
 
 `SessionCreate` now accepts optional setup-attempt fields:
 

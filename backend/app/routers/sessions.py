@@ -147,7 +147,7 @@ async def update_session_status(
 
 @router.post("/{session_id}/finished", status_code=204)
 async def post_session_finished(
-    session_id: uuid.UUID,
+    session_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     result = await session_service.mark_session_finished(db, session_id)

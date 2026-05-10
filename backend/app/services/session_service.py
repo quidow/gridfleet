@@ -478,7 +478,7 @@ async def get_device_session_outcome_heatmap_rows(
     return [(row.started_at, row.status) for row in result.all()]
 
 
-async def mark_session_finished(db: AsyncSession, session_id: uuid.UUID) -> Session | None:
+async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | None:
     """Stamp ``ended_at`` (if null) and run lifecycle bookkeeping.
 
     Idempotent: a row that already has ``ended_at`` set returns unchanged
@@ -490,8 +490,12 @@ async def mark_session_finished(db: AsyncSession, session_id: uuid.UUID) -> Sess
     clients). Mutating status here would race against the testkit's
     follow-up ``update_session_status`` call and cause a brief
     ``ended → passed`` flicker visible in the UI.
+
+    ``session_id`` is the WebDriver session token (``Session.session_id``
+    string column), NOT the row primary key. The testkit passes
+    ``driver.session_id`` which is the WebDriver-issued token.
     """
-    session = await db.get(Session, session_id)
+    session = await get_session(db, session_id)
     if session is None:
         return None
     if session.ended_at is not None:

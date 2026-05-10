@@ -894,7 +894,11 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """POST /api/sessions/{id}/finished stamps ended_at on the row and returns 204.
+    """POST /api/sessions/{session_id}/finished stamps ended_at on the row and returns 204.
+
+    The URL token is the WebDriver session token (Session.session_id), NOT the
+    row PK. This mirrors the real testkit call shape: driver.session_id is the
+    WebDriver-issued token, which maps to the Session.session_id string column.
 
     CRITICAL: the endpoint must NOT clobber Session.status — terminal status is
     owned by update_session_status (testkit) or session_sync_loop (fallback).
@@ -913,13 +917,14 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     )
     db_session.add(session)
     await db_session.commit()
-    session_uuid = str(session.id)
+    # Use session.session_id (the WebDriver token), not session.id (the PK).
+    webdriver_token = session.session_id
 
     with patch(
         "app.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
-        resp = await client.post(f"/api/sessions/{session_uuid}/finished")
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
 
     assert resp.status_code == 204
     mock_lifecycle.assert_awaited_once()
@@ -935,9 +940,7 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
 
 async def test_post_session_finished_not_found_returns_404(client: AsyncClient) -> None:
     """POST /api/sessions/{unknown_id}/finished returns 404 when the row is absent."""
-    import uuid
-
-    resp = await client.post(f"/api/sessions/{uuid.uuid4()}/finished")
+    resp = await client.post("/api/sessions/nonexistent-webdriver-token/finished")
     assert resp.status_code == 404
 
 
@@ -965,15 +968,62 @@ async def test_post_session_finished_is_idempotent_and_does_not_double_fire_life
     )
     db_session.add(session)
     await db_session.commit()
-    session_uuid = str(session.id)
+    # Use session.session_id (the WebDriver token), not session.id (the PK).
+    webdriver_token = session.session_id
 
     with patch(
         "app.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
-        resp1 = await client.post(f"/api/sessions/{session_uuid}/finished")
-        resp2 = await client.post(f"/api/sessions/{session_uuid}/finished")
+        resp1 = await client.post(f"/api/sessions/{webdriver_token}/finished")
+        resp2 = await client.post(f"/api/sessions/{webdriver_token}/finished")
 
     assert resp1.status_code == 204
     assert resp2.status_code == 204
     mock_lifecycle.assert_awaited_once()
+
+
+async def test_post_session_finished_real_testkit_call_shape(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Mirror the real testkit call shape: register a session with a known string
+    session_id, then POST to that string token in the URL.
+
+    The testkit's _wrap_quit_for_notify calls notify_session_finished(driver.session_id)
+    where driver.session_id is the WebDriver token — a string that maps to
+    Session.session_id, NOT the row PK. This test confirms the endpoint resolves
+    via the string column and that D2 push detection works for real testkit traffic.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    # Register a session with an explicit WebDriver-style token, as the testkit does.
+    webdriver_token = "webdriver-abc-123"
+    session = Session(
+        session_id=webdriver_token,
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ):
+        # POST to the string token — exactly what the testkit sends.
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp.status_code == 204
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None, (
+        "ended_at must be set when posting the WebDriver token — "
+        "PK lookup would have returned 404 (silent no-op in testkit)"
+    )
