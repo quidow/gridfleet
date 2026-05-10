@@ -13,7 +13,9 @@ class AgentSettings(BaseSettings):
     grid_hub_url: str = "http://selenium-hub:4444"
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
-    selenium_server_jar: str = "/opt/gridfleet-agent/selenium-server.jar"
+    grid_node_heartbeat_sec: float = 5.0
+    grid_node_session_timeout_sec: float = 300.0
+    grid_node_proxy_timeout_sec: float = 60.0
     runtime_root: str = "/opt/gridfleet-agent/runtimes"
     appium_port_range_start: int = 4723
     appium_port_range_end: int = 4823
@@ -48,6 +50,19 @@ class AgentSettings(BaseSettings):
             raise ValueError("AGENT_TERMINAL_TOKEN must not be blank when set")
         if self.enable_web_terminal and not self.terminal_token:
             raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true")
+        return self
+
+    @model_validator(mode="after")
+    def validate_grid_node_intervals(self) -> "AgentSettings":
+        # Non-positive heartbeat would crash the supervisor's `_clock.sleep`
+        # loop and silently break drain semantics; non-positive timeouts
+        # would force-close every session on the first tick.
+        if self.grid_node_heartbeat_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_HEARTBEAT_SEC must be > 0")
+        if self.grid_node_session_timeout_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC must be > 0")
+        if self.grid_node_proxy_timeout_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC must be > 0")
         return self
 
 

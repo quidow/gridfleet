@@ -1,0 +1,10 @@
+{
+  "data": {
+    "availability": "UP",
+    "externalUri": "<URI>",
+    "nodeId": "<NODE_ID>",
+    "sessionId": "<SESSION_ID>",
+    "timestamp": "<TIMESTAMP>"
+  },
+  "type": "node-drain-started"
+}

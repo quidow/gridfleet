@@ -26,7 +26,7 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 
 - **Discovery**: Runs pack-aware probes and adapters, then reports discovered candidates through manager-owned intake flows.
 - **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial.
-- **Selenium Grid Registration**: Once Appium is healthy, the Agent launches a Grid Relay node (Java, via TOML config) that points to the central Grid Hub port.
+- **Selenium Grid Registration**: Once Appium is healthy, the Agent starts an in-process Python Grid Node service. The service registers with the central Selenium Hub over the Grid event bus and reverse-proxies WebDriver traffic to local Appium.
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 
 ## 3. Frontend Operator Dashboard
@@ -46,4 +46,4 @@ The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operato
 4. The Backend signals the Agent to start an Appium node for that device.
 5. The Appium node points to the hardware; the complementary Grid Node attaches to the Hub.
 6. A CI runner makes a reservation via `/api/runs`.
-7. Testing traffic is sent directly to the Hub (`http://localhost:4444`), where Selenium routing matches it by Capabilities directly to that specific Relay Node, and therefore Appium Server & Device.
+7. Testing traffic is sent directly to the Hub (`http://localhost:4444`), where Selenium routing matches it by capabilities to the Python Grid Node, which proxies WebDriver traffic to the local Appium server and device.

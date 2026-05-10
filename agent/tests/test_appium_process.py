@@ -17,6 +17,7 @@ from agent_app.appium_process import (
     _build_env,
     _find_java,
 )
+from agent_app.grid_node.config import GridNodeConfig
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult
 from agent_app.tool_paths import _parse_node_version
@@ -33,6 +34,7 @@ def stub_port_probe() -> object:
             new_callable=AsyncMock,
             return_value=False,
         ),
+        patch("agent_app.appium_process.start_grid_node_supervisor", return_value=RecordingGridNodeHandle()),
         patch("agent_app.registration.get_local_ip", return_value="127.0.0.1"),
     ):
         yield
@@ -85,6 +87,35 @@ class FakeProcess:
             if self.returncode is not None:
                 self._wait_future.set_result(self.returncode)
         return asyncio.shield(self._wait_future)
+
+
+class RecordingGridNodeHandle:
+    def __init__(self) -> None:
+        self.start_called = False
+        self.stop_called = False
+        self.wait_until_running_called = False
+        self.snapshot_payload = {"status": "up"}
+
+    async def start(self) -> None:
+        self.start_called = True
+
+    async def wait_until_running(self) -> None:
+        self.wait_until_running_called = True
+
+    async def stop(self) -> None:
+        self.stop_called = True
+
+    def is_running(self) -> bool:
+        return self.start_called and not self.stop_called
+
+    def snapshot(self) -> dict[str, object]:
+        return dict(self.snapshot_payload)
+
+
+class FailingGridNodeHandle(RecordingGridNodeHandle):
+    async def wait_until_running(self) -> None:
+        self.wait_until_running_called = True
+        raise RuntimeError("grid node failed")
 
 
 def test_parse_node_version_prefers_version_tuple() -> None:
@@ -189,22 +220,14 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         stdout=_stream_with_lines("appium ready"),
         stderr=_stream_with_lines("appium stderr"),
     )
-    node_proc = FakeProcess(
-        pid=2345,
-        stdout=_stream_with_lines("grid ready"),
-        stderr=_stream_with_lines("grid stderr"),
-    )
 
     with (
         patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
         patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=True),
-        patch("agent_app.appium_process._find_java", return_value="/usr/bin/java"),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True) as wait_ready,
-        patch("agent_app.appium_process._write_grid_node_toml", return_value="/tmp/node.toml"),
         patch(
             "agent_app.appium_process.asyncio.create_subprocess_exec",
-            side_effect=[appium_proc, node_proc],
+            return_value=appium_proc,
         ) as create_proc,
     ):
         info = await manager.start(
@@ -236,8 +259,102 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
     assert "--use-plugins" in create_proc.await_args_list[0].args
     logs = manager.get_logs(4723)
     assert any("appium ready" in line for line in logs)
-    assert any("grid ready" in line for line in logs)
     await manager.shutdown()
+
+
+async def test_start_spawns_grid_node_supervisor() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5001)
+    handles: list[RecordingGridNodeHandle] = []
+    configs: list[GridNodeConfig] = []
+
+    def start_supervisor(*, factory: object, config: GridNodeConfig) -> RecordingGridNodeHandle:
+        del factory
+        configs.append(config)
+        handle = RecordingGridNodeHandle()
+        handles.append(handle)
+        return handle
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=appium_proc) as create_proc,
+        patch("agent_app.appium_process.start_grid_node_supervisor", side_effect=start_supervisor),
+    ):
+        await manager.start(
+            connection_target="device-1",
+            port=4723,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+            stereotype_caps={"appium:platform": "android_mobile"},
+        )
+
+    assert create_proc.await_count == 1
+    assert handles[0].start_called is True
+    assert handles[0].wait_until_running_called is True
+    assert configs[0].appium_upstream == "http://127.0.0.1:4723"
+    assert configs[0].slots[0].stereotype.caps["appium:platform"] == "android_mobile"
+    await manager.shutdown()
+
+
+async def test_start_rolls_back_appium_when_grid_node_start_fails() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5004)
+    handle = FailingGridNodeHandle()
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch("agent_app.appium_process.start_grid_node_supervisor", return_value=handle),
+        pytest.raises(RuntimeError, match="grid node failed"),
+    ):
+        await manager.start(
+            connection_target="device-1",
+            port=4723,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+        )
+
+    assert handle.stop_called is True
+    assert appium_proc.sent_signals
+    assert 4723 not in manager._grid_supervisors
+    assert 4723 not in manager._appium_procs
+    assert 4723 not in manager._launch_specs
+
+
+async def test_stop_calls_grid_node_supervisor_stop() -> None:
+    manager = AppiumProcessManager()
+    handle = RecordingGridNodeHandle()
+    appium_proc = FakeProcess(pid=5002)
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5002, connection_target="device-1", platform_id="android_mobile"
+    )
+    manager._logs[4723] = deque(["line"], maxlen=10)
+    manager._log_tasks[4723] = []
+
+    await manager.stop(4723)
+
+    assert handle.stop_called is True
+    assert 4723 not in manager._grid_supervisors
+
+
+def test_process_snapshot_includes_grid_node_status() -> None:
+    manager = AppiumProcessManager()
+    handle = RecordingGridNodeHandle()
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    snapshot = manager.process_snapshot()
+
+    assert snapshot["running_nodes"][0]["grid_node_status"] == "up"
 
 
 async def test_start_requires_pack_metadata() -> None:
@@ -267,19 +384,20 @@ async def test_start_requires_pack_metadata() -> None:
 async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=1234)
-    node_proc = FakeProcess(pid=2345)
+    configs: list[GridNodeConfig] = []
 
     with (
         patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
         patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=True),
-        patch("agent_app.appium_process._find_java", return_value="/usr/bin/java"),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium_process._write_grid_node_toml", return_value="/tmp/node.toml") as write_toml,
         patch(
             "agent_app.appium_process.asyncio.create_subprocess_exec",
-            side_effect=[appium_proc, node_proc],
+            return_value=appium_proc,
         ) as create_proc,
+        patch(
+            "agent_app.appium_process.start_grid_node_supervisor",
+            side_effect=lambda *, factory, config: configs.append(config) or RecordingGridNodeHandle(),
+        ),
     ):
         await manager.start(
             connection_target="device-002",
@@ -301,172 +419,12 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         "platformName": "android_mobile",
         "appium:automationName": "UiAutomator2",
     }
-    # _write_grid_node_toml receives caps without browserName; it adds the
-    # Chrome slot internally.
-    assert write_toml.call_args is not None
-    assert write_toml.call_args.args[3] == {
+    assert configs[0].slots[0].stereotype.caps == {
         "appium:udid": "device-002",
         "platformName": "android_mobile",
         "appium:platform": "android_mobile",
     }
     await manager.shutdown()
-
-
-def _extract_relay_stereotypes(toml_content: str) -> list[dict]:
-    """Parse stereotype dicts from a Grid 4 relay TOML.
-
-    The configs array contains pairs of (count_string, json_capability_string).
-    The capability strings are JSON-encoded strings themselves (quoted + escaped).
-    """
-    import re
-
-    configs_section = toml_content.split("configs")[1]
-    # Match all "..." values in the array (handles escaped inner quotes).
-    raw_values = re.findall(r'"((?:[^"\\]|\\.)*)"', configs_section)
-    # Pairs: [count, json_str, count, json_str, ...]
-    # Odd-indexed entries are the JSON capability strings.
-    result = []
-    for i, raw in enumerate(raw_values):
-        if i % 2 == 1:
-            # raw is the content inside the outer quotes; unescape \" → "
-            unescaped = raw.replace('\\"', '"')
-            result.append(json.loads(unescaped))
-    return result
-
-
-def test_write_grid_node_toml_android_emits_dual_slots() -> None:
-    """Android nodes must register two relay slots: one for native-app sessions
-    (no browserName) and one for Chrome sessions (browserName=Chrome)."""
-    from agent_app.appium_process import _write_grid_node_toml
-
-    caps = {
-        "appium:udid": "emulator-5554",
-        "platformName": "Android",
-        "appium:platform": "android_mobile",
-    }
-
-    with patch("agent_app.appium_process.agent_settings") as mock_settings:
-        mock_settings.grid_publish_url = "tcp://hub:4442"
-        mock_settings.grid_subscribe_url = "tcp://hub:4443"
-        toml_path = _write_grid_node_toml(4723, 5555, "android_mobile", caps, grid_slots=["native", "chrome"])
-
-    try:
-        with open(toml_path) as f:
-            content = f.read()
-    finally:
-        import os
-
-        os.unlink(toml_path)
-
-    stereos = _extract_relay_stereotypes(content)
-    assert len(stereos) == 2, f"Expected 2 stereotype dicts, got {len(stereos)}: {stereos}"
-
-    native = next((s for s in stereos if "browserName" not in s), None)
-    chrome = next((s for s in stereos if s.get("browserName") == "Chrome"), None)
-    assert native is not None, "Native-app slot (no browserName) not found"
-    assert chrome is not None, "Chrome slot (browserName=Chrome) not found"
-    assert native["platformName"] == "Android"
-    assert chrome["platformName"] == "Android"
-
-
-def test_write_grid_node_toml_non_android_emits_single_slot() -> None:
-    """Non-Android platforms register a single relay slot."""
-    from agent_app.appium_process import _write_grid_node_toml
-
-    caps = {"appium:udid": "00008110-001", "platformName": "iOS"}
-
-    with patch("agent_app.appium_process.agent_settings") as mock_settings:
-        mock_settings.grid_publish_url = "tcp://hub:4442"
-        mock_settings.grid_subscribe_url = "tcp://hub:4443"
-        toml_path = _write_grid_node_toml(4723, 5556, "ios", caps, grid_slots=["native"])
-
-    try:
-        with open(toml_path) as f:
-            content = f.read()
-    finally:
-        import os
-
-        os.unlink(toml_path)
-
-    stereos = _extract_relay_stereotypes(content)
-    assert len(stereos) == 1, f"Expected 1 stereotype dict, got {len(stereos)}: {stereos}"
-    assert "browserName" not in stereos[0]
-
-
-def test_write_grid_node_toml_sets_external_url_when_advertise_url_is_known() -> None:
-    from pathlib import Path
-
-    from agent_app.appium_process import _write_grid_node_toml
-
-    with patch("agent_app.appium_process.agent_settings") as mock_settings:
-        mock_settings.grid_publish_url = "tcp://hub:4442"
-        mock_settings.grid_subscribe_url = "tcp://hub:4443"
-        path = _write_grid_node_toml(
-            appium_port=4723,
-            node_port=5556,
-            platform_name="roku_network",
-            caps={"appium:platform": "roku_network"},
-            grid_slots=["native"],
-            external_url="http://192.168.1.10:5556",
-        )
-
-    try:
-        contents = Path(path).read_text()
-    finally:
-        import os
-
-        os.unlink(path)
-
-    assert 'external-url = "http://192.168.1.10:5556"' in contents
-
-
-def test_grid_toml_writes_two_slots_when_grid_slots_includes_chrome() -> None:
-    from agent_app.appium_process import _write_grid_node_toml
-
-    with patch("agent_app.appium_process.agent_settings") as mock_settings:
-        mock_settings.grid_publish_url = "tcp://hub:4442"
-        mock_settings.grid_subscribe_url = "tcp://hub:4443"
-        path = _write_grid_node_toml(
-            appium_port=4723,
-            node_port=5555,
-            platform_name="android_mobile",
-            caps={"appium:platform": "Android"},
-            grid_slots=["native", "chrome"],
-        )
-    from pathlib import Path
-
-    contents = Path(path).read_text()
-    stereos = _extract_relay_stereotypes(contents)
-    assert len(stereos) == 2
-    chrome = next((s for s in stereos if s.get("browserName") == "Chrome"), None)
-    assert chrome is not None, "Chrome slot (browserName=Chrome) not found"
-    import os
-
-    os.unlink(path)
-
-
-def test_grid_toml_writes_one_slot_when_grid_slots_native_only() -> None:
-    from agent_app.appium_process import _write_grid_node_toml
-
-    with patch("agent_app.appium_process.agent_settings") as mock_settings:
-        mock_settings.grid_publish_url = "tcp://hub:4442"
-        mock_settings.grid_subscribe_url = "tcp://hub:4443"
-        path = _write_grid_node_toml(
-            appium_port=4723,
-            node_port=5555,
-            platform_name="tvos",
-            caps={"appium:platform": "tvOS"},
-            grid_slots=["native"],
-        )
-    from pathlib import Path
-
-    contents = Path(path).read_text()
-    stereos = _extract_relay_stereotypes(contents)
-    assert len(stereos) == 1
-    assert "browserName" not in stereos[0]
-    import os
-
-    os.unlink(path)
 
 
 async def test_start_can_disable_session_override() -> None:
@@ -518,38 +476,15 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
     assert manager.get_logs(4724) == []
 
 
-async def test_start_without_grid_jar_logs_standalone_only() -> None:
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5678)
-
-    with (
-        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=False),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=appium_proc) as create_proc,
-    ):
-        await manager.start(
-            connection_target="device-003",
-            port=4725,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-        )
-
-    assert create_proc.await_count == 1
-    await manager.shutdown()
-
-
 async def test_stop_escalates_to_kill_after_timeout() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=8765, returncode=None)
-    node_proc = FakeProcess(pid=9876, returncode=None)
+    handle = RecordingGridNodeHandle()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
-    manager._node_procs[4723] = cast("asyncio.subprocess.Process", node_proc)
+    manager._grid_supervisors[4723] = handle
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=8765, connection_target="device-001", platform_id="android_mobile"
     )
-    manager._node_configs[4723] = "/tmp/node.toml"
     manager._logs[4723] = deque(["line"], maxlen=10)
     manager._log_tasks[4723] = []
 
@@ -557,15 +492,11 @@ async def test_stop_escalates_to_kill_after_timeout() -> None:
         del timeout
         raise TimeoutError
 
-    with (
-        patch("agent_app.appium_process.asyncio.wait_for", side_effect=wait_for_side_effect),
-        patch("agent_app.appium_process.os.unlink") as unlink,
-    ):
+    with patch("agent_app.appium_process.asyncio.wait_for", side_effect=wait_for_side_effect):
         await manager.stop(4723)
 
-    assert node_proc.killed is True
+    assert handle.stop_called is True
     assert appium_proc.killed is True
-    unlink.assert_called_once_with("/tmp/node.toml")
     assert manager.list_running() == []
 
 
@@ -721,9 +652,9 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
 async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_listener() -> None:
     manager = AppiumProcessManager()
     old_appium_proc = FakeProcess(pid=1111, returncode=1)
-    old_grid_proc = FakeProcess(pid=2222)
+    handle = RecordingGridNodeHandle()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", old_appium_proc)
-    manager._node_procs[4723] = cast("asyncio.subprocess.Process", old_grid_proc)
+    manager._grid_supervisors[4723] = handle
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-conflict",
         port=4723,
@@ -762,8 +693,8 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert manager.list_running() == []
     assert 4723 not in manager._launch_specs
     assert 4723 not in manager._info
-    assert 4723 not in manager._node_procs
-    assert old_grid_proc.sent_signals
+    assert 4723 not in manager._grid_supervisors
+    assert handle.stop_called is True
     snapshot = manager.process_snapshot()
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
@@ -816,149 +747,10 @@ async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
     await manager.shutdown()
 
 
-async def test_grid_relay_exit_triggers_local_restart_without_restarting_appium() -> None:
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=1111)
-    first_node_proc = FakeProcess(pid=2111)
-    restarted_node_proc = FakeProcess(pid=2222)
-    real_sleep = asyncio.sleep
-    delays: list[float] = []
-
-    async def fake_sleep(delay: float) -> None:
-        delays.append(delay)
-        await real_sleep(0)
-
-    with (
-        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium_process._find_java", return_value="/usr/bin/java"),
-        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=True),
-        patch("agent_app.appium_process._write_grid_node_toml", return_value="/tmp/node.toml"),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch(
-            "agent_app.appium_process.asyncio.create_subprocess_exec",
-            side_effect=[appium_proc, first_node_proc, restarted_node_proc],
-        ),
-        patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep),
-    ):
-        await manager.start(
-            connection_target="device-relay",
-            port=4727,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-        )
-        first_node_proc.set_exit(17)
-        await real_sleep(0)
-        await real_sleep(0)
-        await real_sleep(0)
-
-    assert [info.pid for info in manager.list_running()] == [1111]
-    assert manager._node_procs[4727].pid == 2222
-    assert delays[0] == 1
-    snapshot = manager.process_snapshot()
-    assert [event["process"] for event in snapshot["recent_restart_events"]] == [
-        "grid_relay",
-        "grid_relay",
-    ]
-    assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
-        "crash_detected",
-        "restart_succeeded",
-    ]
-    await manager.shutdown()
-
-
-async def test_advertise_ip_change_recreates_running_grid_relay() -> None:
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=1111)
-    first_node_proc = FakeProcess(pid=2111)
-    restarted_node_proc = FakeProcess(pid=2222)
-    external_urls: list[str] = []
-
-    def fake_write_grid_node_toml(
-        _appium_port: int,
-        _node_port: int,
-        _platform_name: str,
-        _caps: dict[str, object],
-        *,
-        grid_slots: list[str] | None = None,
-        external_url: str | None = None,
-    ) -> str:
-        assert grid_slots == ["native"]
-        external_urls.append(str(external_url))
-        return f"/tmp/grid-node-{len(external_urls)}.toml"
-
-    with (
-        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium_process._find_java", return_value="/usr/bin/java"),
-        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=True),
-        patch("agent_app.appium_process._write_grid_node_toml", side_effect=fake_write_grid_node_toml),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch(
-            "agent_app.appium_process.asyncio.create_subprocess_exec",
-            side_effect=[appium_proc, first_node_proc, restarted_node_proc],
-        ),
-    ):
-        await manager.refresh_grid_relay_advertise_ip("10.0.0.10")
-        await manager.start(
-            connection_target="device-relay-ip",
-            port=4732,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-        )
-        await manager.refresh_grid_relay_advertise_ip("10.0.0.20")
-
-    assert first_node_proc.sent_signals
-    assert manager._node_procs[4732].pid == 2222
-    assert external_urls == ["http://10.0.0.10:5555", "http://10.0.0.20:5556"]
-    await manager.shutdown()
-
-
-async def test_grid_relay_restart_cap_stops_retrying_after_threshold() -> None:
-    manager = AppiumProcessManager()
-    current_time = asyncio.get_running_loop().time()
-    manager._launch_specs[4728] = AppiumLaunchSpec(
-        connection_target="device-relay-loop",
-        port=4728,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=True,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-    manager._info[4728] = AppiumProcessInfo(
-        port=4728,
-        pid=9999,
-        connection_target="device-relay-loop",
-        platform_id="android_mobile",
-    )
-    manager._appium_procs[4728] = cast("asyncio.subprocess.Process", FakeProcess(pid=9999))
-    manager._node_procs[4728] = cast("asyncio.subprocess.Process", FakeProcess(pid=8888))
-    manager._grid_node_restart_attempts[4728] = deque(current_time - offset for offset in (1, 2, 3, 4, 5))
-
-    await manager._auto_restart_grid_node(4728, exit_code=9)
-
-    snapshot = manager.process_snapshot()
-    assert [event["process"] for event in snapshot["recent_restart_events"]] == [
-        "grid_relay",
-        "grid_relay",
-    ]
-    assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
-        "crash_detected",
-        "restart_exhausted",
-    ]
-
-
-async def test_appium_restart_recreates_grid_relay_without_duplicate_relay_loop() -> None:
+async def test_appium_restart_does_not_create_duplicate_recovery_loop() -> None:
     manager = AppiumProcessManager()
     first_appium_proc = FakeProcess(pid=1001)
-    first_node_proc = FakeProcess(pid=2001)
     restarted_appium_proc = FakeProcess(pid=1002)
-    restarted_node_proc = FakeProcess(pid=2002)
     real_sleep = asyncio.sleep
 
     async def fake_sleep(delay: float) -> None:
@@ -966,14 +758,11 @@ async def test_appium_restart_recreates_grid_relay_without_duplicate_relay_loop(
 
     with (
         patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium_process._find_java", return_value="/usr/bin/java"),
         patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.appium_process.os.path.isfile", return_value=True),
-        patch("agent_app.appium_process._write_grid_node_toml", return_value="/tmp/node.toml"),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True]),
         patch(
             "agent_app.appium_process.asyncio.create_subprocess_exec",
-            side_effect=[first_appium_proc, first_node_proc, restarted_appium_proc, restarted_node_proc],
+            side_effect=[first_appium_proc, restarted_appium_proc],
         ),
         patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep),
     ):
@@ -984,7 +773,6 @@ async def test_appium_restart_recreates_grid_relay_without_duplicate_relay_loop(
             **PACK_START_KWARGS,
         )
         first_appium_proc.set_exit(1)
-        first_node_proc.set_exit(2)
         await real_sleep(0)
         await real_sleep(0)
         await real_sleep(0)
@@ -999,7 +787,6 @@ async def test_appium_restart_recreates_grid_relay_without_duplicate_relay_loop(
         "crash_detected",
         "restart_succeeded",
     ]
-    assert manager._node_procs[4729].pid == 2002
     assert [info.pid for info in manager.list_running()] == [1002]
     await manager.shutdown()
 

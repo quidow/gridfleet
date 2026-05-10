@@ -40,7 +40,7 @@ async def client() -> AsyncGenerator[AsyncClient]:
 async def test_health(client: AsyncClient) -> None:
     with patch(
         "agent_app.main.get_capabilities_snapshot",
-        return_value={"platforms": [], "tools": {}, "missing_prerequisites": ["java"]},
+        return_value={"platforms": [], "tools": {}, "missing_prerequisites": []},
     ):
         resp = await client.get("/agent/health")
     assert resp.status_code == 200
@@ -48,7 +48,7 @@ async def test_health(client: AsyncClient) -> None:
     assert data["status"] == "ok"
     assert "hostname" in data
     assert "os_type" in data
-    assert data["missing_prerequisites"] == ["java"]
+    assert data["missing_prerequisites"] == []
     assert data["appium_processes"] == {"running_nodes": [], "recent_restart_events": []}
 
 
@@ -583,8 +583,6 @@ async def test_agent_tools_status(client: AsyncClient) -> None:
             "node": "24.14.1",
             "node_provider": "fnm",
             "go_ios": "1.0.207",
-            "selenium_jar": "4.41.0",
-            "selenium_jar_path": "/opt/gridfleet-agent/selenium-server.jar",
         },
     ) as status:
         resp = await client.get("/agent/tools/status")
@@ -603,12 +601,12 @@ async def test_agent_tools_ensure_serializes_and_returns_result(client: AsyncCli
     ) as ensure:
         resp = await client.post(
             "/agent/tools/ensure",
-            json={"appium_version": "3.3.0", "selenium_jar_version": None},
+            json={"appium_version": "3.3.0"},
         )
 
     assert resp.status_code == 200
     assert resp.json()["appium"]["success"] is True
-    ensure.assert_awaited_once_with("3.3.0", None)
+    ensure.assert_awaited_once_with("3.3.0")
 
 
 async def test_health_includes_version_guidance(client: AsyncClient) -> None:

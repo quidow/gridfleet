@@ -27,6 +27,8 @@ dependencies = [
     "httpx==0.28.1",
     "packaging>=26.2",
     "psutil==7.2.2",
+    "pyzmq>=26",
+    "websockets>=14",
 ]
 
 [project.urls]
@@ -43,10 +45,15 @@ dev = [
     "pytest-cov>=6.0",
     "mypy>=1.20.2",
     "ruff>=0.15.12",
+    "testcontainers>=4.9",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "slow: tests that require external services such as Docker and real Selenium Hub",
+]
+addopts = ["-m", "not slow"]
 
 [tool.mypy]
 strict = true

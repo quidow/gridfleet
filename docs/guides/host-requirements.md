@@ -25,7 +25,6 @@ These are the parts the agent can install, verify, or keep aligned after the hos
 | Artifact | How it is managed | Manager setting |
 | --- | --- | --- |
 | Appium binary | installed or updated with npm | `appium.target_version` |
-| Selenium Server JAR | downloaded to `AGENT_SELENIUM_SERVER_JAR` and re-verified | `grid.selenium_jar_version` |
 | Appium driver packs | reconciled from the active pack catalog and checked with Appium doctor | driver pack catalog |
 | Appium plugins | installed or removed to match the registry | plugin registry |
 | Appium default plugin activation | passed to managed Appium nodes as `--use-plugins` | `appium.default_plugins` |
@@ -33,7 +32,6 @@ These are the parts the agent can install, verify, or keep aligned after the hos
 What the agent does not install for you:
 
 - Node.js or npm
-- Java
 - Android SDK platform tools
 - Xcode
 - Android SDK system images or AVD creation
@@ -49,9 +47,6 @@ Linux hosts are for Android and Roku lanes only.
 - **Node.js and npm**
   - Required so the agent can install or upgrade Appium.
   - The agent can detect Node from fnm, nvm, standard macOS paths, or a system install, but it does not install Node itself.
-- **Java 11+**
-  - Required for the Selenium Grid relay node that runs beside Appium on the host.
-  - `JAVA_HOME` is optional if `java` is already on `PATH`, but it is honored by both the installer and process tool resolution.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
   - The minimum useful pieces are the SDK root plus `platform-tools` so `adb` is available.
@@ -74,9 +69,6 @@ macOS hosts can run both Apple and Android lanes.
 - **Node.js and npm**
   - Required so the agent can install or upgrade Appium.
   - fnm, nvm, standard macOS paths, and system Node are all supported discovery paths.
-- **Java 11+**
-  - Required for the Selenium Grid relay node.
-  - `JAVA_HOME` is optional but supported.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
   - As on Linux, emulator use also requires the `emulator` binary plus the AVDs and system images you want to run.

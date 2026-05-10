@@ -49,3 +49,10 @@ def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -
     settings = AgentSettings()
     assert settings.api_auth_username == "ops"
     assert settings.api_auth_password == "secret"
+
+
+def test_grid_node_settings_defaults() -> None:
+    settings = AgentSettings()
+    assert settings.grid_node_heartbeat_sec == 5.0
+    assert settings.grid_node_session_timeout_sec == 300.0
+    assert settings.grid_node_proxy_timeout_sec == 60.0

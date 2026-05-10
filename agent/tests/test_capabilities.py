@@ -26,11 +26,10 @@ async def test_get_tool_version_falls_back_to_first_line() -> None:
 async def test_detect_capabilities_infers_platforms_from_available_tools() -> None:
     with (
         patch("agent_app.capabilities._find_appium", return_value="/node/bin/appium"),
-        patch("agent_app.capabilities._find_java", return_value="/java/bin/java"),
         patch(
             "agent_app.capabilities._get_tool_version",
             new_callable=AsyncMock,
-            side_effect=["2.0.0", "1.0.41", "15.0", "1.0.207", "21.0.2"],
+            side_effect=["2.0.0", "1.0.41", "15.0", "1.0.207"],
         ),
     ):
         capabilities = await detect_capabilities()
@@ -40,7 +39,6 @@ async def test_detect_capabilities_infers_platforms_from_available_tools() -> No
         "adb": "1.0.41",
         "xcodebuild": "15.0",
         "go_ios": "1.0.207",
-        "java": "21.0.2",
     }
     assert capabilities["platforms"] == []
     assert capabilities["missing_prerequisites"] == []
@@ -49,23 +47,21 @@ async def test_detect_capabilities_infers_platforms_from_available_tools() -> No
 async def test_detect_capabilities_reports_linux_missing_prerequisites_without_apple_tools() -> None:
     with (
         patch("agent_app.capabilities._find_appium", return_value="/node/bin/appium"),
-        patch("agent_app.capabilities._find_java", return_value="/java/bin/java"),
         patch(
             "agent_app.capabilities._get_tool_version",
             new_callable=AsyncMock,
-            side_effect=["2.0.0", None, None, None, None],
+            side_effect=["2.0.0", None, None, None],
         ),
     ):
         capabilities = await detect_capabilities()
 
     assert capabilities["platforms"] == []
-    assert capabilities["missing_prerequisites"] == ["java"]
+    assert capabilities["missing_prerequisites"] == []
 
 
 async def test_detect_capabilities_checks_adapter_tools_by_command_name() -> None:
     with (
         patch("agent_app.capabilities._find_appium", return_value="/node/bin/appium"),
-        patch("agent_app.capabilities._find_java", return_value="/java/bin/java"),
         patch("agent_app.capabilities._get_tool_version", new_callable=AsyncMock, return_value=None) as get_version,
     ):
         await detect_capabilities()

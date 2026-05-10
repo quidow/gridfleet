@@ -22,7 +22,7 @@ def _patch_operator(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_install_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fake_discover_tools() -> ToolDiscovery:
-        return ToolDiscovery(java_bin="/usr/bin/java")
+        return ToolDiscovery()
 
     monkeypatch.setattr(cli, "discover_tools", fake_discover_tools)
 
@@ -70,7 +70,6 @@ def test_install_no_start_invokes_file_writer(monkeypatch: pytest.MonkeyPatch) -
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
-            selenium_jar=Path("jar"),
             started=False,
         )
 
@@ -96,7 +95,6 @@ def test_install_start_invokes_starting_installer(monkeypatch: pytest.MonkeyPatc
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
-            selenium_jar=Path("jar"),
             started=True,
             health=HealthCheckResult(ok=True, message="healthy"),
         )
@@ -122,7 +120,6 @@ def test_install_start_warns_when_manager_registration_is_pending(
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
-            selenium_jar=Path("jar"),
             started=True,
             health=HealthCheckResult(ok=True, message="healthy"),
             registration=RegistrationCheckResult(ok=False, message="agent registration pending"),
@@ -148,7 +145,6 @@ def test_install_start_returns_nonzero_when_health_fails(
         return InstallResult(
             config_env=Path("config.env"),
             service_file=Path("service"),
-            selenium_jar=Path("jar"),
             started=True,
             health=HealthCheckResult(ok=False, message="agent health check timed out: connection refused"),
         )
@@ -447,7 +443,6 @@ def test_install_main_threads_api_auth_into_install_config(monkeypatch: pytest.M
                 "started": False,
                 "config_env": "",
                 "service_file": "",
-                "selenium_jar": "",
                 "health": None,
                 "registration": None,
             },

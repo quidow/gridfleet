@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -67,8 +67,7 @@ async def test_stop_cancels_restart_task_from_natural_crash() -> None:
     restart_task = mgr._appium_restart_tasks[port]
     assert not restart_task.done(), "Restart task should be running"
 
-    with patch.object(mgr, "_stop_grid_node_process", new=AsyncMock()):
-        await mgr.stop(port)
+    await mgr.stop(port)
 
     with contextlib.suppress(asyncio.CancelledError):
         await asyncio.wait_for(restart_task, timeout=1.0)

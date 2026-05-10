@@ -1,7 +1,6 @@
 import asyncio
 import os
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from agent_app.tools_manager import (
     CommandResult,
@@ -12,14 +11,12 @@ from agent_app.tools_manager import (
     _first_version,
     _get_appium_version,
     _get_node_version,
-    _parse_manifest_version,
     _prepend_process_path,
     _provider_env,
     _run_command,
     _run_optional,
     detect_node_provider,
     ensure_appium,
-    ensure_selenium_jar,
     ensure_tools,
 )
 
@@ -65,7 +62,6 @@ async def test_run_command_and_run_optional_cover_success_and_missing_binary() -
 
 def test_tools_manager_small_helpers() -> None:
     assert _first_version("node v20.11.1") == "20.11.1"
-    assert _parse_manifest_version("Manifest-Version: 1.0\nImplementation-Version: 4.40.\n 1\n") == "4.40.1"
 
 
 async def test_detect_fnm_provider_prefers_exec_and_has_error_fallback() -> None:
@@ -168,7 +164,7 @@ async def test_get_node_and_appium_versions_handle_fallbacks() -> None:
         assert await _get_appium_version(provider) == "3.1.0"
 
 
-async def test_ensure_appium_and_other_tool_flows_cover_remaining_branches(tmp_path: Path) -> None:
+async def test_ensure_appium_and_other_tool_flows_cover_remaining_branches() -> None:
     assert await ensure_appium("   ") == {"success": True, "action": "skipped"}
 
     provider = NodeProvider(name="system", node_path="/usr/bin/node", npm_path=None, command_prefix=[])
@@ -192,27 +188,7 @@ async def test_ensure_appium_and_other_tool_flows_cover_remaining_branches(tmp_p
 
     assert mismatch["error"] == "installed_version_mismatch"
 
-    jar_path = tmp_path / "selenium.jar"
-    jar_path.write_bytes(b"existing")
+    with patch("agent_app.tools_manager.ensure_appium", new_callable=AsyncMock, return_value={"success": True}):
+        combined = await ensure_tools("3.3.0")
 
-    response = MagicMock()
-    response.content = b"not-a-jar"
-    response.raise_for_status.return_value = None
-
-    client = MagicMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = False
-    client.get = AsyncMock(return_value=response)
-
-    with patch("agent_app.tools_manager.httpx.AsyncClient", return_value=client):
-        download = await ensure_selenium_jar("4.41.0", str(jar_path))
-
-    assert download["error"] == "downloaded_version_mismatch"
-
-    with (
-        patch("agent_app.tools_manager.ensure_appium", new_callable=AsyncMock, return_value={"success": True}),
-        patch("agent_app.tools_manager.ensure_selenium_jar", new_callable=AsyncMock, return_value={"success": True}),
-    ):
-        combined = await ensure_tools("3.3.0", "4.41.0")
-
-    assert combined == {"appium": {"success": True}, "selenium_jar": {"success": True}}
+    assert combined == {"appium": {"success": True}}

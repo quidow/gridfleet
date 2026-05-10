@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import contextlib
 import getpass
-import hashlib
 import os
 import platform
 import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import time
-import urllib.request
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -54,7 +51,6 @@ class HealthCheckCallable(Protocol):
 class InstallResult:
     config_env: Path
     service_file: Path
-    selenium_jar: Path
     started: bool
     health: HealthCheckResult | None = None
     registration: RegistrationCheckResult | None = None
@@ -80,29 +76,6 @@ def validate_dedicated_venv(
             "Create /opt/gridfleet-agent/venv first, install gridfleet-agent there, "
             f"then run /opt/gridfleet-agent/venv/bin/gridfleet-agent {command_name}."
         )
-
-
-def _selenium_url(config: InstallConfig) -> str:
-    version = config.selenium_version
-    return f"https://github.com/SeleniumHQ/selenium/releases/download/selenium-{version}/selenium-server-{version}.jar"
-
-
-def _download_selenium(url: str, dest: Path) -> None:
-    fd, tmp = tempfile.mkstemp(dir=str(dest.parent), suffix=".download")
-    try:
-        sha256 = hashlib.sha256()
-        with urllib.request.urlopen(url, timeout=60) as response, os.fdopen(fd, "wb") as output:
-            while True:
-                chunk = response.read(65536)
-                if not chunk:
-                    break
-                sha256.update(chunk)
-                output.write(chunk)
-        os.rename(tmp, str(dest))
-    except BaseException:
-        os.unlink(tmp)
-        raise
-    print(f"Downloaded {dest.name} sha256={sha256.hexdigest()}")
 
 
 def _operator_home_darwin() -> Path:
@@ -163,10 +136,11 @@ def install_no_start(
     operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
-    download: Callable[[str, Path], None] = _download_selenium,
+    download: Callable[[str, Path], None] | None = None,
     chown: Callable[[Path, str], None] = _chown_to_user,
     start: bool = False,
 ) -> InstallResult:
+    del download
     if start:
         raise NotImplementedError("service start is not implemented in this installer slice")
 
@@ -180,15 +154,11 @@ def install_no_start(
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
     runtime_dir = agent_dir / "runtimes"
-    selenium_jar = Path(config.selenium_jar)
     service_file = _service_file_path(config, resolved_os, operator)
 
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)
     service_file.parent.mkdir(parents=True, exist_ok=True)
-
-    if not selenium_jar.exists():
-        download(_selenium_url(config), selenium_jar)
 
     config_env = Path(config.config_env_path)
     config_env.write_text(render_config_env(config, discovery))
@@ -201,7 +171,7 @@ def install_no_start(
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
     os.chmod(service_file, 0o600)
 
-    chown_targets = (agent_dir, runtime_dir, config_dir, config_env, selenium_jar, service_file)
+    chown_targets = (agent_dir, runtime_dir, config_dir, config_env, service_file)
     if _should_chown(operator):
         for path in chown_targets:
             if path.exists():
@@ -210,7 +180,6 @@ def install_no_start(
     return InstallResult(
         config_env=Path(config.config_env_path),
         service_file=service_file,
-        selenium_jar=selenium_jar,
         started=False,
     )
 
@@ -334,7 +303,7 @@ def install_with_start(
     operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
-    download: Callable[[str, Path], None] = _download_selenium,
+    download: Callable[[str, Path], None] | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
@@ -364,7 +333,6 @@ def install_with_start(
     return InstallResult(
         config_env=result.config_env,
         service_file=result.service_file,
-        selenium_jar=result.selenium_jar,
         started=True,
         health=health,
         registration=registration,

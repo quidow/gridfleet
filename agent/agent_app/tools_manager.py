@@ -1,26 +1,18 @@
-"""Manage host-level Appium and Selenium Grid tool versions."""
+"""Manage host-level Appium tool versions."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import glob
 import logging
 import os
 import re
 import shutil
-import tempfile
-import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-
-import httpx
-from packaging.version import InvalidVersion, Version
 
 from agent_app.appium_process import _build_env
 from agent_app.capabilities import refresh_capabilities_snapshot
-from agent_app.config import agent_settings
 from agent_app.tool_paths import _parse_node_version
 from agent_app.tool_paths import find_appium as _find_appium
 
@@ -28,36 +20,6 @@ logger = logging.getLogger(__name__)
 
 APPIUM_INSTALL_TIMEOUT_SEC = 180
 TOOL_VERSION_TIMEOUT_SEC = 10
-SELENIUM_DOWNLOAD_TIMEOUT_SEC = 120
-SELENIUM_JAR_URL = (
-    "https://github.com/SeleniumHQ/selenium/releases/download/selenium-{version}/selenium-server-{version}.jar"
-)
-
-
-def _normalize_selenium_version(version: str) -> str | None:
-    stripped = version.strip()
-    parts = stripped.split(".")
-    if len(parts) != 3 or any(not part or not all("0" <= char <= "9" for char in part) for part in parts):
-        return None
-    try:
-        parsed = Version(stripped)
-    except InvalidVersion:
-        return None
-    if (
-        parsed.epoch != 0
-        or parsed.post is not None
-        or parsed.is_prerelease
-        or parsed.is_devrelease
-        or parsed.local is not None
-    ):
-        return None
-    normalized = str(parsed)
-    if normalized != stripped:
-        return None
-    release = parsed.release
-    if len(release) != 3:
-        return None
-    return normalized
 
 
 @dataclass(frozen=True)
@@ -292,32 +254,6 @@ async def _get_go_ios_version(provider: NodeProvider | None = None) -> str | Non
     return _first_version(result.output) or result.output.splitlines()[0].strip()
 
 
-def _parse_manifest_version(text: str) -> str | None:
-    values: dict[str, str] = {}
-    current_key: str | None = None
-    for raw_line in text.splitlines():
-        if raw_line.startswith(" ") and current_key:
-            values[current_key] += raw_line.strip()
-            continue
-        if ":" not in raw_line:
-            current_key = None
-            continue
-        key, value = raw_line.split(":", 1)
-        current_key = key.strip()
-        values[current_key] = value.strip()
-    return values.get("Selenium-Version") or values.get("Implementation-Version")
-
-
-def get_selenium_jar_version(jar_path: str) -> str | None:
-    if not os.path.isfile(jar_path):
-        return None
-    try:
-        with zipfile.ZipFile(jar_path) as jar, jar.open("META-INF/MANIFEST.MF") as manifest:
-            return _parse_manifest_version(manifest.read().decode(errors="replace"))
-    except (OSError, KeyError, zipfile.BadZipFile):
-        return None
-
-
 async def get_tool_status() -> dict[str, Any]:
     provider = await detect_node_provider()
     if provider and provider.bin_paths:
@@ -331,8 +267,6 @@ async def get_tool_status() -> dict[str, Any]:
         "node_provider": provider.name if provider and not provider.error else None,
         "node_error": provider.error if provider and provider.error else None,
         "go_ios": go_ios_version,
-        "selenium_jar": get_selenium_jar_version(agent_settings.selenium_server_jar),
-        "selenium_jar_path": agent_settings.selenium_server_jar,
     }
 
 
@@ -394,67 +328,8 @@ async def ensure_appium(version: str) -> dict[str, Any]:
     }
 
 
-async def ensure_selenium_jar(version: str, jar_path: str) -> dict[str, Any]:
-    version = version.strip()
-    if not version:
-        return {"success": True, "action": "skipped"}
-    normalized_version = _normalize_selenium_version(version)
-    if normalized_version is None:
-        return {"success": False, "error": "invalid_selenium_version", "version": get_selenium_jar_version(jar_path)}
-    version = normalized_version
-
-    current_version = get_selenium_jar_version(jar_path)
-    if current_version == version:
-        return {"success": True, "action": "none", "version": current_version, "path": jar_path}
-
-    url = SELENIUM_JAR_URL.format(version=version)
-    parent = Path(jar_path).expanduser().resolve().parent
-    tmp_path: str | None = None
-    try:
-        parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(prefix=".selenium-server-", suffix=".jar", dir=str(parent))
-        os.close(fd)
-        async with httpx.AsyncClient(timeout=SELENIUM_DOWNLOAD_TIMEOUT_SEC, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-        with open(tmp_path, "wb") as f:
-            f.write(response.content)
-        downloaded_version = get_selenium_jar_version(tmp_path)
-        if downloaded_version != version:
-            return {
-                "success": False,
-                "error": "downloaded_version_mismatch",
-                "expected_version": version,
-                "version": downloaded_version,
-            }
-        os.replace(tmp_path, jar_path)
-        tmp_path = None
-    except httpx.HTTPError as exc:
-        return {"success": False, "error": str(exc), "version": current_version}
-    except OSError as exc:
-        return {"success": False, "error": str(exc), "version": current_version}
-    finally:
-        if tmp_path:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-
-    await refresh_capabilities_snapshot()
-    return {
-        "success": True,
-        "action": "downloaded" if current_version is None else "updated",
-        "version": version,
-        "previous_version": current_version,
-        "path": jar_path,
-    }
-
-
-async def ensure_tools(
-    appium_version: str | None,
-    selenium_jar_version: str | None,
-) -> dict[str, Any]:
+async def ensure_tools(appium_version: str | None) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if appium_version is not None:
         result["appium"] = await ensure_appium(appium_version)
-    if selenium_jar_version is not None:
-        result["selenium_jar"] = await ensure_selenium_jar(selenium_jar_version, agent_settings.selenium_server_jar)
     return result

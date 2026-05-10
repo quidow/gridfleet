@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import platform
 import re
@@ -32,6 +33,7 @@ from agent_app.capabilities import (
 from agent_app.config import agent_settings
 from agent_app.driver_doctor import run_driver_doctor
 from agent_app.error_codes import AgentErrorCode, http_exc
+from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
 from agent_app.host_telemetry import get_host_telemetry
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
@@ -61,9 +63,11 @@ from agent_app.tools_manager import ensure_tools, get_tool_status
 from agent_app.version_guidance import get_version_guidance
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 appium_mgr = AppiumProcessManager()
 tools_ensure_lock = asyncio.Lock()
+GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
 def _manager_auth() -> httpx.BasicAuth | None:
@@ -164,6 +168,35 @@ def _build_adapter_loader(
     return _load
 
 
+async def _stop_grid_node_supervisors_for_shutdown(
+    manager: AppiumProcessManager,
+    *,
+    timeout_sec: float = GRID_NODE_SHUTDOWN_TIMEOUT_SEC,
+) -> None:
+    supervisors = list(manager._grid_supervisors.items())
+    if not supervisors:
+        return
+
+    async def _stop_one(port: int, supervisor: GridNodeSupervisorHandle) -> int:
+        await supervisor.stop()
+        return port
+
+    tasks = [asyncio.create_task(_stop_one(port, supervisor)) for port, supervisor in supervisors]
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_sec)
+    except TimeoutError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.warning("timed out stopping grid node supervisors during shutdown")
+        return
+    for result in results:
+        if isinstance(result, int):
+            manager._grid_supervisors.pop(result, None)
+        elif isinstance(result, Exception):
+            logger.warning("failed to stop grid node supervisor during shutdown", exc_info=result)
+
+
 def _get_network_devices() -> list[dict[str, Any]]:
     """Return network devices from currently running Appium processes."""
     devices: list[dict[str, Any]] = []
@@ -202,7 +235,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             agent_settings.manager_url,
             agent_settings.agent_port,
             host_identity,
-            on_advertised_ip_change=appium_mgr.refresh_grid_relay_advertise_ip,
         )
     )
     appium_mgr.set_runtime_registry(runtime_registry)
@@ -223,6 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             pack_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
+        await _stop_grid_node_supervisors_for_shutdown(appium_mgr)
         await appium_mgr.shutdown()
         await sidecar_supervisor.shutdown()
         await close_shared_http_client()
@@ -277,7 +310,6 @@ class PluginSyncRequest(BaseModel):
 
 class ToolsEnsureRequest(BaseModel):
     appium_version: str | None = None
-    selenium_jar_version: str | None = None
 
 
 class FeatureActionRequest(BaseModel):
@@ -737,7 +769,7 @@ async def agent_tools_status() -> dict[str, Any]:
 @app.post("/agent/tools/ensure")
 async def ensure_agent_tools(req: ToolsEnsureRequest) -> dict[str, Any]:
     async with tools_ensure_lock:
-        return await ensure_tools(req.appium_version, req.selenium_jar_version)
+        return await ensure_tools(req.appium_version)
 
 
 @app.websocket("/agent/terminal")
