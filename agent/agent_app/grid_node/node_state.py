@@ -96,6 +96,14 @@ class NodeState:
                 runtime.reserved_at = None
                 return
 
+    def release(self, session_id: str) -> None:
+        for runtime in self._slots:
+            if runtime.session_id == session_id and runtime.state == "BUSY":
+                runtime.state = "FREE"
+                runtime.session_id = None
+                runtime.started_at = None
+                return
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[
