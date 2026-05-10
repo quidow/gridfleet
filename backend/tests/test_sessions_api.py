@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -1027,3 +1027,68 @@ async def test_post_session_finished_real_testkit_call_shape(
         "ended_at must be set when posting the WebDriver token — "
         "PK lookup would have returned 404 (silent no-op in testkit)"
     )
+
+
+# ---------------------------------------------------------------------------
+# D2 regression: ended_at must be durable (actually committed, not just flushed)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_session_finished_ended_at_is_durable_after_request_closes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: object,
+    default_host_id: str,
+) -> None:
+    """Regression: mark_session_finished must commit ended_at, not just flush.
+
+    The NO_PENDING branch of handle_session_finished returns without committing.
+    Before the fix, mark_session_finished relied on the lifecycle helper to commit,
+    so the flushed ended_at write was rolled back when the request-scoped get_db
+    session closed — POST returned 204 but the row's ended_at stayed null.
+
+    This test catches the bug by verifying durability via a *second, independent*
+    session that cannot see uncommitted writes from db_session.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session_obj = Session(
+        session_id="push-end-durable-regression",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session_obj)
+    await db_session.commit()
+    row_id = session_obj.id
+    webdriver_token = session_obj.session_id
+
+    # Simulate the NO_PENDING path: handle_session_finished returns without
+    # calling db.commit(). This is the exact path that exposed the bug.
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ):
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp.status_code == 204
+
+    # Verify durability using an independent session that cannot see
+    # uncommitted writes. If mark_session_finished only flushed (did not
+    # commit), this second session will see ended_at=None and the assertion
+    # will fail — catching the regression.
+    maker = cast("async_sessionmaker[AsyncSession]", db_session_maker)
+    async with maker() as fresh_session:
+        refreshed = await fresh_session.get(Session, row_id)
+        assert refreshed is not None
+        assert refreshed.ended_at is not None, (
+            "ended_at must be committed (not just flushed) by mark_session_finished; "
+            "the NO_PENDING lifecycle path returns without committing, so "
+            "mark_session_finished must own the final db.commit()"
+        )

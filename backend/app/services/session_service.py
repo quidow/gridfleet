@@ -512,12 +512,19 @@ async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | 
         device = await db.get(Device, session.device_id)
         if device is None:
             # Defensive: device row was deleted out from under the session.
-            # Skip lifecycle bookkeeping — the foreign key on Session.device_id
-            # should make this unreachable in practice, but a clean return
-            # is safer than crashing the request.
+            # Skip lifecycle bookkeeping but still persist ended_at.
+            await db.commit()
             return session
 
         await lifecycle_policy.handle_session_finished(db, device)
+
+    # mark_session_finished owns persistence of ended_at. handle_session_finished
+    # commits only on its terminal branches (CLEARED_RECOVERED, AUTO_STOPPED);
+    # the common NO_PENDING path returns without committing, which would
+    # otherwise let the request-scoped session roll back our flushed write
+    # when get_db closes. An extra commit is idempotent on already-committed
+    # branches.
+    await db.commit()
     return session
 
 
