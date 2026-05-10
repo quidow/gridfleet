@@ -33,6 +33,8 @@ from agent_app.config import agent_settings
 from agent_app.driver_doctor import run_driver_doctor
 from agent_app.error_codes import AgentErrorCode, http_exc
 from agent_app.host_telemetry import get_host_telemetry
+from agent_app.http_client import close as close_shared_http_client
+from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.observability import RequestContextMiddleware, configure_logging
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.adapter_loader import load_adapter
@@ -78,18 +80,24 @@ class HttpPackStateClient(PackStateClient):
         self._host_id = host_id
 
     async def fetch_desired(self) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0, auth=_manager_auth()) as client:
-            resp = await client.get(
-                f"{self._base}/agent/driver-packs/desired",
-                params={"host_id": self._host_id},
-            )
-            resp.raise_for_status()
-            return resp.json()  # type: ignore[no-any-return]
+        client = get_shared_http_client()
+        kwargs: dict[str, Any] = {
+            "params": {"host_id": self._host_id},
+            "timeout": 15.0,
+        }
+        if (auth := _manager_auth()) is not None:
+            kwargs["auth"] = auth
+        resp = await client.get(f"{self._base}/agent/driver-packs/desired", **kwargs)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
 
     async def post_status(self, payload: dict[str, Any]) -> None:
-        async with httpx.AsyncClient(timeout=15.0, auth=_manager_auth()) as client:
-            resp = await client.post(f"{self._base}/agent/driver-packs/status", json=payload)
-            resp.raise_for_status()
+        client = get_shared_http_client()
+        kwargs: dict[str, Any] = {"json": payload, "timeout": 15.0}
+        if (auth := _manager_auth()) is not None:
+            kwargs["auth"] = auth
+        resp = await client.post(f"{self._base}/agent/driver-packs/status", **kwargs)
+        resp.raise_for_status()
 
 
 async def _start_pack_loop_when_ready(
@@ -217,6 +225,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         capabilities_task.cancel()
         await appium_mgr.shutdown()
         await sidecar_supervisor.shutdown()
+        await close_shared_http_client()
 
 
 app = FastAPI(title="GridFleet Agent", version="0.1.0", lifespan=lifespan)
@@ -638,66 +647,67 @@ async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, 
         }
     }
 
-    async with httpx.AsyncClient(base_url=base_url, timeout=req.timeout_sec) as client:
-        try:
-            create_resp = await client.post("/session", json=payload)
-        except httpx.TimeoutException as exc:
-            raise http_exc(
-                status_code=504,
-                code=AgentErrorCode.PROBE_FAILED,
-                message=f"Appium probe timed out: {exc}",
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise http_exc(
-                status_code=502,
-                code=AgentErrorCode.PROBE_FAILED,
-                message=f"Appium probe failed: {exc}",
-            ) from exc
+    client = get_shared_http_client()
+    create_url = f"{base_url}/session"
+    try:
+        create_resp = await client.post(create_url, json=payload, timeout=req.timeout_sec)
+    except httpx.TimeoutException as exc:
+        raise http_exc(
+            status_code=504,
+            code=AgentErrorCode.PROBE_FAILED,
+            message=f"Appium probe timed out: {exc}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise http_exc(
+            status_code=502,
+            code=AgentErrorCode.PROBE_FAILED,
+            message=f"Appium probe failed: {exc}",
+        ) from exc
 
-        if create_resp.status_code >= 400:
-            detail = _probe_failure_detail(create_resp, fallback="Session create failed")
-            raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
+    if create_resp.status_code >= 400:
+        detail = _probe_failure_detail(create_resp, fallback="Session create failed")
+        raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
 
-        try:
-            data = create_resp.json()
-        except ValueError:
-            raise http_exc(
-                status_code=502,
-                code=AgentErrorCode.PROBE_FAILED,
-                message="Session create returned invalid JSON",
-            ) from None
+    try:
+        data = create_resp.json()
+    except ValueError:
+        raise http_exc(
+            status_code=502,
+            code=AgentErrorCode.PROBE_FAILED,
+            message="Session create returned invalid JSON",
+        ) from None
 
-        session_id = data.get("sessionId")
-        if not session_id and isinstance(data.get("value"), dict):
-            session_id = data["value"].get("sessionId")
-        if not isinstance(session_id, str) or not session_id:
-            raise http_exc(
-                status_code=502,
-                code=AgentErrorCode.PROBE_FAILED,
-                message="Session create did not return a session id",
-            )
+    session_id = data.get("sessionId")
+    if not session_id and isinstance(data.get("value"), dict):
+        session_id = data["value"].get("sessionId")
+    if not isinstance(session_id, str) or not session_id:
+        raise http_exc(
+            status_code=502,
+            code=AgentErrorCode.PROBE_FAILED,
+            message="Session create did not return a session id",
+        )
 
-        try:
-            delete_resp = await client.delete(f"/session/{session_id}")
-        except httpx.TimeoutException as exc:
-            raise http_exc(
-                status_code=504,
-                code=AgentErrorCode.PROBE_FAILED,
-                message=f"Session cleanup timed out: {exc}",
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise http_exc(
-                status_code=502,
-                code=AgentErrorCode.PROBE_FAILED,
-                message=f"Session created but cleanup failed: {exc}",
-            ) from exc
+    try:
+        delete_resp = await client.delete(f"{base_url}/session/{session_id}", timeout=req.timeout_sec)
+    except httpx.TimeoutException as exc:
+        raise http_exc(
+            status_code=504,
+            code=AgentErrorCode.PROBE_FAILED,
+            message=f"Session cleanup timed out: {exc}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise http_exc(
+            status_code=502,
+            code=AgentErrorCode.PROBE_FAILED,
+            message=f"Session created but cleanup failed: {exc}",
+        ) from exc
 
-        if delete_resp.status_code >= 400:
-            detail = _probe_failure_detail(
-                delete_resp,
-                fallback=f"Session created but cleanup failed ({delete_resp.status_code})",
-            )
-            raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
+    if delete_resp.status_code >= 400:
+        detail = _probe_failure_detail(
+            delete_resp,
+            fallback=f"Session created but cleanup failed ({delete_resp.status_code})",
+        )
+        raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
 
     return {"ok": True}
 

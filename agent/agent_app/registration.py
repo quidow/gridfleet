@@ -14,6 +14,7 @@ from agent_app import __version__
 from agent_app.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.config import agent_settings
 from agent_app.grid_url import get_local_ip
+from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.version_guidance import update_version_guidance
 
 if TYPE_CHECKING:
@@ -62,15 +63,15 @@ async def register_with_manager(manager_url: str, agent_port: int) -> dict[str, 
         "capabilities": capabilities,
     }
 
-    async with httpx.AsyncClient() as client:
-        request_kwargs: dict[str, Any] = {"json": payload, "timeout": 10}
-        if (auth := _manager_auth()) is not None:
-            request_kwargs["auth"] = auth
-        resp = await client.post(f"{manager_url}/api/hosts/register", **request_kwargs)
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
-        _handle_version_guidance(data)
-        return data
+    client = get_shared_http_client()
+    request_kwargs: dict[str, Any] = {"json": payload, "timeout": 10}
+    if (auth := _manager_auth()) is not None:
+        request_kwargs["auth"] = auth
+    resp = await client.post(f"{manager_url}/api/hosts/register", **request_kwargs)
+    resp.raise_for_status()
+    data: dict[str, Any] = resp.json()
+    _handle_version_guidance(data)
+    return data
 
 
 async def registration_loop(
