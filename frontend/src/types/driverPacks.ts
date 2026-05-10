@@ -1,4 +1,7 @@
+import type { components } from '../api/openapi';
 import type { ConnectionType, DeviceType } from './shared';
+
+type Schemas = components['schemas'];
 
 export type PlatformIconKind = 'mobile' | 'tv' | 'set_top' | 'generic';
 
@@ -35,6 +38,17 @@ export type PlatformHealthCheckLabel = {
   label: string;
 };
 
+export type PlatformDeviceTypeOverride = {
+  identity?: {
+    scheme?: string;
+    scope?: 'global' | 'host';
+  };
+  lifecycle_actions?: PlatformLifecycleAction[];
+  device_fields_schema?: PlatformDeviceField[];
+  default_capabilities?: Record<string, unknown>;
+  connection_behavior?: PlatformConnectionBehavior;
+};
+
 export type PlatformDescriptor = {
   packId: string;
   platformId: string;
@@ -53,216 +67,109 @@ export type PlatformDescriptor = {
   deviceTypeOverrides: Record<string, PlatformDeviceTypeOverride>;
 };
 
-export type PlatformDeviceTypeOverride = {
-  identity?: {
-    scheme?: string;
-    scope?: 'global' | 'host';
-  };
-  lifecycle_actions?: PlatformLifecycleAction[];
-  device_fields_schema?: PlatformDeviceField[];
-  default_capabilities?: Record<string, unknown>;
-  connection_behavior?: PlatformConnectionBehavior;
-};
-
-export interface DriverPackPlatform {
-  id: string;
-  display_name: string;
-  automation_name: string;
-  appium_platform_name: string;
-  device_types: string[];
-  connection_types: string[];
-  grid_slots: string[];
-  identity_scheme: string;
+export type DriverPackPlatform = Omit<
+  Schemas['PlatformOut'],
+  | 'connection_behavior'
+  | 'connection_types'
+  | 'device_fields_schema'
+  | 'device_type_overrides'
+  | 'device_types'
+  | 'display_metadata'
+  | 'health_checks'
+  | 'identity_scope'
+  | 'lifecycle_actions'
+  | 'parallel_resources'
+> & {
+  device_types: DeviceType[];
+  connection_types: ConnectionType[];
   identity_scope: 'global' | 'host';
-  discovery_kind: string;
   lifecycle_actions?: PlatformLifecycleAction[];
   health_checks?: PlatformHealthCheckLabel[];
   device_fields_schema: PlatformDeviceField[];
-  capabilities: Record<string, unknown>;
   display_metadata?: { icon_kind?: PlatformIconKind };
-  default_capabilities?: Record<string, unknown>;
   connection_behavior?: PlatformConnectionBehavior;
   device_type_overrides?: Record<string, PlatformDeviceTypeOverride>;
   parallel_resources?: {
     ports?: Array<{ capability_name: string; start: number }>;
     derived_data_path?: boolean;
   };
-}
+};
 
-export interface DriverPackPlatformsResponse {
-  pack_id: string;
-  release: string;
+export type DriverPackPlatformsResponse = Omit<Schemas['PackPlatforms'], 'platforms'> & {
   platforms: DriverPackPlatform[];
-}
+};
 
 export type PackState = 'draft' | 'enabled' | 'draining' | 'disabled';
 
-export interface PackFeatureAction {
-  id: string;
-  label: string;
-}
-
-export interface PackFeature {
-  display_name: string;
-  description_md: string;
+export type PackFeatureAction = Schemas['FeatureActionOut'];
+export type PackFeature = Omit<Schemas['FeatureOut'], 'actions'> & {
   actions: PackFeatureAction[];
-}
-
-export interface FeatureActionResult {
-  ok: boolean;
-  detail: string;
+};
+export type FeatureActionResult = Omit<Schemas['FeatureActionResultOut'], 'data'> & {
   data: Record<string, unknown>;
-}
+};
 
-export type RuntimePolicy =
-  | { strategy: 'recommended'; appium_server_version?: null; appium_driver_version?: null }
-  | { strategy: 'latest_patch'; appium_server_version?: null; appium_driver_version?: null }
-  | { strategy: 'exact'; appium_server_version: string; appium_driver_version: string };
+export type RuntimePolicy = Schemas['RuntimePolicy'];
 
-export interface AppiumInstallable {
-  source: 'npm' | 'github' | 'local' | string;
-  package: string;
-  version: string;
-  recommended?: string | null;
+export type AppiumInstallable = Omit<Schemas['AppiumInstallableOut'], 'known_bad'> & {
   known_bad: string[];
-  github_repo?: string | null;
-}
-
-export interface ManifestWorkaround {
-  id: string;
+};
+export type ManifestWorkaround = Omit<Schemas['ManifestWorkaroundOut'], 'applies_when' | 'env'> & {
   applies_when: Record<string, unknown>;
   env: Record<string, string>;
-}
+};
+export type ManifestDoctorCheck = Schemas['ManifestDoctorCheckOut'];
 
-export interface ManifestDoctorCheck {
-  id: string;
-  description: string;
-  adapter_hook?: string | null;
-}
-
-export interface DriverPack {
-  id: string;
-  display_name: string;
-  maintainer?: string;
-  license?: string;
+export type DriverPack = Omit<
+  Schemas['PackOut'],
+  | 'appium_driver'
+  | 'appium_server'
+  | 'doctor'
+  | 'features'
+  | 'platforms'
+  | 'runtime_policy'
+  | 'state'
+  | 'workarounds'
+> & {
   state: PackState;
-  current_release: string | null;
   appium_server?: AppiumInstallable | null;
   appium_driver?: AppiumInstallable | null;
   workarounds?: ManifestWorkaround[];
   doctor?: ManifestDoctorCheck[];
-  insecure_features?: string[];
   features?: Record<string, PackFeature>;
   runtime_policy: RuntimePolicy;
   platforms?: DriverPackPlatform[];
-  active_runs: number;
-  live_sessions: number;
-  derived_from?: { pack_id: string; release: string } | null;
-  runtime_summary?: {
-    installed_hosts: number;
-    blocked_hosts: number;
-    actual_appium_server_versions: string[];
-    actual_appium_driver_versions: string[];
-    driver_drift_hosts: number;
-  };
-}
+};
 
-export interface DriverPackRelease {
-  release: string;
-  is_current: boolean;
-  artifact_sha256: string | null;
-  created_at: string;
+export type DriverPackRelease = Omit<Schemas['PackReleaseOut'], 'platform_ids'> & {
   platform_ids: string[];
-}
-
-export interface DriverPackReleasesResponse {
-  pack_id: string;
+};
+export type DriverPackReleasesResponse = Omit<Schemas['PackReleasesOut'], 'releases'> & {
   releases: DriverPackRelease[];
-}
+};
 
-export interface HostRuntimeStatus {
-  runtime_id: string;
-  appium_server_package: string;
-  appium_server_version: string;
-  driver_specs: Array<Record<string, unknown>>;
-  plugin_specs: Array<Record<string, unknown>>;
-  appium_home: string | null;
+type RuntimePluginStatus = {
+  name: string;
+  version: string;
   status: string;
   blocked_reason: string | null;
-  plugins: Array<{
-    name: string;
-    version: string;
-    status: string;
-    blocked_reason: string | null;
-  }>;
-}
+};
 
-export interface HostPackDoctorStatus {
-  pack_id: string;
-  check_id: string;
-  ok: boolean;
-  message: string;
-}
-
-export interface HostPackFeatureStatus {
-  pack_id: string;
-  feature_id: string;
-  ok: boolean;
-  detail: string;
-}
-
-export interface HostPackStatus {
-  pack_id: string;
-  pack_release: string;
-  runtime_id: string | null;
-  status: string;
-  resolved_install_spec: Record<string, unknown> | null;
-  installer_log_excerpt: string | null;
-  resolver_version: string | null;
-  blocked_reason: string | null;
-  installed_at: string | null;
-  desired_appium_driver_version: string | null;
-  installed_appium_driver_version: string | null;
-  appium_driver_drift: boolean;
-}
-
-export interface HostDriverPacksStatus {
-  host_id: string;
-  packs: HostPackStatus[];
+export type HostRuntimeStatus = Omit<Schemas['HostRuntimeStatusOut'], 'plugins'> & {
+  plugins: RuntimePluginStatus[];
+};
+export type HostPackDoctorStatus = Schemas['HostPackDoctorOut'];
+export type HostPackFeatureStatus = Schemas['HostPackFeatureStatusOut'];
+export type HostPackStatus = Schemas['HostPackStatusOut'];
+export type HostDriverPacksStatus = Omit<Schemas['HostDriverPacksOut'], 'features' | 'runtimes'> & {
   runtimes: HostRuntimeStatus[];
-  doctor: HostPackDoctorStatus[];
   features: HostPackFeatureStatus[];
-}
+};
 
-export interface DriverPackHostDoctor {
-  check_id: string;
-  ok: boolean;
-  message: string;
-}
-
-export interface DriverPackHostStatus {
-  host_id: string;
-  hostname: string;
-  status: string;
-  pack_release: string;
-  runtime_id: string | null;
-  pack_status: string;
-  resolved_install_spec: Record<string, unknown> | null;
-  installer_log_excerpt: string | null;
-  resolver_version: string | null;
-  blocked_reason: string | null;
-  installed_at: string | null;
-  desired_appium_driver_version: string | null;
-  installed_appium_driver_version: string | null;
-  appium_driver_drift: boolean;
-  appium_home: string | null;
-  runtime_status: string | null;
-  runtime_blocked_reason: string | null;
-  appium_server_version: string | null;
+export type DriverPackHostDoctor = Schemas['DriverPackHostDoctorOut'];
+export type DriverPackHostStatus = Omit<Schemas['DriverPackHostStatusOut'], 'doctor'> & {
   doctor: DriverPackHostDoctor[];
-}
-
-export interface DriverPackHostsResponse {
-  pack_id: string;
+};
+export type DriverPackHostsResponse = Omit<Schemas['DriverPackHostsOut'], 'hosts'> & {
   hosts: DriverPackHostStatus[];
-}
+};
