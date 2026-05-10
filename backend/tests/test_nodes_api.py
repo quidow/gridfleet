@@ -239,6 +239,53 @@ async def test_restart_node_cold_start(
     assert resp.json()["state"] == NodeState.running.value
 
 
+async def test_restart_node_clears_stale_recovery_suppression(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    """A successful manual restart must clear stale lifecycle suppression so the
+    device leaves the "Recovery paused — admin review needed" state without
+    waiting for the next auto-recovery tick (which never runs while the node
+    is healthy)."""
+    device = await _create_device(db_session, default_host_id)
+    device_id = device["id"]
+    remote_manager_client.post.side_effect = [
+        _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
+        _mock_agent_response({"stopped": True, "port": 4723}),
+        _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "emulator-5554"}),
+    ]
+
+    await client.post(f"/api/devices/{device_id}/node/start")
+
+    db_device = await db_session.get(Device, uuid.UUID(device_id))
+    assert db_device is not None
+    db_device.lifecycle_policy_state = {
+        "last_failure_source": "device_checks",
+        "last_failure_reason": "Agent failed to start node: Appium already running for target",
+        "last_action": "recovery_failed",
+        "last_action_at": "2026-05-10T18:00:00+00:00",
+        "stop_pending": False,
+        "stop_pending_reason": None,
+        "stop_pending_since": None,
+        "recovery_suppressed_reason": "Node restart failed",
+        "backoff_until": None,
+        "recovery_backoff_attempts": 0,
+    }
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/restart")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == NodeState.running.value
+
+    await db_session.refresh(db_device)
+    assert db_device.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert db_device.lifecycle_policy_state["last_failure_reason"] is None
+    assert db_device.lifecycle_policy_state["last_failure_source"] is None
+    assert db_device.lifecycle_policy_state["last_action"] == "manual_recovered"
+
+
 async def test_port_allocation_increments(
     client: AsyncClient,
     db_session: AsyncSession,

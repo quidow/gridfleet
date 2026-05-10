@@ -36,6 +36,15 @@ from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.event_bus import queue_event_for_session
+from app.services.lifecycle_policy_state import (
+    record_manual_recovered,
+)
+from app.services.lifecycle_policy_state import (
+    state as lifecycle_policy_state,
+)
+from app.services.lifecycle_policy_state import (
+    write_state as write_lifecycle_policy_state,
+)
 from app.services.node_service_common import (
     build_appium_driver_caps,
     build_grid_stereotype_caps,
@@ -877,7 +886,9 @@ async def stop_temporary_node(
 
 async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
     if not device.appium_node or device.appium_node.state != NodeState.running:
-        return await start_node(db, device)
+        node = await start_node(db, device)
+        await _clear_manual_recovery_suppression(db, device.id)
+        return node
 
     node = device.appium_node
     owner_key = _build_device_owner_key(device)
@@ -908,7 +919,7 @@ async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
                 preferred_port=node.port,
                 release_allocations_on_failure=False,
             )
-            return await mark_node_started(
+            started = await mark_node_started(
                 db,
                 device,
                 port=restarted.port,
@@ -916,6 +927,8 @@ async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
                 active_connection_target=restarted.active_connection_target,
                 allocated_caps=restarted.allocated_caps,
             )
+            await _clear_manual_recovery_suppression(db, device.id)
+            return started
         except NodeManagerError as exc:
             last_error = exc
             wait = RESTART_BACKOFF_BASE**attempt
@@ -935,3 +948,17 @@ async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
         await appium_node_resource_service.release_temporary(db, host_id=device.host_id, owner_token=owner_key)
     await db.commit()
     raise NodeManagerError(f"Failed to restart node after {RESTART_MAX_RETRIES} attempts: {last_error}")
+
+
+async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.UUID) -> None:
+    locked = await device_locking.lock_device(db, device_id)
+    current_state = lifecycle_policy_state(locked)
+    if (
+        current_state.get("recovery_suppressed_reason") is None
+        and current_state.get("last_failure_reason") is None
+        and current_state.get("backoff_until") is None
+    ):
+        return
+    record_manual_recovered(current_state)
+    write_lifecycle_policy_state(locked, current_state)
+    await db.commit()
