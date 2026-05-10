@@ -188,6 +188,11 @@ async def _stop_grid_node_supervisors_for_shutdown(
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        # Drop every supervisor entry we attempted to stop. Otherwise a
+        # subsequent `appium_mgr.shutdown()` walks the same dict, observes
+        # stale handles, and tries to stop already-cancelled supervisors.
+        for port, _ in supervisors:
+            manager._grid_supervisors.pop(port, None)
         logger.warning("timed out stopping grid node supervisors during shutdown")
         return
     for result in results:
