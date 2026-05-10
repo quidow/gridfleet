@@ -42,6 +42,7 @@ from app.routers import (
     settings,
     webhooks,
 )
+from app.schemas.health import HealthStatusRead, LiveHealthRead
 from app.services import auth as auth_service
 from app.services import device_health, device_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
@@ -252,18 +253,18 @@ app.include_router(host_driver_pack_features.router)
 app.include_router(agent_driver_packs.router)
 
 
-@app.get("/health/live")
+@app.get("/health/live", response_model=LiveHealthRead)
 async def live_health() -> dict[str, str]:
     return await check_liveness()
 
 
-@app.get("/health/ready")
+@app.get("/health/ready", response_model=HealthStatusRead)
 async def ready_health(db: AsyncSession = Depends(get_db)) -> JSONResponse:
     payload, status_code = await check_readiness(db)
     return JSONResponse(content=payload, status_code=status_code)
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthStatusRead)
 async def health(db: AsyncSession = Depends(get_db)) -> JSONResponse:
     payload, status_code = await check_readiness(db)
     return JSONResponse(content=payload, status_code=status_code)

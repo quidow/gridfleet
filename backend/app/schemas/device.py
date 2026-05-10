@@ -2,9 +2,9 @@ import enum
 import json
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
 
 from app.models.appium_node import NodeState
 from app.models.device import (
@@ -197,6 +197,42 @@ class DeviceHealthSummaryRead(BaseModel):
     healthy: bool | None
     summary: str
     last_checked_at: str | None = None
+
+
+class DeviceConfigRead(RootModel[dict[str, Any]]):
+    pass
+
+
+class ConfigAuditEntryRead(BaseModel):
+    id: uuid.UUID
+    previous_config: dict[str, Any] | None = None
+    new_config: dict[str, Any]
+    changed_by: str | None = None
+    changed_at: datetime
+
+
+class DeviceHealthNodeRead(BaseModel):
+    running: bool
+    port: int | None = None
+    state: str | None = None
+
+
+class SessionViabilityRead(BaseModel):
+    status: Literal["passed", "failed"] | None = None
+    last_attempted_at: str | None = None
+    last_succeeded_at: str | None = None
+    error: str | None = None
+    checked_by: Literal["scheduled", "manual", "recovery"] | None = None
+
+
+class DeviceHealthRead(BaseModel):
+    platform: str
+    node: DeviceHealthNodeRead
+    device_checks: dict[str, Any]
+    session_viability: SessionViabilityRead | None = None
+    # Lifecycle policy payload is intentionally open while the policy engine evolves.
+    lifecycle_policy: dict[str, Any]
+    healthy: bool
 
 
 class HardwareTelemetryState(enum.StrEnum):

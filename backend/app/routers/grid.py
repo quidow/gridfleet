@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.schemas.grid import GridQueueRead, GridStatusRead
 from app.services import device_service, grid_service
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
-@router.get("/status")
+@router.get("/status", response_model=GridStatusRead)
 async def grid_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     grid_data = await grid_service.get_grid_status()
     devices = await device_service.list_devices(db)
@@ -46,7 +47,7 @@ async def grid_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     }
 
 
-@router.get("/queue")
+@router.get("/queue", response_model=GridQueueRead)
 async def grid_queue() -> dict[str, Any]:
     grid_data = await grid_service.get_grid_status()
     value = grid_data.get("value", {})
