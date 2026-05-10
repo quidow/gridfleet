@@ -196,6 +196,7 @@ async def durable_job_worker_loop(
     async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
         await reset_stale_running_jobs(session_factory)
         await reset_stale_running_jobs(session_factory, kind=JOB_KIND_HOST_TOOLS_ENSURE)
+        await reset_stale_running_jobs(session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
     while True:
         try:
             async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():

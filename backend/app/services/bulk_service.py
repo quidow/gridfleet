@@ -16,7 +16,7 @@ from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.device_service import delete_device
 from app.services.event_bus import event_bus, queue_event_for_session
-from app.services.maintenance_service import enter_maintenance, exit_maintenance
+from app.services.maintenance_service import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.services.node_service import restart_node, start_node, stop_node
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
@@ -283,9 +283,11 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
 async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
+    successful: list[uuid.UUID] = []
     for device in devices:
         try:
             await exit_maintenance(db, device, commit=False)
+            successful.append(device.id)
         except ValueError as e:
             errors[str(device.id)] = str(e)
         except Exception as e:
@@ -302,4 +304,14 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
         },
     )
     await db.commit()
+
+    # Enqueue recovery jobs after the bulk transaction commits to avoid
+    # create_job committing mid-loop (which could leave a device stranded
+    # with state mutations flushed but no recovery job if create_job raises).
+    for device_id in successful:
+        try:
+            await schedule_device_recovery(db, device_id)
+        except Exception as exc:
+            logger.warning("bulk_exit_maintenance: failed to enqueue recovery for %s: %s", device_id, exc)
+
     return _result(len(devices), succeeded, errors)

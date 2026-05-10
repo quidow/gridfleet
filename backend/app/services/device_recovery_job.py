@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import NoResultFound
+
 from app.models.job import Job
 from app.observability import get_logger
 from app.services import device_locking, lifecycle_policy
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _utcnow() -> datetime:
+def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
@@ -39,16 +41,31 @@ async def run_device_recovery_job(
             row = await db.get(Job, parsed_job_id)
             try:
                 device = await device_locking.lock_device(db, device_id)
+            except NoResultFound:
+                logger.info(
+                    "device_recovery: device %s no longer exists; marking job complete",
+                    device_id,
+                )
+                if row is not None:
+                    row.status = JOB_STATUS_COMPLETED
+                    snapshot = copy.deepcopy(row.snapshot)
+                    snapshot["status"] = JOB_STATUS_COMPLETED
+                    snapshot["note"] = "Device no longer exists"
+                    snapshot["finished_at"] = utcnow().isoformat()
+                    row.snapshot = snapshot
+                    row.completed_at = utcnow()
+                    await db.commit()
+                return
             except Exception:
-                logger.exception("device_recovery: device %s missing or lock failed", device_id)
+                logger.exception("device_recovery: failed to lock device %s", device_id)
                 if row is not None:
                     row.status = JOB_STATUS_FAILED
                     snapshot = copy.deepcopy(row.snapshot)
                     snapshot["status"] = JOB_STATUS_FAILED
-                    snapshot["error"] = f"Device {device_id} not found or could not be locked"
-                    snapshot["finished_at"] = _utcnow().isoformat()
+                    snapshot["error"] = f"Device {device_id} could not be locked"
+                    snapshot["finished_at"] = utcnow().isoformat()
                     row.snapshot = snapshot
-                    row.completed_at = _utcnow()
+                    row.completed_at = utcnow()
                     await db.commit()
                 return
 
@@ -61,9 +78,9 @@ async def run_device_recovery_job(
                 row.status = JOB_STATUS_COMPLETED
                 snapshot = copy.deepcopy(row.snapshot)
                 snapshot["status"] = JOB_STATUS_COMPLETED
-                snapshot["finished_at"] = _utcnow().isoformat()
+                snapshot["finished_at"] = utcnow().isoformat()
                 row.snapshot = snapshot
-                row.completed_at = _utcnow()
+                row.completed_at = utcnow()
                 await db.commit()
     except Exception:
         logger.exception("device_recovery: job %s for device %s crashed", job_id, device_id)
@@ -75,7 +92,7 @@ async def run_device_recovery_job(
             snapshot = copy.deepcopy(row.snapshot)
             snapshot["status"] = JOB_STATUS_FAILED
             snapshot["error"] = "device_recovery job crashed unexpectedly"
-            snapshot["finished_at"] = _utcnow().isoformat()
+            snapshot["finished_at"] = utcnow().isoformat()
             row.snapshot = snapshot
-            row.completed_at = _utcnow()
+            row.completed_at = utcnow()
             await db.commit()

@@ -1,5 +1,6 @@
 """D3: durable_job_worker picks up a device_recovery job and runs recovery."""
 
+import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -10,7 +11,7 @@ from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperatio
 from app.models.host import Host
 from app.services import device_locking, job_queue, maintenance_service
 from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
-from app.services.job_status_constants import JOB_STATUS_PENDING
+from app.services.job_status_constants import JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from tests.helpers import create_device, create_reserved_run
 
 pytestmark = pytest.mark.asyncio
@@ -142,3 +143,37 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     )
     assert device.hold == DeviceHold.reserved, f"Expected hold=reserved (active run), got {device.hold}"
     _ = run  # consumed above; suppress unused-variable warning
+
+
+async def test_device_recovery_job_completed_when_device_missing(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """When the device no longer exists, the job must be marked COMPLETED (not FAILED).
+
+    This covers the orphaned-job path: the device was deleted between the time
+    the recovery job was enqueued and the time the worker picked it up.
+    """
+    nonexistent_device_id = uuid.uuid4()
+
+    job = await job_queue.create_job(
+        db_session,
+        kind=JOB_KIND_DEVICE_RECOVERY,
+        payload={
+            "device_id": str(nonexistent_device_id),
+            "source": "exit_maintenance",
+            "reason": "Operator exited maintenance",
+        },
+        snapshot={"status": JOB_STATUS_PENDING},
+        max_attempts=1,
+    )
+
+    worked = await job_queue.run_pending_jobs_once(_session_factory(db_session))
+
+    assert worked is True
+
+    await db_session.refresh(job)
+    assert job.status == JOB_STATUS_COMPLETED, f"Expected COMPLETED for orphaned job, got {job.status}"
+    assert job.snapshot.get("note") == "Device no longer exists", (
+        f"Expected snapshot note 'Device no longer exists', got {job.snapshot.get('note')!r}"
+    )

@@ -1,4 +1,5 @@
 import logging
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,21 +68,29 @@ async def exit_maintenance(
     if commit:
         await db.commit()
         await db.refresh(device)
+        # D3: schedule recovery so the operator does not see an idle offline
+        # device while waiting for the next device_connectivity_loop tick.
+        # Bulk callers pass commit=False and enqueue their own jobs after
+        # their own final commit, to avoid create_job committing mid-loop.
+        await schedule_device_recovery(db, device.id)
 
-    # D3: enqueue one-shot recovery so the operator does not see an idle
-    # offline device while waiting for the next connectivity loop tick.
-    # create_job commits internally; placing it after the state commit ensures
-    # the worker (running in a separate session) sees the post-exit state.
+    return device
+
+
+async def schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> None:
+    """Enqueue a one-shot device_recovery job for the given device.
+
+    Creates and commits one row in the durable job queue. Safe to call
+    after the device-state mutations are already committed.
+    """
     await job_queue.create_job(
         db,
         kind=JOB_KIND_DEVICE_RECOVERY,
         payload={
-            "device_id": str(device.id),
+            "device_id": str(device_id),
             "source": "exit_maintenance",
             "reason": "Operator exited maintenance",
         },
         snapshot={"status": JOB_STATUS_PENDING},
         max_attempts=1,
     )
-
-    return device
