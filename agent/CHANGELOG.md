@@ -2,6 +2,26 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.5.0...gridfleet-agent-v0.6.0) (2026-05-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** replace java grid relay with python grid node service ([#148](https://github.com/quidow/gridfleet/issues/148))
+
+### Features
+
+* **agent:** replace java grid relay with python grid node service ([#148](https://github.com/quidow/gridfleet/issues/148)) ([05f7604](https://github.com/quidow/gridfleet/commit/05f760426c3151b2c4b264d0c9e290469f60de28))
+
+
+### Bug Fixes
+
+* **agent:** close five remaining grid node review findings ([#156](https://github.com/quidow/gridfleet/issues/156)) ([d065ef2](https://github.com/quidow/gridfleet/commit/d065ef24182133b354ce667bb2bc679387326ddc))
+* **agent:** match capabilities across always-match + first-match on grid node ([#155](https://github.com/quidow/gridfleet/issues/155)) ([d893655](https://github.com/quidow/gridfleet/commit/d89365546845228be01b45f5b1479c18a790fd4c))
+* **agent:** populate session info in grid node status payload ([#153](https://github.com/quidow/gridfleet/issues/153)) ([7a34932](https://github.com/quidow/gridfleet/commit/7a349328000e087219816d8f3e2c03e32b052264))
+* **agent:** share httpx async client across probe, registration, and pack-state loops ([#150](https://github.com/quidow/gridfleet/issues/150)) ([874aa11](https://github.com/quidow/gridfleet/commit/874aa1164a86a841fce36240f9711d2733ad8bc6))
+* **agent:** tighten grid node lifecycle and capability edge cases ([#154](https://github.com/quidow/gridfleet/issues/154)) ([d5d9a04](https://github.com/quidow/gridfleet/commit/d5d9a047d50c84cc69d982752576a5b1450bff1d))
+
 ## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.4.0...gridfleet-agent-v0.5.0) (2026-05-10)
 
 
