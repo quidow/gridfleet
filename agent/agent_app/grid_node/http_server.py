@@ -1,18 +1,45 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+import time
+from typing import TYPE_CHECKING, Protocol
 
+import httpx
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from agent_app.grid_node.node_state import NoFreeSlotError, NoMatchingSlotError
+from agent_app.grid_node.protocol import EventType, event_envelope
+from agent_app.grid_node.proxy import proxy_request
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from starlette.requests import Request
 
     from agent_app.grid_node.node_state import NodeState
 
 
-def build_app(*, state: NodeState, appium_upstream: str) -> Starlette:
+class EventPublisher(Protocol):
+    async def publish(self, event: dict[str, object]) -> None: ...
+
+
+class NoopPublisher:
+    async def publish(self, event: dict[str, object]) -> None:
+        return None
+
+
+def build_app(
+    *,
+    state: NodeState,
+    appium_upstream: str,
+    bus: EventPublisher | None = None,
+    proxy_request_func: Callable[..., Awaitable[Response]] = proxy_request,
+    proxy_timeout: float = 30.0,
+) -> Starlette:
+    publisher = bus or NoopPublisher()
+
     async def status(_request: Request) -> JSONResponse:
         snapshot = state.snapshot()
         return JSONResponse(
@@ -37,9 +64,70 @@ def build_app(*, state: NodeState, appium_upstream: str) -> Starlette:
         owned = any(slot.session_id == session_id for slot in state.snapshot().slots)
         return JSONResponse({"value": owned})
 
+    async def create_session(request: Request) -> Response:
+        body = await request.json()
+        caps = _always_match_caps(body)
+        try:
+            reservation = state.reserve(caps)
+        except NoMatchingSlotError:
+            return JSONResponse({"value": {"error": "session not created"}}, status_code=404)
+        except NoFreeSlotError:
+            return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
+
+        async with httpx.AsyncClient() as client:
+            response = await proxy_request_func(
+                request,
+                upstream=appium_upstream,
+                timeout=proxy_timeout,
+                client=client,
+            )
+        if response.status_code < 200 or response.status_code >= 300:
+            state.abort(reservation.id)
+            return response
+        session_id = _session_id_from_response(response)
+        if session_id is None:
+            state.abort(reservation.id)
+            return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
+        state.commit(reservation.id, session_id=session_id, started_at=time.monotonic())
+        await publisher.publish(
+            event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id})
+        )
+        return response
+
     return Starlette(
         routes=[
             Route("/status", status, methods=["GET"]),
+            Route("/session", create_session, methods=["POST"]),
             Route("/se/grid/node/owner/{session_id}", owner, methods=["POST"]),
         ]
     )
+
+
+def _always_match_caps(body: object) -> dict[str, object]:
+    if not isinstance(body, dict):
+        return {}
+    capabilities = body.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return {}
+    always_match = capabilities.get("alwaysMatch")
+    if not isinstance(always_match, dict):
+        return {}
+    return dict(always_match)
+
+
+def _session_id_from_response(response: Response) -> str | None:
+    try:
+        payload = json.loads(bytes(response.body))
+    except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("value")
+    if isinstance(value, dict):
+        value_session_id = value.get("sessionId")
+        if isinstance(value_session_id, str):
+            return value_session_id
+    session_id = payload.get("sessionId")
+    if isinstance(session_id, str):
+        return session_id
+    return None
