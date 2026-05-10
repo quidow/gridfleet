@@ -72,7 +72,18 @@ async def exit_maintenance(
         # device while waiting for the next device_connectivity_loop tick.
         # Bulk callers pass commit=False and enqueue their own jobs after
         # their own final commit, to avoid create_job committing mid-loop.
-        await schedule_device_recovery(db, device.id)
+        # Enqueue failure must not raise back to the operator after the
+        # state mutation already committed — the device_connectivity_loop
+        # remains the fallback path.
+        try:
+            await schedule_device_recovery(db, device.id)
+        except Exception:
+            logger.warning(
+                "exit_maintenance: failed to enqueue recovery job for %s; "
+                "device_connectivity_loop will pick it up on the next tick",
+                device.id,
+                exc_info=True,
+            )
 
     return device
 
