@@ -8,11 +8,11 @@ desired-state convergence.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.observability import get_logger
 from app.services.agent_snapshot import parse_running_nodes
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from app.services.agent_snapshot import RunningAppiumNode
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 FetchHealth = Callable[..., Awaitable[dict[str, object]]]
 AppiumStop = Callable[..., Awaitable[object]]
@@ -129,22 +129,18 @@ async def reconcile_host_orphans(
             logger.warning(
                 "appium_reconciler_stop_failed",
                 exc_info=True,
-                extra={
-                    "host_id": str(host_id),
-                    "port": orphan.port,
-                    "connection_target": orphan.connection_target,
-                    "reason": orphan.reason,
-                },
+                host_id=str(host_id),
+                port=orphan.port,
+                connection_target=orphan.connection_target,
+                reason=orphan.reason,
             )
             continue
         stopped.append(orphan)
         logger.info(
             "appium_reconciler_orphan_stopped",
-            extra={
-                "host_id": str(host_id),
-                "port": orphan.port,
-                "connection_target": orphan.connection_target,
-                "reason": orphan.reason,
-            },
+            host_id=str(host_id),
+            port=orphan.port,
+            connection_target=orphan.connection_target,
+            reason=orphan.reason,
         )
     return stopped
