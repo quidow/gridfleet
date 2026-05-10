@@ -71,6 +71,29 @@ def offline_summary_state(device: Device) -> DeviceLifecyclePolicySummaryState:
     return DeviceLifecyclePolicySummaryState.manual
 
 
+def record_reconciler_start_failure_state(
+    device: Device,
+    *,
+    reason: str,
+    attempts: int,
+    backoff_until: str | None,
+) -> None:
+    fresh = policy_state(device)
+    fresh["recovery_backoff_attempts"] = attempts
+    fresh["last_failure_source"] = "appium_reconciler"
+    fresh["last_failure_reason"] = reason
+    if backoff_until is not None:
+        fresh["backoff_until"] = backoff_until
+    write_state(device, fresh)
+
+
+def reset_reconciler_start_failure_state(device: Device) -> None:
+    fresh = policy_state(device)
+    fresh["recovery_backoff_attempts"] = 0
+    fresh["backoff_until"] = None
+    write_state(device, fresh)
+
+
 def auto_stopped_summary_state(
     device: Device,
     run: TestRun | None,

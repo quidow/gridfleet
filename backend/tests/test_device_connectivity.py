@@ -273,42 +273,29 @@ async def test_lifecycle_state_uses_pack_lifecycle_action(
 async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> None:
     _host, device, node = await _setup_host_and_device(db_session, with_node=True)
 
-    # Agent reports no devices connected
-    with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
-        patch(
-            "app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock, return_value=True
-        ) as mock_stop,
-    ):
+    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
-    mock_stop.assert_called_once()
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.stopped
 
 
-async def test_disconnected_device_keeps_node_error_when_stop_fails(db_session: AsyncSession) -> None:
+async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) -> None:
     _host, device, node = await _setup_host_and_device(db_session, with_node=True)
 
-    with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
-        patch(
-            "app.services.device_connectivity._stop_node_via_agent",
-            new_callable=AsyncMock,
-            return_value=False,
-        ) as mock_stop,
-    ):
+    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
-    mock_stop.assert_awaited_once()
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.error
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.stopped
 
 
 async def test_offline_disconnected_device_stops_leftover_node(db_session: AsyncSession) -> None:
@@ -318,20 +305,15 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         with_node=True,
     )
 
-    with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
-        patch(
-            "app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock, return_value=True
-        ) as stop,
-    ):
+    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
-    stop.assert_awaited_once()
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.stopped
 
 
 async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:

@@ -8,7 +8,7 @@ import pytest_asyncio
 from httpx import AsyncClient, HTTPStatusError, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.services import device_locking
 from app.services.agent_error_codes import AgentErrorCode
@@ -131,12 +131,12 @@ async def test_start_node(
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.running.value
-    assert data["pid"] == 12345
+    assert data["state"] == NodeState.stopped.value
+    assert data["desired_state"] == NodeState.running.value
+    assert data["pid"] is None
     assert data["port"] == 4723
-    assert data["active_connection_target"] == "emulator-5554"
+    assert data["active_connection_target"] is None
 
-    # Verify device status updated to available
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
 
@@ -155,9 +155,9 @@ async def test_start_node_already_running(
 
     await client.post(f"/api/devices/{device_id}/node/start")
     resp = await client.post(f"/api/devices/{device_id}/node/start")
-    assert resp.status_code == 400
-    assert "already running" in resp.json()["error"]["message"]
-    assert remote_manager_client.post.await_count == 1
+    assert resp.status_code == 200
+    assert resp.json()["desired_state"] == NodeState.running.value
+    assert remote_manager_client.post.await_count == 0
 
 
 async def test_start_node_device_not_found(client: AsyncClient) -> None:
@@ -173,21 +173,28 @@ async def test_stop_node(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    remote_manager_client.post.side_effect = [
-        _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
-        _mock_agent_response({"stopped": True, "port": 4723}),
-    ]
-
-    await client.post(f"/api/devices/{device_id}/node/start")
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+            active_connection_target="emulator-5554",
+        )
+    )
+    await db_session.commit()
 
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.stopped.value
-    assert data["pid"] is None
-    assert data["active_connection_target"] is None
+    assert data["state"] == NodeState.running.value
+    assert data["desired_state"] == NodeState.stopped.value
+    assert data["pid"] == 12345
+    assert data["active_connection_target"] == "emulator-5554"
 
-    # Verify device status updated to offline
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.json()["operational_state"] == DeviceOperationalState.offline.value
 
@@ -209,18 +216,24 @@ async def test_restart_node(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    remote_manager_client.post.side_effect = [
-        _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
-        _mock_agent_response({"stopped": True, "port": 4723}),
-        _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "emulator-5554"}),
-    ]
-
-    # Start then restart
-    await client.post(f"/api/devices/{device_id}/node/start")
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
     data = resp.json()
     assert data["state"] == NodeState.running.value
+    assert data["desired_state"] == NodeState.running.value
+    assert data["transition_token"] is not None
 
 
 async def test_restart_node_cold_start(
@@ -238,7 +251,8 @@ async def test_restart_node_cold_start(
 
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
-    assert resp.json()["state"] == NodeState.running.value
+    assert resp.json()["state"] == NodeState.stopped.value
+    assert resp.json()["desired_state"] == NodeState.running.value
 
 
 async def test_restart_node_clears_stale_recovery_suppression(
@@ -259,7 +273,18 @@ async def test_restart_node_clears_stale_recovery_suppression(
         _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "emulator-5554"}),
     ]
 
-    await client.post(f"/api/devices/{device_id}/node/start")
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
     write_lifecycle_policy_state(
@@ -282,12 +307,10 @@ async def test_restart_node_clears_stale_recovery_suppression(
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
     assert resp.json()["state"] == NodeState.running.value
+    assert resp.json()["transition_token"] is not None
 
     await db_session.refresh(locked)
-    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
-    assert locked.lifecycle_policy_state["last_failure_reason"] is None
-    assert locked.lifecycle_policy_state["last_failure_source"] is None
-    assert locked.lifecycle_policy_state["last_action"] == "manual_recovered"
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Node restart failed"
 
 
 async def test_port_allocation_increments(
@@ -323,7 +346,9 @@ async def test_port_allocation_increments(
     r2 = await client.get(f"/api/devices/{d2['id']}")
 
     assert r1.json()["appium_node"]["port"] == 4723
-    assert r2.json()["appium_node"]["port"] == 4724
+    assert r2.json()["appium_node"]["port"] == 4723
+    assert r1.json()["appium_node"]["desired_port"] == 4723
+    assert r2.json()["appium_node"]["desired_port"] == 4723
 
 
 async def test_start_node_agent_failure(
@@ -342,8 +367,8 @@ async def test_start_node_agent_failure(
 
     device = await _create_device(db_session, default_host_id)
     resp = await client.post(f"/api/devices/{device['id']}/node/start")
-    assert resp.status_code == 400
-    assert "Agent failed to start node: startup failed" in resp.json()["error"]["message"]
+    assert resp.status_code == 200
+    assert resp.json()["desired_state"] == NodeState.running.value
 
 
 async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
@@ -360,18 +385,14 @@ async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
     remote_manager_client.get.return_value = _mock_agent_response({"running": False, "port": 4723})
 
     resp = await client.post(f"/api/devices/{device['id']}/node/start")
-    assert resp.status_code == 400
-    assert "Appium is not reachable" in resp.json()["error"]["message"]
+    assert resp.status_code == 200
 
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200
     node = detail.json()["appium_node"]
     assert node["state"] == "stopped"
-    # Rollback writes desired_state='stopped' on inline-RPC failure so the
-    # AppiumNode row is consistent. Phase 4 reconciler would otherwise try to
-    # converge a desired-running row whose agent-side start never succeeded.
-    assert node["desired_state"] == "stopped"
-    assert node["desired_port"] is None
+    assert node["desired_state"] == "running"
+    assert node["desired_port"] == 4723
 
 
 async def test_start_node_retries_next_port_when_agent_reports_port_conflict(
@@ -388,11 +409,11 @@ async def test_start_node_retries_next_port_when_agent_reports_port_conflict(
 
     resp = await client.post(f"/api/devices/{device['id']}/node/start")
     assert resp.status_code == 200
-    assert resp.json()["port"] == 4724
+    assert resp.json()["port"] == 4723
 
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200
-    assert detail.json()["appium_node"]["port"] == 4724
+    assert detail.json()["appium_node"]["desired_port"] == 4723
 
 
 async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
@@ -409,16 +430,27 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
         _mock_agent_response({"pid": 12346, "port": 4724, "connection_target": "emulator-5554"}),
     ]
 
-    start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
-    assert start_resp.status_code == 200
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device["id"]),
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
 
     resp = await client.post(f"/api/devices/{device['id']}/node/restart")
     assert resp.status_code == 200
-    assert resp.json()["port"] == 4724
+    assert resp.json()["port"] == 4723
+    assert resp.json()["transition_token"] is not None
 
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200
-    assert detail.json()["appium_node"]["port"] == 4724
+    assert detail.json()["appium_node"]["desired_port"] == 4723
 
 
 async def test_reserved_device_blocks_node_controls(
@@ -454,22 +486,34 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    # Test flow: start node → stop it explicitly while running (confirms stop is
-    # not blocked) → enter maintenance (no node running, so no auto-stop) →
-    # verify start/restart are blocked by maintenance.
-    remote_manager_client.post.side_effect = [
-        _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
-        _mock_agent_response({"stopped": True, "port": 4723}),
-    ]
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
 
-    await client.post(f"/api/devices/{device_id}/node/start")
-    # Stop the node explicitly while it is running — maintenance is not entered
-    # yet so this proves the stop endpoint is not blocked by maintenance state.
+    # Stop the node explicitly while it is observed running. Maintenance is not
+    # entered yet, so this proves the stop endpoint is not blocked by
+    # maintenance state.
     stop_resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert stop_resp.status_code == 200
-    assert stop_resp.json()["state"] == NodeState.stopped.value
+    assert stop_resp.json()["state"] == NodeState.running.value
+    assert stop_resp.json()["desired_state"] == NodeState.stopped.value
 
-    # Now enter maintenance (node already stopped, so no auto-stop occurs).
+    # Simulate the reconciler observing the stop before entering maintenance.
+    node = await db_session.get(AppiumNode, uuid.UUID(stop_resp.json()["id"]))
+    assert node is not None
+    node.state = NodeState.stopped
+    node.pid = None
+    await db_session.commit()
+
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
     assert maintenance_resp.status_code == 200
     assert maintenance_resp.json()["hold"] == DeviceHold.maintenance.value

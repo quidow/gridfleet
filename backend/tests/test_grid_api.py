@@ -1,10 +1,10 @@
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.appium_node import AppiumNode, NodeState
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -32,23 +32,6 @@ async def seed_packs(db_session: AsyncSession) -> None:
     """Seed driver packs so the assert_runnable gate passes in all tests."""
     await seed_test_packs(db_session)
     await db_session.commit()
-
-
-def _mock_agent_response(json_data: dict[str, Any], status_code: int = 200) -> MagicMock:
-    mock_resp = MagicMock()
-    mock_resp.status_code = status_code
-    mock_resp.json.return_value = json_data
-    mock_resp.raise_for_status = MagicMock()
-    return mock_resp
-
-
-def _mock_agent_client(*, post_responses: list[MagicMock], get_responses: list[MagicMock] | None = None) -> MagicMock:
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(side_effect=post_responses)
-    mock_client.get = AsyncMock(side_effect=get_responses or [])
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    return mock_client
 
 
 async def test_grid_status(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -121,18 +104,20 @@ async def test_grid_status_with_running_node(
         operational_state="available",
     )
 
-    mock_client = _mock_agent_client(
-        post_responses=[
-            _mock_agent_response({"pid": 9999, "port": 4723, "connection_target": DEVICE_PAYLOAD["identity_value"]})
-        ],
-        get_responses=[_mock_agent_response({"running": True, "port": 4723})],
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=9999,
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
     )
+    await db_session.commit()
 
-    with (
-        patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client),
-        patch("app.routers.grid.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS),
-    ):
-        await client.post(f"/api/devices/{device.id}/node/start")
+    with patch("app.routers.grid.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200

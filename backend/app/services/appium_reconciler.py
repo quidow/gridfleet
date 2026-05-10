@@ -38,8 +38,11 @@ from app.services.agent_operations import agent_base_url, agent_health, appium_s
 from app.services.agent_snapshot import parse_running_nodes
 from app.services.appium_reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.lifecycle_policy_actions import (
+    record_reconciler_start_failure_state,
+    reset_reconciler_start_failure_state,
+)
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
 from app.services.node_service import mark_node_started, mark_node_stopped, start_temporary_node, stop_temporary_node
 from app.services.node_service_types import TemporaryNodeHandle
 from app.services.settings_service import settings_service
@@ -580,12 +583,15 @@ async def _record_start_failure(row: DesiredRow, *, reason: str) -> None:
             return
         current = lifecycle_policy_state(device)
         attempts = int(current.get("recovery_backoff_attempts", 0)) + 1
-        current["recovery_backoff_attempts"] = attempts
-        current["last_failure_source"] = "appium_reconciler"
-        current["last_failure_reason"] = reason
+        backoff_until = None
         if attempts >= threshold:
-            current["backoff_until"] = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
-        write_lifecycle_policy_state(device, current)
+            backoff_until = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
+        record_reconciler_start_failure_state(
+            device,
+            reason=reason,
+            attempts=attempts,
+            backoff_until=backoff_until,
+        )
         await db.commit()
 
 
@@ -597,9 +603,7 @@ async def _reset_start_failure(row: DesiredRow) -> None:
         current = lifecycle_policy_state(device)
         if not current.get("recovery_backoff_attempts") and not current.get("backoff_until"):
             return
-        current["recovery_backoff_attempts"] = 0
-        current["backoff_until"] = None
-        write_lifecycle_policy_state(device, current)
+        reset_reconciler_start_failure_state(device)
         await db.commit()
 
 

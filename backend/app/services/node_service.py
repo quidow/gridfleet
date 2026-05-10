@@ -17,6 +17,7 @@ from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.services import (
+    agent_operations,
     appium_capability_keys,
     appium_node_locking,
     appium_node_resource_service,
@@ -74,6 +75,7 @@ AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 
 appium_start = appium_reconciler_agent.appium_start
 appium_stop = appium_reconciler_agent.appium_stop
+appium_status = agent_operations.appium_status
 
 
 def _short_session_factory(db: AsyncSession) -> async_sessionmaker[AsyncSession]:
