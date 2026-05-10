@@ -2,6 +2,17 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.5.0...gridfleet-testkit-v0.6.0) (2026-05-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backend:** clients sending {drain: true|false} to /api/devices/ {id}/maintenance, /api/devices/bulk/enter-maintenance, or the group bulk equivalent must drop the field. The enter-maintenance behaviour is unchanged from drain=false (always stop the node).
+
+### Features
+
+* **backend:** device state model drift fixes (D1-D6) ([#144](https://github.com/quidow/gridfleet/issues/144)) ([09556fd](https://github.com/quidow/gridfleet/commit/09556fdac8ddb458f1655f9001f25240443062fb))
+
 ## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.4.0...gridfleet-testkit-v0.5.0) (2026-05-08)
 
 
