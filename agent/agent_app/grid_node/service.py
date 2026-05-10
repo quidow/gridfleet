@@ -232,13 +232,27 @@ class GridNodeService:
         snapshot = self.state.snapshot()
         availability = "DRAINING" if snapshot.drain else "UP"
         slot_payloads: list[dict[str, object]] = []
+        epoch_iso = "1970-01-01T00:00:00Z"
         for runtime_slot, source_slot in zip(snapshot.slots, self.config.slots, strict=True):
+            stereotype = source_slot.stereotype.to_dict()
+            session: dict[str, object] | None = None
+            last_started = epoch_iso
+            if runtime_slot.session_id is not None:
+                start_iso = runtime_slot.session_start_iso or epoch_iso
+                last_started = start_iso
+                session = {
+                    "sessionId": runtime_slot.session_id,
+                    "start": start_iso,
+                    "stereotype": stereotype,
+                    "capabilities": runtime_slot.session_capabilities or {},
+                    "uri": self.config.node_uri,
+                }
             slot_payloads.append(
                 {
                     "id": {"hostId": self.config.node_id, "id": runtime_slot.slot_id},
-                    "lastStarted": "1970-01-01T00:00:00Z",
-                    "session": None,
-                    "stereotype": source_slot.stereotype.to_dict(),
+                    "lastStarted": last_started,
+                    "session": session,
+                    "stereotype": stereotype,
                 }
             )
         # Field names + types match Selenium 4.x `NodeStatus.fromJson`:
