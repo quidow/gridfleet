@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import signal
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -808,7 +808,7 @@ def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatc
 
     class FakeDriver:
         session_id = "sess-1"
-        capabilities = {
+        capabilities: ClassVar[dict[str, object]] = {
             "appium:gridfleet:deviceId": "dev-1",
             "appium:udid": "SERIAL123",
             "appium:platform": "android_mobile",
@@ -1694,7 +1694,7 @@ def test_register_session_from_driver_wraps_quit_to_notify(monkeypatch):
 
     class FakeDriver:
         session_id = "session-xyz"
-        capabilities: dict[str, object] = {}
+        capabilities: ClassVar[dict[str, object]] = {}
 
         def quit(self) -> None:
             quit_called["n"] += 1
@@ -1731,7 +1731,7 @@ def test_register_session_from_driver_quit_wrap_is_idempotent(monkeypatch):
 
     class FakeDriver:
         session_id = "session-xyz"
-        capabilities: dict[str, object] = {}
+        capabilities: ClassVar[dict[str, object]] = {}
         quit_count = 0
 
         def quit(self) -> None:
