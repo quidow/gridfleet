@@ -116,6 +116,9 @@ class NodeState:
                 runtime.reserved_at = None
         return expired
 
+    def mark_drain(self) -> None:
+        self._drain = True
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[

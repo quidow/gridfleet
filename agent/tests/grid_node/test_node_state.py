@@ -82,3 +82,12 @@ def test_commit_after_reservation_expiry_raises() -> None:
     state.expire_reservations(now=45.0, ttl_sec=30.0)
     with pytest.raises(ReservationGoneError):
         state.commit(reservation.id, session_id="session-1", started_at=50.0)
+
+
+def test_mark_drain_blocks_new_reservations_and_is_idempotent() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    state.mark_drain()
+    state.mark_drain()
+    assert state.snapshot().drain is True
+    with pytest.raises(NoFreeSlotError):
+        state.reserve({"platformName": "Android"})
