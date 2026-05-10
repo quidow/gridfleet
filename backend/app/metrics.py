@@ -25,6 +25,8 @@ from app.metrics_recorders import (
     PENDING_JOBS,
     RUN_CLAIMS_TOTAL,
     WEBHOOK_DELIVERIES_TOTAL,
+    ip_ping_consecutive_failures,
+    ip_ping_failures_total,
     record_agent_call,
     record_background_loop_error,
     record_background_loop_run,
@@ -32,7 +34,9 @@ from app.metrics_recorders import (
     record_heartbeat_cycle,
     record_heartbeat_ping,
     record_http_request,
+    record_ip_ping_failure,
     record_webhook_delivery,
+    set_ip_ping_consecutive_failures,
 )
 from app.models.job import Job
 from app.models.session import Session, SessionStatus
@@ -96,6 +100,8 @@ __all__ = [
     "PENDING_JOBS",
     "RUN_CLAIMS_TOTAL",
     "WEBHOOK_DELIVERIES_TOTAL",
+    "ip_ping_consecutive_failures",
+    "ip_ping_failures_total",
     "record_agent_call",
     "record_background_loop_error",
     "record_background_loop_run",
@@ -103,7 +109,9 @@ __all__ = [
     "record_heartbeat_cycle",
     "record_heartbeat_ping",
     "record_http_request",
+    "record_ip_ping_failure",
     "record_webhook_delivery",
     "refresh_system_gauges",
     "render_metrics",
+    "set_ip_ping_consecutive_failures",
 ]

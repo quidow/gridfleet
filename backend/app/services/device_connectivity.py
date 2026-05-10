@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
@@ -319,6 +320,16 @@ async def _check_connectivity(db: AsyncSession) -> None:
                             ok=bool(ip_ping_entry.get("ok")),
                             threshold=ip_ping_threshold,
                         )
+                        if not bool(ip_ping_entry.get("ok")):
+                            metrics.record_ip_ping_failure(device_identity=device.identity_value, host=host.hostname)
+                        counter_value = await control_plane_state_store.get_value(
+                            db, IP_PING_NAMESPACE, device.identity_value
+                        )
+                        metrics.set_ip_ping_consecutive_failures(
+                            device_identity=device.identity_value,
+                            host=host.hostname,
+                            value=int(counter_value or 0),
+                        )
                     healthy = others_ok and gated_ip_ping_ok
 
                     if not healthy:
@@ -413,6 +424,18 @@ async def _check_connectivity(db: AsyncSession) -> None:
                                 device,
                                 ok=bool(ip_ping_entry.get("ok")),
                                 threshold=ip_ping_threshold,
+                            )
+                            if not bool(ip_ping_entry.get("ok")):
+                                metrics.record_ip_ping_failure(
+                                    device_identity=device.identity_value, host=host.hostname
+                                )
+                            counter_value = await control_plane_state_store.get_value(
+                                db, IP_PING_NAMESPACE, device.identity_value
+                            )
+                            metrics.set_ip_ping_consecutive_failures(
+                                device_identity=device.identity_value,
+                                host=host.hostname,
+                                value=int(counter_value or 0),
                             )
                         healthy = others_ok and gated_ip_ping_ok
 
