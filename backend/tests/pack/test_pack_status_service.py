@@ -321,3 +321,177 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
             "doctor": [{"check_id": "xcode", "ok": False, "message": "Xcode missing"}],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_apply_status_clears_stale_doctor_rows_when_pack_reports_empty(db_session: AsyncSession) -> None:
+    """A pack reported with an empty doctor list must wipe its pre-existing doctor rows."""
+    await seed_test_packs(db_session)
+
+    host = Host(
+        hostname="h-doctor-reconcile.local",
+        ip="10.0.0.42",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+
+    db_session.add(
+        HostPackDoctorResult(
+            host_id=host.id,
+            pack_id="appium-uiautomator2",
+            check_id="adb",
+            ok=False,
+            message="stale parse error",
+        )
+    )
+    await db_session.commit()
+
+    payload = {
+        "host_id": str(host.id),
+        "runtimes": [],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": None,
+                "status": "installed",
+                "resolved_install_spec": None,
+                "installer_log_excerpt": None,
+                "resolver_version": None,
+                "blocked_reason": None,
+            }
+        ],
+        "doctor": [],
+    }
+
+    await apply_status(db_session, payload)
+    await db_session.commit()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(HostPackDoctorResult).where(
+                    HostPackDoctorResult.host_id == host.id,
+                    HostPackDoctorResult.pack_id == "appium-uiautomator2",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_apply_status_ignores_doctor_entries_for_unreported_packs(db_session: AsyncSession) -> None:
+    """Doctor entries for pack_ids absent from the packs list are silently dropped."""
+    await seed_test_packs(db_session)
+
+    host = Host(
+        hostname="h-doctor-stray.local",
+        ip="10.0.0.43",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+
+    payload = {
+        "host_id": str(host.id),
+        "runtimes": [],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": None,
+                "status": "installed",
+                "resolved_install_spec": None,
+                "installer_log_excerpt": None,
+                "resolver_version": None,
+                "blocked_reason": None,
+            }
+        ],
+        "doctor": [
+            {"pack_id": "appium-uiautomator2", "check_id": "adb", "ok": True, "message": ""},
+            {"pack_id": "appium-xcuitest", "check_id": "xcrun", "ok": True, "message": ""},
+        ],
+    }
+
+    await apply_status(db_session, payload)
+    await db_session.commit()
+
+    rows = (
+        (await db_session.execute(select(HostPackDoctorResult).where(HostPackDoctorResult.host_id == host.id)))
+        .scalars()
+        .all()
+    )
+    pack_ids = {row.pack_id for row in rows}
+    assert pack_ids == {"appium-uiautomator2"}
+
+
+@pytest.mark.asyncio
+async def test_apply_status_preserves_doctor_rows_for_blocked_packs(db_session: AsyncSession) -> None:
+    """Blocked packs did not run doctor; previously-recorded rows must not be wiped."""
+    await seed_test_packs(db_session)
+
+    host = Host(
+        hostname="h-doctor-blocked.local",
+        ip="10.0.0.44",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+
+    db_session.add(
+        HostPackDoctorResult(
+            host_id=host.id,
+            pack_id="appium-uiautomator2",
+            check_id="adb",
+            ok=True,
+            message="last good check",
+        )
+    )
+    await db_session.commit()
+
+    payload = {
+        "host_id": str(host.id),
+        "runtimes": [],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": None,
+                "status": "blocked",
+                "resolved_install_spec": None,
+                "installer_log_excerpt": None,
+                "resolver_version": None,
+                "blocked_reason": "runtime install failed",
+            }
+        ],
+        "doctor": [],
+    }
+
+    await apply_status(db_session, payload)
+    await db_session.commit()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(HostPackDoctorResult).where(
+                    HostPackDoctorResult.host_id == host.id,
+                    HostPackDoctorResult.pack_id == "appium-uiautomator2",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].check_id == "adb"
+    assert rows[0].message == "last good check"
