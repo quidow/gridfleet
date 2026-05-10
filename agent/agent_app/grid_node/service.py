@@ -21,11 +21,31 @@ if TYPE_CHECKING:
     from agent_app.grid_node.config import GridNodeConfig
 
 _GRID_NODE_VERSION = "4.41.0"
-_OS_INFO: dict[str, str] = {
-    "arch": platform.machine(),
-    "name": platform.system(),
-    "version": platform.release(),
-}
+
+
+def _build_os_info() -> dict[str, str]:
+    # Selenium hub's UI maps osInfo.name to a platform icon via substring
+    # match ("mac", "linux", "windows"). Python's `platform.system()` returns
+    # "Darwin" on macOS — that does not match "mac" and the hub falls back to
+    # the Windows icon. Translate to the values Java's `os.name` / `os.arch`
+    # / `os.version` system properties report so the hub renders the same
+    # icons the Java relay produced. macOS also needs the product version
+    # (`platform.mac_ver()`); `platform.release()` returns the kernel
+    # version on Darwin.
+    system = platform.system()
+    if system == "Darwin":
+        name = "Mac OS X"
+        version = platform.mac_ver()[0] or platform.release()
+    else:
+        name = system
+        version = platform.release()
+    machine = platform.machine().lower()
+    arch_map = {"x86_64": "amd64", "arm64": "aarch64"}
+    arch = arch_map.get(machine, machine)
+    return {"arch": arch, "name": name, "version": version}
+
+
+_OS_INFO: dict[str, str] = _build_os_info()
 
 
 class EventPublisher(Protocol):
