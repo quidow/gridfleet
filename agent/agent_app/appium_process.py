@@ -353,15 +353,18 @@ class AppiumProcessManager:
 
     def _allocate_node_port(self) -> int:
         # Skip ports already bound by another listener so the grid node HTTP
-        # server does not race a third-party process on a stale port. We bind
-        # 127.0.0.1 to detect ownership without exposing the listener.
+        # server does not race a third-party process on a stale port. The
+        # actual uvicorn server binds `_grid_advertise_ip` (the advertised LAN
+        # interface), so probe that hostname — a free 127.0.0.1 does not
+        # imply the LAN IP is also free.
+        probe_host = self._grid_advertise_ip or "0.0.0.0"
         while True:
             port = self._next_node_port
             self._next_node_port += 1
             with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
                 try:
                     probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    probe.bind(("127.0.0.1", port))
+                    probe.bind((probe_host, port))
                 except OSError:
                     continue
             return port
