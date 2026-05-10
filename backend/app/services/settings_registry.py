@@ -22,8 +22,8 @@ class SettingDefinition:
     default: SettingValue
     description: str
     env_var: str | None = None  # maps to GRIDFLEET_ env var for fallback
-    min_value: int | None = None
-    max_value: int | None = None
+    min_value: int | float | None = None
+    max_value: int | float | None = None
     allowed_values: list[str] | None = field(default=None)
     item_allowed_values: list[str] | None = field(default=None)
     json_list_item_type: str | None = None
@@ -39,6 +39,7 @@ CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
+    "device_checks": "Device Checks",
 }
 
 _DEFINITIONS: list[SettingDefinition] = [
@@ -282,6 +283,37 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Maximum delay for automatic lifecycle recovery backoff",
         min_value=1,
         max_value=86400,
+    ),
+    # ── Device Checks ──
+    SettingDefinition(
+        key="device_checks.ip_ping.consecutive_fail_threshold",
+        category="device_checks",
+        setting_type="int",
+        default=3,
+        description=(
+            "Consecutive ICMP-ping misses before an opted-in device is marked unhealthy. "
+            "Set to 1 for strict, no-hysteresis behaviour."
+        ),
+        min_value=1,
+        max_value=50,
+    ),
+    SettingDefinition(
+        key="device_checks.ip_ping.timeout_sec",
+        category="device_checks",
+        setting_type="float",
+        default=2.0,
+        description="Per-attempt ICMP-ping timeout used by the adapter.",
+        min_value=0.5,
+        max_value=30.0,
+    ),
+    SettingDefinition(
+        key="device_checks.ip_ping.count_per_cycle",
+        category="device_checks",
+        setting_type="int",
+        default=1,
+        description="Number of ICMP echo requests sent per cycle inside the adapter probe.",
+        min_value=1,
+        max_value=10,
     ),
     # ── Appium & Grid ──
     SettingDefinition(
@@ -632,6 +664,8 @@ def _parse_bool(raw: str, env_var: str) -> bool:
 def _parse_env_value(definition: SettingDefinition, raw: str) -> SettingValue:
     if definition.setting_type == "int":
         return int(raw)
+    if definition.setting_type == "float":
+        return float(raw)
     if definition.setting_type == "bool":
         return _parse_bool(raw, definition.env_var or definition.key)
     if definition.setting_type == "json":
