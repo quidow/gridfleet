@@ -111,7 +111,12 @@ class EventBus:
     def _open_publish_socket(self) -> None:
         self._publish_socket = self._context.socket(zmq.PUB)
         if self._publish_url.startswith("inproc://") and self._publish_url == self._subscribe_url:
-            self._publish_socket.bind(self._publish_url)
+            try:
+                self._publish_socket.bind(self._publish_url)
+            except zmq.ZMQError as exc:
+                if exc.errno != zmq.EADDRINUSE:
+                    raise
+                self._publish_socket.connect(self._publish_url)
         else:
             self._publish_socket.connect(self._publish_url)
 

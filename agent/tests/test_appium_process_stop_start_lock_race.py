@@ -11,7 +11,7 @@ pytestmark = pytest.mark.asyncio
 
 async def test_stop_holds_start_lock_during_process_teardown() -> None:
     """``stop()`` must hold ``_start_lock`` for its entire body — including
-    the grid-node teardown that runs *before* the appium-proc/launch-spec
+    the Grid Node service teardown that runs *before* the appium-proc/launch-spec
     dicts are popped. Without the fix, a concurrent ``start()`` for the
     same port can recreate ``_launch_specs[port]`` and discard the
     ``_intentional_stop_ports`` flag mid-stop. With the fix, any other
@@ -49,7 +49,7 @@ async def test_stop_holds_start_lock_during_process_teardown() -> None:
 
     async def fake_grid_stop(*_args: object, **_kwargs: object) -> None:
         # Signal that stop() is past _intentional_stop_ports.add and has
-        # entered _stop_grid_node_process — this is the moment a concurrent
+        # entered _stop_grid_node_service — this is the moment a concurrent
         # start() would race the shared dicts.
         inside_stop.set()
         await proceed_stop.wait()
@@ -57,7 +57,7 @@ async def test_stop_holds_start_lock_during_process_teardown() -> None:
     async def stopper() -> None:
         with patch.object(
             AppiumProcessManager,
-            "_stop_grid_node_process",
+            "_stop_grid_node_service",
             new=AsyncMock(side_effect=fake_grid_stop),
         ):
             await mgr.stop(5555)

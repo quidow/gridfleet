@@ -100,6 +100,7 @@ class GridNodeSupervisorHandle:
 
 
 def start_grid_node_supervisor(
-    *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock | None = None
+    *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock | None = None, config: object | None = None
 ) -> GridNodeSupervisorHandle:
+    del config
     return GridNodeSupervisorHandle(factory=factory, clock=clock or AsyncioClock())

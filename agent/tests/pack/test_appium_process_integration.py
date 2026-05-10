@@ -88,7 +88,7 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
 
         return _P()
 
-    async def _fake_start_grid_node(
+    async def _fake_start_grid_node_service(
         self: AppiumProcessManager,
         spec: AppiumLaunchSpec,
     ) -> None:
@@ -108,7 +108,7 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
     )
     mgr.set_runtime_registry(registry)
     monkeypatch.setattr(AppiumProcessManager, "_start_appium_server", _fake_start_appium_server)
-    monkeypatch.setattr(AppiumProcessManager, "_start_grid_node", _fake_start_grid_node)
+    monkeypatch.setattr(AppiumProcessManager, "_start_grid_node_service", _fake_start_grid_node_service)
 
     await mgr.start(
         connection_target="ABCD1234",
@@ -165,7 +165,7 @@ async def test_pack_start_default_caps_use_appium_platform_name(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
-    monkeypatch.setattr(mgr, "_start_grid_node", AsyncMock(return_value=None))
+    monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 
     await mgr.start(
         connection_target="SERIAL1",
@@ -231,7 +231,7 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
-    monkeypatch.setattr(mgr, "_start_grid_node", AsyncMock(return_value=None))
+    monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 
     info = await mgr.start(
         connection_target="Pixel_8_API_35",

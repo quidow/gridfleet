@@ -202,7 +202,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             agent_settings.manager_url,
             agent_settings.agent_port,
             host_identity,
-            on_advertised_ip_change=appium_mgr.refresh_grid_relay_advertise_ip,
         )
     )
     appium_mgr.set_runtime_registry(runtime_registry)

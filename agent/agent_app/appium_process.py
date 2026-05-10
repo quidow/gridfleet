@@ -8,7 +8,6 @@ import platform
 import shutil
 import signal
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +15,11 @@ from typing import Any
 import httpx
 
 from agent_app.config import agent_settings
+from agent_app.grid_node.config import GridNodeConfig
+from agent_app.grid_node.event_bus import EventBus
+from agent_app.grid_node.protocol import build_slots
+from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
 from agent_app.grid_url import get_local_ip
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
@@ -243,65 +247,6 @@ def _build_env(
     return env
 
 
-def _write_grid_node_toml(
-    appium_port: int,
-    node_port: int,
-    platform_name: str,
-    caps: dict[str, Any],
-    *,
-    grid_slots: list[str] | None = None,
-    external_url: str | None = None,
-) -> str:
-    """Write a temporary TOML config file for a Selenium Grid 4 relay node.
-
-    Platforms with grid_slots containing "chrome" register two relay slots so
-    the Grid can route both native-app sessions (no browserName) and Chrome
-    sessions (browserName=Chrome) to the same Appium server.
-    All other platforms register a single slot.
-    """
-    # The caller provides the Appium-compatible platformName via the caps dict
-    # (set from spec.appium_platform_name or spec.platform_id).  Routing to
-    # specific device types (e.g. firetv) is handled by appium:platform in the
-    # stereotype caps.
-    base_caps = {"platformName": platform_name, **caps}
-
-    # Grid 4 relay configs entries are pairs of "<concurrency>", "<stereotype JSON string>".
-    # The stereotype MUST be a quoted JSON string, not an inline TOML object.
-    slots = grid_slots if grid_slots is not None else ["native"]
-    if "chrome" in slots:
-        native_str = json.dumps(json.dumps(base_caps))
-        chrome_str = json.dumps(json.dumps({**base_caps, "browserName": "Chrome"}))
-        configs_entries = f'    "1", {native_str},\n    "1", {chrome_str}'
-    else:
-        configs_entries = f'    "1", {json.dumps(json.dumps(base_caps))}'
-
-    external_url_line = f'external-url = "{external_url}"\n' if external_url else ""
-    toml_content = f"""\
-[server]
-port = {node_port}
-{external_url_line}
-
-[node]
-detect-drivers = false
-max-sessions = 1
-
-[events]
-publish = "{agent_settings.grid_publish_url}"
-subscribe = "{agent_settings.grid_subscribe_url}"
-
-[relay]
-url = "http://localhost:{appium_port}"
-status-endpoint = "/status"
-configs = [
-{configs_entries}
-]
-"""
-    fd, path = tempfile.mkstemp(suffix=".toml", prefix="grid-node-")
-    with os.fdopen(fd, "w") as f:
-        f.write(toml_content)
-    return path
-
-
 @dataclass
 class AppiumProcessInfo:
     port: int
@@ -365,24 +310,19 @@ class AppiumRestartEvent:
 
 
 class AppiumProcessManager:
-    """Manages Appium server + Grid relay node processes on this host."""
+    """Manages Appium server processes and in-process Grid node services on this host."""
 
     def __init__(self) -> None:
         self._appium_procs: dict[int, asyncio.subprocess.Process] = {}  # appium_port -> process
-        self._node_procs: dict[int, asyncio.subprocess.Process] = {}  # appium_port -> grid node process
-        self._node_configs: dict[int, str] = {}  # appium_port -> toml path
+        self._grid_supervisors: dict[int, GridNodeSupervisorHandle] = {}
         self._info: dict[int, AppiumProcessInfo] = {}
         self._launch_specs: dict[int, AppiumLaunchSpec] = {}
         self._logs: dict[int, collections.deque[str]] = {}
         self._log_tasks: dict[int, list[asyncio.Task[None]]] = {}
         self._appium_watch_tasks: dict[int, asyncio.Task[None]] = {}
-        self._grid_node_watch_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_tasks: dict[int, asyncio.Task[None]] = {}
-        self._grid_node_restart_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_attempts: dict[int, collections.deque[float]] = {}
-        self._grid_node_restart_attempts: dict[int, collections.deque[float]] = {}
         self._appium_restart_backoff_steps: dict[int, int] = {}
-        self._grid_node_restart_backoff_steps: dict[int, int] = {}
         self._recent_restart_events: collections.deque[AppiumRestartEvent] = collections.deque(
             maxlen=MAX_RESTART_EVENTS
         )
@@ -532,17 +472,6 @@ class AppiumProcessManager:
         current = backoff_steps.get(port, 0)
         backoff_steps[port] = min(current + 1, len(AUTO_RESTART_DELAYS_SEC) - 1)
 
-    def _should_manage_grid_node(self, port: int) -> bool:
-        spec = self._launch_specs.get(port)
-        return spec.manage_grid_node if spec is not None else False
-
-    def _should_defer_grid_node_restart(self, port: int) -> bool:
-        appium_proc = self._appium_procs.get(port)
-        if appium_proc is None or appium_proc.returncode is not None:
-            return True
-        appium_restart_task = self._appium_restart_tasks.get(port)
-        return appium_restart_task is not None and not appium_restart_task.done()
-
     async def _watch_appium_process(self, port: int, process: asyncio.subprocess.Process) -> None:
         try:
             exit_code = await process.wait()
@@ -682,144 +611,6 @@ class AppiumProcessManager:
             )
             return
 
-    async def _watch_grid_node_process(self, port: int, process: asyncio.subprocess.Process) -> None:
-        try:
-            exit_code = await process.wait()
-        except asyncio.CancelledError:
-            raise
-
-        if self._node_procs.get(port) is not process:
-            return
-        if port in self._intentional_stop_ports:
-            return
-        if not self._should_manage_grid_node(port):
-            return
-
-        info = self._info.get(port)
-        connection_target = info.connection_target if info is not None else "unknown"
-        logger.warning(
-            "Grid relay process exited unexpectedly for connection_target=%s port=%d exit_code=%s",
-            connection_target,
-            port,
-            exit_code,
-        )
-        if self._should_defer_grid_node_restart(port):
-            logger.info(
-                "Skipping standalone Grid relay restart for connection_target=%s port=%d because "
-                "Appium recovery owns relay recreation",
-                connection_target,
-                port,
-            )
-            return
-        restart_task = self._grid_node_restart_tasks.get(port)
-        if restart_task is not None and not restart_task.done():
-            return
-        task = asyncio.create_task(self._auto_restart_grid_node(port, exit_code))
-        self._register_port_task(self._grid_node_restart_tasks, port, task)
-
-    async def _auto_restart_grid_node(self, port: int, exit_code: int | None) -> None:
-        last_exit_code = exit_code
-        while True:
-            if port in self._intentional_stop_ports:
-                return
-            if self._should_defer_grid_node_restart(port):
-                return
-
-            history = self._trim_restart_attempts(self._grid_node_restart_attempts, port)
-            next_attempt = len(history) + 1
-            can_retry = next_attempt <= AUTO_RESTART_MAX_ATTEMPTS
-            delay_sec = self._next_restart_delay(self._grid_node_restart_backoff_steps, port) if can_retry else None
-            node_proc = self._node_procs.get(port)
-            self._record_restart_event(
-                process="grid_relay",
-                kind="crash_detected",
-                port=port,
-                pid=node_proc.pid if node_proc is not None else None,
-                attempt=next_attempt,
-                delay_sec=delay_sec,
-                exit_code=last_exit_code,
-                will_retry=can_retry,
-            )
-            if not can_retry:
-                info = self._info.get(port)
-                logger.error(
-                    "Grid relay auto-restart exhausted for connection_target=%s port=%d after %d attempts in %ds",
-                    info.connection_target if info is not None else "unknown",
-                    port,
-                    AUTO_RESTART_MAX_ATTEMPTS,
-                    AUTO_RESTART_WINDOW_SEC,
-                )
-                self._record_restart_event(
-                    process="grid_relay",
-                    kind="restart_exhausted",
-                    port=port,
-                    pid=node_proc.pid if node_proc is not None else None,
-                    attempt=next_attempt,
-                    delay_sec=None,
-                    exit_code=last_exit_code,
-                    will_retry=False,
-                )
-                return
-
-            info = self._info.get(port)
-            logger.info(
-                "Scheduling Grid relay auto-restart for connection_target=%s port=%d attempt=%d delay_sec=%d",
-                info.connection_target if info is not None else "unknown",
-                port,
-                next_attempt,
-                delay_sec,
-            )
-            assert delay_sec is not None
-            await asyncio.sleep(delay_sec)
-            if port in self._intentional_stop_ports:
-                return
-            if self._should_defer_grid_node_restart(port):
-                return
-            if port not in self._launch_specs:
-                return
-
-            attempt_number = (
-                len(
-                    self._trim_restart_attempts(
-                        self._grid_node_restart_attempts,
-                        port,
-                        now=asyncio.get_running_loop().time(),
-                    )
-                )
-                + 1
-            )
-            self._grid_node_restart_attempts.setdefault(port, collections.deque()).append(
-                asyncio.get_running_loop().time()
-            )
-            try:
-                async with self._start_lock:
-                    restarted = await self._restart_grid_node_from_launch_spec(port)
-            except Exception:
-                self._advance_restart_backoff(self._grid_node_restart_backoff_steps, port)
-                logger.exception("Grid relay auto-restart failed for port %d on attempt %d", port, attempt_number)
-                last_exit_code = None
-                continue
-
-            self._grid_node_restart_backoff_steps.pop(port, None)
-            self._record_restart_event(
-                process="grid_relay",
-                kind="restart_succeeded",
-                port=port,
-                pid=restarted.pid,
-                attempt=attempt_number,
-                delay_sec=delay_sec,
-                exit_code=last_exit_code,
-                will_retry=False,
-            )
-            logger.info(
-                "Grid relay auto-restart succeeded for connection_target=%s port=%d attempt=%d pid=%d",
-                info.connection_target if info is not None else "unknown",
-                port,
-                attempt_number,
-                restarted.pid,
-            )
-            return
-
     async def _restart_from_launch_spec(self, port: int) -> AppiumProcessInfo:
         spec = self._launch_specs.get(port)
         if spec is None:
@@ -844,19 +635,6 @@ class AppiumProcessManager:
             lifecycle_actions=list(spec.lifecycle_actions),
             connection_behavior=dict(spec.connection_behavior),
         )
-
-    async def _restart_grid_node_from_launch_spec(
-        self, port: int, *, force: bool = False
-    ) -> asyncio.subprocess.Process:
-        spec = self._launch_specs.get(port)
-        if spec is None:
-            raise RuntimeError(f"No launch spec found for port {port}")
-        if force:
-            await self._stop_grid_node_process(port)
-        restarted = await self._start_grid_node(spec)
-        if restarted is None:
-            raise RuntimeError(f"Grid relay could not be restarted for port {port}")
-        return restarted
 
     async def _start_appium_server(
         self,
@@ -944,91 +722,6 @@ class AppiumProcessManager:
         )
         return appium_proc
 
-    async def _start_grid_node(self, spec: AppiumLaunchSpec) -> asyncio.subprocess.Process | None:
-        node_proc = self._node_procs.get(spec.port)
-        if node_proc is not None and node_proc.returncode is None:
-            return node_proc
-
-        appium_platform = spec.appium_platform_name or spec.platform_id
-        caps = {"appium:udid": spec.connection_target, "platformName": appium_platform}
-        if spec.stereotype_caps:
-            caps.update(spec.stereotype_caps)
-        elif spec.extra_caps:
-            caps.update(spec.extra_caps)
-
-        jar_path = agent_settings.selenium_server_jar
-        if not os.path.isfile(jar_path):
-            logger.warning(
-                "selenium-server.jar not found at %s — Grid relay node not started."
-                " Appium is running standalone on port %d",
-                jar_path,
-                spec.port,
-            )
-            return None
-
-        node_port = self._allocate_node_port()
-        old_toml_path = self._node_configs.pop(spec.port, None)
-        if old_toml_path:
-            with contextlib.suppress(OSError):
-                os.unlink(old_toml_path)
-        toml_path = _write_grid_node_toml(
-            spec.port,
-            node_port,
-            appium_platform,
-            caps,
-            grid_slots=spec.grid_slots,
-            external_url=self._grid_external_url(node_port),
-        )
-        self._node_configs[spec.port] = toml_path
-
-        java_bin = _find_java()
-        invocation = resolve_appium_invocation_for_pack(pack_id=spec.pack_id, registry=self._runtime_registry)
-        env = _build_env(
-            platform_name=spec.platform_id,
-            device_type=spec.device_type,
-            appium_bin=invocation.binary,
-            appium_home=invocation.env_extra.get("APPIUM_HOME"),
-        )
-        node_cmd = [java_bin, "-jar", jar_path, "node", "--config", toml_path]
-        try:
-            node_proc = await asyncio.create_subprocess_exec(
-                *node_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-        except FileNotFoundError:
-            logger.warning(
-                "Java not found — Grid relay node not started. Appium is running standalone on port %d",
-                spec.port,
-            )
-            return None
-
-        self._node_procs[spec.port] = node_proc
-        self._track_stream_logs(spec.port, node_proc, prefix="grid-node")
-        self._cancel_task(self._grid_node_watch_tasks, spec.port)
-        self._register_port_task(
-            self._grid_node_watch_tasks,
-            spec.port,
-            asyncio.create_task(self._watch_grid_node_process(spec.port, node_proc)),
-        )
-        logger.info("Grid relay node started on port %d for Appium port %d", node_port, spec.port)
-        return node_proc
-
-    async def refresh_grid_relay_advertise_ip(self, advertise_ip: str) -> None:
-        if advertise_ip == self._grid_advertise_ip:
-            return
-        self._grid_advertise_ip = advertise_ip
-        for port in sorted(self._launch_specs):
-            if not self._should_manage_grid_node(port):
-                continue
-            proc = self._appium_procs.get(port)
-            if proc is None or proc.returncode is not None:
-                continue
-            with contextlib.suppress(Exception):
-                async with self._start_lock:
-                    await self._restart_grid_node_from_launch_spec(port, force=True)
-
     async def start(
         self,
         connection_target: str,
@@ -1058,7 +751,6 @@ class AppiumProcessManager:
             raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
         _validate_appium_port_in_range(port)
         self._cancel_task(self._appium_restart_tasks, port)
-        self._cancel_task(self._grid_node_restart_tasks, port)
         resolved_connection_target = connection_target
         if (
             device_type in {"emulator", "simulator"}
@@ -1132,7 +824,7 @@ class AppiumProcessManager:
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
 
             if manage_grid_node:
-                await self._start_grid_node(spec)
+                await self._start_grid_node_service(spec)
 
             info = self._info.get(port)
             if info is None:
@@ -1149,37 +841,59 @@ class AppiumProcessManager:
                 info.platform_id = platform_id
             return info
 
-    async def _stop_grid_node_process(self, port: int) -> None:
-        self._cancel_task(self._grid_node_restart_tasks, port)
-        self._cancel_task(self._grid_node_watch_tasks, port)
+    async def _start_grid_node_service(self, spec: AppiumLaunchSpec) -> GridNodeSupervisorHandle:
+        existing = self._grid_supervisors.get(spec.port)
+        if existing is not None and existing.is_running():
+            return existing
 
-        node_proc = self._node_procs.pop(port, None)
-        if node_proc and node_proc.returncode is None:
-            node_proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(node_proc.wait(), timeout=STOP_GRACE_PERIOD)
-            except TimeoutError:
-                node_proc.kill()
-                await node_proc.wait()
+        appium_platform = spec.appium_platform_name or spec.platform_id
+        caps: dict[str, Any] = {"appium:udid": spec.connection_target, "platformName": appium_platform}
+        if spec.stereotype_caps:
+            caps.update(spec.stereotype_caps)
+        elif spec.extra_caps:
+            caps.update(spec.extra_caps)
 
-        # Clean up toml config
-        toml_path = self._node_configs.pop(port, None)
-        if toml_path:
-            with contextlib.suppress(OSError):
-                os.unlink(toml_path)
+        node_port = self._allocate_node_port()
+        config = GridNodeConfig(
+            node_id=f"{spec.connection_target}:{spec.port}",
+            node_uri=self._grid_external_url(node_port),
+            appium_upstream=f"http://127.0.0.1:{spec.port}",
+            slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
+            hub_publish_url=agent_settings.grid_publish_url,
+            hub_subscribe_url=agent_settings.grid_subscribe_url,
+            heartbeat_sec=getattr(agent_settings, "grid_node_heartbeat_sec", 5.0),
+            session_timeout_sec=getattr(agent_settings, "grid_node_session_timeout_sec", 300.0),
+            proxy_timeout_sec=getattr(agent_settings, "grid_node_proxy_timeout_sec", 60.0),
+        )
+
+        def factory() -> GridNodeService:
+            bus = EventBus(
+                publish_url=config.hub_publish_url,
+                subscribe_url=config.hub_subscribe_url,
+                heartbeat_sec=config.heartbeat_sec,
+            )
+            return GridNodeService(config=config, bus=bus)
+
+        handle = start_grid_node_supervisor(factory=factory, config=config)
+        self._grid_supervisors[spec.port] = handle
+        await handle.start()
+        return handle
+
+    async def _stop_grid_node_service(self, port: int) -> None:
+        handle = self._grid_supervisors.pop(port, None)
+        if handle is not None:
+            await handle.stop()
 
     async def _drop_failed_managed_port(self, port: int) -> None:
         """Forget stale ownership for a crashed Appium process without touching an unmanaged listener."""
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._appium_watch_tasks, port)
-        await self._stop_grid_node_process(port)
+        await self._stop_grid_node_service(port)
         self._appium_procs.pop(port, None)
         self._info.pop(port, None)
         self._launch_specs.pop(port, None)
         self._appium_restart_attempts.pop(port, None)
-        self._grid_node_restart_attempts.pop(port, None)
         self._appium_restart_backoff_steps.pop(port, None)
-        self._grid_node_restart_backoff_steps.pop(port, None)
 
     async def stop(self, port: int) -> None:
         async with self._start_lock:
@@ -1188,16 +902,14 @@ class AppiumProcessManager:
             self._cancel_task(self._appium_watch_tasks, port)
 
             # Stop Grid Node first
-            await self._stop_grid_node_process(port)
+            await self._stop_grid_node_service(port)
 
             # Stop Appium
             appium_proc = self._appium_procs.pop(port, None)
             self._info.pop(port, None)
             self._launch_specs.pop(port, None)
             self._appium_restart_attempts.pop(port, None)
-            self._grid_node_restart_attempts.pop(port, None)
             self._appium_restart_backoff_steps.pop(port, None)
-            self._grid_node_restart_backoff_steps.pop(port, None)
 
             if appium_proc and appium_proc.returncode is None:
                 appium_proc.send_signal(signal.SIGTERM)
@@ -1247,29 +959,31 @@ class AppiumProcessManager:
 
     def process_snapshot(self) -> dict[str, Any]:
         return {
-            "running_nodes": [
-                {
-                    "port": info.port,
-                    "pid": info.pid,
-                    "connection_target": info.connection_target,
-                    "platform_id": info.platform_id,
-                }
-                for info in self.list_running()
-            ],
+            "running_nodes": [self._running_node_snapshot(info) for info in self.list_running()],
             "recent_restart_events": [event.to_payload() for event in self._recent_restart_events],
         }
 
+    def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "port": info.port,
+            "pid": info.pid,
+            "connection_target": info.connection_target,
+            "platform_id": info.platform_id,
+        }
+        supervisor = self._grid_supervisors.get(info.port)
+        if supervisor is not None:
+            supervisor_snapshot = supervisor.snapshot()
+            status = supervisor_snapshot.get("status")
+            if status is not None:
+                payload["grid_node_status"] = status
+        return payload
+
     async def shutdown(self) -> None:
-        ports = sorted(set(self._appium_procs) | set(self._node_procs) | set(self._launch_specs))
+        ports = sorted(set(self._appium_procs) | set(self._grid_supervisors) | set(self._launch_specs))
         for port in ports:
             with contextlib.suppress(Exception):
                 await self.stop(port)
-        for task_map in (
-            self._appium_restart_tasks,
-            self._grid_node_restart_tasks,
-            self._appium_watch_tasks,
-            self._grid_node_watch_tasks,
-        ):
+        for task_map in (self._appium_restart_tasks, self._appium_watch_tasks):
             for task in task_map.values():
                 task.cancel()
             task_map.clear()

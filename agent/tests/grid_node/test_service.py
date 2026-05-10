@@ -10,8 +10,16 @@ from agent_app.grid_node.service import GridNodeService
 class RecordingBus:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
+        self.calls: list[str] = []
+
+    async def start(self) -> None:
+        self.calls.append("start")
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
 
     async def publish(self, event: dict[str, object]) -> None:
+        self.calls.append(f"publish:{event['type']}")
         self.events.append(event)
 
 
@@ -40,6 +48,15 @@ async def test_service_start_and_stop_publish_lifecycle_events() -> None:
     await service.run_heartbeat_once()
     await service.stop()
     assert [event["type"] for event in bus.events] == ["NODE_ADDED", "NODE_STATUS", "NODE_REMOVED"]
+
+
+@pytest.mark.asyncio
+async def test_service_starts_and_stops_event_bus_around_lifecycle_events() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus)
+    await service.start()
+    await service.stop()
+    assert bus.calls == ["start", "publish:NODE_ADDED", "publish:NODE_REMOVED", "stop"]
 
 
 @pytest.mark.asyncio

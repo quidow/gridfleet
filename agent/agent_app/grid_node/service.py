@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 
 class EventPublisher(Protocol):
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
     async def publish(self, event: dict[str, object]) -> None: ...
 
 
@@ -26,16 +30,24 @@ class GridNodeService:
     async def start(self) -> None:
         if self._started:
             return
+        await self._bus.start()
+        try:
+            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self._node_payload()))
+        except Exception:
+            await self._bus.stop()
+            raise
         self._started = True
-        await self._bus.publish(event_envelope(EventType.NODE_ADDED, self._node_payload()))
 
     async def stop(self) -> None:
         if self._heartbeat_task is not None and asyncio.current_task() is self._heartbeat_task:
             raise RuntimeError("stop must be called by the service owner")
         if not self._started:
             return
-        await self._bus.publish(event_envelope(EventType.NODE_REMOVED, {"nodeId": self.config.node_id}))
-        self._started = False
+        try:
+            await self._bus.publish(event_envelope(EventType.NODE_REMOVED, {"nodeId": self.config.node_id}))
+        finally:
+            await self._bus.stop()
+            self._started = False
 
     async def run_heartbeat_once(self) -> None:
         if self.state.snapshot().drain:
