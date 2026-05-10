@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +14,7 @@ from agent_app.grid_node.protocol import Slot, Stereotype
 if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
+    from starlette.websockets import WebSocket
 
 
 class RecordingBus:
@@ -21,6 +23,31 @@ class RecordingBus:
 
     async def publish(self, event: dict[str, object]) -> None:
         self.events.append(event)
+
+
+@dataclass(frozen=True)
+class RecordedRequest:
+    path: str
+
+
+class RecordingProxy:
+    def __init__(self) -> None:
+        self.requests: list[RecordedRequest] = []
+        self.websocket_paths: list[str] = []
+
+    async def request(self, request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+        self.requests.append(RecordedRequest(path=request.url.path))
+        if request.url.path == "/session" and request.method == "POST":
+            return JSONResponse(
+                {"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}}
+            )
+        return JSONResponse({"value": {}})
+
+    async def websocket(self, websocket: WebSocket, *, upstream: str) -> None:
+        self.websocket_paths.append(websocket.url.path)
+        await websocket.accept()
+        await websocket.receive_text()
+        await websocket.send_text("pong")
 
 
 @pytest.fixture
@@ -37,8 +64,19 @@ def bus() -> RecordingBus:
 
 
 @pytest.fixture
-def test_app(state: NodeState, bus: RecordingBus) -> Starlette:
-    return build_app(state=state, appium_upstream="http://appium", bus=bus, proxy_request_func=_session_success_proxy)
+def proxy() -> RecordingProxy:
+    return RecordingProxy()
+
+
+@pytest.fixture
+def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy) -> Starlette:
+    return build_app(
+        state=state,
+        appium_upstream="http://appium",
+        bus=bus,
+        proxy_request_func=proxy.request,
+        proxy_websocket_func=proxy.websocket,
+    )
 
 
 @pytest.fixture
@@ -102,8 +140,37 @@ def test_post_session_returns_503_when_no_free_slot(test_app: Starlette, state: 
     assert response.status_code == 503
 
 
-async def _session_success_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
-    return JSONResponse({"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}})
+def test_delete_session_releases_slot_and_publishes_session_closed(
+    test_app: Starlette, state: NodeState, bus: RecordingBus
+) -> None:
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=1.0)
+    response = TestClient(test_app).delete("/session/session-1")
+    assert response.status_code == 200
+    assert state.snapshot().slots[0].state == "FREE"
+    assert bus.events[-1]["type"] == "SESSION_CLOSED"
+
+
+def test_node_drain_marks_state_and_blocks_new_sessions(test_app: Starlette, state: NodeState) -> None:
+    client = TestClient(test_app)
+    response = client.post("/se/grid/node/drain")
+    assert response.status_code == 200
+    assert state.snapshot().drain is True
+    blocked = client.post("/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
+    assert blocked.status_code == 503
+
+
+def test_wildcard_session_command_is_proxied(test_app: Starlette, proxy: RecordingProxy) -> None:
+    response = TestClient(test_app).post("/session/session-1/element", json={"using": "id", "value": "login"})
+    assert response.status_code == 200
+    assert proxy.requests[-1].path == "/session/session-1/element"
+
+
+def test_cdp_websocket_route_invokes_proxy_websocket(test_app: Starlette, proxy: RecordingProxy) -> None:
+    with TestClient(test_app).websocket_connect("/session/session-1/se/cdp") as websocket:
+        websocket.send_text("ping")
+        assert websocket.receive_text() == "pong"
+    assert proxy.websocket_paths == ["/session/session-1/se/cdp"]
 
 
 async def _connect_error_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:

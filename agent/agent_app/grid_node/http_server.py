@@ -7,16 +7,17 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 
 from agent_app.grid_node.node_state import NoFreeSlotError, NoMatchingSlotError
 from agent_app.grid_node.protocol import EventType, event_envelope
-from agent_app.grid_node.proxy import proxy_request
+from agent_app.grid_node.proxy import proxy_request, proxy_websocket
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from starlette.requests import Request
+    from starlette.websockets import WebSocket
 
     from agent_app.grid_node.node_state import NodeState
 
@@ -36,6 +37,7 @@ def build_app(
     appium_upstream: str,
     bus: EventPublisher | None = None,
     proxy_request_func: Callable[..., Awaitable[Response]] = proxy_request,
+    proxy_websocket_func: Callable[..., Awaitable[None]] = proxy_websocket,
     proxy_timeout: float = 30.0,
 ) -> Starlette:
     publisher = bus or NoopPublisher()
@@ -94,11 +96,43 @@ def build_app(
         )
         return response
 
+    async def delete_session(request: Request) -> Response:
+        session_id = request.path_params["session_id"]
+        response = await _proxy_http(request)
+        if 200 <= response.status_code < 300:
+            state.release(session_id)
+            await publisher.publish(event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
+        return response
+
+    async def drain(_request: Request) -> JSONResponse:
+        state.mark_drain()
+        await publisher.publish(event_envelope(EventType.NODE_DRAIN, {}))
+        return JSONResponse({"value": True})
+
+    async def command_proxy(request: Request) -> Response:
+        return await _proxy_http(request)
+
+    async def websocket_proxy(websocket: WebSocket) -> None:
+        await proxy_websocket_func(websocket, upstream=appium_upstream)
+
+    async def _proxy_http(request: Request) -> Response:
+        async with httpx.AsyncClient() as client:
+            return await proxy_request_func(
+                request,
+                upstream=appium_upstream,
+                timeout=proxy_timeout,
+                client=client,
+            )
+
     return Starlette(
         routes=[
             Route("/status", status, methods=["GET"]),
             Route("/session", create_session, methods=["POST"]),
+            Route("/session/{session_id}", delete_session, methods=["DELETE"]),
+            Route("/se/grid/node/drain", drain, methods=["POST"]),
             Route("/se/grid/node/owner/{session_id}", owner, methods=["POST"]),
+            Route("/{path:path}", command_proxy, methods=["GET", "POST", "PUT", "DELETE", "PATCH"]),
+            WebSocketRoute("/{path:path}", websocket_proxy),
         ]
     )
 
