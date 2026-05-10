@@ -31,9 +31,10 @@ Three settings control IP ping behavior. Adjust them via the Settings UI (Settin
 
 ### `device_checks.ip_ping.timeout_sec`
 
-- **Default:** `5`
+- **Default:** `2.0`
+- **Bounds:** `[0.5, 30.0]`
 - **What it does:** Timeout in seconds for each ping probe.
-- **Use case:** Increase on slow or latency-heavy networks (e.g., to `10`) so legitimate pings don't timeout. Keep at `5` for most LAN setups.
+- **Use case:** Increase on slow or latency-heavy networks (e.g., to `5.0` or `10.0`) so legitimate pings don't timeout. Keep at `2.0` for most LAN setups.
 
 ### `device_checks.ip_ping.count_per_cycle`
 
@@ -150,7 +151,7 @@ Should show `0.0` again (or no row if the device recovered fully).
 **Cause:** The `timeout_sec` setting is too low, causing legitimate pings to timeout on a slow network.
 
 **Fix:**
-- Increase `device_checks.ip_ping.timeout_sec` to `10` or higher.
+- Increase `device_checks.ip_ping.timeout_sec` to `5.0` or higher (max `30.0`).
 - Test manually from the agent host: `ping <device_ip> -c 1 -W 10` (replace 10 with your timeout). If it takes longer than the current setting, increase it.
 
 ### Counter never decreases despite device being reachable
