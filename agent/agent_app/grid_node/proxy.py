@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import httpx
 from starlette.responses import Response
 
 if TYPE_CHECKING:
-    import httpx
     from starlette.requests import Request
 
 HOP_HEADERS = {
@@ -41,7 +41,12 @@ async def proxy_request(
         headers=strip_hop_headers(dict(request.headers)),
         timeout=timeout,
     )
-    upstream_response = await client.send(upstream_request, stream=True)
+    try:
+        upstream_response = await client.send(upstream_request, stream=True)
+    except httpx.ConnectError:
+        return Response(status_code=502)
+    except httpx.TimeoutException:
+        return Response(status_code=504)
     response_body = await upstream_response.aread()
     await upstream_response.aclose()
     return Response(

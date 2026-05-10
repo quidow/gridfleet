@@ -38,6 +38,34 @@ async def test_proxy_request_forwards_status() -> None:
     assert "connection" not in response.headers
 
 
+@pytest.mark.asyncio
+async def test_proxy_connection_refused_returns_502() -> None:
+    async with httpx.AsyncClient() as client:
+        response = await proxy_request(
+            _request("GET", "/status"),
+            upstream="http://127.0.0.1:1",
+            timeout=0.1,
+            client=client,
+        )
+    assert response.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_proxy_timeout_returns_504(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def raise_timeout(*_args: object, **_kwargs: object) -> object:
+        raise httpx.TimeoutException("timed out")
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "send", raise_timeout)
+        response = await proxy_request(
+            _request("GET", "/status"),
+            upstream="http://127.0.0.1:5555",
+            timeout=0.1,
+            client=client,
+        )
+    assert response.status_code == 504
+
+
 def _request(method: str, path: str, *, body: bytes = b"") -> Request:
     async def receive() -> dict[str, object]:
         return {"type": "http.request", "body": body, "more_body": False}
