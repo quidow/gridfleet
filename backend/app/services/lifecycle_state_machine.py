@@ -38,6 +38,7 @@ _OPERATIONAL_TRANSITIONS: dict[
     },
     DeviceOperationalState.offline: {
         TransitionEvent.CONNECTIVITY_RESTORED: DeviceOperationalState.available,
+        TransitionEvent.SESSION_STARTED: DeviceOperationalState.busy,
     },
 }
 

@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
-from app.errors import InvalidTransitionError
 from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
@@ -199,18 +198,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         # Mark device busy under row lock
         locked_device = await device_locking.lock_device(db, device.id)
-        try:
-            await _MACHINE.transition(
-                locked_device,
-                TransitionEvent.SESSION_STARTED,
-                suppress_events=True,
-            )
-        except InvalidTransitionError:
-            # Fallback: device is in a state the machine cannot transition from
-            # (e.g. offline/reserved when a grid session is discovered before
-            # the connectivity loop has caught up). Force-write busy via the
-            # direct writer so the session is tracked correctly.
-            await set_operational_state(locked_device, DeviceOperationalState.busy, publish_event=False)
+        await _MACHINE.transition(
+            locked_device,
+            TransitionEvent.SESSION_STARTED,
+            suppress_events=True,
+        )
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         session_service.queue_session_started_event(
             db,

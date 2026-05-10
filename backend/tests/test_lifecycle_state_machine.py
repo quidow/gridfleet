@@ -96,6 +96,30 @@ class TestValidTransitions:
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold is None
 
+    async def test_offline_to_busy_on_session_started(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="t7"
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        assert changed
+        assert device.operational_state == DeviceOperationalState.busy
+        assert device.hold is None
+
+    async def test_offline_reserved_to_busy_on_session_started(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.offline,
+            hold=DeviceHold.reserved,
+            name_suffix="t8",
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        assert changed
+        assert device.operational_state == DeviceOperationalState.busy
+        assert device.hold == DeviceHold.reserved
+
 
 class TestReservedHoldTransparent:
     async def test_session_started_works_while_reserved(self, db_session: AsyncSession, db_host: Host) -> None:
@@ -164,16 +188,6 @@ class TestIdempotency:
 
 
 class TestInvalidTransitions:
-    async def test_session_started_from_offline_raises(self, db_session: AsyncSession, db_host: Host) -> None:
-        device = await _seed_device(
-            db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="x1"
-        )
-        machine = DeviceStateMachine()
-        with pytest.raises(InvalidTransitionError) as exc:
-            await machine.transition(device, TransitionEvent.SESSION_STARTED)
-        assert exc.value.event == TransitionEvent.SESSION_STARTED.value
-        assert exc.value.current_state == "offline/None"
-
     async def test_maintenance_exited_without_maintenance_hold_raises(
         self, db_session: AsyncSession, db_host: Host
     ) -> None:
