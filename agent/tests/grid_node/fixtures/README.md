@@ -26,3 +26,13 @@ The socket probe was recorded with a sanitized relay stereotype:
 ## HTTP Transcript Capture
 
 To record the Java relay HTTP Node API, start `tests.grid_node.tools.record_grid_http` with `--listen 0.0.0.0:5599` and set the Java relay TOML `server.external-url` to the recorder URL. The recorder forwards to the real Java relay URL and writes `http.transcript` in the selected scenario directory.
+
+## Scenario Fixture Bundles
+
+The scenario bundles under `raw/01_node_bringup` through `raw/08_hard_kill_and_rejoin` are deterministic sanitized fixtures generated with:
+
+```bash
+uv run python -m tests.grid_node.tools.generate_grid_fixtures --root tests/grid_node/fixtures
+```
+
+The generated raw files intentionally use the same JSONL, multipart-frame base64, and HTTP transcript formats as the live capture tools. The decoded files replace volatile node IDs, session IDs, timestamps, and URIs with placeholders so protocol serializer tests can assert stable shapes without committing lab identifiers.
