@@ -294,10 +294,12 @@ def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:
     """Return ordered (alwaysMatch + firstMatch[i]) capability candidates.
 
     W3C 8.1 requires the server to merge `alwaysMatch` with each entry of
-    `firstMatch` and try the resulting capability sets in order. Returning
-    `[{}]` for non-W3C bodies keeps the existing "match anything" behavior
-    so the caller still hits its NoMatchingSlot/NoFreeSlot branches as
-    before.
+    `firstMatch` and try the resulting capability sets in order. Per W3C
+    7.2, a `firstMatch` entry that re-declares an `alwaysMatch` key with a
+    different value is invalid — drop the candidate instead of letting
+    `firstMatch` overwrite a required constraint. Returning `[{}]` for
+    non-W3C bodies keeps the existing "match anything" behavior so the
+    caller still hits its NoMatchingSlot/NoFreeSlot branches as before.
     """
     if not isinstance(body, dict):
         return [{}]
@@ -313,6 +315,9 @@ def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:
     for entry in first_match:
         if not isinstance(entry, dict):
             continue
+        if any(key in always_match and always_match[key] != value for key, value in entry.items()):
+            # Conflicting key with `alwaysMatch` — reject this candidate.
+            continue
         merged = dict(always_match)
         merged.update(entry)
         candidates.append(merged)
@@ -322,14 +327,23 @@ def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:
 def _reserve_first_matching(
     state: NodeState, candidates: list[dict[str, Any]]
 ) -> tuple[Reservation | None, Exception | None]:
-    last_error: Exception | None = None
+    # NoFreeSlotError (slot exists but is BUSY) must take precedence over
+    # NoMatchingSlotError (no compatible stereotype) so the caller returns
+    # 503 instead of 404 when capacity is the real failure. Without this,
+    # a later non-matching candidate would silently downgrade an earlier
+    # capacity error.
+    no_free_slot_error: Exception | None = None
+    no_match_error: Exception | None = None
     for caps in candidates:
         try:
             return state.reserve(caps), None
-        except (NoMatchingSlotError, NoFreeSlotError) as exc:
-            last_error = exc
+        except NoFreeSlotError as exc:
+            no_free_slot_error = exc
             continue
-    return None, last_error
+        except NoMatchingSlotError as exc:
+            no_match_error = exc
+            continue
+    return None, no_free_slot_error or no_match_error
 
 
 def _session_id_from_response(response: Response) -> str | None:

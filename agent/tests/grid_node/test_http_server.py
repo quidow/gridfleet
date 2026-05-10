@@ -169,6 +169,44 @@ def test_post_session_returns_404_when_no_first_match_candidate_matches(test_app
     assert response.status_code == 404
 
 
+def test_post_session_rejects_first_match_conflicting_with_always_match(test_app: Starlette) -> None:
+    # W3C 7.2: a `firstMatch` entry that redefines an `alwaysMatch` key with
+    # a different value is invalid. The candidate must be dropped, not
+    # merged — otherwise the request could match a slot that violates the
+    # client's required constraint.
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {
+                "alwaysMatch": {"platformName": "iOS"},
+                "firstMatch": [{"platformName": "Android"}],
+            }
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_post_session_returns_503_when_matching_slot_busy_even_with_mismatched_alternative(
+    test_app: Starlette, state: NodeState
+) -> None:
+    # When one firstMatch candidate matches a busy slot and another doesn't
+    # match any slot, the response should be 503 (capacity exhausted), not
+    # 404 (no compatible stereotype). NoFreeSlotError must take precedence.
+    state.reserve({"platformName": "Android"})
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {
+                "alwaysMatch": {},
+                "firstMatch": [{"platformName": "Android"}, {"platformName": "iOS"}],
+            }
+        },
+    )
+    assert response.status_code == 503
+
+
 def test_post_session_aborts_on_upstream_connect_error(
     app_with_connect_error_proxy: Starlette, state: NodeState
 ) -> None:
