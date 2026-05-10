@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from agent_app.grid_node.config import GridNodeConfig
@@ -105,6 +107,27 @@ async def test_drain_publishes_drain_complete_and_requests_stop() -> None:
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
     service.state.mark_drain()
+    await service.run_heartbeat_once()
+    assert bus.events[-1]["type"] == "node-drain-complete"
+    assert service.snapshot()["requested_stop"] is True
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_drain_waits_for_busy_slots_before_completing() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    reservation = service.state.reserve({"platformName": "Android"})
+    service.state.commit(reservation.id, session_id="active-session", started_at=time.monotonic())
+    service.state.mark_drain()
+    await service.run_heartbeat_once()
+    # Active session must keep the node up — drain emits a status heartbeat,
+    # not drain-complete, and the supervisor is not asked to stop.
+    assert bus.events[-1]["type"] == "node-heartbeat"
+    assert all(event["type"] != "node-drain-complete" for event in bus.events)
+    assert service.snapshot()["requested_stop"] is False
+    service.state.release("active-session")
     await service.run_heartbeat_once()
     assert bus.events[-1]["type"] == "node-drain-complete"
     assert service.snapshot()["requested_stop"] is True

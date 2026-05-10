@@ -203,10 +203,18 @@ class GridNodeService:
                 "endTime": now_iso,
             }
             await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, session_closed_payload))
-        if self.state.snapshot().drain:
-            self._requested_stop = True
-            # Selenium NodeDrainComplete expects a bare NodeId UUID string.
-            await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
+        snapshot = self.state.snapshot()
+        if snapshot.drain:
+            # Selenium's drain semantics let in-flight sessions finish before the
+            # node is torn down. Only complete the drain (and let the supervisor
+            # stop the node) once every slot is FREE; otherwise emit a NODE_STATUS
+            # heartbeat so the hub continues to render the node as DRAINING.
+            if all(slot.state == "FREE" for slot in snapshot.slots):
+                self._requested_stop = True
+                # Selenium NodeDrainComplete expects a bare NodeId UUID string.
+                await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
+                return
+            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
