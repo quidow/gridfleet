@@ -42,7 +42,6 @@ async def test_exit_maintenance_enqueues_recovery_job(
 async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     db_session: AsyncSession,
     db_host: Host,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Regression: exit_maintenance must not raise when schedule_device_recovery fails.
 
@@ -55,6 +54,14 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
 
     After the fix, the exception is swallowed with a WARNING log, and the
     committed device state mutation is preserved.
+
+    NOTE: Capture the warning via a handler attached directly to the
+    maintenance_service logger instead of pytest's ``caplog`` fixture. Under
+    ``pytest -n auto`` on CI, another test in the same xdist worker mutates
+    ``root_logger.handlers`` while ``configure_logging`` runs, which has
+    intermittently left ``caplog`` unable to see records propagated from
+    ``app.services.maintenance_service``. A direct handler is independent of
+    propagation and root state and produces a deterministic capture.
     """
     device = await create_device(
         db_session,
@@ -66,13 +73,25 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
 
     locked = await device_locking.lock_device(db_session, device.id)
 
+    target_logger = logging.getLogger("app.services.maintenance_service")
+    captured: list[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    capture_handler = _ListHandler(level=logging.WARNING)
+    original_level = target_logger.level
+    target_logger.setLevel(logging.WARNING)
+    target_logger.addHandler(capture_handler)
     mock_schedule = AsyncMock(side_effect=RuntimeError("simulated transient DB error"))
-    with (
-        patch("app.services.maintenance_service.schedule_device_recovery", new=mock_schedule),
-        caplog.at_level(logging.WARNING),
-    ):
-        # Must NOT raise even though schedule_device_recovery raises.
-        result = await maintenance_service.exit_maintenance(db_session, locked)
+    try:
+        with patch("app.services.maintenance_service.schedule_device_recovery", new=mock_schedule):
+            # Must NOT raise even though schedule_device_recovery raises.
+            result = await maintenance_service.exit_maintenance(db_session, locked)
+    finally:
+        target_logger.removeHandler(capture_handler)
+        target_logger.setLevel(original_level)
 
     # Sanity: the patched mock actually intercepted the call. If this fires,
     # the warning-records assertion below would also fail but for a different
@@ -86,7 +105,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     )
 
     # A warning must have been logged so ops can triage.
-    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    warning_records = [r for r in captured if r.levelno >= logging.WARNING]
     assert any("exit_maintenance" in r.getMessage() for r in warning_records), (
         "exit_maintenance must log a WARNING when recovery enqueue fails"
     )
