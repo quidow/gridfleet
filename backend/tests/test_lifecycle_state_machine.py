@@ -148,6 +148,20 @@ class TestIdempotency:
         changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
         assert changed is False
 
+    async def test_connectivity_lost_from_maintenance_is_noop(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.offline,
+            hold=DeviceHold.maintenance,
+            name_suffix="i3",
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST)
+        assert changed is False
+        assert device.operational_state == DeviceOperationalState.offline
+        assert device.hold == DeviceHold.maintenance
+
 
 class TestInvalidTransitions:
     async def test_session_started_from_offline_raises(self, db_session: AsyncSession, db_host: Host) -> None:

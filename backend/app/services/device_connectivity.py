@@ -26,7 +26,9 @@ from app.services.agent_operations import (
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.device_state import legacy_label_for_audit, set_operational_state
+from app.services.device_state import legacy_label_for_audit
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import stop_node_via_agent as stop_node_via_agent_helper
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
@@ -37,6 +39,7 @@ CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
+_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -533,9 +536,9 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
                     if locked_device.operational_state == DeviceOperationalState.busy or locked_device.hold is not None:
-                        await set_operational_state(
+                        await _MACHINE.transition(
                             locked_device,
-                            DeviceOperationalState.offline,
+                            TransitionEvent.CONNECTIVITY_LOST,
                             reason="Device disconnected",
                         )
                         await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
@@ -564,9 +567,9 @@ async def _check_connectivity(db: AsyncSession) -> None:
                 await device_health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                 locked_device = await device_locking.lock_device(db, device.id)
                 if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
-                    await set_operational_state(
+                    await _MACHINE.transition(
                         locked_device,
-                        DeviceOperationalState.offline,
+                        TransitionEvent.CONNECTIVITY_LOST,
                         reason="Device disconnected",
                     )
                     await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")

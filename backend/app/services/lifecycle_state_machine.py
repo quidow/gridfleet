@@ -50,6 +50,7 @@ _IDEMPOTENT_NOOPS: set[tuple[DeviceOperationalState, DeviceHold | None, Transiti
     (DeviceOperationalState.available, DeviceHold.reserved, TransitionEvent.SESSION_ENDED),
     (DeviceOperationalState.offline, None, TransitionEvent.CONNECTIVITY_LOST),
     (DeviceOperationalState.offline, DeviceHold.reserved, TransitionEvent.CONNECTIVITY_LOST),
+    (DeviceOperationalState.offline, DeviceHold.maintenance, TransitionEvent.CONNECTIVITY_LOST),
     (DeviceOperationalState.available, None, TransitionEvent.CONNECTIVITY_RESTORED),
     (DeviceOperationalState.available, DeviceHold.reserved, TransitionEvent.CONNECTIVITY_RESTORED),
 }
