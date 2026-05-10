@@ -74,6 +74,7 @@ class EventBus:
                 try:
                     await self._subscriber_task
                 except asyncio.CancelledError:
+                    # Expected when stop() cancels the subscriber task during normal shutdown.
                     pass
                 except Exception:
                     logger.warning("grid node event subscriber task failed during shutdown", exc_info=True)
