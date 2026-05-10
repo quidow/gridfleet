@@ -182,6 +182,15 @@ class SettingsService:
             if defn.max_value is not None and value > defn.max_value:
                 return f"Value {value} exceeds maximum {defn.max_value} for {key}"
 
+        elif defn.setting_type == "float":
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return f"Expected float for {key}, got {type(value).__name__}"
+            fval = float(value)
+            if defn.min_value is not None and fval < defn.min_value:
+                return f"Value {fval} is below minimum {defn.min_value} for {key}"
+            if defn.max_value is not None and fval > defn.max_value:
+                return f"Value {fval} exceeds maximum {defn.max_value} for {key}"
+
         elif defn.setting_type == "bool":
             if not isinstance(value, bool):
                 return f"Expected boolean for {key}, got {type(value).__name__}"

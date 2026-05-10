@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class SettingDefinition:
     key: str
     category: str
-    setting_type: str  # "int", "string", "bool", "json"
+    setting_type: str  # "int", "float", "string", "bool", "json"
     default: SettingValue
     description: str
     env_var: str | None = None  # maps to GRIDFLEET_ env var for fallback

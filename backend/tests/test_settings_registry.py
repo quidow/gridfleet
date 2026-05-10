@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.services import settings_registry
+from app.services.settings_registry import SETTINGS_REGISTRY
 
 
 @pytest.mark.parametrize(
@@ -146,11 +147,8 @@ def test_ip_ping_settings_registered(
     expected_max: float,
     expected_type: str,
 ) -> None:
-    from app.services.settings_registry import SETTINGS_REGISTRY
-
-    matches = [s for s in SETTINGS_REGISTRY.values() if s.key == key]
-    assert len(matches) == 1, f"{key} should be registered exactly once"
-    setting = matches[0]
+    assert key in SETTINGS_REGISTRY, f"{key} should be registered"
+    setting = SETTINGS_REGISTRY[key]
     assert setting.setting_type == expected_type
     assert setting.default == expected_default
     assert setting.min_value == expected_min
