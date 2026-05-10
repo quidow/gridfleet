@@ -20,6 +20,11 @@ from app.models.session import Session, SessionStatus
 DeviceTags = dict[str, str]
 
 
+class DesiredNodeState(enum.StrEnum):
+    running = "running"
+    stopped = "stopped"
+
+
 class DeviceCreate(BaseModel):
     name: str
     pack_id: str
@@ -148,6 +153,11 @@ class AppiumNodeRead(BaseModel):
     active_connection_target: str | None
     state: NodeState
     started_at: datetime
+    desired_state: DesiredNodeState
+    desired_port: int | None = None
+    transition_token: uuid.UUID | None = None
+    transition_deadline: datetime | None = None
+    last_observed_at: datetime | None = None
 
 
 class SessionRead(BaseModel):

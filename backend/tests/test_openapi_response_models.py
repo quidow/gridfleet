@@ -55,3 +55,24 @@ def test_public_anonymous_responses_have_named_openapi_components() -> None:
         "#/components/schemas/TestDataAuditEntryRead"
     )
     assert _response_ref("/api/hosts/{host_id}/tools/status") == "#/components/schemas/HostToolStatusRead"
+
+
+def test_appium_node_read_exposes_desired_state_fields() -> None:
+    schema = app.openapi()
+    appium = schema["components"]["schemas"]["AppiumNodeRead"]
+    properties = appium["properties"]
+    assert {
+        "desired_state",
+        "desired_port",
+        "transition_token",
+        "transition_deadline",
+        "last_observed_at",
+    } <= properties.keys()
+    required = set(appium.get("required", []))
+    assert "desired_state" in required
+    assert "desired_port" not in required
+    assert "transition_token" not in required
+
+    desired_ref = properties["desired_state"]["$ref"]
+    desired_schema = schema["components"]["schemas"][desired_ref.rsplit("/", 1)[-1]]
+    assert desired_schema["enum"] == ["running", "stopped"]

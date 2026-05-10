@@ -82,6 +82,11 @@ function makeDevice(): DeviceDetail {
       active_connection_target: '192.168.1.254:5555',
       state: 'running',
       started_at: '2026-04-28T13:51:00Z',
+      desired_state: 'running',
+      desired_port: 4723,
+      transition_token: null,
+      transition_deadline: null,
+      last_observed_at: null,
     },
     sessions: [],
   };
@@ -95,5 +100,39 @@ describe('DeviceNodePanel', () => {
 
     expect(row?.className).toContain('flex justify-between');
     expect(row?.className).not.toContain('grid-cols-[8rem,minmax(0,1fr)]');
+  });
+
+  it('renders a Stopping hint when desired_state diverges from observed state', () => {
+    const device = makeDevice();
+    device.appium_node = {
+      ...device.appium_node!,
+      state: 'running',
+      desired_state: 'stopped',
+      desired_port: null,
+    };
+
+    render(<DeviceNodePanel device={device} />);
+
+    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Stopping...');
+  });
+
+  it('renders a Starting hint when desired_state is running but observed is stopped', () => {
+    const device = makeDevice();
+    device.appium_node = {
+      ...device.appium_node!,
+      state: 'stopped',
+      desired_state: 'running',
+      desired_port: 4723,
+    };
+
+    render(<DeviceNodePanel device={device} />);
+
+    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Starting...');
+  });
+
+  it('does not render a transitional hint when desired_state matches observed', () => {
+    render(<DeviceNodePanel device={makeDevice()} />);
+
+    expect(screen.queryByTestId('appium-node-transition-hint')).not.toBeInTheDocument();
   });
 });
