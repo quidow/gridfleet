@@ -951,7 +951,10 @@ async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
 
 
 async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.UUID) -> None:
-    locked = await device_locking.lock_device(db, device_id)
+    # Use _hold_device_row_lock to translate NoResultFound (e.g. concurrent
+    # device delete after mark_node_started commits and releases the row lock)
+    # into NodeManagerError so the route returns a managed 4xx instead of 500.
+    locked = await _hold_device_row_lock(db, device_id)
     current_state = lifecycle_policy_state(locked)
     if (
         current_state.get("recovery_suppressed_reason") is None
