@@ -30,7 +30,9 @@ def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[Runnin
         pid = entry.get("pid")
         connection_target = entry.get("connection_target")
         platform_id = entry.get("platform_id")
-        if not isinstance(port, int) or not isinstance(pid, int):
+        if not isinstance(port, int) or isinstance(port, bool):
+            continue
+        if not isinstance(pid, int) or isinstance(pid, bool):
             continue
         if not isinstance(connection_target, str) or not isinstance(platform_id, str):
             continue
