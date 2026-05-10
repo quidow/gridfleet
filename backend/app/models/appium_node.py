@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,13 @@ class NodeState(enum.StrEnum):
 
 class AppiumNode(Base):
     __tablename__ = "appium_nodes"
+    __table_args__ = (
+        CheckConstraint("desired_state IN ('running', 'stopped')", name="ck_appium_nodes_desired_state"),
+        CheckConstraint(
+            "desired_state = 'running' OR desired_port IS NULL",
+            name="ck_appium_nodes_desired_port_requires_running",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_id: Mapped[uuid.UUID] = mapped_column(
@@ -32,7 +39,7 @@ class AppiumNode(Base):
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[NodeState] = mapped_column(Enum(NodeState), default=NodeState.stopped, nullable=False)
     desired_state: Mapped[NodeState] = mapped_column(
-        Enum(NodeState, name="nodestate"),
+        Enum(NodeState, name="nodestate", create_type=False),
         nullable=False,
         default=NodeState.stopped,
         server_default=NodeState.stopped.value,

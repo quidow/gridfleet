@@ -85,6 +85,7 @@ async def test_appium_nodes_has_desired_state_columns(alembic_session: AsyncSess
 
         check_names = {c["name"] for c in insp.get_check_constraints("appium_nodes")}
         assert "ck_appium_nodes_desired_state" in check_names
+        assert "ck_appium_nodes_desired_port_requires_running" in check_names
 
     await alembic_session.run_sync(lambda s: _inspect(s.connection()))
 
@@ -107,6 +108,27 @@ async def test_check_constraint_definition_excludes_error(alembic_session: Async
     assert "running" in definition
     assert "stopped" in definition
     assert "error" not in definition
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_check_constraint_requires_stopped_nodes_to_have_no_desired_port(
+    alembic_session: AsyncSession,
+) -> None:
+    res = await alembic_session.execute(
+        text(
+            "SELECT pg_get_constraintdef(c.oid) "
+            "FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "WHERE c.conname = 'ck_appium_nodes_desired_port_requires_running' "
+            "AND t.relname = 'appium_nodes' "
+            "AND n.nspname = current_schema()"
+        )
+    )
+    definition = res.scalar_one()
+    assert "running" in definition
+    assert "desired_port IS NULL" in definition
 
 
 @pytest.mark.db

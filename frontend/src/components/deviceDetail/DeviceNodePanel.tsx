@@ -106,7 +106,7 @@ export default function DeviceNodePanel({ device }: Props) {
             </div>
             <div className="flex items-center gap-2">
               {node.desired_state !== node.state && (
-                <span className="text-xs font-medium text-text-3">
+                <span className="text-xs font-medium text-text-3" data-testid="appium-node-transition-hint">
                   {node.desired_state === 'running' ? 'Starting...' : 'Stopping...'}
                 </span>
               )}

@@ -113,7 +113,7 @@ describe('DeviceNodePanel', () => {
 
     render(<DeviceNodePanel device={device} />);
 
-    expect(screen.getByText(/Stopping/i)).toBeInTheDocument();
+    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Stopping...');
   });
 
   it('renders a Starting hint when desired_state is running but observed is stopped', () => {
@@ -127,13 +127,12 @@ describe('DeviceNodePanel', () => {
 
     render(<DeviceNodePanel device={device} />);
 
-    expect(screen.getByText(/Starting/i)).toBeInTheDocument();
+    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Starting...');
   });
 
   it('does not render a transitional hint when desired_state matches observed', () => {
     render(<DeviceNodePanel device={makeDevice()} />);
 
-    expect(screen.queryByText(/Starting/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Stopping/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('appium-node-transition-hint')).not.toBeInTheDocument();
   });
 });
