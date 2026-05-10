@@ -72,7 +72,9 @@ export default function ReliabilityTab({ params }: Props) {
                           {row.device_name}
                         </div>
                       </td>
-                      <td className="px-5 py-3 text-sm text-text-2"><PlatformIcon platformId={row.platform_id} platformLabel={row.platform_label} /></td>
+                      <td className="px-5 py-3 text-sm text-text-2">
+                        <PlatformIcon platformId={row.platform_id} platformLabel={null} />
+                      </td>
                       <td className="px-5 py-3 text-sm text-text-2">{row.health_check_failures}</td>
                       <td className="px-5 py-3 text-sm text-text-2">{row.connectivity_losses}</td>
                       <td className="px-5 py-3 text-sm text-text-2">{row.node_crashes}</td>

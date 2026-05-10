@@ -1,194 +1,114 @@
+import type { components } from '../api/openapi';
 import type { DeviceRead } from './devices';
-import type {
-  ConnectionType,
-  CursorDirection,
-  CursorPaginatedResponse,
-  DeviceChipStatus,
-  DeviceHold,
-  DeviceOperationalState,
-  DeviceType,
-  PaginatedResponse,
-  RunState,
-} from './shared';
+import type { CursorDirection } from './shared';
 
-export interface GridStatus {
-  grid: {
+type Schemas = components['schemas'];
+
+type GridRuntimeStatus = {
+  ready?: boolean;
+  error?: string;
+  message?: string;
+  value?: {
     ready?: boolean;
-    error?: string;
     message?: string;
-    value?: {
-      ready?: boolean;
-      message?: string;
-      nodes?: Array<{
-        slots?: Array<{
-          session?: unknown;
-        }>;
+    nodes?: Array<{
+      slots?: Array<{
+        session?: unknown;
       }>;
-      sessionQueueRequests?: unknown[];
-    };
-  };
-  registry: {
-    device_count: number;
-    devices: Array<{
-      id: string;
-      identity_value: string;
-      connection_target: string | null;
-      name: string;
-      platform_id: string;
-      operational_state: DeviceOperationalState;
-      hold: DeviceHold | null;
-      node_state: string | null;
-      node_port: number | null;
     }>;
+    sessionQueueRequests?: unknown[];
   };
-  active_sessions: number;
-  queue_size: number;
-}
+};
 
-export interface HealthStatus {
-  status: string;
-  checks?: {
-    database?: string;
-  };
-}
+type HealthChecks = {
+  database?: string;
+  [key: string]: unknown;
+};
 
-export interface BulkDeviceIds {
-  device_ids: string[];
-}
+type DeviceGroupType = 'static' | 'dynamic';
 
-export interface BulkAutoManageUpdate {
-  device_ids: string[];
-  auto_manage: boolean;
-}
+export type GridStatus = Omit<Schemas['GridStatusRead'], 'grid'> & {
+  grid: GridRuntimeStatus;
+};
 
-export interface BulkTagsUpdate {
-  device_ids: string[];
-  tags: Record<string, string>;
+export type HealthStatus = Omit<Schemas['HealthStatusRead'], 'checks'> & {
+  checks?: HealthChecks;
+};
+
+export type BulkDeviceIds = Schemas['BulkDeviceIds'];
+export type BulkAutoManageUpdate = Schemas['BulkAutoManageUpdate'];
+export type BulkTagsUpdate = Omit<Schemas['BulkTagsUpdate'], 'merge'> & {
   merge?: boolean;
-}
-
-export interface BulkMaintenanceEnter {
-  device_ids: string[];
-}
-
-export interface BulkOperationResult {
-  total: number;
-  succeeded: number;
-  failed: number;
+};
+export type BulkMaintenanceEnter = Schemas['BulkMaintenanceEnter'];
+export type BulkOperationResult = Omit<Schemas['BulkOperationResult'], 'errors'> & {
   errors: Record<string, string>;
-}
+};
 
-export interface DeviceGroupFilters {
-  pack_id?: string;
-  platform_id?: string;
-  status?: DeviceChipStatus;
-  host_id?: string;
-  identity_value?: string;
-  connection_target?: string;
-  device_type?: DeviceType;
-  connection_type?: ConnectionType;
-  os_version?: string;
-  needs_attention?: boolean;
-  tags?: Record<string, string>;
-}
-
-export interface DeviceGroupRead {
-  id: string;
-  name: string;
-  description: string | null;
-  group_type: 'static' | 'dynamic';
-  filters: DeviceGroupFilters | null;
-  device_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DeviceGroupDetail extends DeviceGroupRead {
+export type DeviceGroupFilters = Schemas['DeviceGroupFilters'];
+export type DeviceGroupRead = Omit<Schemas['DeviceGroupRead'], 'group_type'> & {
+  group_type: DeviceGroupType;
+};
+export type DeviceGroupDetail = Omit<Schemas['DeviceGroupDetail'], 'devices' | 'group_type'> & {
   devices: DeviceRead[];
-}
+  group_type: DeviceGroupType;
+};
+export type DeviceGroupCreate = Omit<Schemas['DeviceGroupCreate'], 'group_type'> & {
+  group_type?: DeviceGroupType;
+};
+export type DeviceGroupUpdate = Schemas['DeviceGroupUpdate'];
 
-export interface DeviceGroupCreate {
-  name: string;
-  description?: string;
-  group_type?: 'static' | 'dynamic';
-  filters?: DeviceGroupFilters;
-}
-
-export interface DeviceGroupUpdate {
-  name?: string;
-  description?: string;
-  filters?: DeviceGroupFilters | null;
-}
-
-export interface DeviceRequirement {
-  pack_id: string;
-  platform_id: string;
-  os_version?: string | null;
-  count?: number | null;
-  allocation?: 'all_available' | null;
-  min_count?: number | null;
-  tags?: Record<string, string> | null;
-}
-
-export interface ReservedDeviceInfo {
-  device_id: string;
-  identity_value: string;
+export type DeviceRequirement = Schemas['DeviceRequirement'];
+export type ReservedDeviceInfo = Omit<
+  Schemas['ReservedDeviceInfo'],
+  | 'connection_target'
+  | 'cooldown_remaining_sec'
+  | 'excluded_at'
+  | 'excluded_until'
+  | 'exclusion_reason'
+  | 'host_ip'
+  | 'platform_label'
+> & {
   connection_target: string | null;
-  pack_id: string;
-  platform_id: string;
-  platform_label: string | null;
-  os_version: string;
-  host_ip: string | null;
-  excluded: boolean;
-  exclusion_reason: string | null;
+  cooldown_remaining_sec: number | null;
   excluded_at: string | null;
   excluded_until: string | null;
-  cooldown_remaining_sec: number | null;
-  cooldown_count: number;
-  cooldown_escalated: boolean;
-  name?: string | null;
-  device_type?: string | null;
-  connection_type?: string | null;
-  manufacturer?: string | null;
-  model?: string | null;
-  config?: Record<string, unknown> | null;
-  live_capabilities?: Record<string, unknown> | null;
-  unavailable_includes?: { include: string; reason: string }[] | null;
-}
-
-export interface SessionCounts {
-  passed: number;
-  failed: number;
-  error: number;
-  running: number;
-  total: number;
-}
-
-export interface RunRead {
-  id: string;
-  name: string;
-  state: RunState;
-  requirements: DeviceRequirement[];
-  ttl_minutes: number;
-  heartbeat_timeout_sec: number;
-  reserved_devices: ReservedDeviceInfo[] | null;
-  error: string | null;
-  created_at: string;
-  started_at: string | null;
+  exclusion_reason: string | null;
+  host_ip: string | null;
+  platform_label: string | null;
+};
+export type SessionCounts = Schemas['SessionCounts'];
+export type RunCreate = Schemas['RunCreate'];
+export type RunRead = Omit<
+  Schemas['RunRead'],
+  'completed_at' | 'created_by' | 'error' | 'last_heartbeat' | 'requirements' | 'reserved_devices' | 'started_at'
+> & {
   completed_at: string | null;
   created_by: string | null;
+  error: string | null;
   last_heartbeat: string | null;
-  session_counts: SessionCounts;
-}
-
-export interface RunDetail extends RunRead {
+  requirements: DeviceRequirement[];
+  reserved_devices: ReservedDeviceInfo[] | null;
+  started_at: string | null;
+};
+export type RunDetail = Omit<
+  Schemas['RunDetail'],
+  'completed_at' | 'created_by' | 'devices' | 'error' | 'last_heartbeat' | 'requirements' | 'reserved_devices' | 'started_at'
+> & {
+  completed_at: string | null;
+  created_by: string | null;
   devices: ReservedDeviceInfo[];
-}
+  error: string | null;
+  last_heartbeat: string | null;
+  requirements: DeviceRequirement[];
+  reserved_devices: ReservedDeviceInfo[] | null;
+  started_at: string | null;
+};
 
 export type RunSortKey = 'name' | 'state' | 'devices' | 'created_by' | 'created_at' | 'duration';
 
 export interface RunListParams {
-  state?: RunState;
+  state?: Schemas['RunState'];
   created_from?: string;
   created_to?: string;
   limit?: number;
@@ -196,12 +116,7 @@ export interface RunListParams {
   direction?: CursorDirection;
 }
 
-export interface SystemEventRead {
-  type: string;
-  id: string;
-  timestamp: string;
-  data: Record<string, unknown>;
-}
+export type SystemEventRead = Schemas['SystemEventRead'];
 
 export interface NotificationListParams {
   limit?: number;
@@ -209,5 +124,7 @@ export interface NotificationListParams {
   types?: string[];
 }
 
-export type RunListResponse = CursorPaginatedResponse<RunRead>;
-export type NotificationListResponse = PaginatedResponse<SystemEventRead>;
+export type RunListResponse = Omit<Schemas['RunListRead'], 'items'> & {
+  items: RunRead[];
+};
+export type NotificationListResponse = Schemas['NotificationListRead'];

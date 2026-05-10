@@ -52,6 +52,8 @@ npm run build
 npm run test                              # Vitest unit
 npm run test:e2e:mocked                   # Playwright with mocked backend
 npm run test:e2e:live                     # Playwright against live backend+frontend
+npm run types:generate                    # dump backend OpenAPI + regenerate src/api/openapi.ts
+npm run types:check                       # regenerate and fail if src/api/openapi.ts drifts
 ```
 Live e2e requires backend, Postgres, and the frontend dev server running.
 
@@ -112,7 +114,8 @@ All writes to `Device.operational_state` and `Device.hold` MUST go through `app.
 ### Frontend conventions
 - `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror `app/schemas/`.
 - `src/hooks/` wraps `react-query` with explicit polling intervals (5–15s) — operator screens are real-time dashboards, not request/response.
-- `src/types/` mirrors backend Pydantic schemas; keep them in sync when changing API shapes.
+- `src/api/openapi.ts` is generated from backend OpenAPI and committed. Keep backend public API responses on named Pydantic `response_model`s so frontend DTOs can derive from `components["schemas"]`; dynamic JSON-column or third-party subfields may stay flexible inside typed envelopes.
+- `src/types/` re-exports stable frontend names derived from `src/api/openapi.ts`. Keep only frontend-only helpers or narrow refinements there; do not hand-copy backend DTOs when a named OpenAPI schema exists.
 - Reuse `components/` primitives (`DataTable`, `Badge`, `FilterBar`, `FetchError`) instead of inventing new ones.
 - Tailwind-only spacing — no hardcoded pixels. See `docs/guides/frontend-development.md`.
 

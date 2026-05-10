@@ -23,6 +23,7 @@ from app.schemas.host import (
     HostRegister,
     HostResourceTelemetryResponse,
     HostToolEnsureJobRead,
+    HostToolStatusRead,
     IntakeCandidateRead,
 )
 from app.services import (
@@ -228,7 +229,7 @@ async def get_host_resource_telemetry(
     return payload
 
 
-@router.get("/{host_id}/tools/status")
+@router.get("/{host_id}/tools/status", response_model=HostToolStatusRead, response_model_exclude_none=True)
 async def get_host_tool_status(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
