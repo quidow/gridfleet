@@ -120,6 +120,8 @@ async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
                 try:
                     task.result()
                 except (ConnectionClosed, WebSocketDisconnect):
+                    # Normal disconnect — drop into the cleanup `finally` to
+                    # cancel the sibling task and exit the proxy.
                     pass
                 except Exception:
                     logger.warning("ws proxy task ended with unexpected error", exc_info=True)
