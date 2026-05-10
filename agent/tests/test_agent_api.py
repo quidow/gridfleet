@@ -122,6 +122,60 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
     assert adapter.health_calls == [("serial-1", False)]
 
 
+async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -> None:
+    from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
+
+    desired_pack = DesiredPack(
+        id="appium-uiautomator2",
+        release="1.0",
+        appium_server=AppiumInstallable("npm", "appium", "2.11.5", None, []),
+        appium_driver=AppiumInstallable("npm", "pkg", "1.0", None, []),
+        platforms=[
+            DesiredPlatform(
+                id="android_mobile",
+                automation_name="UiAutomator2",
+                device_types=["real_device"],
+                connection_types=["usb"],
+                grid_slots=["native"],
+                identity_scheme="android_serial",
+                identity_scope="host",
+                stereotype={},
+                appium_platform_name="Android",
+            )
+        ],
+    )
+    registry = AdapterRegistry()
+    registry.set(desired_pack.id, desired_pack.release, _FakeAdapter())  # type: ignore[arg-type]
+    app.state.adapter_registry = registry
+
+    captured: dict[str, object] = {}
+
+    async def fake_adapter_health_check(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"healthy": True, "checks": []}
+
+    with (
+        patch("agent_app.main._latest_desired", return_value=[desired_pack]),
+        patch("agent_app.main.adapter_health_check", new=fake_adapter_health_check),
+    ):
+        resp = await client.get(
+            "/agent/pack/devices/abc/health",
+            params={
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "device_type": "real_device",
+                "connection_type": "usb",
+                "ip_address": "10.0.0.7",
+                "ip_ping_timeout_sec": 1.5,
+                "ip_ping_count": 2,
+            },
+        )
+
+    assert resp.status_code == 200
+    assert captured["ip_ping_timeout_sec"] == 1.5
+    assert captured["ip_ping_count"] == 2
+
+
 async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     adapter = _FakeAdapter()

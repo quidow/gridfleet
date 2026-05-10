@@ -417,6 +417,8 @@ async def pack_device_health_route(
     ip_address: str | None = Query(None),
     allow_boot: bool = Query(False),
     headless: bool = Query(True),
+    ip_ping_timeout_sec: float | None = Query(None),
+    ip_ping_count: int | None = Query(None),
 ) -> dict[str, Any]:
     """Pack-shaped device health check dispatched through the loaded adapter."""
     platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
@@ -434,6 +436,8 @@ async def pack_device_health_route(
             platform_id=platform_id,
             device_type=device_type,
             connection_type=connection_type,
+            ip_ping_timeout_sec=ip_ping_timeout_sec,
+            ip_ping_count=ip_ping_count,
         )
         if payload is not None:
             return payload
