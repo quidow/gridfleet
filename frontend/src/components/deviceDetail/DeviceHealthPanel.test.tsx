@@ -201,8 +201,8 @@ describe('getCheckLabels', () => {
     expect(
       getCheckLabels({
         ...baseDescriptor,
-        healthChecks: [{ id: 'ip_ping', label: 'IP Reachable' }],
+        healthChecks: [{ id: 'ip_ping', label: 'ICMP Reachable' }],
       }),
-    ).toEqual({ ip_ping: 'IP Reachable' });
+    ).toEqual({ ip_ping: 'ICMP Reachable' });
   });
 });

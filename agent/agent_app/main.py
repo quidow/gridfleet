@@ -436,6 +436,7 @@ async def pack_device_health_route(
             platform_id=platform_id,
             device_type=device_type,
             connection_type=connection_type,
+            ip_address=ip_address,
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
         )

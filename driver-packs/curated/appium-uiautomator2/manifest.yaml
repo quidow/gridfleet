@@ -46,7 +46,7 @@ platforms:
       - id: ping
         label: IP Reachable
       - id: ip_ping
-        label: IP Reachable
+        label: ICMP Reachable
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
@@ -106,7 +106,7 @@ platforms:
       - id: ping
         label: IP Reachable
       - id: ip_ping
-        label: IP Reachable
+        label: ICMP Reachable
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
@@ -167,7 +167,7 @@ platforms:
       - id: ping
         label: IP Reachable
       - id: ip_ping
-        label: IP Reachable
+        label: ICMP Reachable
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
