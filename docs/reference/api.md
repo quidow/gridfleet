@@ -47,7 +47,7 @@ Current auth behavior:
 | `GET` | `/api/devices/verification-jobs/{job_id}` | Read verification job state | path `job_id` | `DeviceVerificationJobRead` |
 | `GET` | `/api/devices/verification-jobs/{job_id}/events` | Subscribe to verification job SSE updates | path `job_id` | SSE stream |
 | `GET` | `/api/devices/{device_id}/capabilities` | Read generated Appium capabilities | path `device_id` | object of Appium capabilities |
-| `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance, optionally draining | `DeviceMaintenanceUpdate` | `DeviceRead` |
+| `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance (stops the node immediately) | `DeviceMaintenanceUpdate` | `DeviceRead` |
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}/sessions` | List recent sessions for one device | `limit` | `SessionRead[]` |
 | `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered by key | `keys` | config object |
