@@ -196,4 +196,13 @@ describe('getCheckLabels', () => {
   it('does not infer platform health check labels', () => {
     expect(getCheckLabels({ ...baseDescriptor, appiumPlatformName: 'Android', healthChecks: [] })).toEqual({});
   });
+
+  it('renders ip_ping health check with correct label', () => {
+    expect(
+      getCheckLabels({
+        ...baseDescriptor,
+        healthChecks: [{ id: 'ip_ping', label: 'IP Reachable' }],
+      }),
+    ).toEqual({ ip_ping: 'IP Reachable' });
+  });
 });
