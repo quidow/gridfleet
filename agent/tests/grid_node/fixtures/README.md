@@ -22,3 +22,7 @@ The socket probe was recorded with a sanitized relay stereotype:
 ```json
 {"platformName":"ANDROID","appium:udid":"fixture-device","appium:platform":"android_fixture"}
 ```
+
+## HTTP Transcript Capture
+
+To record the Java relay HTTP Node API, start `tests.grid_node.tools.record_grid_http` with `--listen 0.0.0.0:5599` and set the Java relay TOML `server.external-url` to the recorder URL. The recorder forwards to the real Java relay URL and writes `http.transcript` in the selected scenario directory.

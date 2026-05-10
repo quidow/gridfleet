@@ -1,0 +1,2 @@
+{"body_b64":"","direction":"hub_to_node","headers":{"accept":"*/*","host":"127.0.0.1:5599","user-agent":"curl/8.7.1"},"kind":"request","method":"GET","path":"/status","ts":1778375612.28913}
+{"body_b64":"eyJ2YWx1ZSI6eyJyZWFkeSI6dHJ1ZSwibWVzc2FnZSI6ImZpeHR1cmUgYXBwaXVtIHN0dWIifX0=","direction":"node_to_hub","headers":{"content-length":"56","content-type":"application/json","date":"Sun, 10 May 2026 01:13:32 GMT","server":"uvicorn"},"kind":"response","method":"GET","path":"/status","ts":1778375612.297369}
