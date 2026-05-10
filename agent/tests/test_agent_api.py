@@ -408,22 +408,21 @@ async def test_probe_appium_session(client: AsyncClient) -> None:
     delete_response = MagicMock(spec=HttpxResponse, status_code=200)
 
     mock_http_client = MagicMock()
-    mock_http_client.__aenter__.return_value = mock_http_client
-    mock_http_client.__aexit__.return_value = False
     mock_http_client.post = AsyncMock(return_value=create_response)
     mock_http_client.delete = AsyncMock(return_value=delete_response)
 
     with (
         patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client),
+        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
     ):
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     mock_http_client.post.assert_awaited_once_with(
-        "/session",
+        "http://127.0.0.1:4723/session",
         json={"capabilities": {"alwaysMatch": {"platformName": "Android"}, "firstMatch": [{}]}},
+        timeout=120,
     )
 
 
@@ -446,8 +445,6 @@ async def test_probe_appium_session_strips_gridfleet_routing_metadata(client: As
     delete_response = MagicMock(spec=HttpxResponse, status_code=200)
 
     mock_http_client = MagicMock()
-    mock_http_client.__aenter__.return_value = mock_http_client
-    mock_http_client.__aexit__.return_value = False
     mock_http_client.post = AsyncMock(return_value=create_response)
     mock_http_client.delete = AsyncMock(return_value=delete_response)
 
@@ -471,13 +468,13 @@ async def test_probe_appium_session_strips_gridfleet_routing_metadata(client: As
 
     with (
         patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client),
+        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
     ):
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": capabilities})
 
     assert resp.status_code == 200
     mock_http_client.post.assert_awaited_once_with(
-        "/session",
+        "http://127.0.0.1:4723/session",
         json={
             "capabilities": {
                 "alwaysMatch": {
@@ -490,6 +487,7 @@ async def test_probe_appium_session_strips_gridfleet_routing_metadata(client: As
                 "firstMatch": [{}],
             }
         },
+        timeout=120,
     )
 
 
@@ -500,14 +498,12 @@ async def test_probe_appium_session_returns_gateway_error_on_cleanup_failure(cli
     delete_response.json.return_value = {"value": {"message": "delete failed"}}
 
     mock_http_client = MagicMock()
-    mock_http_client.__aenter__.return_value = mock_http_client
-    mock_http_client.__aexit__.return_value = False
     mock_http_client.post = AsyncMock(return_value=create_response)
     mock_http_client.delete = AsyncMock(return_value=delete_response)
 
     with (
         patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client),
+        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
     ):
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
@@ -519,13 +515,11 @@ async def test_probe_appium_session_returns_gateway_error_on_cleanup_failure(cli
 
 async def test_probe_appium_session_returns_timeout_status(client: AsyncClient) -> None:
     mock_http_client = MagicMock()
-    mock_http_client.__aenter__.return_value = mock_http_client
-    mock_http_client.__aexit__.return_value = False
     mock_http_client.post = AsyncMock(side_effect=httpx.ReadTimeout("slow", request=MagicMock()))
 
     with (
         patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client),
+        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
     ):
         resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
