@@ -20,7 +20,7 @@ from app.services import (
 )
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.device_state import ready_operational_state, set_hold, set_operational_state
+from app.services.device_state import ready_operational_state, set_hold
 from app.services.lifecycle_policy_actions import (
     complete_auto_stop,
     has_running_client_session,
@@ -594,25 +594,26 @@ async def attempt_auto_recovery(
         )
         if device.operational_state != DeviceOperationalState.available:
             target = await ready_operational_state(db, device)
-            if (
-                device.operational_state == DeviceOperationalState.offline
-                and target == DeviceOperationalState.available
-            ):
+            if device.operational_state == DeviceOperationalState.offline:
+                if target == DeviceOperationalState.available:
+                    await _MACHINE.transition(
+                        device,
+                        TransitionEvent.CONNECTIVITY_RESTORED,
+                        reason=f"Connectivity restored ({source}): {reason}",
+                    )
+                # else: probe still failing — no state change. The next
+                # device_connectivity_loop tick will retry recovery.
+            elif device.operational_state == DeviceOperationalState.busy and target == DeviceOperationalState.offline:
+                # Recovery on a busy device that probe says is unhealthy →
+                # auto-stop. Hold preserved (reserved devices stay reserved).
                 await _MACHINE.transition(
                     device,
-                    TransitionEvent.CONNECTIVITY_RESTORED,
-                    reason=f"Connectivity restored ({source}): {reason}",
+                    TransitionEvent.AUTO_STOP_EXECUTED,
+                    reason=f"Recovery declared device unhealthy ({source}): {reason}",
                 )
-            else:
-                # Fallback: probe says device is not ready (target=offline) or
-                # the device is in an operational state the CONNECTIVITY_RESTORED
-                # transition doesn't model from. Drop through to the direct
-                # writer to preserve existing behavior.
-                await set_operational_state(
-                    device,
-                    target,
-                    reason=f"Connectivity restored ({source}): {reason}",
-                )
+            # else: busy device that probe says is available — extremely rare;
+            # leave state alone, the next device_connectivity_loop tick will
+            # reconcile via session_sync.
         await db.commit()
 
     await db.commit()

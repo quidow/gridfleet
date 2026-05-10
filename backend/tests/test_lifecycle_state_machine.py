@@ -215,6 +215,45 @@ class TestInvalidTransitions:
         with pytest.raises(InvalidTransitionError):
             await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED)
 
+    async def test_session_started_on_maintenance_raises(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.offline,
+            hold=DeviceHold.maintenance,
+            name_suffix="mx1",
+        )
+        machine = DeviceStateMachine()
+        with pytest.raises(InvalidTransitionError) as exc:
+            await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        assert exc.value.current_state == "offline/maintenance"
+
+    async def test_connectivity_restored_on_maintenance_raises(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.offline,
+            hold=DeviceHold.maintenance,
+            name_suffix="mx2",
+        )
+        machine = DeviceStateMachine()
+        with pytest.raises(InvalidTransitionError):
+            await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED)
+
+    async def test_session_ended_on_maintenance_raises(self, db_session: AsyncSession, db_host: Host) -> None:
+        # (busy, maintenance) is impossible to reach naturally after the gate
+        # fix, but assert the gate catches it defensively.
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.busy,
+            hold=DeviceHold.maintenance,
+            name_suffix="mx3",
+        )
+        machine = DeviceStateMachine()
+        with pytest.raises(InvalidTransitionError):
+            await machine.transition(device, TransitionEvent.SESSION_ENDED)
+
 
 class TestStateModel:
     async def test_label_format(self, db_session: AsyncSession, db_host: Host) -> None:

@@ -10,13 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
-from app.models.device import Device, DeviceOperationalState
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.device_state import ready_operational_state, set_operational_state
+from app.services.device_state import ready_operational_state
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
@@ -199,6 +199,14 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         # Mark device busy under row lock
         locked_device = await device_locking.lock_device(db, device.id)
+        if locked_device.hold == DeviceHold.maintenance:
+            logger.warning(
+                "Grid reports session %s on maintenance-held device %s — "
+                "skipping session tracking; operator should investigate",
+                sid,
+                locked_device.name,
+            )
+            continue
         await _MACHINE.transition(
             locked_device,
             TransitionEvent.SESSION_STARTED,
@@ -295,24 +303,19 @@ async def _sync_sessions(db: AsyncSession) -> None:
         fresh_running = (await db.execute(fresh_running_stmt)).first()
         if fresh_running is None:
             target = await ready_operational_state(db, locked_device)
-            if (
-                locked_device.operational_state == DeviceOperationalState.busy
-                and target == DeviceOperationalState.available
-            ):
+            if target == DeviceOperationalState.available:
                 await _MACHINE.transition(
                     locked_device,
                     TransitionEvent.SESSION_ENDED,
                     reason="Session ended",
                 )
             else:
-                # Fallback: device is not ready (probe failed during the
-                # session); the machine has no busy->offline-on-session-end
-                # transition. Drop straight through the writer to preserve
-                # the existing behavior. lifecycle_policy will reconcile.
-                await set_operational_state(
+                # Probe failed during the session — auto-stop the device.
+                # AUTO_STOP_EXECUTED is the modeled busy->offline path.
+                await _MACHINE.transition(
                     locked_device,
-                    target,
-                    reason="Session ended",
+                    TransitionEvent.AUTO_STOP_EXECUTED,
+                    reason="Session ended on unhealthy device",
                 )
 
     await _sweep_stale_stop_pending(db)

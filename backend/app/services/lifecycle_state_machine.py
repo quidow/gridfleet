@@ -88,6 +88,13 @@ class DeviceStateMachine:
         if event is TransitionEvent.DEVICE_DISCOVERED:
             return (before.operational, before.hold)
 
+        # Maintenance hold blocks all non-maintenance state changes.
+        # Idempotent re-entries are caught earlier in transition() via
+        # _IDEMPOTENT_NOOPS, so this gate only fires for real attempts to
+        # mutate state on a maintenance-held device.
+        if before.hold is DeviceHold.maintenance:
+            return None
+
         target_operational = _OPERATIONAL_TRANSITIONS.get(before.operational, {}).get(event)
         if target_operational is None:
             return None
