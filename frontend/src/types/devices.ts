@@ -1,21 +1,70 @@
 import type { components } from '../api/openapi';
-import type { CursorDirection, SessionStatus } from './shared';
+import type { CursorDirection, DeviceReadinessState, DeviceVerificationJobStatus, DeviceVerificationStageStatus, SessionStatus } from './shared';
 
 type Schemas = components['schemas'];
 
 export type DeviceReservation = Schemas['DeviceReservationRead'];
-export type DeviceRead = Schemas['DeviceRead'];
+export type DeviceRead = Omit<Schemas['DeviceRead'], 'platform_label' | 'readiness_state'> & {
+  platform_label: string | null;
+  readiness_state: DeviceReadinessState;
+};
 export type AppiumNodeRead = Schemas['AppiumNodeRead'];
-export type SessionRead = Schemas['SessionRead'];
-export type DeviceDetail = Schemas['DeviceDetail'];
-export type DeviceVerificationJob = Schemas['DeviceVerificationJobRead'];
-export type SessionDetail = Schemas['SessionDetail'];
-export type DeviceVerificationCreate = Schemas['DeviceVerificationCreate'];
+export type SessionRead = Omit<
+  Schemas['SessionRead'],
+  'device_platform_label' | 'error_message' | 'error_type' | 'requested_pack_id' | 'requested_platform_id' | 'run_id'
+> & {
+  device_platform_label: string | null;
+  error_message: string | null;
+  error_type: string | null;
+  requested_pack_id: string | null;
+  requested_platform_id: string | null;
+  run_id: string | null;
+};
+export type DeviceDetail = Omit<Schemas['DeviceDetail'], 'platform_label' | 'readiness_state' | 'sessions'> & {
+  platform_label: string | null;
+  readiness_state: DeviceReadinessState;
+  sessions: SessionRead[];
+};
+export type DeviceVerificationJob = Omit<
+  Schemas['DeviceVerificationJobRead'],
+  'current_stage_status' | 'status'
+> & {
+  current_stage_status?: DeviceVerificationStageStatus | null;
+  status: DeviceVerificationJobStatus;
+};
+export type SessionDetail = Omit<
+  Schemas['SessionDetail'],
+  | 'device_name'
+  | 'device_pack_id'
+  | 'device_platform_id'
+  | 'device_platform_label'
+  | 'error_message'
+  | 'error_type'
+  | 'requested_pack_id'
+  | 'requested_platform_id'
+  | 'run_id'
+> & {
+  device_name: string | null;
+  device_pack_id: string | null;
+  device_platform_id: string | null;
+  device_platform_label: string | null;
+  error_message: string | null;
+  error_type: string | null;
+  requested_pack_id: string | null;
+  requested_platform_id: string | null;
+  run_id: string | null;
+};
+export type DeviceVerificationCreate = Omit<Schemas['DeviceVerificationCreate'], 'auto_manage' | 'os_version'> & {
+  auto_manage?: boolean;
+  os_version?: string;
+};
 export type DeviceVerificationUpdate = Schemas['DeviceVerificationUpdate'];
 export type DevicePatch = Schemas['DevicePatch'];
 export type ConfigAuditEntry = Schemas['ConfigAuditEntryRead'];
 export type TestDataAuditEntry = Schemas['TestDataAuditEntryRead'];
-export type SessionOutcomeHeatmapRow = Schemas['SessionOutcomeHeatmapRow'];
+export type SessionOutcomeHeatmapRow = Omit<Schemas['SessionOutcomeHeatmapRow'], 'status'> & {
+  status: Exclude<SessionStatus, 'running'>;
+};
 
 export type DeviceLifecyclePolicy = {
   last_failure_source: string | null;

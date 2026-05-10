@@ -40,7 +40,17 @@ export type FleetPluginSyncResult = Omit<
   skipped_hosts: string[];
 };
 
-export type LifecycleIncidentRead = Schemas['LifecycleIncidentRead'];
+export type LifecycleIncidentRead = Omit<
+  Schemas['LifecycleIncidentRead'],
+  'backoff_until' | 'detail' | 'reason' | 'run_id' | 'run_name' | 'source'
+> & {
+  backoff_until: string | null;
+  detail: string | null;
+  reason: string | null;
+  run_id: string | null;
+  run_name: string | null;
+  source: string | null;
+};
 
 export interface SettingValidation {
   min?: number;

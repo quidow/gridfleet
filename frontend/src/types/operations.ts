@@ -41,7 +41,9 @@ export type BulkTagsUpdate = Omit<Schemas['BulkTagsUpdate'], 'merge'> & {
   merge?: boolean;
 };
 export type BulkMaintenanceEnter = Schemas['BulkMaintenanceEnter'];
-export type BulkOperationResult = Schemas['BulkOperationResult'];
+export type BulkOperationResult = Omit<Schemas['BulkOperationResult'], 'errors'> & {
+  errors: Record<string, string>;
+};
 
 export type DeviceGroupFilters = Schemas['DeviceGroupFilters'];
 export type DeviceGroupRead = Omit<Schemas['DeviceGroupRead'], 'group_type'> & {
@@ -57,15 +59,50 @@ export type DeviceGroupCreate = Omit<Schemas['DeviceGroupCreate'], 'group_type'>
 export type DeviceGroupUpdate = Schemas['DeviceGroupUpdate'];
 
 export type DeviceRequirement = Schemas['DeviceRequirement'];
-export type ReservedDeviceInfo = Schemas['ReservedDeviceInfo'];
+export type ReservedDeviceInfo = Omit<
+  Schemas['ReservedDeviceInfo'],
+  | 'connection_target'
+  | 'cooldown_remaining_sec'
+  | 'excluded_at'
+  | 'excluded_until'
+  | 'exclusion_reason'
+  | 'host_ip'
+  | 'platform_label'
+> & {
+  connection_target: string | null;
+  cooldown_remaining_sec: number | null;
+  excluded_at: string | null;
+  excluded_until: string | null;
+  exclusion_reason: string | null;
+  host_ip: string | null;
+  platform_label: string | null;
+};
 export type SessionCounts = Schemas['SessionCounts'];
 export type RunCreate = Schemas['RunCreate'];
-export type RunRead = Omit<Schemas['RunRead'], 'requirements'> & {
+export type RunRead = Omit<
+  Schemas['RunRead'],
+  'completed_at' | 'created_by' | 'error' | 'last_heartbeat' | 'requirements' | 'reserved_devices' | 'started_at'
+> & {
+  completed_at: string | null;
+  created_by: string | null;
+  error: string | null;
+  last_heartbeat: string | null;
   requirements: DeviceRequirement[];
+  reserved_devices: ReservedDeviceInfo[] | null;
+  started_at: string | null;
 };
-export type RunDetail = Omit<Schemas['RunDetail'], 'devices' | 'requirements'> & {
+export type RunDetail = Omit<
+  Schemas['RunDetail'],
+  'completed_at' | 'created_by' | 'devices' | 'error' | 'last_heartbeat' | 'requirements' | 'reserved_devices' | 'started_at'
+> & {
+  completed_at: string | null;
+  created_by: string | null;
   devices: ReservedDeviceInfo[];
+  error: string | null;
+  last_heartbeat: string | null;
   requirements: DeviceRequirement[];
+  reserved_devices: ReservedDeviceInfo[] | null;
+  started_at: string | null;
 };
 
 export type RunSortKey = 'name' | 'state' | 'devices' | 'created_by' | 'created_at' | 'duration';
