@@ -42,3 +42,14 @@ def test_commit_promotes_reserved_slot_to_busy() -> None:
     assert snapshot.slots[0].reservation_id is None
     assert snapshot.slots[0].session_id == "session-1"
     assert snapshot.slots[0].started_at == 15.0
+
+
+def test_abort_releases_reserved_slot_and_is_idempotent() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "Android"})
+    state.abort(reservation.id)
+    state.abort(reservation.id)
+    snapshot = state.snapshot()
+    assert snapshot.slots[0].state == "FREE"
+    assert snapshot.slots[0].reservation_id is None
+    assert snapshot.slots[0].reserved_at is None

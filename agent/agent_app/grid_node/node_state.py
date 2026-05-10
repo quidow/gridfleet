@@ -88,6 +88,14 @@ class NodeState:
                 return
         raise ReservationGoneError(f"reservation is not active: {reservation_id}")
 
+    def abort(self, reservation_id: str) -> None:
+        for runtime in self._slots:
+            if runtime.reservation_id == reservation_id and runtime.state == "RESERVED":
+                runtime.state = "FREE"
+                runtime.reservation_id = None
+                runtime.reserved_at = None
+                return
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[
