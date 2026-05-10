@@ -54,6 +54,7 @@ from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
+from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
     heartbeat_loop,
@@ -66,6 +67,7 @@ from app.services.pack_drain import pack_drain_loop
 from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
+from app.services.session_viability import close as close_session_viability_client
 from app.services.session_viability import session_viability_loop
 from app.services.settings_service import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
@@ -211,6 +213,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await control_plane_leader.release()
         await event_bus.shutdown()
         await agent_http_pool.close()
+        await close_grid_service_client()
+        await close_session_viability_client()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)
         await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")

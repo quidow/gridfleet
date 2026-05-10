@@ -32,6 +32,25 @@ SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
 
+# Shared httpx.AsyncClient for grid probe calls. Per-call instantiation leaks
+# ~0.8 MB on macOS (TLS contexts not released by the native allocator).
+_grid_probe_client: httpx.AsyncClient | None = None
+
+
+def _get_grid_probe_client() -> httpx.AsyncClient:
+    global _grid_probe_client
+    if _grid_probe_client is None or _grid_probe_client.is_closed:
+        _grid_probe_client = httpx.AsyncClient()
+    return _grid_probe_client
+
+
+async def close() -> None:
+    """Close the shared probe client. Call from app shutdown."""
+    global _grid_probe_client
+    if _grid_probe_client is not None and not _grid_probe_client.is_closed:
+        await _grid_probe_client.aclose()
+    _grid_probe_client = None
+
 
 class HealthFailureHandler(Protocol):
     async def __call__(
@@ -206,38 +225,40 @@ def build_probe_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
 
 
 async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int) -> tuple[bool, str | None]:
-    base_url = httpx.URL(f"{settings_service.get('grid.hub_url').rstrip('/')}/")
-    async with httpx.AsyncClient(base_url=base_url, timeout=timeout_sec) as client:
-        try:
-            create_resp = await client.post("session", json=_build_session_payload(capabilities))
-        except httpx.HTTPError as exc:
-            return False, f"Session create request failed: {_format_http_error(exc)}"
+    base = settings_service.get("grid.hub_url").rstrip("/")
+    client = _get_grid_probe_client()
+    try:
+        create_resp = await client.post(
+            f"{base}/session", json=_build_session_payload(capabilities), timeout=timeout_sec
+        )
+    except httpx.HTTPError as exc:
+        return False, f"Session create request failed: {_format_http_error(exc)}"
 
-        if create_resp.status_code >= 400:
-            try:
-                return False, _extract_session_error(create_resp.json())
-            except ValueError:
-                return False, create_resp.text or "Session create failed"
-
+    if create_resp.status_code >= 400:
         try:
-            data = create_resp.json()
+            return False, _extract_session_error(create_resp.json())
         except ValueError:
-            return False, "Session create returned invalid JSON"
+            return False, create_resp.text or "Session create failed"
 
-        session_id = data.get("sessionId")
-        if not session_id and isinstance(data.get("value"), dict):
-            session_id = data["value"].get("sessionId")
-        if not isinstance(session_id, str) or not session_id:
-            return False, "Session create did not return a session id"
+    try:
+        data = create_resp.json()
+    except ValueError:
+        return False, "Session create returned invalid JSON"
 
-        try:
-            delete_resp = await client.delete(f"session/{session_id}")
-            if delete_resp.status_code >= 400:
-                return False, f"Session created but cleanup failed ({delete_resp.status_code})"
-        except httpx.HTTPError as exc:
-            return False, f"Session created but cleanup failed: {_format_http_error(exc)}"
+    session_id = data.get("sessionId")
+    if not session_id and isinstance(data.get("value"), dict):
+        session_id = data["value"].get("sessionId")
+    if not isinstance(session_id, str) or not session_id:
+        return False, "Session create did not return a session id"
 
-        return True, None
+    try:
+        delete_resp = await client.delete(f"{base}/session/{session_id}", timeout=timeout_sec)
+        if delete_resp.status_code >= 400:
+            return False, f"Session created but cleanup failed ({delete_resp.status_code})"
+    except httpx.HTTPError as exc:
+        return False, f"Session created but cleanup failed: {_format_http_error(exc)}"
+
+    return True, None
 
 
 async def probe_session_via_agent_node(
