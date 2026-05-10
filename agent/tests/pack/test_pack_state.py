@@ -184,15 +184,6 @@ class _DoctorAdapter:
         return [DoctorCheckResult(check_id="adb", ok=True, message=f"host={ctx.host_id}")]
 
 
-class _DriverDoctorRunner:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    async def __call__(self, driver_name: str, env: RuntimeEnv) -> dict[str, object]:
-        self.calls.append((driver_name, env.runtime_id))
-        return {"ok": False, "required_fixes": 1, "issues": ["ANDROID_HOME is not set"]}
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -312,17 +303,16 @@ async def test_runtime_entry_includes_blocked_reason_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_installed_pack_posts_adapter_and_appium_driver_doctor_results() -> None:
+async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
+    """PackStateLoop posts only adapter-sourced doctor entries; the generic appium driver doctor is gone."""
     client = _FakeClient(_make_desired([_android_pack()]))
     registry = AdapterRegistry()
     registry.set("appium-uiautomator2", "2026.04.0", _DoctorAdapter())  # type: ignore[arg-type]
-    driver_doctor_runner = _DriverDoctorRunner()
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000099",
         adapter_registry=registry,
-        driver_doctor_runner=driver_doctor_runner,
     )
 
     await loop.run_once()
@@ -335,30 +325,55 @@ async def test_installed_pack_posts_adapter_and_appium_driver_doctor_results() -
             "ok": True,
             "message": "host=00000000-0000-0000-0000-000000000099",
         },
-        {
-            "pack_id": "appium-uiautomator2",
-            "check_id": "driver",
-            "ok": False,
-            "message": "ANDROID_HOME is not set",
-        },
     ]
-    assert driver_doctor_runner.calls == [("uiautomator2", payload["packs"][0]["runtime_id"])]
 
 
 @pytest.mark.asyncio
-async def test_xcuitest_pack_runs_appium_driver_doctor_with_xcuitest_name() -> None:
+async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
+    """Without a registered adapter, an xcuitest pack contributes no doctor entries."""
     client = _FakeClient(_make_desired([_ios_pack()]))
-    driver_doctor_runner = _DriverDoctorRunner()
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000099",
-        driver_doctor_runner=driver_doctor_runner,
     )
 
     await loop.run_once()
 
-    assert driver_doctor_runner.calls == [("xcuitest", client.posted[-1]["packs"][0]["runtime_id"])]
+    payload = client.posted[-1]
+    assert payload["doctor"] == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
+    """When adapter_loader raises, the pack still reports installed but emits an adapter_load failure entry."""
+    client = _FakeClient(_make_desired([_android_pack()]))
+    registry = AdapterRegistry()
+
+    async def failing_loader(pack: object, env: object) -> None:
+        raise RuntimeError("tarball missing on disk")
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_id="00000000-0000-0000-0000-000000000099",
+        adapter_registry=registry,
+        adapter_loader=failing_loader,
+    )
+
+    await loop.run_once()
+
+    payload = client.posted[-1]
+    assert payload["doctor"] == [
+        {
+            "pack_id": "appium-uiautomator2",
+            "check_id": "adapter_load",
+            "ok": False,
+            "message": "adapter load failed: tarball missing on disk",
+        },
+    ]
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "installed"
 
 
 @pytest.mark.asyncio
