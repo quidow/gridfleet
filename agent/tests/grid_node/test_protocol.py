@@ -32,7 +32,7 @@ def test_build_slots_emits_android_native_and_chrome_slots() -> None:
         base_caps={"platformName": "Android", "appium:platform": "android_mobile"},
         grid_slots=["native", "chrome"],
     )
-    assert [slot.stereotype.caps.get("browserName") for slot in slots] == [None, "Chrome"]
+    assert [slot.stereotype.caps.get("browserName") for slot in slots] == [None, "chrome"]
     assert all(slot.stereotype.caps["platformName"] == "Android" for slot in slots)
 
 

@@ -156,7 +156,20 @@ def build_app(
                 prev_caps = dict(slot.session_capabilities or {})
                 prev_start = slot.session_start_iso
                 break
-        response = await _proxy_http(request)
+        try:
+            response = await _proxy_http(request)
+        except Exception:
+            # If the upstream proxy fails (transport reset, protocol error,
+            # etc.), the upstream session may or may not be gone. Release the
+            # local slot anyway so a stuck session does not pin the node, and
+            # surface a 502 to the caller. Selenium's hub treats DELETE 502
+            # the same as a transient cleanup failure and retries.
+            logger.warning("delete_session upstream proxy failed for %s", session_id, exc_info=True)
+            state.release(session_id)
+            return JSONResponse(
+                {"value": {"error": "session not deleted", "message": "Upstream session delete failed"}},
+                status_code=502,
+            )
         if 200 <= response.status_code < 300 or response.status_code in {404, 410}:
             state.release(session_id)
             now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")

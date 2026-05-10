@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import signal
+import socket
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -351,9 +352,22 @@ class AppiumProcessManager:
                 self._logs[port].append(f"[{prefix}] {text}")
 
     def _allocate_node_port(self) -> int:
-        port = self._next_node_port
-        self._next_node_port += 1
-        return port
+        # Skip ports already bound by another listener so the grid node HTTP
+        # server does not race a third-party process on a stale port. The
+        # actual uvicorn server binds `_grid_advertise_ip` (the advertised LAN
+        # interface), so probe that hostname — a free 127.0.0.1 does not
+        # imply the LAN IP is also free.
+        probe_host = self._grid_advertise_ip or "0.0.0.0"
+        while True:
+            port = self._next_node_port
+            self._next_node_port += 1
+            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+                try:
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    probe.bind((probe_host, port))
+                except OSError:
+                    continue
+            return port
 
     def _track_stream_logs(
         self,
@@ -1041,6 +1055,13 @@ class AppiumProcessManager:
             for task in task_map.values():
                 task.cancel()
             task_map.clear()
+        # If a per-port `stop()` raised before reaching its `_log_tasks.pop`,
+        # the log-streamer tasks survive shutdown and leak into the next
+        # event-loop tick. Cancel anything still tracked here.
+        for port, tasks in list(self._log_tasks.items()):
+            for task in tasks:
+                task.cancel()
+            self._log_tasks.pop(port, None)
 
     async def _fetch_appium_status(self, port: int) -> dict[str, Any] | None:
         try:
