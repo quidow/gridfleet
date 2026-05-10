@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.services import device_locking
 from app.services.agent_error_codes import AgentErrorCode
+from app.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -237,6 +239,55 @@ async def test_restart_node_cold_start(
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
     assert resp.json()["state"] == NodeState.running.value
+
+
+async def test_restart_node_clears_stale_recovery_suppression(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    """A successful manual restart must clear stale lifecycle suppression so the
+    device leaves the "Recovery paused — admin review needed" state without
+    waiting for the next auto-recovery tick (which never runs while the node
+    is healthy)."""
+    device = await _create_device(db_session, default_host_id)
+    device_id = device["id"]
+    remote_manager_client.post.side_effect = [
+        _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
+        _mock_agent_response({"stopped": True, "port": 4723}),
+        _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "emulator-5554"}),
+    ]
+
+    await client.post(f"/api/devices/{device_id}/node/start")
+
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            "last_failure_source": "device_checks",
+            "last_failure_reason": "Agent failed to start node: Appium already running for target",
+            "last_action": "recovery_failed",
+            "last_action_at": "2026-05-10T18:00:00+00:00",
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "recovery_suppressed_reason": "Node restart failed",
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        },
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/restart")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == NodeState.running.value
+
+    await db_session.refresh(locked)
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_failure_reason"] is None
+    assert locked.lifecycle_policy_state["last_failure_source"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "manual_recovered"
 
 
 async def test_port_allocation_increments(

@@ -132,6 +132,22 @@ def record_recovery_recovered(next_state: dict[str, Any]) -> None:
     set_action(next_state, "auto_recovered")
 
 
+def record_manual_recovered(next_state: dict[str, Any]) -> None:
+    """Operator manually returned the device to a healthy state.
+
+    The auto-recovery loop only clears ``recovery_suppressed_reason`` when it
+    runs ``attempt_auto_recovery`` end-to-end, and that path early-returns when
+    the node is already running. Without this helper a successful manual
+    Restart leaves stale suppression metadata, freezing the device in the
+    "Recovery paused — admin review needed" UI state.
+    """
+    next_state["last_failure_source"] = None
+    next_state["last_failure_reason"] = None
+    next_state["recovery_suppressed_reason"] = None
+    clear_backoff(next_state)
+    set_action(next_state, "manual_recovered")
+
+
 MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
 
 
