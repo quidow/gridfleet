@@ -7,6 +7,7 @@ import pytest
 from app.services.agent_snapshot import RunningAppiumNode
 from app.services.appium_reconciler import (
     OrphanAppiumNode,
+    appium_reconciler_loop_tick,
     detect_orphans,
     reconcile_host_orphans,
 )
@@ -183,3 +184,29 @@ async def test_reconcile_host_orphans_continues_after_stop_failure() -> None:
 
     assert [o.port for o in stopped] == [5002]
     assert appium_stop.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_appium_reconciler_loop_tick_visits_each_online_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_a = uuid.uuid4()
+    host_b = uuid.uuid4()
+    list_hosts = AsyncMock(
+        return_value=[
+            {"id": host_a, "ip": "10.0.0.1", "agent_port": 5100},
+            {"id": host_b, "ip": "10.0.0.2", "agent_port": 5100},
+        ]
+    )
+    list_db_running_rows = AsyncMock(return_value=[])
+    reconcile_host = AsyncMock(return_value=[])
+
+    await appium_reconciler_loop_tick(
+        list_online_hosts=list_hosts,
+        list_db_running_rows=list_db_running_rows,
+        reconcile_host=reconcile_host,
+    )
+
+    assert reconcile_host.await_count == 2
+    visited = {call.kwargs["host_id"] for call in reconcile_host.await_args_list}
+    assert visited == {host_a, host_b}

@@ -8,16 +8,30 @@ desired-state convergence.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+import os
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.observability import get_logger
+import httpx
+from sqlalchemy import select
+
+from app.database import async_session
+from app.models.appium_node import AppiumNode, NodeState
+from app.models.device import Device
+from app.models.host import Host, HostStatus
+from app.observability import get_logger, observe_background_loop
+from app.services.agent_operations import agent_base_url, agent_health, appium_stop
 from app.services.agent_snapshot import parse_running_nodes
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Iterable
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.services.agent_snapshot import RunningAppiumNode
 
@@ -25,6 +39,8 @@ logger = get_logger(__name__)
 
 FetchHealth = Callable[..., Awaitable[dict[str, object]]]
 AppiumStop = Callable[..., Awaitable[object]]
+ListOnlineHosts = Callable[[], Awaitable[Sequence[dict[str, object]]]]
+ListDbRunningRows = Callable[[], Awaitable[Sequence[dict[str, object]]]]
 
 
 _ORPHAN_REASON_NO_DB_ROW = "no_db_row"
@@ -38,6 +54,9 @@ class OrphanAppiumNode:
     port: int
     connection_target: str
     reason: str
+
+
+ReconcileHost = Callable[..., Awaitable[Sequence[OrphanAppiumNode]]]
 
 
 def detect_orphans(
@@ -144,3 +163,136 @@ async def reconcile_host_orphans(
             reason=orphan.reason,
         )
     return stopped
+
+
+async def appium_reconciler_loop_tick(
+    *,
+    list_online_hosts: ListOnlineHosts,
+    list_db_running_rows: ListDbRunningRows,
+    reconcile_host: ReconcileHost,
+) -> int:
+    """Single reconciliation cycle. Returns total orphans stopped across hosts."""
+    hosts = await list_online_hosts()
+    rows = await list_db_running_rows()
+    total_stopped = 0
+    for host in hosts:
+        host_id = host.get("id")
+        host_ip = host.get("ip")
+        agent_port = host.get("agent_port")
+        if not isinstance(host_id, uuid.UUID) or not isinstance(host_ip, str):
+            continue
+        if not isinstance(agent_port, int):
+            continue
+        try:
+            stopped = await reconcile_host(
+                host_id=host_id,
+                host_ip=host_ip,
+                agent_port=agent_port,
+                db_running_rows=rows,
+            )
+        except Exception:
+            logger.warning("appium_reconciler_host_failed", exc_info=True, host_id=str(host_id))
+            continue
+        total_stopped += len(list(stopped))
+    return total_stopped
+
+
+LOOP_NAME = "appium_reconciler_loop"
+
+
+async def appium_reconciler_loop() -> None:
+    """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
+    while True:
+        interval = float(settings_service.get("appium_reconciler.interval_sec"))
+        try:
+            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
+                await assert_current_leader(db)
+                hosts = await _fetch_online_hosts(db)
+                rows = await _fetch_running_node_rows(db)
+            # Agent IO and stops happen outside the DB session — no point holding it open.
+            await _reconcile_all(hosts, rows)
+        except LeadershipLost as exc:
+            logger.error(
+                "appium_reconciler_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
+        except Exception:
+            logger.exception("appium_reconciler_cycle_failed")
+        await asyncio.sleep(interval)
+
+
+async def _reconcile_all(
+    hosts: list[dict[str, object]],
+    rows: list[dict[str, object]],
+) -> None:
+    async def _reconcile(
+        *,
+        host_id: uuid.UUID,
+        host_ip: str,
+        agent_port: int,
+        db_running_rows: Sequence[dict[str, object]],
+    ) -> list[OrphanAppiumNode]:
+        async def _fetch_health(*, host: str, agent_port: int) -> dict[str, object]:
+            payload = await agent_health(host, agent_port, http_client_factory=httpx.AsyncClient)
+            return payload or {}
+
+        async def _stop(*, host: str, agent_port: int, port: int) -> None:
+            response = await appium_stop(
+                agent_base_url(host, agent_port),
+                host=host,
+                agent_port=agent_port,
+                port=port,
+                http_client_factory=httpx.AsyncClient,
+            )
+            response.raise_for_status()
+
+        return await reconcile_host_orphans(
+            host_id=host_id,
+            host_ip=host_ip,
+            agent_port=agent_port,
+            db_running_rows=db_running_rows,
+            fetch_health=_fetch_health,
+            appium_stop=_stop,
+        )
+
+    async def _list_hosts() -> list[dict[str, object]]:
+        return hosts
+
+    async def _list_rows() -> list[dict[str, object]]:
+        return rows
+
+    await appium_reconciler_loop_tick(
+        list_online_hosts=_list_hosts,
+        list_db_running_rows=_list_rows,
+        reconcile_host=_reconcile,
+    )
+
+
+async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:
+    result = await db.execute(select(Host.id, Host.ip, Host.agent_port).where(Host.status == HostStatus.online))
+    return [{"id": row.id, "ip": row.ip, "agent_port": row.agent_port} for row in result.all()]
+
+
+async def _fetch_running_node_rows(db: AsyncSession) -> list[dict[str, object]]:
+    stmt = (
+        select(
+            Device.host_id,
+            Device.connection_target,
+            AppiumNode.port,
+            AppiumNode.state,
+        )
+        .join(AppiumNode, AppiumNode.device_id == Device.id)
+        .where(AppiumNode.state == NodeState.running)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "host_id": row.host_id,
+            "device_connection_target": row.connection_target,
+            "node_port": row.port,
+            "node_state": row.state.value,
+        }
+        for row in result.all()
+    ]
