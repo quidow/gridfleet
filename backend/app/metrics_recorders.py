@@ -37,6 +37,19 @@ BACKGROUND_LOOP_ERRORS_TOTAL = Counter(
     "Total failed background loop iterations.",
     labelnames=("loop_name",),
 )
+APPIUM_RECONCILER_ORPHANS_STOPPED = Counter(
+    "appium_reconciler_orphans_stopped_total",
+    "Agent appium processes stopped by the reconciler because no DB row claimed them.",
+    labelnames=("reason",),
+)
+APPIUM_RECONCILER_CYCLE_FAILURES = Counter(
+    "appium_reconciler_cycle_failures_total",
+    "Reconciler cycles that raised before completing.",
+)
+APPIUM_RECONCILER_LAST_CYCLE_SECONDS = Gauge(
+    "appium_reconciler_last_cycle_seconds",
+    "Wall-clock duration of the most recent reconciler cycle.",
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "webhook_deliveries_total",
     "Webhook delivery state transitions.",

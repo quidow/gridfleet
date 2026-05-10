@@ -404,6 +404,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3600,
     ),
     SettingDefinition(
+        key="appium_reconciler.interval_sec",
+        category="grid",
+        setting_type="int",
+        default=30,
+        description="How often the appium reconciler reaps orphan agent appium processes",
+        min_value=5,
+        max_value=600,
+    ),
+    SettingDefinition(
         key="appium.session_override",
         category="grid",
         setting_type="bool",
