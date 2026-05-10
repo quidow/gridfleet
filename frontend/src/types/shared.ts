@@ -1,71 +1,53 @@
+import type { components } from '../api/openapi';
+
+type Schemas = components['schemas'];
+
+// Core ID aliases (no backend equivalent; these are documentation-only).
 export type PackId = string;
 export type PlatformId = string;
 export type IdentityScheme = string;
 export type IdentityScope = 'global' | 'host';
-export type DeviceType = 'real_device' | 'emulator' | 'simulator';
-export type ConnectionType = 'usb' | 'network' | 'virtual';
-export type HardwareChargingState = 'charging' | 'discharging' | 'full' | 'not_charging' | 'unknown';
-export type HardwareHealthStatus = 'unknown' | 'healthy' | 'warning' | 'critical';
-export type HardwareTelemetryState = 'unknown' | 'fresh' | 'stale' | 'unsupported';
-export type SortDirection = 'asc' | 'desc';
-export type CursorDirection = 'older' | 'newer';
-export type DeviceOperationalState = 'available' | 'busy' | 'offline';
-export type DeviceHold = 'maintenance' | 'reserved';
-export type DeviceChipStatus = DeviceOperationalState | DeviceHold;
-export type DeviceReadinessState = 'setup_required' | 'verification_required' | 'verified';
-export type RunState = 'pending' | 'preparing' | 'ready' | 'active' | 'completing' | 'completed' | 'failed' | 'expired' | 'cancelled';
-export type NodeState = 'running' | 'stopped' | 'error';
-export type SessionStatus = 'running' | 'passed' | 'failed' | 'error';
-export type HostStatus = 'online' | 'offline' | 'pending';
-export type OSType = 'linux' | 'macos';
-export type AgentVersionStatus = 'disabled' | 'ok' | 'outdated' | 'unknown';
-export type DeviceLifecyclePolicySummaryState =
-  | 'idle'
-  | 'deferred_stop'
-  | 'backoff'
-  | 'excluded'
-  | 'suppressed'
-  | 'recoverable'
-  | 'manual';
 
+// Derived from FastAPI Enum schemas.
+export type DeviceType = Schemas['DeviceType'];
+export type ConnectionType = Schemas['ConnectionType'];
+export type HardwareChargingState = Schemas['HardwareChargingState'];
+export type HardwareHealthStatus = Schemas['HardwareHealthStatus'];
+export type HardwareTelemetryState = Schemas['HardwareTelemetryState'];
+export type DeviceOperationalState = Schemas['DeviceOperationalState'];
+export type DeviceHold = Schemas['DeviceHold'];
+export type RunState = Schemas['RunState'];
+export type NodeState = Schemas['NodeState'];
+export type SessionStatus = Schemas['SessionStatus'];
+export type HostStatus = Schemas['HostStatus'];
+export type OSType = Schemas['OSType'];
+export type AgentVersionStatus = Schemas['AgentVersionStatus'];
+export type DeviceLifecyclePolicySummaryState = Schemas['DeviceLifecyclePolicySummaryState'];
+export type DeviceEventType = Schemas['DeviceEventType'];
+
+// Backend currently exposes these as plain strings/Literals rather than named OpenAPI components.
+export type DeviceReadinessState = 'setup_required' | 'verification_required' | 'verified';
 export type DeviceVerificationStageStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 export type DeviceVerificationJobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
-export type DeviceEventType =
-  | 'health_check_fail'
-  | 'connectivity_lost'
-  | 'node_crash'
-  | 'node_restart'
-  | 'hardware_health_changed'
-  | 'connectivity_restored'
-  | 'lifecycle_deferred_stop'
-  | 'lifecycle_auto_stopped'
-  | 'lifecycle_recovery_suppressed'
-  | 'lifecycle_recovery_failed'
-  | 'lifecycle_recovery_backoff'
-  | 'lifecycle_recovered'
-  | 'lifecycle_run_excluded'
-  | 'lifecycle_run_restored'
-  | 'lifecycle_run_cooldown_set';
+// Frontend-only composites and pagination helpers (not on the backend).
+export type SortDirection = 'asc' | 'desc';
+export type CursorDirection = 'older' | 'newer';
+export type DeviceChipStatus = DeviceOperationalState | DeviceHold;
 
-export interface PaginatedResponse<T> {
+export type PaginatedResponse<T> = {
   items: T[];
   total: number;
   limit: number;
   offset: number;
-}
+};
 
-export interface CursorPaginatedResponse<T> {
+export type CursorPaginatedResponse<T> = {
   items: T[];
   limit: number;
   next_cursor: string | null;
   prev_cursor: string | null;
-}
+};
 
-export interface AuthSession {
-  enabled: boolean;
-  authenticated: boolean;
-  username: string | null;
-  csrf_token: string | null;
-  expires_at: string | null;
-}
+// AuthSession is returned by /api/auth/session.
+export type AuthSession = Schemas['AuthSessionRead'];
