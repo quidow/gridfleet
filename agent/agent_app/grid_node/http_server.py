@@ -61,7 +61,6 @@ def build_app(
     stereotypes_by_slot_id: dict[str, dict[str, object]] = {
         slot.id: slot.stereotype.to_dict() for slot in (slots or [])
     }
-    session_metadata: dict[str, dict[str, object]] = {}
 
     async def status(_request: Request) -> JSONResponse:
         # Selenium hub's `RemoteNode.getStatus` parses /status as
@@ -128,11 +127,18 @@ def build_app(
         if response.status_code < 200 or response.status_code >= 300:
             state.abort(reservation.id)
             return response
-        session_id = _session_id_from_response(response)
+        session_id, returned_caps = _session_info_from_response(response)
         if session_id is None:
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
-        state.commit(reservation.id, session_id=session_id, started_at=time.monotonic())
+        start_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        state.commit(
+            reservation.id,
+            session_id=session_id,
+            started_at=time.monotonic(),
+            capabilities=returned_caps,
+            session_start_iso=start_iso,
+        )
         await _publish_safely(
             publisher,
             event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),
@@ -141,10 +147,18 @@ def build_app(
 
     async def delete_session(request: Request) -> Response:
         session_id = request.path_params["session_id"]
+        # Capture session capabilities + start time from NodeState BEFORE the
+        # upstream proxy call, since `state.release()` clears them afterward.
+        prev_caps: dict[str, object] = {}
+        prev_start: str | None = None
+        for slot in state.snapshot().slots:
+            if slot.session_id == session_id:
+                prev_caps = dict(slot.session_capabilities or {})
+                prev_start = slot.session_start_iso
+                break
         response = await _proxy_http(request)
         if 200 <= response.status_code < 300 or response.status_code in {404, 410}:
             state.release(session_id)
-            metadata = session_metadata.pop(session_id, None)
             now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             # Selenium SessionClosedEvent expects a SessionClosedData object —
             # not just a SessionId. Missing fields cause the listener to drop
@@ -154,8 +168,8 @@ def build_app(
                 "reason": "QUIT_COMMAND",
                 "nodeId": node_id or "",
                 "nodeUri": node_uri or "",
-                "capabilities": (metadata or {}).get("capabilities", {}),
-                "startTime": (metadata or {}).get("startTime", now_iso),
+                "capabilities": prev_caps,
+                "startTime": prev_start or now_iso,
                 "endTime": now_iso,
             }
             await _publish_safely(publisher, event_envelope(EventType.SESSION_CLOSED, payload))
@@ -227,19 +241,20 @@ def build_app(
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
 
-        state.commit(reservation.id, session_id=session_id, started_at=time.monotonic())
+        start_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        state.commit(
+            reservation.id,
+            session_id=session_id,
+            started_at=time.monotonic(),
+            capabilities=returned_caps,
+            session_start_iso=start_iso,
+        )
         await _publish_safely(
             publisher,
             event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),
         )
 
         stereotype = stereotypes_by_slot_id.get(reservation.slot_id) or dict(always_match)
-        start_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        session_metadata[session_id] = {
-            "capabilities": returned_caps,
-            "startTime": start_iso,
-            "slotId": reservation.slot_id,
-        }
         session_payload: dict[str, object] = {
             "sessionId": session_id,
             "uri": node_uri or "",
@@ -298,22 +313,24 @@ def _always_match_caps(body: object) -> dict[str, object]:
     return dict(always_match)
 
 
-def _session_id_from_response(response: Response) -> str | None:
+def _session_info_from_response(response: Response) -> tuple[str | None, dict[str, Any] | None]:
     try:
         payload = json.loads(bytes(response.body))
     except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
+        return None, None
     if not isinstance(payload, dict):
-        return None
+        return None, None
     value = payload.get("value")
     if isinstance(value, dict):
-        value_session_id = value.get("sessionId")
-        if isinstance(value_session_id, str):
-            return value_session_id
+        session_id = value.get("sessionId")
+        caps = value.get("capabilities")
+        if isinstance(session_id, str):
+            return session_id, caps if isinstance(caps, dict) else None
     session_id = payload.get("sessionId")
     if isinstance(session_id, str):
-        return session_id
-    return None
+        caps = payload.get("capabilities")
+        return session_id, caps if isinstance(caps, dict) else None
+    return None, None
 
 
 async def _publish_safely(publisher: EventPublisher, event: dict[str, object]) -> None:

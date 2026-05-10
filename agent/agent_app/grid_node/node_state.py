@@ -38,6 +38,11 @@ class _SlotRuntime:
     session_id: str | None = None
     reserved_at: float | None = None
     started_at: float | None = None
+    # Capabilities returned by Appium and the wall-clock start time are tracked
+    # so the hub-facing NodeStatus payload can include real session info on
+    # busy slots (the hub UI desyncs without it).
+    session_capabilities: dict[str, Any] | None = None
+    session_start_iso: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,8 @@ class SlotSnapshot:
     session_id: str | None
     reserved_at: float | None
     started_at: float | None
+    session_capabilities: dict[str, Any] | None
+    session_start_iso: str | None
 
 
 @dataclass(frozen=True)
@@ -77,7 +84,15 @@ class NodeState:
                 return Reservation(id=reservation_id, slot_id=runtime.slot.id)
         raise NoFreeSlotError(f"all matching slots are busy or reserved: {caps!r}")
 
-    def commit(self, reservation_id: str, *, session_id: str, started_at: float) -> None:
+    def commit(
+        self,
+        reservation_id: str,
+        *,
+        session_id: str,
+        started_at: float,
+        capabilities: dict[str, Any] | None = None,
+        session_start_iso: str | None = None,
+    ) -> None:
         for runtime in self._slots:
             if runtime.reservation_id == reservation_id and runtime.state == "RESERVED":
                 runtime.state = "BUSY"
@@ -85,6 +100,8 @@ class NodeState:
                 runtime.reserved_at = None
                 runtime.session_id = session_id
                 runtime.started_at = started_at
+                runtime.session_capabilities = dict(capabilities) if capabilities else None
+                runtime.session_start_iso = session_start_iso
                 return
         raise ReservationGoneError(f"reservation is not active: {reservation_id}")
 
@@ -102,6 +119,8 @@ class NodeState:
                 runtime.state = "FREE"
                 runtime.session_id = None
                 runtime.started_at = None
+                runtime.session_capabilities = None
+                runtime.session_start_iso = None
                 return
 
     def expire_reservations(self, *, now: float, ttl_sec: float = 30.0) -> list[str]:
@@ -141,6 +160,8 @@ class NodeState:
                     session_id=runtime.session_id,
                     reserved_at=runtime.reserved_at,
                     started_at=runtime.started_at,
+                    session_capabilities=runtime.session_capabilities,
+                    session_start_iso=runtime.session_start_iso,
                 )
                 for runtime in self._slots
             ],
