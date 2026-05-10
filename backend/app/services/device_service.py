@@ -27,6 +27,7 @@ from app.schemas.device import (
 )
 from app.schemas.device_filters import ChipStatus, DeviceQueryFilters
 from app.services import (
+    control_plane_state_store,
     device_attention,
     device_health,
     device_locking,
@@ -36,6 +37,7 @@ from app.services import (
     lifecycle_policy,
     run_service,
 )
+from app.services.device_connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
 from app.services.device_identity_conflicts import (
     ensure_device_payload_identity_available,
 )
@@ -356,6 +358,11 @@ async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
         device = await _stop_running_node_for_delete(db, device, device_id)
         if device is None:
             return True
+
+    # Clean up control_plane_state rows keyed by identity_value before deleting
+    # the device row, so the cleanup stays in the same transaction.
+    await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
+    await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
 
     await db.delete(device)
     await db.commit()

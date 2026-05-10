@@ -953,3 +953,34 @@ async def test_ip_ping_settings_threshold_one_flips_immediately(
 
     refreshed = await _reload(db_session, device.id)
     assert refreshed.device_checks_healthy is False
+
+
+# ---------------------------------------------------------------------------
+# Task 13: delete_device clears control_plane_state namespace rows
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_device_clears_connectivity_and_ip_ping_namespaces(
+    db_session: AsyncSession,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
+    from app.services.device_service import delete_device
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)
+    await control_plane_state_store.set_value(db_session, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+    await db_session.commit()
+
+    deleted = await delete_device(db_session, device.id)
+    assert deleted is True
+
+    ip_ping_counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert ip_ping_counter is None
+
+    connectivity_flag = await control_plane_state_store.get_value(
+        db_session, CONNECTIVITY_NAMESPACE, device.identity_value
+    )
+    assert connectivity_flag is None
