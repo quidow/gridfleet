@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+import websockets
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
+from starlette.testclient import TestClient
 
-from agent_app.grid_node.proxy import proxy_request, strip_hop_headers
+from agent_app.grid_node.proxy import proxy_request, proxy_websocket, strip_hop_headers
+
+if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
 
 
 def test_proxy_strips_hop_by_hop_headers() -> None:
@@ -64,6 +71,32 @@ async def test_proxy_timeout_returns_504(monkeypatch: pytest.MonkeyPatch) -> Non
             client=client,
         )
     assert response.status_code == 504
+
+
+@pytest.mark.asyncio
+async def test_proxy_websocket_pipes_frames() -> None:
+    async def echo(websocket: websockets.ServerConnection) -> None:
+        async for message in websocket:
+            await websocket.send(message)
+
+    server = await websockets.serve(echo, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    async def proxy_endpoint(websocket: WebSocket) -> None:
+        await proxy_websocket(websocket, upstream=f"ws://127.0.0.1:{port}")
+
+    app = Starlette(routes=[WebSocketRoute("/session/{session_id}/se/cdp", proxy_endpoint)])
+
+    def run_client() -> None:
+        with TestClient(app).websocket_connect("/session/session-1/se/cdp") as websocket:
+            websocket.send_text("ping")
+            assert websocket.receive_text() == "ping"
+
+    try:
+        await asyncio.to_thread(run_client)
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def _request(method: str, path: str, *, body: bytes = b"") -> Request:
