@@ -102,24 +102,45 @@ class UvicornGridNodeHttpServer:
             node_id=self._config.node_id,
             slots=list(self._config.slots),
         )
+        # Bind to `config.bind_host` (a real local interface) instead of
+        # `parsed.hostname` from `node_uri`. The advertised host (e.g.
+        # `host.docker.internal`) is for hub registration only — uvicorn
+        # cannot bind it on the agent host and would `sys.exit(1)`,
+        # propagating an exception that previously took down the whole
+        # agent process on every node-start.
         server_config = uvicorn.Config(
             app,
-            host=parsed.hostname,
+            host=self._config.bind_host,
             port=parsed.port,
             log_level="warning",
             access_log=False,
             lifespan="off",
         )
         self._server = uvicorn.Server(server_config)
-        self._task = asyncio.create_task(self._server.serve())
+        self._task = asyncio.create_task(self._serve_protected())
         for _ in range(100):
             if self._server.started:
                 return
             if self._task.done():
+                # `_serve_protected` re-raises the original failure, so the
+                # caller (`start_grid_node_supervisor`) sees a real Python
+                # exception instead of uvicorn's bare SystemExit.
                 await self._task
                 return
             await asyncio.sleep(0.01)
         raise TimeoutError(f"grid node HTTP server did not start on {self._config.node_uri}")
+
+    async def _serve_protected(self) -> None:
+        # uvicorn calls `sys.exit(1)` on startup failures (e.g. bind
+        # `EADDRNOTAVAIL`/`gaierror`). Bare SystemExit escapes asyncio's task
+        # boundary and crashes the host agent process via systemd. Trap it
+        # here and surface a normal RuntimeError for the supervisor's retry
+        # path.
+        try:
+            assert self._server is not None
+            await self._server.serve()
+        except SystemExit as exc:
+            raise RuntimeError(f"uvicorn grid-node server exited (code={exc.code})") from exc
 
     async def stop(self) -> None:
         if self._server is not None:
