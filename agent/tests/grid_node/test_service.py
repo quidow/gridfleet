@@ -115,6 +115,21 @@ def test_service_node_state_uses_monotonic_clock(monkeypatch: pytest.MonkeyPatch
     assert service.state.snapshot().slots[0].reserved_at == 123.4
 
 
+@pytest.mark.asyncio
+async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    reservation = service.state.reserve({"platformName": "Android"})
+    service.state.commit(reservation.id, session_id="session-1", started_at=1.0)
+    monkeypatch.setattr("agent_app.grid_node.service.time.monotonic", lambda: 302.0)
+
+    await service.run_heartbeat_once()
+
+    assert service.state.snapshot().slots[0].state == "FREE"
+    assert [event["type"] for event in bus.events][-2:] == ["SESSION_CLOSED", "NODE_STATUS"]
+
+
 def _config() -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",

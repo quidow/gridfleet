@@ -7,11 +7,13 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 import websockets
+from httpx import Response as HttpxResponse
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket, strip_hop_headers
 
@@ -67,6 +69,35 @@ async def test_proxy_request_preserves_duplicate_response_headers(monkeypatch: p
         value.decode("latin-1") for key, value in response.raw_headers if key.lower() == b"set-cookie"
     ]
     assert set_cookie_headers == ["a=1; Path=/", "b=2; Path=/"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_request_closes_upstream_response_when_body_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = False
+
+    class FailingReadResponse(HttpxResponse):
+        async def aread(self) -> bytes:
+            raise RuntimeError("read failed")
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+            await super().aclose()
+
+    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
+        return FailingReadResponse(200, content=b"{}")
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "send", send)
+        with pytest.raises(RuntimeError, match="read failed"):
+            await proxy_request(
+                _request("GET", "/status"),
+                upstream="http://appium",
+                timeout=1.0,
+                client=client,
+            )
+
+    assert closed is True
 
 
 @pytest.mark.asyncio
@@ -152,6 +183,20 @@ async def test_proxy_websocket_preserves_query_string() -> None:
         await server.wait_closed()
 
     assert seen_paths == ["/session/session-1/se/cdp?channel=devtools"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_websocket_rejects_client_when_upstream_connect_fails() -> None:
+    async def proxy_endpoint(websocket: WebSocket) -> None:
+        await proxy_websocket(websocket, upstream="ws://127.0.0.1:1")
+
+    app = Starlette(routes=[WebSocketRoute("/session/{session_id}/se/cdp", proxy_endpoint)])
+
+    def run_client() -> None:
+        with pytest.raises(WebSocketDisconnect), TestClient(app).websocket_connect("/session/session-1/se/cdp"):
+            pass
+
+    await asyncio.to_thread(run_client)
 
 
 def _request(method: str, path: str, *, body: bytes = b"") -> Request:

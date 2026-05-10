@@ -19,9 +19,10 @@ class FakeClock:
 
 
 class RecordingService:
-    def __init__(self, *, fail_start: bool = False, request_stop: bool = False) -> None:
+    def __init__(self, *, fail_start: bool = False, request_stop: bool = False, fail_heartbeat: bool = False) -> None:
         self.fail_start = fail_start
         self.request_stop = request_stop
+        self.fail_heartbeat = fail_heartbeat
         self.stop_called = False
         self.heartbeat_calls = 0
 
@@ -34,6 +35,8 @@ class RecordingService:
 
     async def run_heartbeat_once(self) -> None:
         self.heartbeat_calls += 1
+        if self.fail_heartbeat:
+            raise RuntimeError("heartbeat failed")
         if self.request_stop:
             self.request_stop = False
 
@@ -114,6 +117,27 @@ async def test_supervisor_runs_periodic_heartbeat_with_config_interval() -> None
 def test_supervisor_snapshot_includes_status() -> None:
     handle = start_grid_node_supervisor(factory=RecordingService, clock=FakeClock())
     assert handle.snapshot()["status"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_reports_stopped_after_stop() -> None:
+    service = RecordingService()
+    handle = start_grid_node_supervisor(factory=lambda: service, clock=FakeClock())
+    await handle.start()
+    await handle.wait_until_running()
+    await handle.stop()
+    assert handle.snapshot()["status"] == "stopped"
+    assert handle.snapshot()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_supervisor_reports_errored_after_heartbeat_failure() -> None:
+    service = RecordingService(fail_heartbeat=True)
+    handle = start_grid_node_supervisor(factory=lambda: service, clock=FakeClock(), config=_config(heartbeat_sec=1.0))
+    await handle.start()
+    await handle.wait_until_errored()
+    assert service.stop_called is True
+    assert handle.snapshot()["status"] == "error"
 
 
 def _config(*, heartbeat_sec: float) -> GridNodeConfig:

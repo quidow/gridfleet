@@ -125,6 +125,9 @@ class GridNodeService:
                 self._started = False
 
     async def run_heartbeat_once(self) -> None:
+        for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
+            self.state.release(session_id)
+            await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
         if self.state.snapshot().drain:
             self._requested_stop = True
             await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, {"nodeId": self.config.node_id}))

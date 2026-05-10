@@ -59,6 +59,7 @@ class GridNodeSupervisorHandle:
         self._stop_requested.set()
         if self._service is not None:
             await self._service.stop()
+        self._running.clear()
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -67,7 +68,20 @@ class GridNodeSupervisorHandle:
         self._stopped.set()
 
     async def wait_until_running(self) -> None:
-        await asyncio.wait_for(self._running.wait(), timeout=1.0)
+        running_task = asyncio.create_task(self._running.wait())
+        errored_task = asyncio.create_task(self._errored.wait())
+        done, pending = await asyncio.wait(
+            {running_task, errored_task}, timeout=1.0, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if not done:
+            raise TimeoutError("grid node supervisor did not report running")
+        if errored_task in done and self.errored:
+            raise RuntimeError("grid node supervisor failed before running")
 
     async def wait_until_errored(self) -> None:
         await asyncio.wait_for(self._errored.wait(), timeout=1.0)
@@ -107,16 +121,26 @@ class GridNodeSupervisorHandle:
             self._running.set()
             if service.snapshot().get("requested_stop") is True:
                 await service.stop()
+                self._running.clear()
                 self._stopped.set()
                 return
             while not self._stop_requested.is_set():
                 await self._clock.sleep(self._heartbeat_sec)
                 if self._stop_requested.is_set():
                     break
-                await service.run_heartbeat_once()
+                try:
+                    await service.run_heartbeat_once()
+                except Exception:
+                    self._errored.set()
+                    self._running.clear()
+                    with contextlib.suppress(Exception):
+                        await service.stop()
+                    self._stopped.set()
+                    return
                 if service.snapshot().get("requested_stop") is True:
                     break
             await service.stop()
+            self._running.clear()
             self._stopped.set()
             return
 

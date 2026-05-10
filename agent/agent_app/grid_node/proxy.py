@@ -61,9 +61,11 @@ async def proxy_request(
         return Response(status_code=502)
     except httpx.TimeoutException:
         return Response(status_code=504)
-    response_body = await upstream_response.aread()
-    response_headers = strip_hop_header_items(upstream_response.headers.multi_items())
-    await upstream_response.aclose()
+    try:
+        response_body = await upstream_response.aread()
+        response_headers = strip_hop_header_items(upstream_response.headers.multi_items())
+    finally:
+        await upstream_response.aclose()
     response = Response(response_body, status_code=upstream_response.status_code)
     for key, value in response_headers:
         response.headers.append(key, value)
@@ -71,11 +73,16 @@ async def proxy_request(
 
 
 async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
-    await websocket.accept()
     target = f"{_websocket_upstream(upstream)}{websocket.url.path}"
     if websocket.url.query:
         target = f"{target}?{websocket.url.query}"
-    async with websockets.connect(target) as remote:
+    try:
+        remote = await websockets.connect(target)
+    except Exception:
+        await websocket.close(code=1011)
+        return
+    await websocket.accept()
+    async with remote:
 
         async def client_to_remote() -> None:
             while True:
@@ -96,15 +103,18 @@ async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
                     await websocket.send_text(message)
 
         tasks = {asyncio.create_task(client_to_remote()), asyncio.create_task(remote_to_client())}
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        for task in done:
-            with contextlib.suppress(ConnectionClosed):
-                task.result()
-        for task in pending:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        pending: set[asyncio.Task[None]] = set()
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                with contextlib.suppress(ConnectionClosed):
+                    task.result()
+        finally:
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
 
 def _websocket_upstream(upstream: str) -> str:

@@ -74,7 +74,7 @@ def build_app(
     async def create_session(request: Request) -> Response:
         try:
             body = await request.json()
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JSONResponse(
                 {"value": {"error": "invalid argument", "message": "Malformed JSON request body"}}, status_code=400
             )
@@ -86,13 +86,18 @@ def build_app(
         except NoFreeSlotError:
             return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
 
-        async with httpx.AsyncClient() as client:
-            response = await proxy_request_func(
-                request,
-                upstream=appium_upstream,
-                timeout=proxy_timeout,
-                client=client,
-            )
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await proxy_request_func(
+                    request,
+                    upstream=appium_upstream,
+                    timeout=proxy_timeout,
+                    client=client,
+                )
+        except Exception:
+            state.abort(reservation.id)
+            logger.warning("upstream session creation proxy failed", exc_info=True)
+            return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
         if response.status_code < 200 or response.status_code >= 300:
             state.abort(reservation.id)
             return response
@@ -110,7 +115,7 @@ def build_app(
     async def delete_session(request: Request) -> Response:
         session_id = request.path_params["session_id"]
         response = await _proxy_http(request)
-        if 200 <= response.status_code < 300:
+        if 200 <= response.status_code < 300 or response.status_code in {404, 410}:
             state.release(session_id)
             await _publish_safely(publisher, event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
         return response

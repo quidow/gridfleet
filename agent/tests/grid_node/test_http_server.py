@@ -153,6 +153,26 @@ def test_post_session_returns_400_for_malformed_json(test_app: Starlette, state:
     assert state.snapshot().slots[0].state == "FREE"
 
 
+def test_post_session_returns_400_for_invalid_json_encoding(test_app: Starlette, state: NodeState) -> None:
+    client = TestClient(test_app, raise_server_exceptions=False)
+    response = client.post("/session", content=b'{"bad":"\xff"}', headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert response.json()["value"]["error"] == "invalid argument"
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_post_session_aborts_reservation_when_proxy_raises(state: NodeState, bus: RecordingBus) -> None:
+    async def raising_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
+        raise RuntimeError("proxy failed")
+
+    app = build_app(state=state, appium_upstream="http://appium", bus=bus, proxy_request_func=raising_proxy)
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
 def test_post_session_commit_survives_session_started_publish_failure(state: NodeState, proxy: RecordingProxy) -> None:
     app = build_app(
         state=state,
@@ -175,6 +195,30 @@ def test_delete_session_releases_slot_and_publishes_session_closed(
     state.commit(reservation.id, session_id="session-1", started_at=1.0)
     response = TestClient(test_app).delete("/session/session-1")
     assert response.status_code == 200
+    assert state.snapshot().slots[0].state == "FREE"
+    assert bus.events[-1]["type"] == "SESSION_CLOSED"
+
+
+def test_delete_session_releases_slot_when_upstream_session_is_gone(
+    state: NodeState, proxy: RecordingProxy, bus: RecordingBus
+) -> None:
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="missing-session", started_at=1.0)
+
+    async def missing_session_proxy(
+        _request: Request, *, upstream: str, timeout: float, client: object
+    ) -> JSONResponse:
+        return JSONResponse({"value": {"error": "invalid session id"}}, status_code=404)
+
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        bus=bus,
+        proxy_request_func=missing_session_proxy,
+        proxy_websocket_func=proxy.websocket,
+    )
+    response = TestClient(app).delete("/session/missing-session")
+    assert response.status_code == 404
     assert state.snapshot().slots[0].state == "FREE"
     assert bus.events[-1]["type"] == "SESSION_CLOSED"
 

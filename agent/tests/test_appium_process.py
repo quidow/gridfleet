@@ -112,6 +112,12 @@ class RecordingGridNodeHandle:
         return dict(self.snapshot_payload)
 
 
+class FailingGridNodeHandle(RecordingGridNodeHandle):
+    async def wait_until_running(self) -> None:
+        self.wait_until_running_called = True
+        raise RuntimeError("grid node failed")
+
+
 def test_parse_node_version_prefers_version_tuple() -> None:
     assert _parse_node_version("/Users/me/.nvm/versions/node/v24.12.0/bin/appium") == (24, 12, 0)
     assert _parse_node_version("/usr/local/bin/appium") == (0,)
@@ -290,6 +296,33 @@ async def test_start_spawns_grid_node_supervisor() -> None:
     assert configs[0].appium_upstream == "http://127.0.0.1:4723"
     assert configs[0].slots[0].stereotype.caps["appium:platform"] == "android_mobile"
     await manager.shutdown()
+
+
+async def test_start_rolls_back_appium_when_grid_node_start_fails() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5004)
+    handle = FailingGridNodeHandle()
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch("agent_app.appium_process.start_grid_node_supervisor", return_value=handle),
+        pytest.raises(RuntimeError, match="grid node failed"),
+    ):
+        await manager.start(
+            connection_target="device-1",
+            port=4723,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+        )
+
+    assert handle.stop_called is True
+    assert appium_proc.sent_signals
+    assert 4723 not in manager._grid_supervisors
+    assert 4723 not in manager._appium_procs
+    assert 4723 not in manager._launch_specs
 
 
 async def test_stop_calls_grid_node_supervisor_stop() -> None:

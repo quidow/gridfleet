@@ -824,7 +824,11 @@ class AppiumProcessManager:
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
 
             if manage_grid_node:
-                await self._start_grid_node_service(spec)
+                try:
+                    await self._start_grid_node_service(spec)
+                except Exception:
+                    await self._cleanup_started_appium_after_grid_node_failure(spec.port, appium_proc)
+                    raise
 
             info = self._info.get(port)
             if info is None:
@@ -875,10 +879,38 @@ class AppiumProcessManager:
             return GridNodeService(config=config, bus=bus)
 
         handle = start_grid_node_supervisor(factory=factory, config=config)
+        try:
+            await handle.start()
+            await handle.wait_until_running()
+        except Exception:
+            with contextlib.suppress(Exception):
+                await handle.stop()
+            raise
         self._grid_supervisors[spec.port] = handle
-        await handle.start()
-        await handle.wait_until_running()
         return handle
+
+    async def _cleanup_started_appium_after_grid_node_failure(
+        self, port: int, appium_proc: asyncio.subprocess.Process
+    ) -> None:
+        self._intentional_stop_ports.add(port)
+        self._cancel_task(self._appium_restart_tasks, port)
+        self._cancel_task(self._appium_watch_tasks, port)
+        self._grid_supervisors.pop(port, None)
+        self._appium_procs.pop(port, None)
+        self._info.pop(port, None)
+        self._launch_specs.pop(port, None)
+        self._appium_restart_attempts.pop(port, None)
+        self._appium_restart_backoff_steps.pop(port, None)
+        if appium_proc.returncode is None:
+            appium_proc.send_signal(signal.SIGTERM)
+            try:
+                await asyncio.wait_for(appium_proc.wait(), timeout=STOP_GRACE_PERIOD)
+            except TimeoutError:
+                appium_proc.kill()
+                await appium_proc.wait()
+        for task in self._log_tasks.pop(port, []):
+            task.cancel()
+        self._intentional_stop_ports.discard(port)
 
     async def _stop_grid_node_service(self, port: int) -> None:
         handle = self._grid_supervisors.pop(port, None)
