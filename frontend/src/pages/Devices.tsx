@@ -94,7 +94,7 @@ export default function Devices() {
         toggleAutoManage.mutate({ id: action.deviceId, autoManage: action.autoManage });
         break;
       case 'enter-maintenance':
-        enterMaintenance.mutate({ id: action.deviceId, drain: false });
+        enterMaintenance.mutate({ id: action.deviceId });
         break;
       case 'exit-maintenance':
         exitMaintenance.mutate(action.deviceId);

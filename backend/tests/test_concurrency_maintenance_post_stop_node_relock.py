@@ -71,7 +71,7 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await original_lock_device(session, device_id)
-            await maintenance_service.enter_maintenance(session, target, drain=False)
+            await maintenance_service.enter_maintenance(session, target)
 
     runner_task = asyncio.create_task(runner())
     try:

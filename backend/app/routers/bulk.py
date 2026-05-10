@@ -48,7 +48,7 @@ async def bulk_delete(body: BulkDeviceIds, db: AsyncSession = Depends(get_db)) -
 
 @router.post("/enter-maintenance", response_model=BulkOperationResult)
 async def bulk_enter_maintenance(body: BulkMaintenanceEnter, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    return await bulk_service.bulk_enter_maintenance(db, body.device_ids, body.drain)
+    return await bulk_service.bulk_enter_maintenance(db, body.device_ids)
 
 
 @router.post("/exit-maintenance", response_model=BulkOperationResult)

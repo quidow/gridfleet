@@ -54,12 +54,11 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
         db: AsyncSession,
         device: Device,
         *,
-        drain: bool = False,
         commit: bool = True,
         allow_reserved: bool = False,
     ) -> Device:
         nonlocal first_enter
-        _ = (drain, allow_reserved)
+        _ = allow_reserved
         assert commit is False
         if first_enter:
             first_enter = False
@@ -70,7 +69,7 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
     monkeypatch.setattr(bulk_service, "enter_maintenance", fake_enter_maintenance)
 
     async with db_session_maker() as session:
-        result = await bulk_service.bulk_enter_maintenance(session, device_ids, drain=False)
+        result = await bulk_service.bulk_enter_maintenance(session, device_ids)
 
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
     assert lock_device_calls == expected_lock_order

@@ -181,14 +181,14 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str
     return _result(len(device_ids), succeeded, errors)
 
 
-async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID], drain: bool = False) -> dict[str, Any]:
+async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     ordered_ids = [device.id for device in devices]
     errors: dict[str, str] = {}
     for device_id in ordered_ids:
         try:
             device = await device_locking.lock_device(db, device_id)
-            await enter_maintenance(db, device, drain=drain, commit=False)
+            await enter_maintenance(db, device, commit=False)
         except Exception as e:
             errors[str(device_id)] = str(e)
     succeeded = len(ordered_ids) - len(errors)

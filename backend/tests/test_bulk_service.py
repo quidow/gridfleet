@@ -177,7 +177,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     )
 
     deleted = await bulk_service.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
-    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices], drain=True)
+    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices])
     exited = await bulk_service.bulk_exit_maintenance(db, [device.id for device in devices])
 
     assert deleted["failed"] == 2

@@ -395,7 +395,7 @@ export function useEnterDeviceMaintenance() {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: ['devices', 'enter-maintenance'],
-    mutationFn: ({ id, drain }: { id: string; drain?: boolean }) => enterDeviceMaintenance(id, drain),
+    mutationFn: ({ id }: { id: string }) => enterDeviceMaintenance(id),
     onMutate: ({ id }) => patchDeviceQueries(qc, id, updateHold('maintenance')),
     onError: (error, { id }, context) => {
       rollbackOptimisticDeviceQueries(qc, context);

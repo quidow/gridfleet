@@ -42,7 +42,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
                     f"/api/devices/{device_id}/maintenance",
-                    json={"drain": False},
+                    json={},
                 )
                 return resp.status_code
         finally:

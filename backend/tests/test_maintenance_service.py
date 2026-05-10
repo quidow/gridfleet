@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host
+from app.services import device_locking
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from tests.helpers import create_device
 
@@ -21,8 +22,9 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
     )
     await db_session.commit()
 
+    locked = await device_locking.lock_device(db_session, device.id)
     with pytest.raises(ValueError) as exc:
-        await enter_maintenance(db_session, device)
+        await enter_maintenance(db_session, locked)
 
     assert "reserved" in str(exc.value).lower()
     await db_session.refresh(device)
@@ -41,7 +43,8 @@ async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     )
     await db_session.commit()
 
-    result = await enter_maintenance(db_session, device, allow_reserved=True, drain=True)
+    locked = await device_locking.lock_device(db_session, device.id)
+    result = await enter_maintenance(db_session, locked, allow_reserved=True)
 
     assert result.hold == DeviceHold.maintenance
 
@@ -58,7 +61,8 @@ async def test_enter_maintenance_succeeds_for_available_device(
     )
     await db_session.commit()
 
-    result = await enter_maintenance(db_session, device, drain=True)
+    locked = await device_locking.lock_device(db_session, device.id)
+    result = await enter_maintenance(db_session, locked)
 
     assert result.hold == DeviceHold.maintenance
 

@@ -117,7 +117,7 @@ async def group_bulk_enter_maintenance(
     group_id: uuid.UUID, body: BulkMaintenanceEnter, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_enter_maintenance(db, device_ids, body.drain)
+    return await bulk_service.bulk_enter_maintenance(db, device_ids)
 
 
 @router.post("/{group_id}/bulk/exit-maintenance", response_model=BulkOperationResult)

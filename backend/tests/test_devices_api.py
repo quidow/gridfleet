@@ -1002,7 +1002,7 @@ async def test_manual_session_test_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_enter_device_maintenance_with_drain_false_stops_running_node(
+async def test_enter_device_maintenance_stops_running_node(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -1017,7 +1017,7 @@ async def test_enter_device_maintenance_with_drain_false_stops_running_node(
         start_resp = await client.post(f"/api/devices/{device_id}/node/start")
         assert start_resp.status_code == 200
 
-        maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": False})
+        maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
 
     assert maintenance_resp.status_code == 200
     assert maintenance_resp.json()["hold"] == "maintenance"
@@ -1029,37 +1029,11 @@ async def test_enter_device_maintenance_with_drain_false_stops_running_node(
 
 
 @pytest.mark.asyncio
-async def test_enter_device_maintenance_with_drain_true_keeps_running_node(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    device = await _create_device(db_session, default_host_id)
-    device_id = str(device.id)
-
-    with (
-        patch("app.routers.nodes.start_managed_node", new=_fake_start_node),
-        patch("app.services.maintenance_service.stop_node", new=_fake_stop_node),
-    ):
-        start_resp = await client.post(f"/api/devices/{device_id}/node/start")
-        assert start_resp.status_code == 200
-
-        maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": True})
-
-    assert maintenance_resp.status_code == 200
-    assert maintenance_resp.json()["hold"] == "maintenance"
-
-    device_resp = await client.get(f"/api/devices/{device_id}")
-    assert device_resp.status_code == 200
-    assert device_resp.json()["appium_node"]["state"] == "running"
-
-
-@pytest.mark.asyncio
 async def test_exit_device_maintenance(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
 
-    enter_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": False})
+    enter_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
     assert enter_resp.status_code == 200
 
     exit_resp = await client.post(f"/api/devices/{device_id}/maintenance/exit")
