@@ -918,10 +918,11 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     with patch(
         "app.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
-    ):
+    ) as mock_lifecycle:
         resp = await client.post(f"/api/sessions/{session_uuid}/finished")
 
     assert resp.status_code == 204
+    mock_lifecycle.assert_awaited_once()
 
     await db_session.refresh(session)
     assert session.ended_at is not None, "ended_at must be stamped by the push endpoint"

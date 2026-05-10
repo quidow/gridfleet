@@ -495,19 +495,25 @@ async def mark_session_finished(db: AsyncSession, session_id: uuid.UUID) -> Sess
     if session is None:
         return None
     if session.ended_at is not None:
-        return session  # already finalized — no work, no incident churn
+        return session
 
     session.ended_at = datetime.now(UTC)
     await db.flush()
 
+    # handle_session_finished re-locks the device row internally via
+    # _reload_device. Pass an unlocked Device fetched by id; do NOT
+    # acquire an outer FOR UPDATE here — that would just be a redundant
+    # round trip with the inner lock.
     if session.device_id is not None:
-        device = await device_locking.lock_device(db, session.device_id)
+        device = await db.get(Device, session.device_id)
+        if device is None:
+            # Defensive: device row was deleted out from under the session.
+            # Skip lifecycle bookkeeping — the foreign key on Session.device_id
+            # should make this unreachable in practice, but a clean return
+            # is safer than crashing the request.
+            return session
+
         await lifecycle_policy.handle_session_finished(db, device)
-    # handle_session_finished commits internally on its terminal branches
-    # (CLEARED_RECOVERED, AUTO_STOPPED — see lifecycle_policy.py:267, 284).
-    # NO_PENDING and RUNNING_SESSION_EXISTS return without committing — but
-    # those cases are unreachable here because we just stamped ended_at,
-    # so no defensive commit is needed.
     return session
 
 
