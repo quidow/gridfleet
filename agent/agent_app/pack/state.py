@@ -171,8 +171,16 @@ class PackStateLoop:
             ):
                 try:
                     await self.adapter_loader(pack, env)
-                except Exception:
+                except Exception as exc:
                     logger.exception("adapter load failed for pack %s@%s", pack.id, pack.release)
+                    doctor_entries.append(
+                        {
+                            "pack_id": pack.id,
+                            "check_id": "adapter_load",
+                            "ok": False,
+                            "message": f"adapter load failed: {exc}",
+                        }
+                    )
 
             if self.sidecar_supervisor is not None and self.adapter_registry is not None:
                 adapter = self.adapter_registry.get(pack.id, pack.release)

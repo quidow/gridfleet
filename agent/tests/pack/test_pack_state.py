@@ -345,6 +345,38 @@ async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
+    """When adapter_loader raises, the pack still reports installed but emits an adapter_load failure entry."""
+    client = _FakeClient(_make_desired([_android_pack()]))
+    registry = AdapterRegistry()
+
+    async def failing_loader(pack: object, env: object) -> None:
+        raise RuntimeError("tarball missing on disk")
+
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_id="00000000-0000-0000-0000-000000000099",
+        adapter_registry=registry,
+        adapter_loader=failing_loader,
+    )
+
+    await loop.run_once()
+
+    payload = client.posted[-1]
+    assert payload["doctor"] == [
+        {
+            "pack_id": "appium-uiautomator2",
+            "check_id": "adapter_load",
+            "ok": False,
+            "message": "adapter load failed: tarball missing on disk",
+        },
+    ]
+    pack_entry = next(p for p in payload["packs"] if p["pack_id"] == "appium-uiautomator2")
+    assert pack_entry["status"] == "installed"
+
+
+@pytest.mark.asyncio
 async def test_manual_pack_is_not_blocked_as_unsupported() -> None:
     client = _FakeClient(
         _make_desired(
