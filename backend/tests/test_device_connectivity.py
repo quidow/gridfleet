@@ -1,7 +1,10 @@
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
@@ -566,6 +569,108 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
 
 
 # ---------------------------------------------------------------------------
+# Task 12: integration test helpers
+# ---------------------------------------------------------------------------
+
+
+def healthy_payload(*, adb: bool = True, ip_ping: bool | None = None) -> dict[str, object]:
+    checks: list[dict[str, object]] = [{"check_id": "adb", "ok": adb, "message": "" if adb else "adb dead"}]
+    if ip_ping is not None:
+        checks.append(
+            {
+                "check_id": "ip_ping",
+                "ok": ip_ping,
+                "message": "" if ip_ping else "ICMP echo unanswered",
+            }
+        )
+    return {"healthy": adb and (ip_ping is None or ip_ping), "checks": checks}
+
+
+def _stub_get_health(monkeypatch: pytest.MonkeyPatch, payload: object) -> None:
+    async def _f(device: object, **kwargs: object) -> object:
+        return payload
+
+    monkeypatch.setattr("app.services.device_connectivity._get_device_health", _f)
+
+
+def _stub_get_health_sequence(monkeypatch: pytest.MonkeyPatch, payloads: list[object]) -> None:
+    iterator = iter(payloads)
+
+    async def _f(device: object, **kwargs: object) -> object:
+        return next(iterator)
+
+    monkeypatch.setattr("app.services.device_connectivity._get_device_health", _f)
+
+
+def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> None:
+    async def _f(host: object) -> set[str]:
+        return aliases
+
+    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", _f)
+
+
+def _stub_settings(monkeypatch: pytest.MonkeyPatch, *, threshold: int, timeout: float, count: int) -> None:
+    from app.services.settings_service import settings_service
+
+    monkeypatch.setattr(
+        settings_service,
+        "get",
+        _settings_dispatch(threshold=threshold, timeout=timeout, count=count),
+    )
+
+
+def _settings_dispatch(*, threshold: int, timeout: float, count: int) -> Callable[[str], object]:
+    def _get(key: str) -> object:
+        if key == "general.device_check_interval_sec":
+            return 60
+        if key == "device_checks.ip_ping.consecutive_fail_threshold":
+            return threshold
+        if key == "device_checks.ip_ping.timeout_sec":
+            return timeout
+        if key == "device_checks.ip_ping.count_per_cycle":
+            return count
+        raise KeyError(key)
+
+    return _get
+
+
+def _async_recorder(sink: list[str]) -> Callable[..., Coroutine[Any, Any, None]]:
+    async def _f(*args: object, **kwargs: object) -> None:
+        sink.append(str(kwargs.get("source", "unknown")))
+
+    return _f
+
+
+async def _reload(db: AsyncSession, device_id: object) -> Device:
+    from sqlalchemy import select
+
+    res = await db.execute(select(Device).where(Device.id == device_id))
+    return res.scalar_one()
+
+
+@pytest_asyncio.fixture
+async def make_device(db_session: AsyncSession, db_host: Host) -> Callable[..., Coroutine[Any, Any, Device]]:
+    """Factory fixture: ``await make_device(connection_type="usb", ip_address="...")``."""
+    import uuid as _uuid
+
+    from tests.helpers import create_device_record
+
+    async def _factory(**kwargs: object) -> Device:
+        identity = f"ip-dev-{_uuid.uuid4().hex[:8]}"
+        return await create_device_record(
+            db_session,
+            host_id=db_host.id,
+            identity_value=identity,
+            name=f"Test Device {identity}",
+            operational_state="available",
+            auto_manage=kwargs.pop("auto_manage", True),  # type: ignore[arg-type]
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
 # Task 11: ip_ping namespace constants and hysteresis helpers
 # ---------------------------------------------------------------------------
 
@@ -643,3 +748,208 @@ async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSessi
     assert gated is True
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
     assert counter is None
+
+
+# ---------------------------------------------------------------------------
+# Task 12: _check_connectivity ip_ping hysteresis integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_first_miss_keeps_healthy(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is True
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter == 1
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_threshold_flips_unhealthy(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    handler_calls: list[str] = []
+    monkeypatch.setattr(
+        "app.services.device_connectivity.lifecycle_policy.handle_health_failure",
+        _async_recorder(handler_calls),
+    )
+
+    for _ in range(3):
+        await _check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is False
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter == 3
+    assert len(handler_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_success_clears_counter(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    payloads: list[object] = [
+        healthy_payload(adb=True, ip_ping=False),
+        healthy_payload(adb=True, ip_ping=False),
+        healthy_payload(adb=True, ip_ping=True),
+    ]
+    _stub_get_health_sequence(monkeypatch, payloads)
+
+    for _ in range(3):
+        await _check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is True
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_other_check_failure_no_hysteresis(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=False, ip_ping=True))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is False
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_absent_no_counter_writes(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address=None)
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True))  # no ip_ping entry
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_skipped_for_held_device(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7", hold=DeviceHold.maintenance)
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_skipped_for_auto_manage_off(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7", auto_manage=False)
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_health_result_none_preserves_counter(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import IP_PING_NAMESPACE
+
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)
+    await db_session.commit()
+    _stub_get_health(monkeypatch, None)  # agent unreachable
+
+    await _check_connectivity(db_session)
+
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
+    assert counter == 2
+
+
+@pytest.mark.asyncio
+async def test_ip_ping_settings_threshold_one_flips_immediately(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    device = await make_device(connection_type="usb", ip_address="10.0.0.7")
+    _stub_settings(monkeypatch, threshold=1, timeout=2.0, count=1)
+    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+
+    await _check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is False
