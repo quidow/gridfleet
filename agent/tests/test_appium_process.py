@@ -93,10 +93,14 @@ class RecordingGridNodeHandle:
     def __init__(self) -> None:
         self.start_called = False
         self.stop_called = False
+        self.wait_until_running_called = False
         self.snapshot_payload = {"status": "up"}
 
     async def start(self) -> None:
         self.start_called = True
+
+    async def wait_until_running(self) -> None:
+        self.wait_until_running_called = True
 
     async def stop(self) -> None:
         self.stop_called = True
@@ -282,6 +286,7 @@ async def test_start_spawns_grid_node_supervisor() -> None:
 
     assert create_proc.await_count == 1
     assert handles[0].start_called is True
+    assert handles[0].wait_until_running_called is True
     assert configs[0].appium_upstream == "http://127.0.0.1:4723"
     assert configs[0].slots[0].stereotype.caps["appium:platform"] == "android_mobile"
     await manager.shutdown()

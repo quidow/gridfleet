@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +14,7 @@ import zmq.asyncio
 from agent_app._supervision import ExponentialBackoff
 
 EventHandler = Callable[[dict[str, Any]], None]
+logger = logging.getLogger(__name__)
 
 
 def encode_event_frames(event: dict[str, Any]) -> list[bytes]:
@@ -67,17 +68,23 @@ class EventBus:
         await asyncio.sleep(0)
 
     async def stop(self) -> None:
-        if self._subscriber_task is not None:
-            self._subscriber_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._subscriber_task
-            self._subscriber_task = None
-        if self._publish_socket is not None:
-            self._publish_socket.close(linger=0)
-            self._publish_socket = None
-        if self._subscribe_socket is not None:
-            self._subscribe_socket.close(linger=0)
-            self._subscribe_socket = None
+        try:
+            if self._subscriber_task is not None:
+                self._subscriber_task.cancel()
+                try:
+                    await self._subscriber_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.warning("grid node event subscriber task failed during shutdown", exc_info=True)
+                self._subscriber_task = None
+        finally:
+            if self._publish_socket is not None:
+                self._publish_socket.close(linger=0)
+                self._publish_socket = None
+            if self._subscribe_socket is not None:
+                self._subscribe_socket.close(linger=0)
+                self._subscribe_socket = None
 
     async def publish(self, event: dict[str, Any]) -> None:
         try:
@@ -104,9 +111,16 @@ class EventBus:
             return
         while True:
             frames = await self._subscribe_socket.recv_multipart()
-            event = decode_event_frames(list(frames))
+            try:
+                event = decode_event_frames(list(frames))
+            except ValueError:
+                logger.warning("discarding malformed grid node event bus frames")
+                continue
             for handler in self._handlers:
-                handler(event)
+                try:
+                    handler(event)
+                except Exception:
+                    logger.warning("grid node event handler failed", exc_info=True)
 
     def _open_publish_socket(self) -> None:
         self._publish_socket = self._context.socket(zmq.PUB)

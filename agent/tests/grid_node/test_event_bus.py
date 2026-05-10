@@ -8,6 +8,17 @@ from agent_app.grid_node.event_bus import EventBus, decode_event_frames, encode_
 from agent_app.grid_node.protocol import EventType, event_envelope
 
 
+class FakeSubscribeSocket:
+    def __init__(self, frames: list[list[bytes]]) -> None:
+        self._frames = frames
+
+    async def recv_multipart(self) -> list[bytes]:
+        await asyncio.sleep(0)
+        if not self._frames:
+            raise asyncio.CancelledError
+        return self._frames.pop(0)
+
+
 def test_event_frames_round_trip_json_envelope() -> None:
     event = event_envelope(EventType.NODE_STATUS, {"id": "node-1"})
     frames = encode_event_frames(event)
@@ -46,3 +57,32 @@ async def test_event_bus_records_failed_publish_and_recreates_socket(monkeypatch
     assert bus.publish_failures == 1
     assert bus.publish_socket is not original_socket
     await bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_event_bus_receive_loop_skips_malformed_frames() -> None:
+    event = event_envelope(EventType.NODE_STATUS, {"id": "node-1"})
+    bus = EventBus(publish_url="inproc://receive-loop", subscribe_url="inproc://receive-loop", heartbeat_sec=1.0)
+    received: list[dict[str, object]] = []
+    bus.on_event(lambda payload: received.append(payload))
+    bus._subscribe_socket = FakeSubscribeSocket([[b"not-json"], encode_event_frames(event)])
+    with pytest.raises(asyncio.CancelledError):
+        await bus._receive_loop()
+    assert received == [event]
+
+
+@pytest.mark.asyncio
+async def test_event_bus_receive_loop_continues_after_handler_error() -> None:
+    event = event_envelope(EventType.NODE_DRAIN, {"id": "node-1"})
+    bus = EventBus(publish_url="inproc://handler-error", subscribe_url="inproc://handler-error", heartbeat_sec=1.0)
+    received: list[dict[str, object]] = []
+
+    def fail(_payload: dict[str, object]) -> None:
+        raise RuntimeError("handler failed")
+
+    bus.on_event(fail)
+    bus.on_event(lambda payload: received.append(payload))
+    bus._subscribe_socket = FakeSubscribeSocket([encode_event_frames(event)])
+    with pytest.raises(asyncio.CancelledError):
+        await bus._receive_loop()
+    assert received == [event]

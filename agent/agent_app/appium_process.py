@@ -877,6 +877,7 @@ class AppiumProcessManager:
         handle = start_grid_node_supervisor(factory=factory, config=config)
         self._grid_supervisors[spec.port] = handle
         await handle.start()
+        await handle.wait_until_running()
         return handle
 
     async def _stop_grid_node_service(self, port: int) -> None:

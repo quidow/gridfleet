@@ -23,6 +23,12 @@ class RecordingSupervisor:
             self.order.append(self.name)
 
 
+class FailingSupervisor(RecordingSupervisor):
+    async def stop(self) -> None:
+        self.stop_called = True
+        raise RuntimeError("stop failed")
+
+
 async def test_stop_grid_node_supervisors_for_shutdown_stops_all_and_clears_handles() -> None:
     first = RecordingSupervisor("first")
     second = RecordingSupervisor("second")
@@ -33,6 +39,18 @@ async def test_stop_grid_node_supervisors_for_shutdown_stops_all_and_clears_hand
     assert first.stop_called is True
     assert second.stop_called is True
     assert manager._grid_supervisors == {}
+
+
+async def test_stop_grid_node_supervisors_for_shutdown_keeps_failed_handles() -> None:
+    failed = FailingSupervisor("failed")
+    stopped = RecordingSupervisor("stopped")
+    manager = SimpleNamespace(_grid_supervisors={4723: failed, 4724: stopped})
+
+    await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=1.0)
+
+    assert failed.stop_called is True
+    assert stopped.stop_called is True
+    assert manager._grid_supervisors == {4723: failed}
 
 
 async def test_lifespan_stops_grid_node_supervisors_before_appium_shutdown() -> None:

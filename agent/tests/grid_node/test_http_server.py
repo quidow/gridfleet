@@ -25,6 +25,11 @@ class RecordingBus:
         self.events.append(event)
 
 
+class FailingBus:
+    async def publish(self, event: dict[str, object]) -> None:
+        raise RuntimeError(f"publish failed for {event['type']}")
+
+
 @dataclass(frozen=True)
 class RecordedRequest:
     path: str
@@ -138,6 +143,29 @@ def test_post_session_returns_503_when_no_free_slot(test_app: Starlette, state: 
     client = TestClient(test_app)
     response = client.post("/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 503
+
+
+def test_post_session_returns_400_for_malformed_json(test_app: Starlette, state: NodeState) -> None:
+    client = TestClient(test_app, raise_server_exceptions=False)
+    response = client.post("/session", content="{", headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert response.json()["value"]["error"] == "invalid argument"
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_post_session_commit_survives_session_started_publish_failure(state: NodeState, proxy: RecordingProxy) -> None:
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        bus=FailingBus(),
+        proxy_request_func=proxy.request,
+        proxy_websocket_func=proxy.websocket,
+    )
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert response.status_code == 200
+    assert state.snapshot().slots[0].session_id == "appium-session-1"
 
 
 def test_delete_session_releases_slot_and_publishes_session_closed(

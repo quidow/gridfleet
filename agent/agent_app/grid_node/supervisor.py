@@ -11,15 +11,22 @@ if TYPE_CHECKING:
 
 
 class GridNodeServiceProtocol(Protocol):
-    async def start(self) -> None: ...
+    async def start(self) -> None:
+        raise NotImplementedError
 
-    async def stop(self) -> None: ...
+    async def stop(self) -> None:
+        raise NotImplementedError
 
-    def snapshot(self) -> dict[str, object]: ...
+    async def run_heartbeat_once(self) -> None:
+        raise NotImplementedError
+
+    def snapshot(self) -> dict[str, object]:
+        raise NotImplementedError
 
 
 class Clock(Protocol):
-    async def sleep(self, delay: float) -> None: ...
+    async def sleep(self, delay: float) -> None:
+        raise NotImplementedError
 
 
 class AsyncioClock:
@@ -28,9 +35,10 @@ class AsyncioClock:
 
 
 class GridNodeSupervisorHandle:
-    def __init__(self, *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock) -> None:
+    def __init__(self, *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock, heartbeat_sec: float) -> None:
         self._factory = factory
         self._clock = clock
+        self._heartbeat_sec = heartbeat_sec
         self._task: asyncio.Task[None] | None = None
         self._stop_requested = asyncio.Event()
         self._running = asyncio.Event()
@@ -68,7 +76,15 @@ class GridNodeSupervisorHandle:
         await asyncio.wait_for(self._stopped.wait(), timeout=1.0)
 
     def snapshot(self) -> dict[str, object]:
-        return {"errored": self.errored, "running": self._running.is_set()}
+        if self.errored:
+            status = "error"
+        elif self._running.is_set():
+            status = "up"
+        elif self._stopped.is_set():
+            status = "stopped"
+        else:
+            status = "starting"
+        return {"errored": self.errored, "running": self._running.is_set(), "status": status}
 
     def is_running(self) -> bool:
         return self._running.is_set()
@@ -93,7 +109,13 @@ class GridNodeSupervisorHandle:
                 await service.stop()
                 self._stopped.set()
                 return
-            await self._stop_requested.wait()
+            while not self._stop_requested.is_set():
+                await self._clock.sleep(self._heartbeat_sec)
+                if self._stop_requested.is_set():
+                    break
+                await service.run_heartbeat_once()
+                if service.snapshot().get("requested_stop") is True:
+                    break
             await service.stop()
             self._stopped.set()
             return
@@ -102,5 +124,7 @@ class GridNodeSupervisorHandle:
 def start_grid_node_supervisor(
     *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock | None = None, config: object | None = None
 ) -> GridNodeSupervisorHandle:
-    del config
-    return GridNodeSupervisorHandle(factory=factory, clock=clock or AsyncioClock())
+    heartbeat_sec = 5.0
+    if config is not None:
+        heartbeat_sec = float(getattr(config, "heartbeat_sec", heartbeat_sec))
+    return GridNodeSupervisorHandle(factory=factory, clock=clock or AsyncioClock(), heartbeat_sec=heartbeat_sec)

@@ -9,6 +9,8 @@ import websockets
 from starlette.responses import Response
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from starlette.requests import Request
     from starlette.websockets import WebSocket
 
@@ -28,6 +30,10 @@ def strip_hop_headers(headers: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in headers.items() if key.lower() not in HOP_HEADERS}
 
 
+def strip_hop_header_items(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [(key, value) for key, value in headers if key.lower() not in HOP_HEADERS]
+
+
 async def proxy_request(
     request: Request,
     *,
@@ -42,7 +48,9 @@ async def proxy_request(
         target,
         params=request.query_params,
         content=body,
-        headers=strip_hop_headers(dict(request.headers)),
+        headers=strip_hop_header_items(
+            [(key.decode("latin-1"), value.decode("latin-1")) for key, value in request.headers.raw]
+        ),
         timeout=timeout,
     )
     try:
@@ -52,17 +60,19 @@ async def proxy_request(
     except httpx.TimeoutException:
         return Response(status_code=504)
     response_body = await upstream_response.aread()
+    response_headers = strip_hop_header_items(upstream_response.headers.multi_items())
     await upstream_response.aclose()
-    return Response(
-        response_body,
-        status_code=upstream_response.status_code,
-        headers=strip_hop_headers(dict(upstream_response.headers)),
-    )
+    response = Response(response_body, status_code=upstream_response.status_code)
+    for key, value in response_headers:
+        response.headers.append(key, value)
+    return response
 
 
 async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
     await websocket.accept()
     target = f"{upstream}{websocket.url.path}"
+    if websocket.url.query:
+        target = f"{target}?{websocket.url.query}"
     async with websockets.connect(target) as remote:
 
         async def client_to_remote() -> None:

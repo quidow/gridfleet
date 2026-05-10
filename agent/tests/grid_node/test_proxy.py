@@ -46,6 +46,30 @@ async def test_proxy_request_forwards_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_request_preserves_duplicate_response_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[("set-cookie", "a=1; Path=/"), ("set-cookie", "b=2; Path=/")],
+            content=b"{}",
+        )
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "send", send)
+        response = await proxy_request(
+            _request("GET", "/status"),
+            upstream="http://appium",
+            timeout=1.0,
+            client=client,
+        )
+
+    set_cookie_headers = [
+        value.decode("latin-1") for key, value in response.raw_headers if key.lower() == b"set-cookie"
+    ]
+    assert set_cookie_headers == ["a=1; Path=/", "b=2; Path=/"]
+
+
+@pytest.mark.asyncio
 async def test_proxy_connection_refused_returns_502() -> None:
     async with httpx.AsyncClient() as client:
         response = await proxy_request(
@@ -97,6 +121,37 @@ async def test_proxy_websocket_pipes_frames() -> None:
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_proxy_websocket_preserves_query_string() -> None:
+    seen_paths: list[str] = []
+
+    async def echo(websocket: websockets.ServerConnection) -> None:
+        seen_paths.append(websocket.request.path)
+        async for message in websocket:
+            await websocket.send(message)
+
+    server = await websockets.serve(echo, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    async def proxy_endpoint(websocket: WebSocket) -> None:
+        await proxy_websocket(websocket, upstream=f"ws://127.0.0.1:{port}")
+
+    app = Starlette(routes=[WebSocketRoute("/session/{session_id}/se/cdp", proxy_endpoint)])
+
+    def run_client() -> None:
+        with TestClient(app).websocket_connect("/session/session-1/se/cdp?channel=devtools") as websocket:
+            websocket.send_text("ping")
+            assert websocket.receive_text() == "ping"
+
+    try:
+        await asyncio.to_thread(run_client)
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert seen_paths == ["/session/session-1/se/cdp?channel=devtools"]
 
 
 def _request(method: str, path: str, *, body: bytes = b"") -> Request:

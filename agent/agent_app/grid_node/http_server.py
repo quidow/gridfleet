@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import TYPE_CHECKING, Protocol
 
@@ -23,7 +24,11 @@ if TYPE_CHECKING:
 
 
 class EventPublisher(Protocol):
-    async def publish(self, event: dict[str, object]) -> None: ...
+    async def publish(self, event: dict[str, object]) -> None:
+        raise NotImplementedError
+
+
+logger = logging.getLogger(__name__)
 
 
 class NoopPublisher:
@@ -67,7 +72,12 @@ def build_app(
         return JSONResponse({"value": owned})
 
     async def create_session(request: Request) -> Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"value": {"error": "invalid argument", "message": "Malformed JSON request body"}}, status_code=400
+            )
         caps = _always_match_caps(body)
         try:
             reservation = state.reserve(caps)
@@ -91,8 +101,9 @@ def build_app(
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
         state.commit(reservation.id, session_id=session_id, started_at=time.monotonic())
-        await publisher.publish(
-            event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id})
+        await _publish_safely(
+            publisher,
+            event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),
         )
         return response
 
@@ -101,12 +112,12 @@ def build_app(
         response = await _proxy_http(request)
         if 200 <= response.status_code < 300:
             state.release(session_id)
-            await publisher.publish(event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
+            await _publish_safely(publisher, event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
         return response
 
     async def drain(_request: Request) -> JSONResponse:
         state.mark_drain()
-        await publisher.publish(event_envelope(EventType.NODE_DRAIN, {}))
+        await _publish_safely(publisher, event_envelope(EventType.NODE_DRAIN, {}))
         return JSONResponse({"value": True})
 
     async def command_proxy(request: Request) -> Response:
@@ -165,3 +176,10 @@ def _session_id_from_response(response: Response) -> str | None:
     if isinstance(session_id, str):
         return session_id
     return None
+
+
+async def _publish_safely(publisher: EventPublisher, event: dict[str, object]) -> None:
+    try:
+        await publisher.publish(event)
+    except Exception:
+        logger.warning("grid node event publish failed after HTTP state transition", exc_info=True)

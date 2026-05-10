@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import platform
 import re
@@ -62,6 +63,7 @@ from agent_app.tools_manager import ensure_tools, get_tool_status
 from agent_app.version_guidance import get_version_guidance
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 appium_mgr = AppiumProcessManager()
 tools_ensure_lock = asyncio.Lock()
@@ -175,19 +177,24 @@ async def _stop_grid_node_supervisors_for_shutdown(
     if not supervisors:
         return
 
-    async def _stop_one(port: int, supervisor: GridNodeSupervisorHandle) -> None:
-        try:
-            await supervisor.stop()
-        finally:
-            manager._grid_supervisors.pop(port, None)
+    async def _stop_one(port: int, supervisor: GridNodeSupervisorHandle) -> int:
+        await supervisor.stop()
+        return port
 
     tasks = [asyncio.create_task(_stop_one(port, supervisor)) for port, supervisor in supervisors]
     try:
-        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_sec)
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_sec)
     except TimeoutError:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        logger.warning("timed out stopping grid node supervisors during shutdown")
+        return
+    for result in results:
+        if isinstance(result, int):
+            manager._grid_supervisors.pop(result, None)
+        elif isinstance(result, Exception):
+            logger.warning("failed to stop grid node supervisor during shutdown", exc_info=result)
 
 
 def _get_network_devices() -> list[dict[str, Any]]:
