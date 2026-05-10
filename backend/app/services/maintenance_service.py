@@ -9,13 +9,14 @@ from app.services import device_locking
 from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
 
 logger = logging.getLogger(__name__)
 
-_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 async def enter_maintenance(

@@ -26,10 +26,11 @@ from app.services.lifecycle_policy_state import (
 )
 from app.services.lifecycle_policy_state import state as policy_state
 from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import stop_node as stop_managed_node
 
-_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 if TYPE_CHECKING:
     import uuid

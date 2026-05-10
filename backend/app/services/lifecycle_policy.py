@@ -50,6 +50,7 @@ from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
 from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
@@ -60,7 +61,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 build_lifecycle_policy = lifecycle_policy_summary.build_lifecycle_policy
 build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy_summary
@@ -614,12 +615,6 @@ async def attempt_auto_recovery(
                 )
         await db.commit()
 
-    await record_event(
-        db,
-        device.id,
-        DeviceEventType.connectivity_restored,
-        {"source": source, "reason": reason, "rejoined_run_id": str(run.id) if run else None},
-    )
     await db.commit()
 
     # Re-lock for the trailing lifecycle write: the per-branch commits above

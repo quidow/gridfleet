@@ -18,6 +18,7 @@ from app.services import device_locking, grid_service, lifecycle_policy, run_ser
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
@@ -26,7 +27,7 @@ logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
 RESERVED_SESSION_ID = "reserved"
 
-_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:

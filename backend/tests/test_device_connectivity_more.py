@@ -224,13 +224,11 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
             "app.services.device_connectivity.device_health.update_emulator_state",
             new=AsyncMock(),
         ) as update_emulator_state,
-        patch("app.services.device_connectivity.record_event", new=AsyncMock()) as record_event,
         patch("app.services.device_connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(db_session)
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
-    record_event.assert_not_awaited()
 
 
 async def test_stop_node_via_agent_delegates_to_helper() -> None:

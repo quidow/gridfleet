@@ -29,6 +29,12 @@ class DeviceEventType(enum.StrEnum):
     lifecycle_run_restored = "lifecycle_run_restored"
     lifecycle_run_cooldown_set = "lifecycle_run_cooldown_set"
     lifecycle_run_cooldown_escalated = "lifecycle_run_cooldown_escalated"
+    # State-machine-driven transitions (added with DeviceStateMachine EventLogHook):
+    maintenance_entered = "maintenance_entered"
+    maintenance_exited = "maintenance_exited"
+    session_started = "session_started"
+    session_ended = "session_ended"
+    auto_stopped = "auto_stopped"
 
 
 class DeviceEvent(Base):
