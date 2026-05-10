@@ -99,3 +99,18 @@ def test_expire_idle_returns_busy_sessions_past_timeout() -> None:
     state.commit(reservation.id, session_id="session-1", started_at=20.0)
     assert state.expire_idle(now=100.0, timeout_sec=60.0) == ["session-1"]
     assert state.snapshot().slots[0].state == "BUSY"
+
+
+def test_reserve_matches_nested_capability_subset() -> None:
+    state = NodeState(
+        slots=[
+            _slot(
+                "s1",
+                platformName="Android",
+                **{"appium:options": {"automationName": "UiAutomator2", "udid": "device-1"}},
+            )
+        ],
+        now=lambda: 10.0,
+    )
+    reservation = state.reserve({"appium:options": {"automationName": "UiAutomator2"}})
+    assert reservation.slot_id == "s1"
