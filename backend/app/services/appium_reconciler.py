@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -19,6 +20,11 @@ import httpx
 from sqlalchemy import select
 
 from app.database import async_session
+from app.metrics_recorders import (
+    APPIUM_RECONCILER_CYCLE_FAILURES,
+    APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
+    APPIUM_RECONCILER_ORPHANS_STOPPED,
+)
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device
 from app.models.host import Host, HostStatus
@@ -155,6 +161,7 @@ async def reconcile_host_orphans(
             )
             continue
         stopped.append(orphan)
+        APPIUM_RECONCILER_ORPHANS_STOPPED.labels(reason=orphan.reason).inc()
         logger.info(
             "appium_reconciler_orphan_stopped",
             host_id=str(host_id),
@@ -204,6 +211,7 @@ async def appium_reconciler_loop() -> None:
     """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
     while True:
         interval = float(settings_service.get("appium_reconciler.interval_sec"))
+        cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await assert_current_leader(db)
@@ -219,7 +227,10 @@ async def appium_reconciler_loop() -> None:
             )
             os._exit(70)
         except Exception:
+            APPIUM_RECONCILER_CYCLE_FAILURES.inc()
             logger.exception("appium_reconciler_cycle_failed")
+        finally:
+            APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
         await asyncio.sleep(interval)
 
 
