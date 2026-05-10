@@ -45,6 +45,7 @@ from app.routers import (
 from app.services import auth as auth_service
 from app.services import device_health, device_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
+from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
@@ -195,6 +196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
                 asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
                 asyncio.create_task(appium_resource_sweeper_loop(), name="appium_resource_sweeper_loop"),
+                asyncio.create_task(appium_reconciler_loop(), name="appium_reconciler_loop"),
             ]
         watcher_task = asyncio.create_task(
             control_plane_leader_watcher_loop(),
