@@ -104,6 +104,18 @@ class NodeState:
                 runtime.started_at = None
                 return
 
+    def expire_reservations(self, *, now: float, ttl_sec: float = 30.0) -> list[str]:
+        expired: list[str] = []
+        for runtime in self._slots:
+            if runtime.state != "RESERVED" or runtime.reservation_id is None or runtime.reserved_at is None:
+                continue
+            if now - runtime.reserved_at >= ttl_sec:
+                expired.append(runtime.reservation_id)
+                runtime.state = "FREE"
+                runtime.reservation_id = None
+                runtime.reserved_at = None
+        return expired
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[

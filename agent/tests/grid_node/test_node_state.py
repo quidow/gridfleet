@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_app.grid_node.node_state import NodeState, NoFreeSlotError, NoMatchingSlotError
+from agent_app.grid_node.node_state import NodeState, NoFreeSlotError, NoMatchingSlotError, ReservationGoneError
 from agent_app.grid_node.protocol import Slot, Stereotype
 
 
@@ -66,3 +66,19 @@ def test_release_releases_busy_slot_and_is_idempotent() -> None:
     assert snapshot.slots[0].state == "FREE"
     assert snapshot.slots[0].session_id is None
     assert snapshot.slots[0].started_at is None
+
+
+def test_expire_reservations_releases_old_reservations() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "Android"})
+    expired = state.expire_reservations(now=45.0, ttl_sec=30.0)
+    assert expired == [reservation.id]
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_commit_after_reservation_expiry_raises() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "Android"})
+    state.expire_reservations(now=45.0, ttl_sec=30.0)
+    with pytest.raises(ReservationGoneError):
+        state.commit(reservation.id, session_id="session-1", started_at=50.0)
