@@ -105,7 +105,9 @@ If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, 
 Sessions go **directly to the Grid hub** (`:4444`); the manager does not proxy WebDriver traffic. The manager owns reservations, run lifecycle, and capability matching; the hub owns request routing.
 
 ### Device row locking
-Any code that writes `Device.availability_status` or `Device.lifecycle_policy_state` MUST acquire the row lock first via `app.services.device_locking.lock_device` (or `lock_devices` for batch) inside the same transaction. Routers should use `get_device_for_update_or_404` for state-mutating endpoints. Background loops (`device_connectivity`, `node_health`, `session_sync`, `session_viability`) commit per device after the locked write window. The leader advisory lock alone is NOT sufficient — API mutators run on every worker and bypass it.
+Any code that writes `Device.operational_state`, `Device.hold`, or `Device.lifecycle_policy_state` MUST acquire the row lock first via `app.services.device_locking.lock_device` (or `lock_devices` for batch) inside the same transaction. Routers should use `get_device_for_update_or_404` for state-mutating endpoints. Background loops (`device_connectivity`, `node_health`, `session_sync`, `session_viability`) commit per device after the locked write window. The leader advisory lock alone is NOT sufficient — API mutators run on every worker and bypass it.
+
+All writes to `Device.operational_state` and `Device.hold` MUST go through `app.services.lifecycle_state_machine.DeviceStateMachine.transition` under the device row lock. The machine routes through `set_operational_state` / `set_hold` so event-bus emissions and `EventLogHook` writes are preserved. Direct attribute assignment (`device.operational_state = ...`) is forbidden outside the writers themselves. See `docs/reference/device-lifecycle.md`.
 
 ### Frontend conventions
 - `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror `app/schemas/`.

@@ -20,7 +20,7 @@ from app.services import (
 )
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.device_state import ready_operational_state, set_hold, set_operational_state
+from app.services.device_state import ready_operational_state, set_hold
 from app.services.lifecycle_policy_actions import (
     complete_auto_stop,
     has_running_client_session,
@@ -49,6 +49,9 @@ from app.services.lifecycle_policy_state import (
 from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
 from app.services.settings_service import settings_service
@@ -57,6 +60,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 build_lifecycle_policy = lifecycle_policy_summary.build_lifecycle_policy
 build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy_summary
@@ -588,19 +593,29 @@ async def attempt_auto_recovery(
             {"recovered_from": source, "reason": reason},
         )
         if device.operational_state != DeviceOperationalState.available:
-            await set_operational_state(
-                device,
-                await ready_operational_state(db, device),
-                reason=f"Connectivity restored ({source}): {reason}",
-            )
+            target = await ready_operational_state(db, device)
+            if device.operational_state == DeviceOperationalState.offline:
+                if target == DeviceOperationalState.available:
+                    await _MACHINE.transition(
+                        device,
+                        TransitionEvent.CONNECTIVITY_RESTORED,
+                        reason=f"Connectivity restored ({source}): {reason}",
+                    )
+                # else: probe still failing — no state change. The next
+                # device_connectivity_loop tick will retry recovery.
+            elif device.operational_state == DeviceOperationalState.busy and target == DeviceOperationalState.offline:
+                # Recovery on a busy device that probe says is unhealthy →
+                # auto-stop. Hold preserved (reserved devices stay reserved).
+                await _MACHINE.transition(
+                    device,
+                    TransitionEvent.AUTO_STOP_EXECUTED,
+                    reason=f"Recovery declared device unhealthy ({source}): {reason}",
+                )
+            # else: busy device that probe says is available — extremely rare;
+            # leave state alone, the next device_connectivity_loop tick will
+            # reconcile via session_sync.
         await db.commit()
 
-    await record_event(
-        db,
-        device.id,
-        DeviceEventType.connectivity_restored,
-        {"source": source, "reason": reason, "rejoined_run_id": str(run.id) if run else None},
-    )
     await db.commit()
 
     # Re-lock for the trailing lifecycle write: the per-branch commits above

@@ -323,14 +323,12 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         patch(
             "app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock, return_value=True
         ) as stop,
-        patch("app.services.device_connectivity.record_event", new_callable=AsyncMock) as record,
     ):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
     stop.assert_awaited_once()
-    record.assert_not_awaited()
     assert node is not None
     await db_session.refresh(node)
     assert node.state == NodeState.stopped

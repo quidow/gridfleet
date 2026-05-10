@@ -101,7 +101,14 @@ def configure_logging(*, force: bool = False) -> None:
     handler.setFormatter(formatter)
     setattr(handler, _GRIDFLEET_BACKEND_HANDLER_ATTR, True)
 
-    root_logger.handlers.clear()
+    # Remove only previously-installed gridfleet handlers (defensive cleanup
+    # of duplicates from a prior configure_logging call). Foreign handlers —
+    # notably pytest's caplog LogCaptureHandler — must survive so log capture
+    # works regardless of import-order races between get_logger and caplog
+    # setup.
+    for existing in list(root_logger.handlers):
+        if getattr(existing, _GRIDFLEET_BACKEND_HANDLER_ATTR, False):
+            root_logger.removeHandler(existing)
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
 

@@ -106,6 +106,19 @@ class PlatformRemovedError(LookupError):
         self.platform_id = platform_id
 
 
+class InvalidTransitionError(Exception):
+    """Raised when a DeviceStateMachine transition is attempted from an invalid source state.
+
+    Mapped to HTTP 409 by ``register_exception_handlers``. The machine module imports
+    this class — do not re-declare it elsewhere.
+    """
+
+    def __init__(self, event: str, current_state: str) -> None:
+        self.event = event
+        self.current_state = current_state
+        super().__init__(f"Cannot {event} from state {current_state}")
+
+
 def request_id_from_scope(scope: Mapping[str, Any]) -> str | None:
     state = scope.get("state")
     if not isinstance(state, Mapping):
@@ -243,6 +256,16 @@ def register_exception_handlers(app: FastAPI) -> None:
             request_id=request_id_from_request(request),
             details=details,
             headers=exc.headers,
+        )
+
+    @app.exception_handler(InvalidTransitionError)
+    async def handle_invalid_transition(request: Request, exc: InvalidTransitionError) -> JSONResponse:
+        return error_response(
+            status_code=409,
+            code="INVALID_TRANSITION",
+            message=str(exc),
+            request_id=request_id_from_request(request),
+            details={"event": exc.event, "current_state": exc.current_state},
         )
 
     @app.exception_handler(Exception)
