@@ -413,6 +413,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
+        key="appium_reconciler.transition_default_window_sec",
+        category="grid",
+        setting_type="int",
+        default=120,
+        description=(
+            "Default wall-clock window (seconds) Phase 3 writers use to populate "
+            "appium_nodes.transition_deadline when starting a desired-state lease. "
+            "The reconciler reclaims leases past this deadline."
+        ),
+        min_value=30,
+        max_value=600,
+    ),
+    SettingDefinition(
         key="appium.session_override",
         category="grid",
         setting_type="bool",

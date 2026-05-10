@@ -31,6 +31,16 @@ class AppiumNode(Base):
     container_id: Mapped[str | None] = mapped_column(String, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[NodeState] = mapped_column(Enum(NodeState), default=NodeState.stopped, nullable=False)
+    desired_state: Mapped[NodeState] = mapped_column(
+        Enum(NodeState, name="nodestate"),
+        nullable=False,
+        default=NodeState.stopped,
+        server_default=NodeState.stopped.value,
+    )
+    desired_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transition_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    transition_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     live_capabilities: Mapped[dict[str, Any]] = mapped_column(
         JSONB,

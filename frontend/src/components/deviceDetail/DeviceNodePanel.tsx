@@ -104,7 +104,14 @@ export default function DeviceNodePanel({ device }: Props) {
               <h3 className="text-xs font-medium uppercase tracking-wide text-text-3">Appium Node</h3>
               <p className="mt-0.5 text-sm font-medium text-text-1">{node.grid_url}</p>
             </div>
-            <StatusBadge status={node.state} />
+            <div className="flex items-center gap-2">
+              {node.desired_state !== node.state && (
+                <span className="text-xs font-medium text-text-3">
+                  {node.desired_state === 'running' ? 'Starting...' : 'Stopping...'}
+                </span>
+              )}
+              <StatusBadge status={node.state} />
+            </div>
           </div>
           <DefinitionList
             className="mb-4"

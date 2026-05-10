@@ -2225,6 +2225,9 @@ export interface components {
             active_connection_target: string | null;
             /** Container Id */
             container_id: string | null;
+            /** Desired Port */
+            desired_port?: number | null;
+            desired_state: components["schemas"]["NodeState"];
             /** Grid Url */
             grid_url: string;
             /**
@@ -2232,6 +2235,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Last Observed At */
+            last_observed_at?: string | null;
             /** Pid */
             pid: number | null;
             /** Port */
@@ -2242,6 +2247,10 @@ export interface components {
              */
             started_at: string;
             state: components["schemas"]["NodeState"];
+            /** Transition Deadline */
+            transition_deadline?: string | null;
+            /** Transition Token */
+            transition_token?: string | null;
         };
         /** AuthLoginRequest */
         AuthLoginRequest: {

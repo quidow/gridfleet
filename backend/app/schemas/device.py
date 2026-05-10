@@ -148,6 +148,11 @@ class AppiumNodeRead(BaseModel):
     active_connection_target: str | None
     state: NodeState
     started_at: datetime
+    desired_state: NodeState
+    desired_port: int | None = None
+    transition_token: uuid.UUID | None = None
+    transition_deadline: datetime | None = None
+    last_observed_at: datetime | None = None
 
 
 class SessionRead(BaseModel):
