@@ -4,17 +4,23 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import pytest
+from sqlalchemy import select
+
 if TYPE_CHECKING:
-    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
+from app.models.job import Job
 from app.services import bulk_service
+from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
 from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.helpers import create_device
+
+pytestmark = pytest.mark.asyncio
 
 
 def _device(
@@ -177,9 +183,48 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     )
 
     deleted = await bulk_service.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
-    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices], drain=True)
+    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices])
     exited = await bulk_service.bulk_exit_maintenance(db, [device.id for device in devices])
 
     assert deleted["failed"] == 2
     assert entered["failed"] == 1
     assert exited["failed"] == 2
+
+
+async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """bulk_exit_maintenance must enqueue exactly one recovery job per successfully-exited device.
+
+    This regression test covers the fix-2 window: state mutations are committed
+    first (bulk commit) and recovery jobs are only enqueued afterwards, so
+    create_job cannot commit mid-loop and strand a device.
+    """
+    # Create 3 devices in maintenance.
+    devices = [
+        await create_device(
+            db_session,
+            host_id=db_host.id,
+            name=f"bulk-exit-recovery-{i}",
+            hold=DeviceHold.maintenance,
+            operational_state=DeviceOperationalState.offline,
+        )
+        for i in range(3)
+    ]
+    await db_session.commit()
+
+    result = await bulk_service.bulk_exit_maintenance(db_session, [d.id for d in devices])
+
+    assert result["succeeded"] == 3
+    assert result["failed"] == 0
+
+    # Each successfully-exited device must have exactly one recovery job enqueued.
+    rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
+    assert len(rows) == 3, f"Expected 3 recovery jobs, got {len(rows)}"
+
+    enqueued_device_ids = {row.payload["device_id"] for row in rows}
+    expected_device_ids = {str(d.id) for d in devices}
+    assert enqueued_device_ids == expected_device_ids, (
+        f"Recovery jobs enqueued for wrong device IDs: {enqueued_device_ids!r}"
+    )

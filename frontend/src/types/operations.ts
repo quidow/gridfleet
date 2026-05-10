@@ -69,7 +69,6 @@ export interface BulkTagsUpdate {
 
 export interface BulkMaintenanceEnter {
   device_ids: string[];
-  drain?: boolean;
 }
 
 export interface BulkOperationResult {

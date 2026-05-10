@@ -478,6 +478,56 @@ async def get_device_session_outcome_heatmap_rows(
     return [(row.started_at, row.status) for row in result.all()]
 
 
+async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | None:
+    """Stamp ``ended_at`` (if null) and run lifecycle bookkeeping.
+
+    Idempotent: a row that already has ``ended_at`` set returns unchanged
+    and does NOT re-fire ``handle_session_finished``.
+
+    Does NOT modify ``Session.status``. Terminal status (passed / failed /
+    error) is owned by ``update_session_status`` (testkit) or by the
+    ``session_sync_loop`` reconciliation path (fallback for non-testkit
+    clients). Mutating status here would race against the testkit's
+    follow-up ``update_session_status`` call and cause a brief
+    ``ended → passed`` flicker visible in the UI.
+
+    ``session_id`` is the WebDriver session token (``Session.session_id``
+    string column), NOT the row primary key. The testkit passes
+    ``driver.session_id`` which is the WebDriver-issued token.
+    """
+    session = await get_session(db, session_id)
+    if session is None:
+        return None
+    if session.ended_at is not None:
+        return session
+
+    session.ended_at = datetime.now(UTC)
+    await db.flush()
+
+    # handle_session_finished re-locks the device row internally via
+    # _reload_device. Pass an unlocked Device fetched by id; do NOT
+    # acquire an outer FOR UPDATE here — that would just be a redundant
+    # round trip with the inner lock.
+    if session.device_id is not None:
+        device = await db.get(Device, session.device_id)
+        if device is None:
+            # Defensive: device row was deleted out from under the session.
+            # Skip lifecycle bookkeeping but still persist ended_at.
+            await db.commit()
+            return session
+
+        await lifecycle_policy.handle_session_finished(db, device)
+
+    # mark_session_finished owns persistence of ended_at. handle_session_finished
+    # commits only on its terminal branches (CLEARED_RECOVERED, AUTO_STOPPED);
+    # the common NO_PENDING path returns without committing, which would
+    # otherwise let the request-scoped session roll back our flushed write
+    # when get_db closes. An extra commit is idempotent on already-committed
+    # branches.
+    await db.commit()
+    return session
+
+
 async def update_session_status(
     db: AsyncSession,
     session_id: str,

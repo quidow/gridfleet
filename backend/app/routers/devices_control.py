@@ -53,7 +53,7 @@ async def enter_device_maintenance(
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        device = await maintenance_service.enter_maintenance(db, device, drain=body.drain)
+        device = await maintenance_service.enter_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return await device_presenter.serialize_device(db, device)

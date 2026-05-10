@@ -64,7 +64,7 @@ Current shipped behaviors:
 | Stop nodes | Yes | Yes | reserved devices fail individually |
 | Restart nodes | Yes | Yes | blocked by reservation, maintenance, or readiness per device |
 | Reconnect | Yes | Yes | only works for eligible network Android / Fire TV devices |
-| Enter maintenance | Yes | Yes | current UI uses immediate maintenance, not drain |
+| Enter maintenance | Yes | Yes | |
 | Exit maintenance | Yes | Yes | device must already be in maintenance |
 | Apply template | Yes | Yes | template picker requires one shared platform |
 | Update tags | Yes | Yes | merge or replace behavior is supported |
@@ -136,7 +136,7 @@ Group and bulk maintenance are for operator-owned holds across multiple devices.
 
 Current UI behavior:
 
-- entering maintenance uses immediate maintenance (`drain=false`)
+- entering maintenance takes effect immediately
 - exiting maintenance returns those devices out of the operator hold, but does not itself verify or restart them
 
 If the devices also have readiness or lifecycle blockers, clear those separately before expecting them to return to service.

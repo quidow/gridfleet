@@ -113,7 +113,7 @@ export default function GroupActionBar({ groupId, devices }: Props) {
             <Wifi size={14} /> Reconnect
           </button>
 
-          <button onClick={() => confirm('Enter Maintenance', `Put all ${count} group devices into maintenance mode?`, () => runOperation('Enter Maintenance', () => enterMaintenance.mutateAsync({ groupId, body: { device_ids: [], drain: false } })))} className={btnDefault}>
+          <button onClick={() => confirm('Enter Maintenance', `Put all ${count} group devices into maintenance mode?`, () => runOperation('Enter Maintenance', () => enterMaintenance.mutateAsync({ groupId, body: { device_ids: [] } })))} className={btnDefault}>
             <Wrench size={14} /> Maintenance
           </button>
           <button onClick={() => confirm('Exit Maintenance', `Exit maintenance for all ${count} group devices?`, () => runOperation('Exit Maintenance', () => exitMaintenance.mutateAsync(groupId)))} className={btnDefault}>

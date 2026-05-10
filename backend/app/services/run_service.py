@@ -814,7 +814,7 @@ async def report_preparation_failure(
         source=source,
     )
 
-    await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
+    await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
     await device_health.update_device_checks(db, device, healthy=False, summary=reason)
 
     await lifecycle_incident_service.record_lifecycle_incident(
@@ -1291,7 +1291,7 @@ async def release_claimed_device_with_cooldown(
         )
         if "appium_node" not in device.__dict__:
             await db.refresh(device, ["appium_node"])
-        await maintenance_service.enter_maintenance(db, device, drain=False, commit=False, allow_reserved=True)
+        await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
         # exclude_run_if_needed + enter_maintenance leave mutations in the session; commit them.
         await db.commit()
         # Refresh device so the response reflects post-maintenance state.

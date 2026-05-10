@@ -100,7 +100,7 @@ stateDiagram-v2
     }
 ```
 
-The two state machines run independently. Node lifecycle never touches `hold`; operator and run logic never touch `operational_state` except when a stop transition flips operational state to `offline` as a side effect of entering maintenance without drain.
+The two state machines run independently. Node lifecycle never touches `hold`; operator and run logic never touch `operational_state` except when a stop transition flips operational state to `offline` as a side effect of entering maintenance.
 
 ## Axis 3 — Hardware health (`Device.hardware_health_status`)
 

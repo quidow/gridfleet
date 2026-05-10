@@ -70,6 +70,9 @@ def auto_stopped_summary_state(
     device: Device,
     run: TestRun | None,
 ) -> DeviceLifecyclePolicySummaryState:
+    # ``run is not None`` only reaches here from genuine-exclusion callers
+    # (complete_auto_stop and CI preparation flows). Connectivity-loss
+    # callers always pass run=None after D1.
     if run is not None:
         return DeviceLifecyclePolicySummaryState.excluded
     return offline_summary_state(device)
@@ -85,14 +88,18 @@ async def exclude_run_if_needed(
     """Exclude the device from its active run reservation and emit the
     ``lifecycle_run_excluded`` incident.
 
+    Called only from genuine exclusion-worthy paths: ``complete_auto_stop``
+    (health failure) and the CI / cooldown escalation flows in
+    ``run_service``. Connectivity loss is intentionally NOT a caller — a
+    transient blip leaves the reservation entry intact (see D1).
+
     Does NOT escalate the device into maintenance. Auto-escalation to
-    maintenance from health/connectivity failures is intentionally absent —
-    only three paths are allowed to flip ``hold`` to ``maintenance``:
-    operator-driven UI actions, ``report_preparation_failure`` (testkit
-    pre-run signal), and ``release_claimed_device_with_cooldown`` after the
-    cooldown threshold is exceeded. Anything else is treated as a regression.
-    Callers that need the device parked in maintenance must call
-    ``maintenance_service.enter_maintenance`` themselves.
+    maintenance from health failures is intentionally absent — only three
+    paths flip ``hold`` to ``maintenance``: operator-driven UI actions,
+    ``report_preparation_failure`` (testkit pre-run signal), and
+    ``release_claimed_device_with_cooldown`` after the cooldown threshold
+    is exceeded. Callers that need the device parked in maintenance must
+    call ``maintenance_service.enter_maintenance`` themselves.
     """
     run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     if run is None:

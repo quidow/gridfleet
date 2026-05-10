@@ -397,13 +397,23 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
+    # Test flow: start node → stop it explicitly while running (confirms stop is
+    # not blocked) → enter maintenance (no node running, so no auto-stop) →
+    # verify start/restart are blocked by maintenance.
     remote_manager_client.post.side_effect = [
         _mock_agent_response({"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}),
         _mock_agent_response({"stopped": True, "port": 4723}),
     ]
 
     await client.post(f"/api/devices/{device_id}/node/start")
-    maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={"drain": True})
+    # Stop the node explicitly while it is running — maintenance is not entered
+    # yet so this proves the stop endpoint is not blocked by maintenance state.
+    stop_resp = await client.post(f"/api/devices/{device_id}/node/stop")
+    assert stop_resp.status_code == 200
+    assert stop_resp.json()["state"] == NodeState.stopped.value
+
+    # Now enter maintenance (node already stopped, so no auto-stop occurs).
+    maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
     assert maintenance_resp.status_code == 200
     assert maintenance_resp.json()["hold"] == DeviceHold.maintenance.value
 
@@ -411,10 +421,6 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
         resp = await client.post(f"/api/devices/{device_id}/node/{action}")
         assert resp.status_code == 409
         assert "maintenance" in resp.json()["error"]["message"]
-
-    stop_resp = await client.post(f"/api/devices/{device_id}/node/stop")
-    assert stop_resp.status_code == 200
-    assert stop_resp.json()["state"] == NodeState.stopped.value
 
 
 async def test_unverified_device_blocks_node_start(

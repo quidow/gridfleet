@@ -116,7 +116,7 @@ async def test_bulk_enter_maintenance(client: AsyncClient, db_session: AsyncSess
     ids = await _create_devices(db_session, default_host_id, 2)
     resp = await client.post(
         "/api/devices/bulk/enter-maintenance",
-        json={"device_ids": ids, "drain": False},
+        json={"device_ids": ids},
     )
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 2
@@ -131,7 +131,7 @@ async def test_bulk_exit_maintenance(client: AsyncClient, db_session: AsyncSessi
     # Enter maintenance first
     await client.post(
         "/api/devices/bulk/enter-maintenance",
-        json={"device_ids": ids, "drain": False},
+        json={"device_ids": ids},
     )
 
     resp = await client.post(

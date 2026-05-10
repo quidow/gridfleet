@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -882,3 +882,213 @@ async def test_list_sessions_invalid_run_id_format_returns_422(client: AsyncClie
     """An invalid UUID for run_id is caught by FastAPI's query-param validation."""
     resp = await client.get("/api/sessions", params={"run_id": "not-a-uuid"})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# D2: POST /api/sessions/{id}/finished push endpoint
+# ---------------------------------------------------------------------------
+
+
+async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """POST /api/sessions/{session_id}/finished stamps ended_at on the row and returns 204.
+
+    The URL token is the WebDriver session token (Session.session_id), NOT the
+    row PK. This mirrors the real testkit call shape: driver.session_id is the
+    WebDriver-issued token, which maps to the Session.session_id string column.
+
+    CRITICAL: the endpoint must NOT clobber Session.status — terminal status is
+    owned by update_session_status (testkit) or session_sync_loop (fallback).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session = Session(
+        session_id="push-end-sess-1",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    # Use session.session_id (the WebDriver token), not session.id (the PK).
+    webdriver_token = session.session_id
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ) as mock_lifecycle:
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp.status_code == 204
+    mock_lifecycle.assert_awaited_once()
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None, "ended_at must be stamped by the push endpoint"
+    # Status must be preserved — the push endpoint does NOT own terminal status.
+    assert session.status == SessionStatus.running, (
+        "POST /finished must not mutate Session.status; "
+        "terminal status belongs to update_session_status or session_sync_loop"
+    )
+
+
+async def test_post_session_finished_not_found_returns_404(client: AsyncClient) -> None:
+    """POST /api/sessions/{unknown_id}/finished returns 404 when the row is absent."""
+    resp = await client.post("/api/sessions/nonexistent-webdriver-token/finished")
+    assert resp.status_code == 404
+
+
+async def test_post_session_finished_is_idempotent_and_does_not_double_fire_lifecycle(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Calling the endpoint twice returns 204 both times.
+
+    handle_session_finished must be awaited exactly once — the second call is a
+    no-op because ended_at is already set.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session = Session(
+        session_id="push-end-sess-idempotent",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    # Use session.session_id (the WebDriver token), not session.id (the PK).
+    webdriver_token = session.session_id
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ) as mock_lifecycle:
+        resp1 = await client.post(f"/api/sessions/{webdriver_token}/finished")
+        resp2 = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp1.status_code == 204
+    assert resp2.status_code == 204
+    mock_lifecycle.assert_awaited_once()
+
+
+async def test_post_session_finished_real_testkit_call_shape(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Mirror the real testkit call shape: register a session with a known string
+    session_id, then POST to that string token in the URL.
+
+    The testkit's _wrap_quit_for_notify calls notify_session_finished(driver.session_id)
+    where driver.session_id is the WebDriver token — a string that maps to
+    Session.session_id, NOT the row PK. This test confirms the endpoint resolves
+    via the string column and that D2 push detection works for real testkit traffic.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    # Register a session with an explicit WebDriver-style token, as the testkit does.
+    webdriver_token = "webdriver-abc-123"
+    session = Session(
+        session_id=webdriver_token,
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ):
+        # POST to the string token — exactly what the testkit sends.
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp.status_code == 204
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None, (
+        "ended_at must be set when posting the WebDriver token — "
+        "PK lookup would have returned 404 (silent no-op in testkit)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D2 regression: ended_at must be durable (actually committed, not just flushed)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_session_finished_ended_at_is_durable_after_request_closes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: object,
+    default_host_id: str,
+) -> None:
+    """Regression: mark_session_finished must commit ended_at, not just flush.
+
+    The NO_PENDING branch of handle_session_finished returns without committing.
+    Before the fix, mark_session_finished relied on the lifecycle helper to commit,
+    so the flushed ended_at write was rolled back when the request-scoped get_db
+    session closed — POST returned 204 but the row's ended_at stayed null.
+
+    This test catches the bug by verifying durability via a *second, independent*
+    session that cannot see uncommitted writes from db_session.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session_obj = Session(
+        session_id="push-end-durable-regression",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session_obj)
+    await db_session.commit()
+    row_id = session_obj.id
+    webdriver_token = session_obj.session_id
+
+    # Simulate the NO_PENDING path: handle_session_finished returns without
+    # calling db.commit(). This is the exact path that exposed the bug.
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ):
+        resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
+
+    assert resp.status_code == 204
+
+    # Verify durability using an independent session that cannot see
+    # uncommitted writes. If mark_session_finished only flushed (did not
+    # commit), this second session will see ended_at=None and the assertion
+    # will fail — catching the regression.
+    maker = cast("async_sessionmaker[AsyncSession]", db_session_maker)
+    async with maker() as fresh_session:
+        refreshed = await fresh_session.get(Session, row_id)
+        assert refreshed is not None
+        assert refreshed.ended_at is not None, (
+            "ended_at must be committed (not just flushed) by mark_session_finished; "
+            "the NO_PENDING lifecycle path returns without committing, so "
+            "mark_session_finished must own the final db.commit()"
+        )

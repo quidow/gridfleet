@@ -148,7 +148,7 @@ export default function DeviceNodePanel({ device }: Props) {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => enterMaintenance.mutate({ id: device.id, drain: false })}
+                onClick={() => enterMaintenance.mutate({ id: device.id })}
                 disabled={rowBusy}
                 leadingIcon={<Wrench size={14} />}
               >

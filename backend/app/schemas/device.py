@@ -369,7 +369,6 @@ class BulkTagsUpdate(BaseModel):
 
 class BulkMaintenanceEnter(BaseModel):
     device_ids: list[uuid.UUID]
-    drain: bool = False
 
 
 class BulkOperationResult(BaseModel):

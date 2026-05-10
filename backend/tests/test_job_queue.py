@@ -201,5 +201,5 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
     ):
         await job_queue.durable_job_worker_loop(session_factory)
 
-    assert reset_jobs.await_count == 2
+    assert reset_jobs.await_count == 3
     sleep.assert_awaited()

@@ -8,6 +8,7 @@ from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.routers import devices_control
 from app.services import device_locking, maintenance_service, node_service
+from app.services.node_service_types import NodeManagerError
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -43,8 +44,16 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
         return await node_service.mark_node_started(db, dev, port=4723, pid=123)
 
+    async def fake_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
+        # Simulate the node stop being refused by the agent (no real agent
+        # running in tests). enter_maintenance catches NodeManagerError and
+        # proceeds with the maintenance hold — the test still verifies that
+        # the concurrent reconnect + restart does not overwrite the hold.
+        raise NodeManagerError("Agent did not acknowledge stop (test stub)")
+
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
     monkeypatch.setattr(devices_control, "restart_managed_node", fake_restart_node)
+    monkeypatch.setattr(maintenance_service, "stop_node", fake_stop_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:
@@ -54,7 +63,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await maintenance_service.enter_maintenance(session, locked, drain=True)
+            await maintenance_service.enter_maintenance(session, locked)
         allow_restart.set()
 
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())

@@ -179,8 +179,8 @@ export async function reconnectDevice(id: string): Promise<{ success: boolean; i
   return data;
 }
 
-export async function enterDeviceMaintenance(id: string, drain = false): Promise<DeviceRead> {
-  const { data } = await api.post(`/devices/${id}/maintenance`, { drain });
+export async function enterDeviceMaintenance(id: string): Promise<DeviceRead> {
+  const { data } = await api.post(`/devices/${id}/maintenance`, {});
   return data;
 }
 

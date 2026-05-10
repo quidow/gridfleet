@@ -47,7 +47,7 @@ Current auth behavior:
 | `GET` | `/api/devices/verification-jobs/{job_id}` | Read verification job state | path `job_id` | `DeviceVerificationJobRead` |
 | `GET` | `/api/devices/verification-jobs/{job_id}/events` | Subscribe to verification job SSE updates | path `job_id` | SSE stream |
 | `GET` | `/api/devices/{device_id}/capabilities` | Read generated Appium capabilities | path `device_id` | object of Appium capabilities |
-| `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance, optionally draining | `DeviceMaintenanceUpdate` | `DeviceRead` |
+| `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance (stops the node immediately) | `DeviceMaintenanceUpdate` | `DeviceRead` |
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}/sessions` | List recent sessions for one device | `limit` | `SessionRead[]` |
 | `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered by key | `keys` | config object |
@@ -242,6 +242,7 @@ Release with cooldown is also owner-checked. It clears `claimed_by` / `claimed_a
 | `GET` | `/api/sessions/{session_id}` | Read one recorded session | path `session_id` | `SessionDetail` |
 | `POST` | `/api/sessions` | Create or register a tracked session attempt, including device-less setup failures | `SessionCreate` | `SessionRead` |
 | `PATCH` | `/api/sessions/{session_id}/status` | Write final session status from an external test harness | `SessionStatusUpdate` | `SessionRead` |
+| `POST` | `/api/sessions/{session_id}/finished` | Push-notify session end from testkit `driver.quit`; stamps `ended_at` without touching `status`; idempotent | path `session_id` (WebDriver token string) | 204 No Content |
 
 `SessionCreate` now accepts optional setup-attempt fields:
 

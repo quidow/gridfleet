@@ -47,7 +47,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
                     bulk_path,
-                    json={"device_ids": device_ids, "drain": False},
+                    json={"device_ids": device_ids},
                 )
                 return resp.status_code
         finally:
