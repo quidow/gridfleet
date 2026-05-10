@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import re
 import shutil
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -51,3 +54,29 @@ def find_tool(name: str, extra_paths: list[str] | None = None) -> str:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
     return name
+
+
+_RECEIVED_RE = re.compile(r"(\d+)\s+(?:packets\s+)?received")
+
+
+async def icmp_reachable(host: str, *, timeout: float = 2.0, count: int = 1) -> bool:
+    """Return True iff the host responds to at least one ICMP echo within the timeout.
+
+    Uses the system ``ping`` binary. Returns False if the binary is missing,
+    if the subprocess fails, or if the parsed response shows zero packets
+    received.
+    """
+
+    if sys.platform == "darwin":
+        wait_arg = str(int(max(timeout, 0.001) * 1000))
+    else:
+        wait_arg = str(max(1, math.ceil(timeout)))
+
+    cmd = ["ping", "-c", str(count), "-W", wait_arg, host]
+    output = await run_cmd(cmd, timeout=timeout * count + 1.0)
+    if not output:
+        return False
+    match = _RECEIVED_RE.search(output)
+    if not match:
+        return False
+    return int(match.group(1)) >= 1
