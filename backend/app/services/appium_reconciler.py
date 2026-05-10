@@ -8,14 +8,23 @@ desired-state convergence.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from app.services.agent_snapshot import parse_running_nodes
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Iterable
 
     from app.services.agent_snapshot import RunningAppiumNode
+
+logger = logging.getLogger(__name__)
+
+FetchHealth = Callable[..., Awaitable[dict[str, object]]]
+AppiumStop = Callable[..., Awaitable[object]]
 
 
 _ORPHAN_REASON_NO_DB_ROW = "no_db_row"
@@ -85,3 +94,57 @@ def detect_orphans(
                 )
             )
     return orphans
+
+
+async def reconcile_host_orphans(
+    *,
+    host_id: uuid.UUID,
+    host_ip: str,
+    agent_port: int,
+    db_running_rows: Iterable[dict[str, object]],
+    fetch_health: FetchHealth,
+    appium_stop: AppiumStop,
+) -> list[OrphanAppiumNode]:
+    """Reconcile a single host: fetch agent snapshot, detect orphans, stop each.
+
+    Returns the list of orphans actually stopped (i.e. excludes those whose
+    stop call raised). Failures are logged but never abort the loop — one
+    bad host must not stall the rest.
+    """
+    payload = await fetch_health(host=host_ip, agent_port=agent_port)
+    appium_processes = payload.get("appium_processes")
+    if not isinstance(appium_processes, dict):
+        return []
+    agent_running = parse_running_nodes(appium_processes)
+    orphans = detect_orphans(
+        host_id=host_id,
+        agent_running=agent_running,
+        db_running_rows=db_running_rows,
+    )
+    stopped: list[OrphanAppiumNode] = []
+    for orphan in orphans:
+        try:
+            await appium_stop(host=host_ip, agent_port=agent_port, port=orphan.port)
+        except Exception:
+            logger.warning(
+                "appium_reconciler_stop_failed",
+                exc_info=True,
+                extra={
+                    "host_id": str(host_id),
+                    "port": orphan.port,
+                    "connection_target": orphan.connection_target,
+                    "reason": orphan.reason,
+                },
+            )
+            continue
+        stopped.append(orphan)
+        logger.info(
+            "appium_reconciler_orphan_stopped",
+            extra={
+                "host_id": str(host_id),
+                "port": orphan.port,
+                "connection_target": orphan.connection_target,
+                "reason": orphan.reason,
+            },
+        )
+    return stopped
