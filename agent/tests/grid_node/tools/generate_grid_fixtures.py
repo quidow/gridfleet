@@ -20,13 +20,13 @@ SCENARIOS = [
 ]
 
 DECODED_EVENTS = {
-    "01_node_bringup": ("node_added.json", "NODE_ADDED"),
-    "02_idle_heartbeats": ("node_status.json", "NODE_STATUS"),
-    "03_new_session": ("session_started.json", "SESSION_STARTED"),
-    "05_session_close": ("session_closed.json", "SESSION_CLOSED"),
-    "06_operator_drain": ("node_drain_complete.json", "NODE_DRAIN_COMPLETE"),
-    "07_hub_drain": ("node_drain.json", "NODE_DRAIN"),
-    "08_hard_kill_and_rejoin": ("node_removed.json", "NODE_REMOVED"),
+    "01_node_bringup": ("node_added.json", "node-added"),
+    "02_idle_heartbeats": ("node_status.json", "node-heartbeat"),
+    "03_new_session": ("session_started.json", "session-created"),
+    "05_session_close": ("session_closed.json", "session-closed"),
+    "06_operator_drain": ("node_drain_complete.json", "node-drain-complete"),
+    "07_hub_drain": ("node_drain.json", "node-drain-started"),
+    "08_hard_kill_and_rejoin": ("node_removed.json", "node-removed"),
 }
 
 
@@ -65,9 +65,19 @@ def _write_raw_scenario(root: Path, scenario: str, event_type: str) -> None:
     raw = root / "raw" / scenario
     raw.mkdir(parents=True, exist_ok=True)
     payload = _raw_payload(event_type)
-    body = json.dumps(payload, sort_keys=True).encode("utf-8")
-    write_bus_record(raw / "bus_hub_to_node.jsonl", ts=1_700_000_000.0, frames=[event_type.lower().encode(), body])
-    write_bus_record(raw / "bus_node_to_hub.jsonl", ts=1_700_000_001.0, frames=[b"node-status", body])
+    data_frame = json.dumps(payload["data"], sort_keys=True).encode("utf-8")
+    event_id = b"33333333-3333-4333-8333-333333333333"
+    secret = b""
+    write_bus_record(
+        raw / "bus_hub_to_node.jsonl",
+        ts=1_700_000_000.0,
+        frames=[event_type.encode(), secret, event_id, data_frame],
+    )
+    write_bus_record(
+        raw / "bus_node_to_hub.jsonl",
+        ts=1_700_000_001.0,
+        frames=[b"node-heartbeat", secret, event_id, data_frame],
+    )
     write_http_record(
         raw / "http.transcript",
         ts=1_700_000_002.0,
@@ -86,7 +96,7 @@ def _write_raw_scenario(root: Path, scenario: str, event_type: str) -> None:
         method="GET",
         path="/status",
         headers={"content-type": "application/json"},
-        body=body,
+        body=data_frame,
     )
 
 

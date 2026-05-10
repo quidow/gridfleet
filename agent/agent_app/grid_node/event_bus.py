@@ -17,24 +17,39 @@ EventHandler = Callable[[dict[str, Any]], None]
 logger = logging.getLogger(__name__)
 
 
+_EVENT_BUS_SECRET = b'""'  # JSON-serialised empty Selenium `Secret`; matches a hub started without --register-secret
+
+
 def encode_event_frames(event: dict[str, Any]) -> list[bytes]:
+    """Encode a `{type, data}` envelope into Selenium event-bus wire frames.
+
+    Selenium 4.x `UnboundZmqEventBus$PollingRunnable` reads frames in the order
+    `[event-name, secret, event-id, data]`. The data frame is the payload alone
+    (not the envelope), because Selenium subscribers deserialise it directly
+    into the target event class. The secret frame holds a JSON-serialised
+    `Secret` object; the empty-string form is accepted when the hub is started
+    without `--register-secret`.
+    """
     return [
-        str(event["type"]).lower().encode("utf-8"),
-        b'""',
+        str(event["type"]).encode("utf-8"),
+        _EVENT_BUS_SECRET,
         str(uuid4()).encode("ascii"),
-        json.dumps(event, sort_keys=True).encode("utf-8"),
+        json.dumps(event["data"], sort_keys=True).encode("utf-8"),
     ]
 
 
 def decode_event_frames(frames: list[bytes]) -> dict[str, Any]:
-    for frame in reversed(frames):
-        try:
-            payload = json.loads(frame.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get("type"), str):
-            return payload
-    raise ValueError("event frames did not contain a JSON event envelope")
+    """Decode Selenium event-bus frames back into a `{type, data}` envelope."""
+    if len(frames) < 4:
+        raise ValueError(f"expected 4 grid event-bus frames, got {len(frames)}")
+    try:
+        event_type = frames[0].decode("utf-8")
+        data = json.loads(frames[3].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("malformed grid event-bus frames") from exc
+    if not event_type:
+        raise ValueError("missing event type frame")
+    return {"type": event_type, "data": data}
 
 
 class EventBus:
@@ -114,8 +129,23 @@ class EventBus:
             frames = await self._subscribe_socket.recv_multipart()
             try:
                 event = decode_event_frames(list(frames))
-            except ValueError:
-                logger.warning("discarding malformed grid node event bus frames")
+            except ValueError as exc:
+                # XPUB forwards stray bytes from any TCP client that connects to its
+                # port — periodically third-party HTTP probes hit `:4442` and we
+                # see them as a single non-event-bus frame. Demote those to debug;
+                # only log a warning if the frame at least looks like a real (but
+                # malformed) event-bus message.
+                first = bytes(frames[0]) if frames else b""
+                looks_like_event_topic = (
+                    bool(first) and all(0x20 <= b < 0x7F for b in first[:60]) and b"/" not in first[:1]
+                )
+                level = logging.WARNING if len(frames) >= 2 and looks_like_event_topic else logging.DEBUG
+                logger.log(
+                    level,
+                    "discarding malformed grid node event bus frames: %s; frames=%r",
+                    exc,
+                    [bytes(f)[:120] for f in frames],
+                )
                 continue
             for handler in self._handlers:
                 try:

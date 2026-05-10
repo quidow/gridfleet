@@ -58,7 +58,12 @@ async def test_service_start_and_stop_publish_lifecycle_events() -> None:
     await service.start()
     await service.run_heartbeat_once()
     await service.stop()
-    assert [event["type"] for event in bus.events] == ["NODE_ADDED", "NODE_STATUS", "NODE_REMOVED"]
+    assert [event["type"] for event in bus.events] == [
+        "node-added",
+        "node-heartbeat",
+        "node-heartbeat",
+        "node-removed",
+    ]
 
 
 @pytest.mark.asyncio
@@ -68,7 +73,13 @@ async def test_service_starts_and_stops_event_bus_around_lifecycle_events() -> N
     service = GridNodeService(config=_config(), bus=bus, http_server=http_server)
     await service.start()
     await service.stop()
-    assert bus.calls == ["start", "publish:NODE_ADDED", "publish:NODE_REMOVED", "stop"]
+    assert bus.calls == [
+        "start",
+        "publish:node-added",
+        "publish:node-heartbeat",
+        "publish:node-removed",
+        "stop",
+    ]
     assert http_server.calls == ["start", "stop"]
 
 
@@ -95,7 +106,7 @@ async def test_drain_publishes_drain_complete_and_requests_stop() -> None:
     await service.start()
     service.state.mark_drain()
     await service.run_heartbeat_once()
-    assert bus.events[-1]["type"] == "NODE_DRAIN_COMPLETE"
+    assert bus.events[-1]["type"] == "node-drain-complete"
     assert service.snapshot()["requested_stop"] is True
     await service.stop()
 
@@ -127,7 +138,7 @@ async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(mon
     await service.run_heartbeat_once()
 
     assert service.state.snapshot().slots[0].state == "FREE"
-    assert [event["type"] for event in bus.events][-2:] == ["SESSION_CLOSED", "NODE_STATUS"]
+    assert [event["type"] for event in bus.events][-2:] == ["session-closed", "node-heartbeat"]
 
 
 def _config() -> GridNodeConfig:

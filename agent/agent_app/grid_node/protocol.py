@@ -9,13 +9,15 @@ SlotState = Literal["AVAILABLE", "RESERVED", "BUSY"]
 
 
 class EventType(StrEnum):
-    NODE_ADDED = "NODE_ADDED"
-    NODE_STATUS = "NODE_STATUS"
-    SESSION_STARTED = "SESSION_STARTED"
-    SESSION_CLOSED = "SESSION_CLOSED"
-    NODE_DRAIN = "NODE_DRAIN"
-    NODE_DRAIN_COMPLETE = "NODE_DRAIN_COMPLETE"
-    NODE_REMOVED = "NODE_REMOVED"
+    # Wire values match Selenium Grid 4 EventName so the hub's event-bus subscribers
+    # accept these messages. Do NOT change without checking Selenium's EventName enum.
+    NODE_ADDED = "node-added"
+    NODE_STATUS = "node-heartbeat"
+    SESSION_STARTED = "session-created"
+    SESSION_CLOSED = "session-closed"
+    NODE_DRAIN = "node-drain-started"
+    NODE_DRAIN_COMPLETE = "node-drain-complete"
+    NODE_REMOVED = "node-removed"
 
 
 @dataclass(frozen=True)
@@ -48,7 +50,8 @@ class Slot:
         )
 
 
-def event_envelope(event_type: EventType, payload: dict[str, Any]) -> dict[str, Any]:
+def event_envelope(event_type: EventType, payload: object) -> dict[str, Any]:
+    """Internal envelope dict. Wire format is produced by `encode_event_frames`."""
     return {"data": payload, "type": event_type.value}
 
 

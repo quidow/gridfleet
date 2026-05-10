@@ -8,6 +8,7 @@ import platform
 import shutil
 import signal
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -858,8 +859,11 @@ class AppiumProcessManager:
             caps.update(spec.extra_caps)
 
         node_port = self._allocate_node_port()
+        # Selenium hub deserializes nodeId via UUID.fromString — derive a stable UUID
+        # from the device target so identity survives agent restarts.
+        node_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gridfleet-node:{spec.connection_target}:{spec.port}"))
         config = GridNodeConfig(
-            node_id=f"{spec.connection_target}:{spec.port}",
+            node_id=node_uuid,
             node_uri=self._grid_external_url(node_port),
             appium_upstream=f"http://127.0.0.1:{spec.port}",
             slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
@@ -871,9 +875,13 @@ class AppiumProcessManager:
         )
 
         def factory() -> GridNodeService:
+            # `hub_publish_url` / `hub_subscribe_url` are bus-centric (Selenium
+            # `--publish-events` / `--subscribe-events` semantics). The node's PUB socket
+            # must connect to the bus's XSUB endpoint, and the node's SUB to the bus's
+            # XPUB endpoint, so the URLs are swapped at the EventBus boundary.
             bus = EventBus(
-                publish_url=config.hub_publish_url,
-                subscribe_url=config.hub_subscribe_url,
+                publish_url=config.hub_subscribe_url,
+                subscribe_url=config.hub_publish_url,
                 heartbeat_sec=config.heartbeat_sec,
             )
             return GridNodeService(config=config, bus=bus)

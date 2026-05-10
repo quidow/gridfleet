@@ -15,13 +15,13 @@ SCENARIOS = [
 ]
 
 KNOWN_EVENT_TYPES = {
-    "NODE_ADDED",
-    "NODE_STATUS",
-    "SESSION_STARTED",
-    "SESSION_CLOSED",
-    "NODE_DRAIN",
-    "NODE_DRAIN_COMPLETE",
-    "NODE_REMOVED",
+    "node-added",
+    "node-heartbeat",
+    "session-created",
+    "session-closed",
+    "node-drain-started",
+    "node-drain-complete",
+    "node-removed",
 }
 
 ROOT = Path(__file__).parent / "fixtures"

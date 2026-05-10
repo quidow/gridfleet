@@ -6,5 +6,5 @@
     "sessionId": "<SESSION_ID>",
     "timestamp": "<TIMESTAMP>"
   },
-  "type": "NODE_REMOVED"
+  "type": "node-removed"
 }

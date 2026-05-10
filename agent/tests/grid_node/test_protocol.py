@@ -11,13 +11,13 @@ FIXTURES = Path(__file__).parent / "fixtures" / "decoded"
 
 def test_known_event_types_match_captured_fixtures() -> None:
     assert {event.value for event in EventType} == {
-        "NODE_ADDED",
-        "NODE_STATUS",
-        "SESSION_STARTED",
-        "SESSION_CLOSED",
-        "NODE_DRAIN",
-        "NODE_DRAIN_COMPLETE",
-        "NODE_REMOVED",
+        "node-added",
+        "node-heartbeat",
+        "session-created",
+        "session-closed",
+        "node-drain-started",
+        "node-drain-complete",
+        "node-removed",
     }
 
 

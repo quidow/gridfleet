@@ -18,5 +18,5 @@ def test_generate_fixture_bundle_writes_raw_and_decoded_files(tmp_path: Path) ->
     assert (raw / "http.transcript").stat().st_size > 0
 
     node_added = json.loads((tmp_path / "decoded" / "01_node_bringup" / "node_added.json").read_text())
-    assert node_added["type"] == "NODE_ADDED"
+    assert node_added["type"] == "node-added"
     assert node_added["data"]["nodeId"] == "<NODE_ID>"

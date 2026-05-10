@@ -119,7 +119,7 @@ def test_post_session_commits_on_upstream_success_and_publishes_session_started(
     response = client.post("/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 200
     assert state.snapshot().slots[0].session_id == "appium-session-1"
-    assert bus.events[-1]["type"] == "SESSION_STARTED"
+    assert bus.events[-1]["type"] == "session-created"
 
 
 def test_post_session_aborts_on_upstream_connect_error(
@@ -196,7 +196,7 @@ def test_delete_session_releases_slot_and_publishes_session_closed(
     response = TestClient(test_app).delete("/session/session-1")
     assert response.status_code == 200
     assert state.snapshot().slots[0].state == "FREE"
-    assert bus.events[-1]["type"] == "SESSION_CLOSED"
+    assert bus.events[-1]["type"] == "session-closed"
 
 
 def test_delete_session_releases_slot_when_upstream_session_is_gone(
@@ -220,7 +220,7 @@ def test_delete_session_releases_slot_when_upstream_session_is_gone(
     response = TestClient(app).delete("/session/missing-session")
     assert response.status_code == 404
     assert state.snapshot().slots[0].state == "FREE"
-    assert bus.events[-1]["type"] == "SESSION_CLOSED"
+    assert bus.events[-1]["type"] == "session-closed"
 
 
 def test_node_drain_marks_state_and_blocks_new_sessions(test_app: Starlette, state: NodeState) -> None:

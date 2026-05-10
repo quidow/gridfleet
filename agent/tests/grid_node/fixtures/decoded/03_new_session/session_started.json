@@ -6,5 +6,5 @@
     "sessionId": "<SESSION_ID>",
     "timestamp": "<TIMESTAMP>"
   },
-  "type": "SESSION_STARTED"
+  "type": "session-created"
 }

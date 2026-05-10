@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import platform
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
@@ -13,7 +15,16 @@ from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agent_app.grid_node.config import GridNodeConfig
+
+_GRID_NODE_VERSION = "4.41.0"
+_OS_INFO: dict[str, str] = {
+    "arch": platform.machine(),
+    "name": platform.system(),
+    "version": platform.release(),
+}
 
 
 class EventPublisher(Protocol):
@@ -36,10 +47,18 @@ class GridNodeHttpServer(Protocol):
 
 
 class UvicornGridNodeHttpServer:
-    def __init__(self, *, config: GridNodeConfig, state: NodeState, bus: EventPublisher) -> None:
+    def __init__(
+        self,
+        *,
+        config: GridNodeConfig,
+        state: NodeState,
+        bus: EventPublisher,
+        node_status_payload: Callable[[], dict[str, object]] | None = None,
+    ) -> None:
         self._config = config
         self._state = state
         self._bus = bus
+        self._node_status_payload = node_status_payload
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -54,6 +73,10 @@ class UvicornGridNodeHttpServer:
             appium_upstream=self._config.appium_upstream,
             bus=self._bus,
             proxy_timeout=self._config.proxy_timeout_sec,
+            node_status_payload=self._node_status_payload,
+            node_uri=self._config.node_uri,
+            node_id=self._config.node_id,
+            slots=list(self._config.slots),
         )
         server_config = uvicorn.Config(
             app,
@@ -91,7 +114,9 @@ class GridNodeService:
         self.config = config
         self.state = NodeState(slots=config.slots, now=time.monotonic)
         self._bus = bus
-        self._http_server = http_server or UvicornGridNodeHttpServer(config=config, state=self.state, bus=bus)
+        self._http_server = http_server or UvicornGridNodeHttpServer(
+            config=config, state=self.state, bus=bus, node_status_payload=self._node_payload
+        )
         self._started = False
         self._requested_stop = False
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -102,7 +127,17 @@ class GridNodeService:
         await self._bus.start()
         try:
             await self._http_server.start()
-            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self._node_payload()))
+            # Selenium uses ZMQ XSUB/XPUB. The PUB socket must complete its TCP
+            # handshake and have its subscriptions propagated to the hub before the
+            # first event will be delivered, otherwise the initial NODE_ADDED is
+            # silently dropped (slow-joiner). 250 ms is the same settle delay
+            # Selenium itself uses in `BoundZmqEventBus`.
+            await asyncio.sleep(0.25)
+            # Selenium NodeAddedEvent expects a bare NodeId UUID string.
+            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
+            # Push initial NodeStatus so the hub can populate the registry slot map
+            # without waiting for the first heartbeat tick.
+            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
         except Exception:
             with contextlib.suppress(Exception):
                 await self._http_server.stop()
@@ -116,7 +151,8 @@ class GridNodeService:
         if not self._started:
             return
         try:
-            await self._bus.publish(event_envelope(EventType.NODE_REMOVED, {"nodeId": self.config.node_id}))
+            # Selenium NodeRemovedEvent expects a NodeStatus payload (not just the NodeId).
+            await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
         finally:
             try:
                 await self._http_server.stop()
@@ -127,10 +163,22 @@ class GridNodeService:
     async def run_heartbeat_once(self) -> None:
         for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
             self.state.release(session_id)
-            await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, {"sessionId": session_id}))
+            now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            # Selenium SessionClosedEvent expects a full SessionClosedData payload.
+            session_closed_payload: dict[str, object] = {
+                "sessionId": session_id,
+                "reason": "TIMEOUT",
+                "nodeId": self.config.node_id,
+                "nodeUri": self.config.node_uri,
+                "capabilities": {},
+                "startTime": now_iso,
+                "endTime": now_iso,
+            }
+            await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, session_closed_payload))
         if self.state.snapshot().drain:
             self._requested_stop = True
-            await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, {"nodeId": self.config.node_id}))
+            # Selenium NodeDrainComplete expects a bare NodeId UUID string.
+            await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
@@ -146,15 +194,28 @@ class GridNodeService:
 
     def _node_payload(self) -> dict[str, object]:
         snapshot = self.state.snapshot()
+        availability = "DRAINING" if snapshot.drain else "UP"
+        slot_payloads: list[dict[str, object]] = []
+        for runtime_slot, source_slot in zip(snapshot.slots, self.config.slots, strict=True):
+            slot_payloads.append(
+                {
+                    "id": {"hostId": self.config.node_id, "id": runtime_slot.slot_id},
+                    "lastStarted": "1970-01-01T00:00:00Z",
+                    "session": None,
+                    "stereotype": source_slot.stereotype.to_dict(),
+                }
+            )
+        # Field names + types match Selenium 4.x `NodeStatus.fromJson`:
+        # `maxSessions` (positive int), `heartbeatPeriod` and `sessionTimeout` in
+        # milliseconds, `osInfo` map of strings, `availability` enum string.
         return {
             "nodeId": self.config.node_id,
             "externalUri": self.config.node_uri,
-            "slots": [
-                {
-                    "id": slot.slot_id,
-                    "state": slot.state,
-                    "sessionId": slot.session_id,
-                }
-                for slot in snapshot.slots
-            ],
+            "version": _GRID_NODE_VERSION,
+            "osInfo": _OS_INFO,
+            "maxSessions": len(self.config.slots),
+            "sessionTimeout": int(self.config.session_timeout_sec * 1000),
+            "slots": slot_payloads,
+            "availability": availability,
+            "heartbeatPeriod": int(self.config.heartbeat_sec * 1000),
         }
