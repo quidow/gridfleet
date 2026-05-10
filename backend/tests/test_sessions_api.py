@@ -882,3 +882,97 @@ async def test_list_sessions_invalid_run_id_format_returns_422(client: AsyncClie
     """An invalid UUID for run_id is caught by FastAPI's query-param validation."""
     resp = await client.get("/api/sessions", params={"run_id": "not-a-uuid"})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# D2: POST /api/sessions/{id}/finished push endpoint
+# ---------------------------------------------------------------------------
+
+
+async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """POST /api/sessions/{id}/finished stamps ended_at on the row and returns 204.
+
+    CRITICAL: the endpoint must NOT clobber Session.status — terminal status is
+    owned by update_session_status (testkit) or session_sync_loop (fallback).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session = Session(
+        session_id="push-end-sess-1",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    session_uuid = str(session.id)
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ):
+        resp = await client.post(f"/api/sessions/{session_uuid}/finished")
+
+    assert resp.status_code == 204
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None, "ended_at must be stamped by the push endpoint"
+    # Status must be preserved — the push endpoint does NOT own terminal status.
+    assert session.status == SessionStatus.running, (
+        "POST /finished must not mutate Session.status; "
+        "terminal status belongs to update_session_status or session_sync_loop"
+    )
+
+
+async def test_post_session_finished_not_found_returns_404(client: AsyncClient) -> None:
+    """POST /api/sessions/{unknown_id}/finished returns 404 when the row is absent."""
+    import uuid
+
+    resp = await client.post(f"/api/sessions/{uuid.uuid4()}/finished")
+    assert resp.status_code == 404
+
+
+async def test_post_session_finished_is_idempotent_and_does_not_double_fire_lifecycle(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Calling the endpoint twice returns 204 both times.
+
+    handle_session_finished must be awaited exactly once — the second call is a
+    no-op because ended_at is already set.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.session import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+
+    session = Session(
+        session_id="push-end-sess-idempotent",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        ended_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    session_uuid = str(session.id)
+
+    with patch(
+        "app.services.lifecycle_policy.handle_session_finished",
+        new=AsyncMock(return_value=None),
+    ) as mock_lifecycle:
+        resp1 = await client.post(f"/api/sessions/{session_uuid}/finished")
+        resp2 = await client.post(f"/api/sessions/{session_uuid}/finished")
+
+    assert resp1.status_code == 204
+    assert resp2.status_code == 204
+    mock_lifecycle.assert_awaited_once()

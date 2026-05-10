@@ -478,6 +478,39 @@ async def get_device_session_outcome_heatmap_rows(
     return [(row.started_at, row.status) for row in result.all()]
 
 
+async def mark_session_finished(db: AsyncSession, session_id: uuid.UUID) -> Session | None:
+    """Stamp ``ended_at`` (if null) and run lifecycle bookkeeping.
+
+    Idempotent: a row that already has ``ended_at`` set returns unchanged
+    and does NOT re-fire ``handle_session_finished``.
+
+    Does NOT modify ``Session.status``. Terminal status (passed / failed /
+    error) is owned by ``update_session_status`` (testkit) or by the
+    ``session_sync_loop`` reconciliation path (fallback for non-testkit
+    clients). Mutating status here would race against the testkit's
+    follow-up ``update_session_status`` call and cause a brief
+    ``ended → passed`` flicker visible in the UI.
+    """
+    session = await db.get(Session, session_id)
+    if session is None:
+        return None
+    if session.ended_at is not None:
+        return session  # already finalized — no work, no incident churn
+
+    session.ended_at = datetime.now(UTC)
+    await db.flush()
+
+    if session.device_id is not None:
+        device = await device_locking.lock_device(db, session.device_id)
+        await lifecycle_policy.handle_session_finished(db, device)
+    # handle_session_finished commits internally on its terminal branches
+    # (CLEARED_RECOVERED, AUTO_STOPPED — see lifecycle_policy.py:267, 284).
+    # NO_PENDING and RUNNING_SESSION_EXISTS return without committing — but
+    # those cases are unreachable here because we just stamped ended_at,
+    # so no defensive commit is needed.
+    return session
+
+
 async def update_session_status(
     db: AsyncSession,
     session_id: str,

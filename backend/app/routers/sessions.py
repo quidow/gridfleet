@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -142,3 +143,14 @@ async def update_session_status(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+@router.post("/{session_id}/finished", status_code=204)
+async def post_session_finished(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await session_service.mark_session_finished(db, session_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return Response(status_code=204)
