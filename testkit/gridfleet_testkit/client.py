@@ -600,6 +600,27 @@ class GridFleetClient:
             return None
         return cast("dict[str, Any]", resp.json())
 
+    def notify_session_finished(
+        self,
+        session_id: str,
+        *,
+        suppress_errors: bool = True,
+    ) -> None:
+        """Tell the manager the WebDriver session has ended.
+
+        Idempotent on the backend — repeated calls are a no-op once the
+        Session row is marked ended.
+        """
+        try:
+            resp = httpx.post(
+                f"{self.base_url}/sessions/{session_id}/finished",
+                timeout=5,
+                auth=self._auth,
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            _raise_or_warn("notify session finished", suppress_errors, exc)
+
     def update_session_status(
         self,
         session_id: str,
@@ -629,7 +650,12 @@ class GridFleetClient:
         run_id: str | None = None,
         suppress_errors: bool = True,
     ) -> dict[str, Any] | None:
-        """Extract session metadata from an Appium driver and register it."""
+        """Extract session metadata from an Appium driver and register it.
+
+        Also wraps ``driver.quit`` so that the first call after a successful
+        registration fires :meth:`notify_session_finished` automatically.
+        Errors from notify are suppressed — they must never break the caller.
+        """
         capabilities = getattr(driver, "capabilities", {})
         if not isinstance(capabilities, dict):
             capabilities = {}
@@ -638,7 +664,7 @@ class GridFleetClient:
             raise RuntimeError("Created Appium driver did not expose a session ID")
         device_id = capabilities.get("appium:gridfleet:deviceId") or capabilities.get("gridfleet:deviceId")
         connection_target = capabilities.get("appium:udid") or capabilities.get("appium:deviceName")
-        return self.register_session(
+        result = self.register_session(
             session_id=session_id,
             test_name=test_name,
             device_id=device_id if isinstance(device_id, str) and device_id else None,
@@ -647,6 +673,33 @@ class GridFleetClient:
             run_id=run_id,
             suppress_errors=suppress_errors,
         )
+        self._wrap_quit_for_notify(driver, session_id)
+        return result
+
+    def _wrap_quit_for_notify(self, driver: Any, session_id: str) -> None:
+        """Replace ``driver.quit`` with a wrapper that also notifies the manager.
+
+        The notify fires at most once per registration: after the first quit
+        succeeds, subsequent quit() calls run the underlying quit but do
+        NOT post to /finished again. The underlying quit still runs every
+        call.
+
+        If the driver has no ``quit`` attribute this is a no-op.
+        """
+        original_quit = getattr(driver, "quit", None)
+        if original_quit is None:
+            return
+        notified: dict[str, bool] = {"done": False}
+
+        def wrapped_quit(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return original_quit(*args, **kwargs)
+            finally:
+                if not notified["done"]:
+                    notified["done"] = True
+                    self.notify_session_finished(session_id, suppress_errors=True)
+
+        driver.quit = wrapped_quit
 
     def complete_run(self, run_id: str) -> dict[str, Any]:
         resp = httpx.post(

@@ -1643,3 +1643,105 @@ def test_register_run_cleanup_idempotent_under_explicit_double_call(monkeypatch)
     cleanup_fn()  # second invocation must be a no-op
 
     assert client.calls == ["complete:run-double"]
+
+
+# --- Task 7: notify_session_finished and driver.quit wrap ---
+
+
+def test_notify_session_finished_calls_endpoint(monkeypatch):
+    """notify_session_finished posts to /api/sessions/{id}/finished."""
+    recorded: dict[str, Any] = {}
+
+    def fake_post(
+        url: str,
+        *,
+        timeout: int,
+        auth: Any = None,
+    ) -> DummyResponse:
+        recorded["url"] = url
+        recorded["timeout"] = timeout
+        return DummyResponse(None, status_code=204)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    client = GridFleetClient("http://localhost:8000/api")
+    client.notify_session_finished("abc-123", suppress_errors=False)
+
+    assert recorded["url"] == "http://localhost:8000/api/sessions/abc-123/finished"
+    assert recorded["timeout"] == 5
+
+
+def test_register_session_from_driver_wraps_quit_to_notify(monkeypatch):
+    """After register_session_from_driver, driver.quit() also fires notify."""
+    post_calls: list[str] = []
+    quit_called = {"n": 0}
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        timeout: int = 5,
+        auth: Any = None,
+    ) -> DummyResponse:
+        post_calls.append(url)
+        if url.endswith("/sessions"):
+            return DummyResponse({"id": "session-xyz"}, status_code=201)
+        if url.endswith("/finished"):
+            return DummyResponse(None, status_code=204)
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    class FakeDriver:
+        session_id = "session-xyz"
+        capabilities: dict[str, object] = {}
+
+        def quit(self) -> None:
+            quit_called["n"] += 1
+
+    driver = FakeDriver()
+    client = GridFleetClient("http://localhost:8000/api")
+    client.register_session_from_driver(driver, test_name="t", suppress_errors=False)
+
+    driver.quit()
+    assert quit_called["n"] == 1
+    finished_calls = [u for u in post_calls if u.endswith("/finished")]
+    assert len(finished_calls) == 1
+
+
+def test_register_session_from_driver_quit_wrap_is_idempotent(monkeypatch):
+    """Calling driver.quit() twice does not fire two notify requests."""
+    post_calls: list[str] = []
+
+    def fake_post(
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        timeout: int = 5,
+        auth: Any = None,
+    ) -> DummyResponse:
+        post_calls.append(url)
+        if url.endswith("/sessions"):
+            return DummyResponse({"id": "session-xyz"}, status_code=201)
+        if url.endswith("/finished"):
+            return DummyResponse(None, status_code=204)
+        return DummyResponse({})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.post", fake_post)
+
+    class FakeDriver:
+        session_id = "session-xyz"
+        capabilities: dict[str, object] = {}
+
+        def quit(self) -> None:
+            return None
+
+    driver = FakeDriver()
+    client = GridFleetClient("http://localhost:8000/api")
+    client.register_session_from_driver(driver, test_name="t", suppress_errors=False)
+
+    driver.quit()
+    driver.quit()  # second call must NOT post /finished again
+
+    finished_calls = [u for u in post_calls if u.endswith("/finished")]
+    assert len(finished_calls) == 1
