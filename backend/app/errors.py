@@ -260,14 +260,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(InvalidTransitionError)
     async def handle_invalid_transition(request: Request, exc: InvalidTransitionError) -> JSONResponse:
-        return JSONResponse(
+        return error_response(
             status_code=409,
-            content={
-                "detail": str(exc),
-                "error_code": "INVALID_TRANSITION",
-                "event": exc.event,
-                "current_state": exc.current_state,
-            },
+            code="INVALID_TRANSITION",
+            message=str(exc),
+            request_id=request_id_from_request(request),
+            details={"event": exc.event, "current_state": exc.current_state},
         )
 
     @app.exception_handler(Exception)

@@ -17,15 +17,15 @@ def app() -> FastAPI:
     return application
 
 
-@pytest.mark.asyncio
-async def test_invalid_transition_returns_409(app: FastAPI) -> None:
+async def test_invalid_transition_returns_409_with_envelope(app: FastAPI) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/_test-invalid-transition")
 
     assert response.status_code == 409
     body = response.json()
-    assert body["error_code"] == "INVALID_TRANSITION"
-    assert body["event"] == "session_started"
-    assert body["current_state"] == "offline/None"
-    assert body["detail"].startswith("Cannot session_started")
+    assert "error" in body
+    error = body["error"]
+    assert error["code"] == "INVALID_TRANSITION"
+    assert error["message"].startswith("Cannot session_started")
+    assert error["details"] == {"event": "session_started", "current_state": "offline/None"}
