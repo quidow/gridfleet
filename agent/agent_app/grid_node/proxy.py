@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import websockets
 from starlette.responses import Response
+from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 
 if TYPE_CHECKING:
@@ -15,6 +17,8 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
     from starlette.websockets import WebSocket
+
+logger = logging.getLogger(__name__)
 
 HOP_HEADERS = {
     "connection",
@@ -107,8 +111,18 @@ async def proxy_websocket(websocket: WebSocket, *, upstream: str) -> None:
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
-                with contextlib.suppress(ConnectionClosed):
+                # Disconnect surfaces in two flavors: `ConnectionClosed` from
+                # the upstream `websockets` client and `WebSocketDisconnect`
+                # from Starlette's downstream socket. Both are normal
+                # termination paths. Anything else is logged but never
+                # allowed to abort the cleanup loop — otherwise the sibling
+                # task in `pending` would never be cancelled and awaited.
+                try:
                     task.result()
+                except (ConnectionClosed, WebSocketDisconnect):
+                    pass
+                except Exception:
+                    logger.warning("ws proxy task ended with unexpected error", exc_info=True)
         finally:
             for task in pending:
                 task.cancel()

@@ -1,3 +1,5 @@
+import math
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
@@ -54,15 +56,18 @@ class AgentSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_grid_node_intervals(self) -> "AgentSettings":
-        # Non-positive heartbeat would crash the supervisor's `_clock.sleep`
-        # loop and silently break drain semantics; non-positive timeouts
-        # would force-close every session on the first tick.
-        if self.grid_node_heartbeat_sec <= 0:
-            raise ValueError("AGENT_GRID_NODE_HEARTBEAT_SEC must be > 0")
-        if self.grid_node_session_timeout_sec <= 0:
-            raise ValueError("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC must be > 0")
-        if self.grid_node_proxy_timeout_sec <= 0:
-            raise ValueError("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC must be > 0")
+        # Non-positive (or non-finite) heartbeat would crash the supervisor's
+        # `_clock.sleep` loop and silently break drain semantics; non-positive
+        # timeouts would force-close every session on the first tick. NaN /
+        # +inf must also be rejected — `asyncio.sleep(NaN)` raises at the
+        # heartbeat tick, after process startup, instead of failing fast here.
+        for name, value in (
+            ("AGENT_GRID_NODE_HEARTBEAT_SEC", self.grid_node_heartbeat_sec),
+            ("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC", self.grid_node_session_timeout_sec),
+            ("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC", self.grid_node_proxy_timeout_sec),
+        ):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be a positive finite number")
         return self
 
 
