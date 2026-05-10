@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.4.0...gridfleet-agent-v0.5.0) (2026-05-10)
+
+
+### Features
+
+* **main:** add optional icmp ping health check for usb devices with saved ip ([#143](https://github.com/quidow/gridfleet/issues/143)) ([afda5ce](https://github.com/quidow/gridfleet/commit/afda5ce5527167bcd47cb04f227a791ab3cdea1b))
+
 ## [0.4.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.3.0...gridfleet-agent-v0.4.0) (2026-05-08)
 
 
