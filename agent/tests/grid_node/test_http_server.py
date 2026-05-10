@@ -144,6 +144,69 @@ def test_post_session_commits_on_upstream_success_and_publishes_session_started(
     assert bus.events[-1]["type"] == "session-created"
 
 
+def test_post_session_matches_when_required_caps_live_in_first_match(test_app: Starlette, state: NodeState) -> None:
+    # W3C clients can put required capabilities in `firstMatch[i]` instead of
+    # `alwaysMatch`. The server must still match against slot stereotypes.
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "iOS"}, {"platformName": "Android"}]}
+        },
+    )
+    assert response.status_code == 200
+    assert state.snapshot().slots[0].session_id == "appium-session-1"
+
+
+def test_post_session_returns_404_when_no_first_match_candidate_matches(test_app: Starlette) -> None:
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "iOS"}, {"platformName": "Windows"}]}
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_post_session_rejects_first_match_conflicting_with_always_match(test_app: Starlette) -> None:
+    # W3C 7.2: a `firstMatch` entry that redefines an `alwaysMatch` key with
+    # a different value is invalid. The candidate must be dropped, not
+    # merged — otherwise the request could match a slot that violates the
+    # client's required constraint.
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {
+                "alwaysMatch": {"platformName": "iOS"},
+                "firstMatch": [{"platformName": "Android"}],
+            }
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_post_session_returns_503_when_matching_slot_busy_even_with_mismatched_alternative(
+    test_app: Starlette, state: NodeState
+) -> None:
+    # When one firstMatch candidate matches a busy slot and another doesn't
+    # match any slot, the response should be 503 (capacity exhausted), not
+    # 404 (no compatible stereotype). NoFreeSlotError must take precedence.
+    state.reserve({"platformName": "Android"})
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {
+                "alwaysMatch": {},
+                "firstMatch": [{"platformName": "Android"}, {"platformName": "iOS"}],
+            }
+        },
+    )
+    assert response.status_code == 503
+
+
 def test_post_session_aborts_on_upstream_connect_error(
     app_with_connect_error_proxy: Starlette, state: NodeState
 ) -> None:
