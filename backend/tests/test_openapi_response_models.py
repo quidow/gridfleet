@@ -72,3 +72,7 @@ def test_appium_node_read_exposes_desired_state_fields() -> None:
     assert "desired_state" in required
     assert "desired_port" not in required
     assert "transition_token" not in required
+
+    desired_ref = properties["desired_state"]["$ref"]
+    desired_schema = schema["components"]["schemas"][desired_ref.rsplit("/", 1)[-1]]
+    assert desired_schema["enum"] == ["running", "stopped"]

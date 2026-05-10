@@ -7,7 +7,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
 | `general` | General | 14 |
-| `grid` | Appium & Grid | 11 |
+| `grid` | Appium & Grid | 12 |
 | `notifications` | Notifications | 3 |
 | `devices` | Device Defaults | 2 |
 | `agent` | Agent | 4 |
@@ -42,6 +42,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
 | `appium.reservation_ttl_sec` | `grid` | `int` | `900` | none | `180..7200` | TTL for temporary Appium parallel-resource reservations; must exceed `appium.startup_timeout_sec + 5s` |
 | `appium.resource_sweeper_interval_sec` | `grid` | `int` | `300` | none | `30..3600` | Cadence of the leader-only loop that reaps expired temporary Appium resource claims |
+| `appium_reconciler.transition_default_window_sec` | `grid` | `int` | `120` | none | `30..600` | Default lease window for desired-state Appium node transitions; Phase 3 writers use it when populating `transition_deadline` |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
 | `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hold_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |

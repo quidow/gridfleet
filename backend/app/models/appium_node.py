@@ -38,6 +38,7 @@ class AppiumNode(Base):
     container_id: Mapped[str | None] = mapped_column(String, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[NodeState] = mapped_column(Enum(NodeState), default=NodeState.stopped, nullable=False)
+    # DB constraints keep desired_state to running/stopped and require stopped intent to have no desired_port.
     desired_state: Mapped[NodeState] = mapped_column(
         Enum(NodeState, name="nodestate", create_type=False),
         nullable=False,

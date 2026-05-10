@@ -2227,7 +2227,7 @@ export interface components {
             container_id: string | null;
             /** Desired Port */
             desired_port?: number | null;
-            desired_state: components["schemas"]["NodeState"];
+            desired_state: components["schemas"]["DesiredNodeState"];
             /** Grid Url */
             grid_url: string;
             /**
@@ -2413,6 +2413,11 @@ export interface components {
             /** Release */
             release: string;
         };
+        /**
+         * DesiredNodeState
+         * @enum {string}
+         */
+        DesiredNodeState: "running" | "stopped";
         /** DeviceConfigRead */
         DeviceConfigRead: {
             [key: string]: unknown;
