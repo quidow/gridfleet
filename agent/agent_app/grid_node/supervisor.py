@@ -118,10 +118,15 @@ class GridNodeSupervisorHandle:
     async def _run(self) -> None:
         backoff = ExponentialBackoff(base=1.0, factor=2.0, cap=30.0, max_attempts=5, window_sec=300.0)
         while not self._stop_requested.is_set():
-            service = self._factory()
-            self._service = service
             try:
+                # `record_attempt` runs before the factory + start so that a
+                # factory exception (config errors, transient zmq failures,
+                # etc.) is also counted toward the retry budget — without it
+                # the backoff window would never be consumed and the loop
+                # would burn CPU through tight retries.
                 backoff.record_attempt(asyncio.get_running_loop().time())
+                service = self._factory()
+                self._service = service
                 await service.start()
             except Exception:
                 if not backoff.can_attempt(asyncio.get_running_loop().time()):

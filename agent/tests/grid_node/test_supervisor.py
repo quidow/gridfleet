@@ -84,6 +84,25 @@ async def test_supervisor_reports_errored_after_five_crashes_in_window() -> None
 
 
 @pytest.mark.asyncio
+async def test_supervisor_reports_errored_when_factory_raises() -> None:
+    # Factory exceptions (e.g. config errors, transient zmq init failures)
+    # must drive the supervisor through its retry path rather than crashing
+    # the task silently and stalling `wait_until_running`/`wait_until_errored`.
+    attempts = 0
+
+    def crashing_factory() -> RecordingService:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("factory boom")
+
+    handle = start_grid_node_supervisor(factory=crashing_factory, clock=FakeClock())
+    await handle.start()
+    await handle.wait_until_errored()
+    assert handle.errored is True
+    assert attempts == 5
+
+
+@pytest.mark.asyncio
 async def test_supervisor_calls_stop_when_service_requests_stop() -> None:
     services: list[RecordingService] = []
 

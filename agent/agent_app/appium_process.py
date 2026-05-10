@@ -932,7 +932,11 @@ class AppiumProcessManager:
                 await appium_proc.wait()
         for task in self._log_tasks.pop(port, []):
             task.cancel()
-        self._intentional_stop_ports.discard(port)
+        # Intentionally do NOT discard `_intentional_stop_ports` here. Cleanup
+        # represents permanent grid-node startup failure: any straggler exit
+        # handler must NOT trigger an auto-restart against the now-cleared
+        # launch_spec. The next explicit `start()` for this port resets the
+        # flag at line 838.
 
     async def _stop_grid_node_service(self, port: int) -> None:
         handle = self._grid_supervisors.pop(port, None)

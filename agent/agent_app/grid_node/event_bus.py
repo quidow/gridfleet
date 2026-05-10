@@ -110,7 +110,16 @@ class EventBus:
             self.last_publish_failed_at = now
             self.publish_failures += 1
             self._publish_backoff.record_attempt(now)
-            self._publish_backoff.next_delay()
+            # Honor the backoff window: stop reconnecting once max_attempts
+            # has been reached so a wedged broker does not get hammered with
+            # tight reconnect loops. Otherwise sleep the computed delay before
+            # recreating the publish socket so the next publish attempt has a
+            # chance to succeed without immediate retry.
+            if not self._publish_backoff.can_attempt(now):
+                raise
+            delay = self._publish_backoff.next_delay()
+            if delay > 0:
+                await asyncio.sleep(delay)
             self._recreate_publish_socket()
             raise
         else:
