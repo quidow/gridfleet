@@ -353,11 +353,12 @@ class AppiumProcessManager:
 
     def _allocate_node_port(self) -> int:
         # Skip ports already bound by another listener so the grid node HTTP
-        # server does not race a third-party process on a stale port. The
-        # actual uvicorn server binds `_grid_advertise_ip` (the advertised LAN
-        # interface), so probe that hostname — a free 127.0.0.1 does not
-        # imply the LAN IP is also free.
-        probe_host = self._grid_advertise_ip or "0.0.0.0"
+        # server does not race a third-party process on a stale port. Probe
+        # the same interface uvicorn will bind (`grid_node_bind_host`,
+        # default `0.0.0.0`) — NOT the advertised hostname, which can be a
+        # docker-only DNS name like `host.docker.internal` that does not
+        # resolve on the agent host and would fail probe + bind alike.
+        probe_host = getattr(agent_settings, "grid_node_bind_host", "0.0.0.0")
         while True:
             port = self._next_node_port
             self._next_node_port += 1
@@ -886,6 +887,7 @@ class AppiumProcessManager:
             heartbeat_sec=getattr(agent_settings, "grid_node_heartbeat_sec", 5.0),
             session_timeout_sec=getattr(agent_settings, "grid_node_session_timeout_sec", 300.0),
             proxy_timeout_sec=getattr(agent_settings, "grid_node_proxy_timeout_sec", 60.0),
+            bind_host=getattr(agent_settings, "grid_node_bind_host", "0.0.0.0"),
         )
 
         def factory() -> GridNodeService:

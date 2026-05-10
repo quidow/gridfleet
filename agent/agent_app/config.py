@@ -18,6 +18,7 @@ class AgentSettings(BaseSettings):
     grid_node_heartbeat_sec: float = 5.0
     grid_node_session_timeout_sec: float = 300.0
     grid_node_proxy_timeout_sec: float = 60.0
+    grid_node_bind_host: str = "0.0.0.0"
     runtime_root: str = "/opt/gridfleet-agent/runtimes"
     appium_port_range_start: int = 4723
     appium_port_range_end: int = 4823

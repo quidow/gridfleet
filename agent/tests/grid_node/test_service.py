@@ -51,6 +51,10 @@ def test_grid_node_config_from_values() -> None:
     )
     assert config.node_id == "node-1"
     assert config.slots == [slot]
+    # Default bind host must be the local wildcard so uvicorn never tries to
+    # bind a non-resolvable advertised hostname (e.g. host.docker.internal)
+    # and `sys.exit(1)` out of the agent process.
+    assert config.bind_host == "0.0.0.0"
 
 
 @pytest.mark.asyncio
