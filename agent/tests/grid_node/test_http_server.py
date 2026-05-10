@@ -144,6 +144,31 @@ def test_post_session_commits_on_upstream_success_and_publishes_session_started(
     assert bus.events[-1]["type"] == "session-created"
 
 
+def test_post_session_matches_when_required_caps_live_in_first_match(test_app: Starlette, state: NodeState) -> None:
+    # W3C clients can put required capabilities in `firstMatch[i]` instead of
+    # `alwaysMatch`. The server must still match against slot stereotypes.
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "iOS"}, {"platformName": "Android"}]}
+        },
+    )
+    assert response.status_code == 200
+    assert state.snapshot().slots[0].session_id == "appium-session-1"
+
+
+def test_post_session_returns_404_when_no_first_match_candidate_matches(test_app: Starlette) -> None:
+    client = TestClient(test_app)
+    response = client.post(
+        "/session",
+        json={
+            "capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "iOS"}, {"platformName": "Windows"}]}
+        },
+    )
+    assert response.status_code == 404
+
+
 def test_post_session_aborts_on_upstream_connect_error(
     app_with_connect_error_proxy: Starlette, state: NodeState
 ) -> None:

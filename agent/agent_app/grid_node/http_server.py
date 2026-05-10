@@ -12,7 +12,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 
-from agent_app.grid_node.node_state import NoFreeSlotError, NoMatchingSlotError
+from agent_app.grid_node.node_state import NodeState, NoFreeSlotError, NoMatchingSlotError, Reservation
 from agent_app.grid_node.protocol import EventType, event_envelope
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket
 
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.websockets import WebSocket
 
-    from agent_app.grid_node.node_state import NodeState
     from agent_app.grid_node.protocol import Slot
 
 
@@ -106,13 +105,15 @@ def build_app(
             return JSONResponse(
                 {"value": {"error": "invalid argument", "message": "Malformed JSON request body"}}, status_code=400
             )
-        caps = _always_match_caps(body)
-        try:
-            reservation = state.reserve(caps)
-        except NoMatchingSlotError:
+        # W3C clients can place required fields in `firstMatch[i]` rather than
+        # `alwaysMatch`; honor both by trying every (alwaysMatch + firstMatch[i])
+        # candidate against the slot stereotypes.
+        candidates = _w3c_candidate_caps(body)
+        reservation, reserve_error = _reserve_first_matching(state, candidates)
+        if reservation is None:
+            if isinstance(reserve_error, NoFreeSlotError):
+                return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=404)
-        except NoFreeSlotError:
-            return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
 
         try:
             response = await proxy_request_func(
@@ -188,12 +189,15 @@ def build_app(
         else:
             always_match = dict(capabilities)
             w3c_capabilities = {"alwaysMatch": always_match, "firstMatch": [{}]}
-        try:
-            reservation = state.reserve(always_match)
-        except NoMatchingSlotError:
+        # Reservation tries each W3C candidate (alwaysMatch + firstMatch[i])
+        # so a hub-routed request whose required fields live in `firstMatch`
+        # is still matched against the slot stereotypes.
+        candidates = _w3c_candidate_caps({"capabilities": w3c_capabilities})
+        reservation, reserve_error = _reserve_first_matching(state, candidates)
+        if reservation is None:
+            if isinstance(reserve_error, NoFreeSlotError):
+                return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=404)
-        except NoFreeSlotError:
-            return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
 
         try:
             upstream = await http_client.post(
@@ -286,16 +290,46 @@ def build_app(
     )
 
 
-def _always_match_caps(body: object) -> dict[str, object]:
+def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:
+    """Return ordered (alwaysMatch + firstMatch[i]) capability candidates.
+
+    W3C 8.1 requires the server to merge `alwaysMatch` with each entry of
+    `firstMatch` and try the resulting capability sets in order. Returning
+    `[{}]` for non-W3C bodies keeps the existing "match anything" behavior
+    so the caller still hits its NoMatchingSlot/NoFreeSlot branches as
+    before.
+    """
     if not isinstance(body, dict):
-        return {}
+        return [{}]
     capabilities = body.get("capabilities")
     if not isinstance(capabilities, dict):
-        return {}
-    always_match = capabilities.get("alwaysMatch")
-    if not isinstance(always_match, dict):
-        return {}
-    return dict(always_match)
+        return [{}]
+    raw_always = capabilities.get("alwaysMatch")
+    always_match: dict[str, Any] = dict(raw_always) if isinstance(raw_always, dict) else {}
+    first_match = capabilities.get("firstMatch")
+    if not isinstance(first_match, list) or not first_match:
+        return [always_match]
+    candidates: list[dict[str, Any]] = []
+    for entry in first_match:
+        if not isinstance(entry, dict):
+            continue
+        merged = dict(always_match)
+        merged.update(entry)
+        candidates.append(merged)
+    return candidates or [always_match]
+
+
+def _reserve_first_matching(
+    state: NodeState, candidates: list[dict[str, Any]]
+) -> tuple[Reservation | None, Exception | None]:
+    last_error: Exception | None = None
+    for caps in candidates:
+        try:
+            return state.reserve(caps), None
+        except (NoMatchingSlotError, NoFreeSlotError) as exc:
+            last_error = exc
+            continue
+    return None, last_error
 
 
 def _session_id_from_response(response: Response) -> str | None:
