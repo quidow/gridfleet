@@ -114,3 +114,17 @@ def test_reserve_matches_nested_capability_subset() -> None:
     )
     reservation = state.reserve({"appium:options": {"automationName": "UiAutomator2"}})
     assert reservation.slot_id == "s1"
+
+
+def test_android_native_and_chrome_slots_can_be_reserved_independently() -> None:
+    state = NodeState(
+        slots=[
+            _slot("native", platformName="Android"),
+            _slot("chrome", platformName="Android", browserName="Chrome"),
+        ],
+        now=lambda: 10.0,
+    )
+    native = state.reserve({"platformName": "Android"})
+    chrome = state.reserve({"platformName": "Android", "browserName": "Chrome"})
+    assert native.slot_id == "native"
+    assert chrome.slot_id == "chrome"
