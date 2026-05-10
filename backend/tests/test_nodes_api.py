@@ -397,9 +397,6 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    # Three responses: start node, stop node during maintenance entry, stop node
-    # via explicit stop call after entering maintenance a second time (no node).
-    # With drain removed, entering maintenance always stops a running node.
     # Test flow: start node → stop it explicitly while running (confirms stop is
     # not blocked) → enter maintenance (no node running, so no auto-stop) →
     # verify start/restart are blocked by maintenance.
