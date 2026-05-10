@@ -33,6 +33,8 @@ from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
+IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
+IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
 
 
@@ -186,6 +188,41 @@ def _summarize_unhealthy_result(result: dict[str, Any] | None) -> str:
         return f"Failed checks: {', '.join(failures)}" if failures else "Device health checks failed"
 
     return "Device health checks failed"
+
+
+def _split_ip_ping(checks: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Separate the ip_ping check entry from the remaining checks list."""
+    ip_ping: dict[str, Any] | None = None
+    others: list[dict[str, Any]] = []
+    for entry in checks:
+        if isinstance(entry, dict) and entry.get("check_id") == IP_PING_CHECK_ID:
+            ip_ping = entry
+        else:
+            others.append(entry)
+    return ip_ping, others
+
+
+async def _apply_ip_ping_hysteresis(
+    db: AsyncSession,
+    device: Device,
+    *,
+    ok: bool,
+    threshold: int,
+) -> bool:
+    """Increment / reset the consecutive-failure counter and return the gated boolean.
+
+    Returns True while the failure count is below threshold (suppressing the
+    failure), False once the count reaches or exceeds threshold, and always
+    True (plus counter reset) on success.
+    """
+    if ok:
+        await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
+        return True
+
+    current = await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+    counter = int(current) + 1 if isinstance(current, int) else 1
+    await control_plane_state_store.set_value(db, IP_PING_NAMESPACE, device.identity_value, counter)
+    return counter < threshold
 
 
 async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:

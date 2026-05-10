@@ -563,3 +563,83 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
 
     # lifecycle_policy_state untouched (still default state)
     assert (device.lifecycle_policy_state or {}).get("last_failure_source") is None
+
+
+# ---------------------------------------------------------------------------
+# Task 11: ip_ping namespace constants and hysteresis helpers
+# ---------------------------------------------------------------------------
+
+
+class _FakeDevice:
+    def __init__(self, identity_value: str) -> None:
+        self.identity_value = identity_value
+
+
+def test_split_ip_ping_separates_check() -> None:
+    from app.services.device_connectivity import _split_ip_ping
+
+    checks = [
+        {"check_id": "adb", "ok": True, "message": ""},
+        {"check_id": "ip_ping", "ok": False, "message": "ICMP unanswered"},
+    ]
+    ip_ping, others = _split_ip_ping(checks)
+    assert ip_ping == {"check_id": "ip_ping", "ok": False, "message": "ICMP unanswered"}
+    assert others == [{"check_id": "adb", "ok": True, "message": ""}]
+
+
+def test_split_ip_ping_when_absent() -> None:
+    from app.services.device_connectivity import _split_ip_ping
+
+    checks = [{"check_id": "adb", "ok": True, "message": ""}]
+    ip_ping, others = _split_ip_ping(checks)
+    assert ip_ping is None
+    assert others == checks
+
+
+@pytest.mark.asyncio
+async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import (
+        IP_PING_NAMESPACE,
+        _apply_ip_ping_hysteresis,
+    )
+
+    fake = _FakeDevice(identity_value="dev-1")
+    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    assert gated is True
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
+    assert counter == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import (
+        IP_PING_NAMESPACE,
+        _apply_ip_ping_hysteresis,
+    )
+
+    fake = _FakeDevice(identity_value="dev-1")
+    for _ in range(2):
+        await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    assert gated is False
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
+    assert counter == 3
+
+
+@pytest.mark.asyncio
+async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
+    from app.services import control_plane_state_store
+    from app.services.device_connectivity import (
+        IP_PING_NAMESPACE,
+        _apply_ip_ping_hysteresis,
+    )
+
+    fake = _FakeDevice(identity_value="dev-1")
+    await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=True, threshold=3)  # type: ignore[arg-type]
+    assert gated is True
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
+    assert counter is None
