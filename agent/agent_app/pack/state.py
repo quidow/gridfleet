@@ -43,11 +43,6 @@ class VersionCatalog(Protocol):
         raise NotImplementedError
 
 
-class DriverDoctorRunner(Protocol):
-    async def __call__(self, driver_name: str, env: RuntimeEnv) -> dict[str, object]:
-        raise NotImplementedError
-
-
 @dataclass
 class _DoctorCtx:
     host_id: str
@@ -64,7 +59,6 @@ class PackStateLoop:
     adapter_loader: AdapterLoaderFn | None = None
     sidecar_supervisor: SidecarSupervisor | None = None
     version_catalog: VersionCatalog | None = None
-    driver_doctor_runner: DriverDoctorRunner | None = None
     _latest_desired: list[DesiredPack] | None = field(default=None, init=False, repr=False)
 
     @property
@@ -191,7 +185,7 @@ class PackStateLoop:
                             adapter=adapter,
                         )
 
-            doctor_entries.extend(await self._doctor_entries_for_pack(pack, env, spec))
+            doctor_entries.extend(await self._doctor_entries_for_pack(pack))
 
             pack_entries.append(
                 {
@@ -248,8 +242,6 @@ class PackStateLoop:
     async def _doctor_entries_for_pack(
         self,
         pack: DesiredPack,
-        env: RuntimeEnv,
-        spec: RuntimeSpec,
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         if self.adapter_registry is not None:
@@ -268,12 +260,6 @@ class PackStateLoop:
                             "message": str(exc),
                         }
                     )
-
-        if self.driver_doctor_runner is not None:
-            for driver_package, _version, _source, _github_repo in spec.drivers:
-                driver_name = _driver_name_from_package(driver_package)
-                driver_result = await self.driver_doctor_runner(driver_name, env)
-                entries.append(_driver_doctor_entry(pack.id, driver_result))
         return entries
 
     async def run_forever(self) -> None:
@@ -292,21 +278,3 @@ def _adapter_doctor_entry(pack_id: str, result: DoctorCheckResult) -> dict[str, 
         "ok": result.ok,
         "message": result.message,
     }
-
-
-def _driver_doctor_entry(pack_id: str, result: dict[str, object]) -> dict[str, Any]:
-    issues = result.get("issues")
-    message = "; ".join(item for item in issues if isinstance(item, str)) if isinstance(issues, list) else ""
-    return {
-        "pack_id": pack_id,
-        "check_id": "driver",
-        "ok": bool(result.get("ok")),
-        "message": message,
-    }
-
-
-def _driver_name_from_package(package: str) -> str:
-    bare_package = package.rsplit("/", 1)[-1]
-    if bare_package.startswith("appium-"):
-        bare_package = bare_package.removeprefix("appium-")
-    return bare_package.removesuffix("-driver")

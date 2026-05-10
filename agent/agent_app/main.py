@@ -126,7 +126,6 @@ async def _start_pack_loop_when_ready(
         adapter_loader=adapter_loader,
         sidecar_supervisor=sidecar_supervisor,
         version_catalog=NpmVersionCatalog(),
-        driver_doctor_runner=_run_driver_doctor,
     )
     app.state.pack_state_loop = loop
     await loop.run_forever()
