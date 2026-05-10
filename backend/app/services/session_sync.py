@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
+from app.errors import InvalidTransitionError
 from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
@@ -17,12 +18,16 @@ from app.observability import get_logger, observe_background_loop
 from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_state import ready_operational_state, set_operational_state
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.session_viability import PROBE_TEST_NAME
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
 RESERVED_SESSION_ID = "reserved"
+
+_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -194,7 +199,18 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         # Mark device busy under row lock
         locked_device = await device_locking.lock_device(db, device.id)
-        await set_operational_state(locked_device, DeviceOperationalState.busy, publish_event=False)
+        try:
+            await _MACHINE.transition(
+                locked_device,
+                TransitionEvent.SESSION_STARTED,
+                suppress_events=True,
+            )
+        except InvalidTransitionError:
+            # Fallback: device is in a state the machine cannot transition from
+            # (e.g. offline/reserved when a grid session is discovered before
+            # the connectivity loop has caught up). Force-write busy via the
+            # direct writer so the session is tracked correctly.
+            await set_operational_state(locked_device, DeviceOperationalState.busy, publish_event=False)
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         session_service.queue_session_started_event(
             db,
@@ -285,11 +301,26 @@ async def _sync_sessions(db: AsyncSession) -> None:
         )
         fresh_running = (await db.execute(fresh_running_stmt)).first()
         if fresh_running is None:
-            await set_operational_state(
-                locked_device,
-                await ready_operational_state(db, locked_device),
-                reason="Session ended",
-            )
+            target = await ready_operational_state(db, locked_device)
+            if (
+                locked_device.operational_state == DeviceOperationalState.busy
+                and target == DeviceOperationalState.available
+            ):
+                await _MACHINE.transition(
+                    locked_device,
+                    TransitionEvent.SESSION_ENDED,
+                    reason="Session ended",
+                )
+            else:
+                # Fallback: device is not ready (probe failed during the
+                # session); the machine has no busy->offline-on-session-end
+                # transition. Drop straight through the writer to preserve
+                # the existing behavior. lifecycle_policy will reconcile.
+                await set_operational_state(
+                    locked_device,
+                    target,
+                    reason="Session ended",
+                )
 
     await _sweep_stale_stop_pending(db)
     await db.commit()
