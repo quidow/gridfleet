@@ -806,19 +806,19 @@ def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatc
 
     monkeypatch.setattr(GridFleetClient, "register_session", fake_register_session)
 
-    driver = type(
-        "Driver",
-        (),
-        {
-            "session_id": "sess-1",
-            "capabilities": {
-                "appium:gridfleet:deviceId": "dev-1",
-                "appium:udid": "SERIAL123",
-                "appium:platform": "android_mobile",
-                "platformName": "Android",
-            },
-        },
-    )()
+    class FakeDriver:
+        session_id = "sess-1"
+        capabilities = {
+            "appium:gridfleet:deviceId": "dev-1",
+            "appium:udid": "SERIAL123",
+            "appium:platform": "android_mobile",
+            "platformName": "Android",
+        }
+
+        def quit(self) -> None:
+            return None
+
+    driver = FakeDriver()
     client = GridFleetClient("http://manager/api")
 
     assert client.register_session_from_driver(driver, test_name="test_login", run_id="run-1") == {"ok": True}
@@ -1710,7 +1710,7 @@ def test_register_session_from_driver_wraps_quit_to_notify(monkeypatch):
 
 
 def test_register_session_from_driver_quit_wrap_is_idempotent(monkeypatch):
-    """Calling driver.quit() twice does not fire two notify requests."""
+    """Calling driver.quit() twice does not fire two notify requests, but underlying quit runs both times."""
     post_calls: list[str] = []
 
     def fake_post(
@@ -1732,16 +1732,20 @@ def test_register_session_from_driver_quit_wrap_is_idempotent(monkeypatch):
     class FakeDriver:
         session_id = "session-xyz"
         capabilities: dict[str, object] = {}
+        quit_count = 0
 
         def quit(self) -> None:
-            return None
+            type(self).quit_count += 1
 
     driver = FakeDriver()
     client = GridFleetClient("http://localhost:8000/api")
     client.register_session_from_driver(driver, test_name="t", suppress_errors=False)
 
     driver.quit()
-    driver.quit()  # second call must NOT post /finished again
+    driver.quit()  # second call: must NOT post /finished again, but MUST run quit
 
+    # /finished posted exactly once
     finished_calls = [u for u in post_calls if u.endswith("/finished")]
     assert len(finished_calls) == 1
+    # underlying quit ran twice
+    assert FakeDriver.quit_count == 2

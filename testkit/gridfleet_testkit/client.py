@@ -684,11 +684,9 @@ class GridFleetClient:
         NOT post to /finished again. The underlying quit still runs every
         call.
 
-        If the driver has no ``quit`` attribute this is a no-op.
+        Raises AttributeError if the driver lacks a quit method.
         """
-        original_quit = getattr(driver, "quit", None)
-        if original_quit is None:
-            return
+        original_quit = driver.quit
         notified: dict[str, bool] = {"done": False}
 
         def wrapped_quit(*args: Any, **kwargs: Any) -> Any:
