@@ -77,6 +77,17 @@ class NodeState:
                 return Reservation(id=reservation_id, slot_id=runtime.slot.id)
         raise NoFreeSlotError(f"all matching slots are busy or reserved: {caps!r}")
 
+    def commit(self, reservation_id: str, *, session_id: str, started_at: float) -> None:
+        for runtime in self._slots:
+            if runtime.reservation_id == reservation_id and runtime.state == "RESERVED":
+                runtime.state = "BUSY"
+                runtime.reservation_id = None
+                runtime.reserved_at = None
+                runtime.session_id = session_id
+                runtime.started_at = started_at
+                return
+        raise ReservationGoneError(f"reservation is not active: {reservation_id}")
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[

@@ -31,3 +31,14 @@ def test_reserve_raises_no_free_slot_when_matching_slot_is_reserved() -> None:
     state.reserve({"platformName": "Android"})
     with pytest.raises(NoFreeSlotError):
         state.reserve({"platformName": "Android"})
+
+
+def test_commit_promotes_reserved_slot_to_busy() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=15.0)
+    snapshot = state.snapshot()
+    assert snapshot.slots[0].state == "BUSY"
+    assert snapshot.slots[0].reservation_id is None
+    assert snapshot.slots[0].session_id == "session-1"
+    assert snapshot.slots[0].started_at == 15.0
