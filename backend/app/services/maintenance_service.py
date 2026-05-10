@@ -4,8 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.services import device_locking
+from app.services import device_locking, job_queue
 from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
+from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
+from app.services.job_status_constants import JOB_STATUS_PENDING
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
@@ -65,4 +67,21 @@ async def exit_maintenance(
     if commit:
         await db.commit()
         await db.refresh(device)
+
+    # D3: enqueue one-shot recovery so the operator does not see an idle
+    # offline device while waiting for the next connectivity loop tick.
+    # create_job commits internally; placing it after the state commit ensures
+    # the worker (running in a separate session) sees the post-exit state.
+    await job_queue.create_job(
+        db,
+        kind=JOB_KIND_DEVICE_RECOVERY,
+        payload={
+            "device_id": str(device.id),
+            "source": "exit_maintenance",
+            "reason": "Operator exited maintenance",
+        },
+        snapshot={"status": JOB_STATUS_PENDING},
+        max_attempts=1,
+    )
+
     return device

@@ -10,10 +10,15 @@ from sqlalchemy import or_, select
 
 from app.models.job import Job
 from app.observability import get_logger, observe_background_loop
+from app.services.device_recovery_job import run_device_recovery_job
 from app.services.device_verification_job_state import reset_snapshot_for_retry
 from app.services.device_verification_runner import run_persisted_verification_job
 from app.services.host_tools_runner import run_persisted_host_tool_ensure_job
-from app.services.job_kind_constants import JOB_KIND_DEVICE_VERIFICATION, JOB_KIND_HOST_TOOLS_ENSURE
+from app.services.job_kind_constants import (
+    JOB_KIND_DEVICE_RECOVERY,
+    JOB_KIND_DEVICE_VERIFICATION,
+    JOB_KIND_HOST_TOOLS_ENSURE,
+)
 from app.services.job_status_constants import (
     JOB_STATUS_FAILED,
     JOB_STATUS_PENDING,
@@ -156,6 +161,14 @@ async def run_pending_jobs_once(
 
     if row.kind == JOB_KIND_HOST_TOOLS_ENSURE:
         await run_persisted_host_tool_ensure_job(
+            str(row.id),
+            row.payload,
+            session_factory=session_factory,
+        )
+        return True
+
+    if row.kind == JOB_KIND_DEVICE_RECOVERY:
+        await run_device_recovery_job(
             str(row.id),
             row.payload,
             session_factory=session_factory,
