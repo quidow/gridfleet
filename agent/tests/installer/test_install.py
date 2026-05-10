@@ -11,7 +11,6 @@ from agent_app.installer.install import (
     HealthCheckResult,
     InstallResult,
     RegistrationCheckResult,
-    _download_selenium,
     _service_file_path,
     install_no_start,
     install_with_start,
@@ -86,31 +85,23 @@ def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.
     )
 
 
-def test_install_no_start_writes_config_runtime_dir_service_and_downloads_selenium(tmp_path: Path) -> None:
+def test_install_no_start_writes_config_runtime_dir_and_service(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
-    downloads: list[tuple[str, Path]] = []
-
-    def fake_download(url: str, dest: Path) -> None:
-        downloads.append((url, dest))
-        dest.write_text("selenium")
-
     result = install_no_start(
         config,
-        ToolDiscovery(java_bin="/usr/bin/java"),
+        ToolDiscovery(),
         operator=operator,
         os_name="Linux",
         executable=executable,
-        download=fake_download,
     )
 
     assert result == InstallResult(
         config_env=Path(config.config_env_path),
         service_file=tmp_path / "etc/systemd/system/gridfleet-agent.service",
-        selenium_jar=Path(config.selenium_jar),
         started=False,
     )
     assert (Path(config.agent_dir) / "runtimes").is_dir()
@@ -118,12 +109,6 @@ def test_install_no_start_writes_config_runtime_dir_service_and_downloads_seleni
     assert stat.S_IMODE(os.stat(config.config_env_path).st_mode) == 0o600
     assert stat.S_IMODE(os.stat(result.service_file).st_mode) == 0o600
     assert "ExecStart=" + str(executable) in result.service_file.read_text()
-    assert downloads == [
-        (
-            "https://github.com/SeleniumHQ/selenium/releases/download/selenium-4.41.0/selenium-server-4.41.0.jar",
-            Path(config.selenium_jar),
-        )
-    ]
 
 
 def test_install_no_start_aligns_linux_writable_paths_to_service_user(
@@ -147,7 +132,6 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
         operator=operator,
         os_name="Linux",
         executable=executable,
-        download=lambda _url, dest: dest.write_text("selenium"),
         chown=lambda path, user: ownership.append((path, user)),
     )
 
@@ -157,34 +141,8 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
         (Path(config.agent_dir) / "runtimes", "gridfleet"),
         (Path(config.config_dir), "gridfleet"),
         (Path(config.config_env_path), "gridfleet"),
-        (Path(config.selenium_jar), "gridfleet"),
         (service_file, "gridfleet"),
     ]
-
-
-def test_install_no_start_skips_existing_selenium_jar(tmp_path: Path) -> None:
-    config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n")
-    selenium_jar = Path(config.selenium_jar)
-    selenium_jar.parent.mkdir(parents=True, exist_ok=True)
-    selenium_jar.write_text("already present")
-
-    def fail_download(_url: str, _dest: Path) -> None:
-        raise AssertionError("download should not run")
-
-    install_no_start(
-        config,
-        ToolDiscovery(),
-        operator=operator,
-        os_name="Linux",
-        executable=executable,
-        download=fail_download,
-    )
-
-    assert selenium_jar.read_text() == "already present"
 
 
 def test_macos_service_path_resolves_sudo_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -485,51 +443,6 @@ def test_poll_agent_health_times_out_after_failed_attempts() -> None:
     assert "connection refused" in result.message
 
 
-def test_download_selenium_writes_file_atomically_and_prints_hash(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import hashlib
-    import http.server
-    import threading
-
-    jar_content = b"fake-selenium-server-jar"
-    expected_hash = hashlib.sha256(jar_content).hexdigest()
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(jar_content)))
-            self.end_headers()
-            self.wfile.write(jar_content)
-
-        def log_message(self, *_args: object) -> None:
-            pass
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.handle_request, daemon=True)
-    thread.start()
-
-    dest = tmp_path / "selenium-server.jar"
-    _download_selenium(f"http://127.0.0.1:{port}/selenium.jar", dest)
-    thread.join(timeout=5)
-    server.server_close()
-
-    assert dest.read_bytes() == jar_content
-    output = capsys.readouterr().out
-    assert f"sha256={expected_hash}" in output
-
-
-def test_download_selenium_cleans_up_temp_file_on_failure(tmp_path: Path) -> None:
-    dest = tmp_path / "selenium-server.jar"
-
-    with pytest.raises(OSError):
-        _download_selenium("http://127.0.0.1:1/will-fail", dest)
-
-    assert not dest.exists()
-    assert not list(tmp_path.glob("*.download"))
-
-
 def test_install_no_start_uses_operator_identity_for_systemd_user(tmp_path: Path) -> None:
     from agent_app.installer.identity import OperatorIdentity
 
@@ -645,7 +558,6 @@ def test_install_no_start_chowns_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     paths = {path for path, login in chown_calls}
     assert any("config.env" in str(p) for p in paths)
-    assert any("selenium-server.jar" in str(p) for p in paths)
     assert any("LaunchAgents/com.gridfleet.agent.plist" in str(p) for p in paths)
     assert all(login == "ops" for _, login in chown_calls)
 

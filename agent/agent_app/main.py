@@ -303,7 +303,6 @@ class PluginSyncRequest(BaseModel):
 
 class ToolsEnsureRequest(BaseModel):
     appium_version: str | None = None
-    selenium_jar_version: str | None = None
 
 
 class FeatureActionRequest(BaseModel):
@@ -763,7 +762,7 @@ async def agent_tools_status() -> dict[str, Any]:
 @app.post("/agent/tools/ensure")
 async def ensure_agent_tools(req: ToolsEnsureRequest) -> dict[str, Any]:
     async with tools_ensure_lock:
-        return await ensure_tools(req.appium_version, req.selenium_jar_version)
+        return await ensure_tools(req.appium_version)
 
 
 @app.websocket("/agent/terminal")

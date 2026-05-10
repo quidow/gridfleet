@@ -27,13 +27,9 @@ class _FakeProc:
 
 
 def test_resolve_tool_command_and_snapshot_staleness() -> None:
-    with (
-        patch("agent_app.capabilities._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.capabilities._find_java", return_value="/java/bin/java"),
-    ):
+    with patch("agent_app.capabilities._find_appium", return_value="/usr/local/bin/appium"):
         assert _resolve_tool_command("appium", None) == "/usr/local/bin/appium"
         assert _resolve_tool_command("adb", None) == "adb"
-        assert _resolve_tool_command("java", None) == "/java/bin/java"
         assert _resolve_tool_command("go_ios", "ios") == "ios"
         assert _resolve_tool_command("xcodebuild", "custom-xcodebuild") == "custom-xcodebuild"
 

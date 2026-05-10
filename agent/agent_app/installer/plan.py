@@ -4,7 +4,6 @@ import getpass
 import os
 import platform
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,7 +32,6 @@ class InstallConfig:
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
     grid_node_port_start: int = 5555
-    selenium_version: str = "4.41.0"
     enable_web_terminal: bool = False
     terminal_token: str | None = None
 
@@ -48,10 +46,6 @@ class InstallConfig:
             raise ValueError("AGENT_API_AUTH_USERNAME and AGENT_API_AUTH_PASSWORD must be set together.")
         if self.enable_web_terminal and not self.terminal_token:
             raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true.")
-
-    @property
-    def selenium_jar(self) -> str:
-        return f"{self.agent_dir}/selenium-server.jar"
 
     @property
     def resolved_bin_path(self) -> str:
@@ -71,8 +65,6 @@ class InstallConfig:
 
 @dataclass(frozen=True)
 class ToolDiscovery:
-    java_bin: str | None = None
-    java_version: str | None = None
     node_bin_dir: str | None = None
     android_home: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -83,51 +75,6 @@ def _first_existing_executable(candidates: list[str]) -> str | None:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
-
-
-def _java_version(java_bin: str) -> str | None:
-    try:
-        result = subprocess.run(
-            [java_bin, "-version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    output = result.stderr.strip() or result.stdout.strip()
-    return output.splitlines()[0] if output else None
-
-
-def _find_java(env: Mapping[str, str], home: Path, os_name: str) -> tuple[str | None, str | None]:
-    path_java = shutil.which("java")
-    java_home = env.get("JAVA_HOME", "")
-    candidates = [
-        path_java or "",
-        f"{java_home}/bin/java" if java_home else "",
-        str(home / ".sdkman/candidates/java/current/bin/java"),
-        "/usr/local/bin/java",
-        "/usr/bin/java",
-    ]
-    java_bin = _first_existing_executable(candidates)
-
-    if java_bin is None and os_name == "Darwin" and os.path.exists("/usr/libexec/java_home"):
-        try:
-            result = subprocess.run(
-                ["/usr/libexec/java_home"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            result = None
-        if result is not None and result.returncode == 0:
-            java_home_path = result.stdout.strip()
-            java_bin = _first_existing_executable([f"{java_home_path}/bin/java"])
-
-    return java_bin, _java_version(java_bin) if java_bin else None
 
 
 def _find_node_bin_dir(env: Mapping[str, str], home: Path) -> str | None:
@@ -202,23 +149,17 @@ def discover_tools(
 ) -> ToolDiscovery:
     resolved_env = os.environ if env is None else env
     resolved_home = home or _operator_home(resolved_env)
-    resolved_os = os_name or platform.system()
     warnings: list[str] = []
 
-    java_bin, java_version = _find_java(resolved_env, resolved_home, resolved_os)
     node_bin_dir = _find_node_bin_dir(resolved_env, resolved_home)
     android_home = _find_android_home(resolved_env, resolved_home)
 
-    if java_bin is None:
-        warnings.append("Java not found. Grid relay node will not start.")
     if node_bin_dir is None:
         warnings.append("Node.js not found. Appium commands may not be available to the service.")
     if android_home is None:
         warnings.append("Android SDK platform-tools not found. ADB-based devices may not be available.")
 
     return ToolDiscovery(
-        java_bin=java_bin,
-        java_version=java_version,
         node_bin_dir=node_bin_dir,
         android_home=android_home,
         warnings=warnings,
@@ -229,8 +170,6 @@ def build_service_path(discovery: ToolDiscovery) -> str:
     prefixes: list[str] = []
     if discovery.node_bin_dir:
         prefixes.append(discovery.node_bin_dir)
-    if discovery.java_bin:
-        prefixes.append(str(Path(discovery.java_bin).parent))
     if discovery.android_home:
         prefixes.append(f"{discovery.android_home}/platform-tools")
     return ":".join([*prefixes, DEFAULT_SERVICE_PATH])
@@ -243,7 +182,6 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
         f"AGENT_GRID_HUB_URL={config.grid_hub_url}",
         f"AGENT_GRID_PUBLISH_URL={config.grid_publish_url}",
         f"AGENT_GRID_SUBSCRIBE_URL={config.grid_subscribe_url}",
-        f"AGENT_SELENIUM_SERVER_JAR={config.selenium_jar}",
         f"AGENT_GRID_NODE_PORT_START={config.grid_node_port_start}",
         f"PATH={build_service_path(discovery)}",
     ]
@@ -318,7 +256,6 @@ def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfi
         grid_publish_url=values.get("AGENT_GRID_PUBLISH_URL", base.grid_publish_url),
         grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
         grid_node_port_start=_env_int(values, "AGENT_GRID_NODE_PORT_START", base.grid_node_port_start),
-        selenium_version=base.selenium_version,
         enable_web_terminal=values.get("AGENT_ENABLE_WEB_TERMINAL", str(base.enable_web_terminal)).lower() == "true",
         terminal_token=values.get("AGENT_TERMINAL_TOKEN", base.terminal_token),
     )
@@ -387,7 +324,6 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
         "AGENT_GRID_HUB_URL": config.grid_hub_url,
         "AGENT_GRID_PUBLISH_URL": config.grid_publish_url,
         "AGENT_GRID_SUBSCRIBE_URL": config.grid_subscribe_url,
-        "AGENT_SELENIUM_SERVER_JAR": config.selenium_jar,
         "AGENT_GRID_NODE_PORT_START": str(config.grid_node_port_start),
     }
     if discovery.android_home:
@@ -424,9 +360,6 @@ def format_dry_run(config: InstallConfig, discovery: ToolDiscovery, *, os_name: 
         else render_launchd_plist(display_config, discovery)
     )
     warnings = "\n".join(f"  - {warning}" for warning in discovery.warnings) or "  - none"
-    java_line = (
-        f"{discovery.java_bin} ({discovery.java_version or 'version unknown'})" if discovery.java_bin else "missing"
-    )
     node_line = discovery.node_bin_dir or "missing"
     android_line = discovery.android_home or "missing"
 
@@ -445,12 +378,9 @@ Settings:
   Grid hub URL: {config.grid_hub_url}
   Grid publish URL: {config.grid_publish_url}
   Grid subscribe URL: {config.grid_subscribe_url}
-  Selenium version: {config.selenium_version}
-  Selenium JAR: {config.selenium_jar}
   Web terminal: {"enabled" if config.enable_web_terminal else "disabled"}
 
 Detected tools:
-  Java: {java_line}
   Node bin dir: {node_line}
   Android SDK: {android_line}
 
@@ -480,7 +410,6 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
         grid_publish_url=config.grid_publish_url,
         grid_subscribe_url=config.grid_subscribe_url,
         grid_node_port_start=config.grid_node_port_start,
-        selenium_version=config.selenium_version,
         enable_web_terminal=config.enable_web_terminal,
         terminal_token="<redacted>" if config.terminal_token else None,
     )

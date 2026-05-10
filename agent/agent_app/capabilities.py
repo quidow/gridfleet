@@ -9,7 +9,6 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from agent_app.appium_process import _find_java
 from agent_app.tool_paths import find_appium as _find_appium
 
 logger = logging.getLogger(__name__)
@@ -20,7 +19,6 @@ _TOOL_CHECKS: list[tuple[str, str | None, list[str], str]] = [
     ("adb", None, ["--version"], r"Android Debug Bridge.*?(\d+\.\d+\.\d+)"),
     ("xcodebuild", "xcodebuild", ["-version"], r"Xcode\s+(\d+\.\d+(?:\.\d+)?)"),
     ("go_ios", "ios", ["--version"], r"v?(\d+\.\d+\.\d+)"),
-    ("java", None, ["-version"], r'"(\d+[\d.]+)"'),
 ]
 _DEFAULT_CAPABILITIES: dict[str, Any] = {"platforms": [], "tools": {}, "missing_prerequisites": []}
 _capabilities_snapshot: dict[str, Any] | None = None
@@ -57,8 +55,6 @@ def _resolve_tool_command(name: str, configured_cmd: str | None) -> str:
         return configured_cmd
     if name == "appium":
         return _find_appium()
-    if name == "java":
-        return _find_java()
     return name
 
 
@@ -80,7 +76,7 @@ async def detect_capabilities() -> dict[str, Any]:
 
     platforms: list[str] = []
 
-    required_tools = ["appium", "java"]
+    required_tools = ["appium"]
     missing_prerequisites = [name for name in required_tools if name not in tools]
 
     return {"platforms": platforms, "tools": tools, "missing_prerequisites": missing_prerequisites}

@@ -58,7 +58,6 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--grid-publish-url", default="tcp://localhost:4442")
     install.add_argument("--grid-subscribe-url", default="tcp://localhost:4443")
     install.add_argument("--grid-node-port-start", type=int, default=5555)
-    install.add_argument("--selenium-version", default="4.41.0")
     install.add_argument("--enable-web-terminal", action="store_true")
     install.add_argument("--terminal-token", default=None)
 
@@ -131,7 +130,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 grid_publish_url=args.grid_publish_url,
                 grid_subscribe_url=args.grid_subscribe_url,
                 grid_node_port_start=args.grid_node_port_start,
-                selenium_version=args.selenium_version,
                 enable_web_terminal=args.enable_web_terminal,
                 terminal_token=args.terminal_token,
             )

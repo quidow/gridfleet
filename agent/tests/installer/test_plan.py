@@ -37,8 +37,6 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
         terminal_token="terminal-token",
     )
     discovery = ToolDiscovery(
-        java_bin="/usr/bin/java",
-        java_version='openjdk version "21"',
         node_bin_dir="/opt/node/bin",
         android_home="/opt/android-sdk",
         warnings=[],
@@ -47,14 +45,14 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     rendered = render_config_env(config, discovery)
 
     assert "AGENT_MANAGER_URL=https://manager.example.com" in rendered
-    assert "AGENT_SELENIUM_SERVER_JAR=/opt/gridfleet-agent/selenium-server.jar" in rendered
+    assert "AGENT_SELENIUM_SERVER_JAR" not in rendered
     assert "ANDROID_HOME=/opt/android-sdk" in rendered
     assert "ANDROID_SDK_ROOT=/opt/android-sdk" in rendered
     assert "AGENT_MANAGER_AUTH_USERNAME=machine" in rendered
     assert "AGENT_MANAGER_AUTH_PASSWORD=secret" in rendered
     assert "AGENT_ENABLE_WEB_TERMINAL=true" in rendered
     assert "AGENT_TERMINAL_TOKEN=terminal-token" in rendered
-    assert "PATH=/opt/node/bin:/usr/bin:" in rendered
+    assert "PATH=/opt/node/bin:/opt/android-sdk/platform-tools:" in rendered
 
 
 def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None:
@@ -119,7 +117,7 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
     assert "<string>5200</string>" in rendered
     assert "<key>PATH</key>" in rendered
     assert "<key>AGENT_GRID_HUB_URL</key>" in rendered
-    assert "<key>AGENT_SELENIUM_SERVER_JAR</key>" in rendered
+    assert "<key>AGENT_SELENIUM_SERVER_JAR</key>" not in rendered
     assert "<key>ANDROID_HOME</key>" in rendered
     assert "<key>AGENT_MANAGER_AUTH_USERNAME</key>" in rendered
     assert "<key>AGENT_MANAGER_AUTH_PASSWORD</key>" in rendered
@@ -162,7 +160,7 @@ def test_dry_run_output_redacts_launchd_service_secrets() -> None:
 
 def test_dry_run_output_names_generated_artifacts_and_warnings() -> None:
     config = InstallConfig(manager_url="https://manager.example.com")
-    discovery = ToolDiscovery(warnings=["Java not found. Grid relay node will not start."])
+    discovery = ToolDiscovery(warnings=["Node.js not found. Appium commands may not be available to the service."])
 
     output = format_dry_run(config, discovery, os_name="Linux")
 
@@ -170,15 +168,16 @@ def test_dry_run_output_names_generated_artifacts_and_warnings() -> None:
     assert "Manager URL: https://manager.example.com" in output
     assert "Config file: /etc/gridfleet-agent/config.env" in output
     assert "Service file: /etc/systemd/system/gridfleet-agent.service" in output
-    assert "Java not found. Grid relay node will not start." in output
+    assert "Selenium JAR" not in output
+    assert "Node.js not found. Appium commands may not be available to the service." in output
     assert "AGENT_MANAGER_URL=https://manager.example.com" in output
     assert "ExecStart=/opt/gridfleet-agent/venv/bin/gridfleet-agent serve" in output
 
 
 def test_build_service_path_prioritizes_node_before_system_dirs() -> None:
-    discovery = ToolDiscovery(java_bin="/usr/lib/jvm/bin/java", node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
+    discovery = ToolDiscovery(node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
 
-    assert build_service_path(discovery).startswith("/opt/node/bin:/usr/lib/jvm/bin:/opt/sdk/platform-tools:")
+    assert build_service_path(discovery).startswith("/opt/node/bin:/opt/sdk/platform-tools:")
 
 
 def test_find_node_bin_dir_prefers_home_nvm_over_system_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
