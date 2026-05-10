@@ -288,6 +288,16 @@ async def _sync_sessions(db: AsyncSession) -> None:
         locked_device = await device_locking.lock_device(db, device.id)
         if locked_device.operational_state != DeviceOperationalState.busy:
             continue
+        if locked_device.hold == DeviceHold.maintenance:
+            # Defensive: clean installs cannot reach (busy, maintenance) after
+            # the maintenance gate, but legacy rows from pre-fix deployments
+            # may. Skip the transition so the sync loop does not abort on
+            # InvalidTransitionError; operator intervention required.
+            logger.warning(
+                "Device %s in (busy, maintenance) — skipping session-end transition; manual cleanup required",
+                locked_device.name,
+            )
+            continue
         # Authoritative recheck under the row lock. ``handle_session_finished``
         # only does the locked running-session check when ``stop_pending`` is
         # set; in the common no-deferred-stop path it returns NO_PENDING
