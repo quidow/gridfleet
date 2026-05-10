@@ -91,3 +91,11 @@ def test_mark_drain_blocks_new_reservations_and_is_idempotent() -> None:
     assert state.snapshot().drain is True
     with pytest.raises(NoFreeSlotError):
         state.reserve({"platformName": "Android"})
+
+
+def test_expire_idle_returns_busy_sessions_past_timeout() -> None:
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=20.0)
+    assert state.expire_idle(now=100.0, timeout_sec=60.0) == ["session-1"]
+    assert state.snapshot().slots[0].state == "BUSY"

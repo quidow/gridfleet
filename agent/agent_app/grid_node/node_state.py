@@ -119,6 +119,18 @@ class NodeState:
     def mark_drain(self) -> None:
         self._drain = True
 
+    def expire_idle(self, *, now: float, timeout_sec: float) -> list[str]:
+        expired: list[str] = []
+        for runtime in self._slots:
+            if (
+                runtime.state == "BUSY"
+                and runtime.session_id is not None
+                and runtime.started_at is not None
+                and now - runtime.started_at >= timeout_sec
+            ):
+                expired.append(runtime.session_id)
+        return expired
+
     def snapshot(self) -> NodeSnapshot:
         return NodeSnapshot(
             slots=[
