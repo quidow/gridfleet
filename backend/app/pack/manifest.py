@@ -136,6 +136,21 @@ class LifecycleAction(BaseModel):
     id: Literal["state", "reconnect", "boot", "shutdown"]
 
 
+class HealthCheckAppliesWhen(BaseModel):
+    """Gate a health check to specific connection types and IP address presence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    connection_types: list[Literal["usb", "network", "virtual"]]
+    requires_ip_address: bool = False
+
+    @model_validator(mode="after")
+    def _non_empty_connection_types(self) -> "HealthCheckAppliesWhen":
+        if not self.connection_types:
+            raise ValueError("applies_when.connection_types must not be empty")
+        return self
+
+
 class HealthCheckLabel(BaseModel):
     """Display metadata for a health check emitted by a pack adapter."""
 
@@ -143,6 +158,7 @@ class HealthCheckLabel(BaseModel):
 
     id: str
     label: str
+    applies_when: HealthCheckAppliesWhen | None = None
 
     @model_validator(mode="after")
     def _non_empty(self) -> "HealthCheckLabel":
