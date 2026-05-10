@@ -52,5 +52,18 @@ class AgentSettings(BaseSettings):
             raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true")
         return self
 
+    @model_validator(mode="after")
+    def validate_grid_node_intervals(self) -> "AgentSettings":
+        # Non-positive heartbeat would crash the supervisor's `_clock.sleep`
+        # loop and silently break drain semantics; non-positive timeouts
+        # would force-close every session on the first tick.
+        if self.grid_node_heartbeat_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_HEARTBEAT_SEC must be > 0")
+        if self.grid_node_session_timeout_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC must be > 0")
+        if self.grid_node_proxy_timeout_sec <= 0:
+            raise ValueError("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC must be > 0")
+        return self
+
 
 agent_settings = AgentSettings()

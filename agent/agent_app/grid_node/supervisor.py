@@ -35,10 +35,18 @@ class AsyncioClock:
 
 
 class GridNodeSupervisorHandle:
-    def __init__(self, *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock, heartbeat_sec: float) -> None:
+    def __init__(
+        self,
+        *,
+        factory: Callable[[], GridNodeServiceProtocol],
+        clock: Clock,
+        heartbeat_sec: float,
+        startup_timeout_sec: float = 30.0,
+    ) -> None:
         self._factory = factory
         self._clock = clock
         self._heartbeat_sec = heartbeat_sec
+        self._startup_timeout_sec = startup_timeout_sec
         self._task: asyncio.Task[None] | None = None
         self._stop_requested = asyncio.Event()
         self._running = asyncio.Event()
@@ -68,10 +76,14 @@ class GridNodeSupervisorHandle:
         self._stopped.set()
 
     async def wait_until_running(self) -> None:
+        # Slow hosts (cold uvicorn boot, slow ZMQ XSUB/XPUB handshake) can need
+        # several seconds to reach the `running` event. The default startup
+        # timeout is configurable so callers do not see spurious TimeoutError
+        # on hardware where the service would still come up healthy.
         running_task = asyncio.create_task(self._running.wait())
         errored_task = asyncio.create_task(self._errored.wait())
         done, pending = await asyncio.wait(
-            {running_task, errored_task}, timeout=1.0, return_when=asyncio.FIRST_COMPLETED
+            {running_task, errored_task}, timeout=self._startup_timeout_sec, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
@@ -149,6 +161,13 @@ def start_grid_node_supervisor(
     *, factory: Callable[[], GridNodeServiceProtocol], clock: Clock | None = None, config: object | None = None
 ) -> GridNodeSupervisorHandle:
     heartbeat_sec = 5.0
+    startup_timeout_sec = 30.0
     if config is not None:
         heartbeat_sec = float(getattr(config, "heartbeat_sec", heartbeat_sec))
-    return GridNodeSupervisorHandle(factory=factory, clock=clock or AsyncioClock(), heartbeat_sec=heartbeat_sec)
+        startup_timeout_sec = float(getattr(config, "startup_timeout_sec", startup_timeout_sec))
+    return GridNodeSupervisorHandle(
+        factory=factory,
+        clock=clock or AsyncioClock(),
+        heartbeat_sec=heartbeat_sec,
+        startup_timeout_sec=startup_timeout_sec,
+    )

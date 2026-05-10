@@ -172,7 +172,7 @@ def build_app(
         # downstream dialects the client supports.
         try:
             body = await request.json()
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JSONResponse(
                 {"value": {"error": "invalid argument", "message": "Malformed JSON request body"}}, status_code=400
             )
@@ -212,7 +212,7 @@ def build_app(
         upstream_bytes = upstream.content
         try:
             upstream_payload = json.loads(upstream_bytes)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
 

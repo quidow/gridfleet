@@ -926,10 +926,18 @@ class AppiumProcessManager:
             await handle.stop()
 
     async def _drop_failed_managed_port(self, port: int) -> None:
-        """Forget stale ownership for a crashed Appium process without touching an unmanaged listener."""
+        """Forget stale ownership for a crashed Appium process without touching an unmanaged listener.
+
+        A grid-node stop failure must not abort cleanup — the Appium process and
+        port metadata still need to be released so the host can recover the
+        port. Suppress and log instead.
+        """
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._appium_watch_tasks, port)
-        await self._stop_grid_node_service(port)
+        try:
+            await self._stop_grid_node_service(port)
+        except Exception:
+            logger.warning("grid node stop failed during managed-port cleanup on port %d", port, exc_info=True)
         self._appium_procs.pop(port, None)
         self._info.pop(port, None)
         self._launch_specs.pop(port, None)
@@ -942,8 +950,13 @@ class AppiumProcessManager:
             self._cancel_task(self._appium_restart_tasks, port)
             self._cancel_task(self._appium_watch_tasks, port)
 
-            # Stop Grid Node first
-            await self._stop_grid_node_service(port)
+            # Stop Grid Node first. A grid-node failure must not leak the
+            # Appium process; suppress and log so we always reach the Appium
+            # teardown below.
+            try:
+                await self._stop_grid_node_service(port)
+            except Exception:
+                logger.warning("grid node stop failed for port %d", port, exc_info=True)
 
             # Stop Appium
             appium_proc = self._appium_procs.pop(port, None)
