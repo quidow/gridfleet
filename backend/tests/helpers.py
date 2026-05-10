@@ -208,9 +208,26 @@ async def create_reserved_run(
 
 
 async def settle_after_commit_tasks() -> None:
-    """Yield the loop twice so after_commit-created publish tasks run before assertions."""
+    """Drain after_commit-created publish tasks so contract assertions run after dispatch.
+
+    The previous implementation yielded the event loop twice. That was sufficient
+    in the common case but raced under load: when multiple host sessions commit
+    concurrently (heartbeat cascade tests), each one schedules its own
+    ``loop.create_task(_publish_pending_events(...))`` and two yields can return
+    before all of those tasks reach their first append, leaving
+    ``event_bus_capture`` empty when the assertion runs. Waiting on the
+    ``event_bus._handler_tasks`` set is deterministic — it only returns after
+    every queued publish task has completed.
+    """
+    from app.services.event_bus import event_bus
+
+    # Yield once so any after_commit hooks fired during the just-completed
+    # await have a chance to call ``loop.create_task`` and register on
+    # ``_handler_tasks`` before we snapshot the set.
     await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    pending = {task for task in event_bus._handler_tasks if not task.done()}
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def seed_host_and_device(

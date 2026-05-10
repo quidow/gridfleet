@@ -66,15 +66,18 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
 
     locked = await device_locking.lock_device(db_session, device.id)
 
+    mock_schedule = AsyncMock(side_effect=RuntimeError("simulated transient DB error"))
     with (
-        patch(
-            "app.services.maintenance_service.schedule_device_recovery",
-            new=AsyncMock(side_effect=RuntimeError("simulated transient DB error")),
-        ),
-        caplog.at_level(logging.WARNING, logger="app.services.maintenance_service"),
+        patch("app.services.maintenance_service.schedule_device_recovery", new=mock_schedule),
+        caplog.at_level(logging.WARNING),
     ):
         # Must NOT raise even though schedule_device_recovery raises.
         result = await maintenance_service.exit_maintenance(db_session, locked)
+
+    # Sanity: the patched mock actually intercepted the call. If this fires,
+    # the warning-records assertion below would also fail but for a different
+    # reason — fail loudly here so the cause is unambiguous.
+    assert mock_schedule.await_count == 1, "schedule_device_recovery patch did not intercept the call"
 
     # State mutation must be committed regardless of enqueue failure.
     assert result.hold is None, "hold must be cleared (committed) even when enqueue fails"
@@ -83,7 +86,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     )
 
     # A warning must have been logged so ops can triage.
-    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("exit_maintenance" in r.message for r in warning_records), (
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("exit_maintenance" in r.getMessage() for r in warning_records), (
         "exit_maintenance must log a WARNING when recovery enqueue fails"
     )

@@ -169,6 +169,17 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     monkeypatch.setattr("app.services.bulk_service._load_devices", AsyncMock(return_value=devices))
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
     monkeypatch.setattr("app.services.bulk_service.queue_event_for_session", Mock())
+    # bulk_enter_maintenance calls device_locking.lock_device(db, ...) which does
+    # `(await db.execute(stmt)).scalar_one()`. With db = AsyncMock(), the value
+    # returned by `await db.execute(...)` is itself an AsyncMock, so `.scalar_one()`
+    # is an AsyncMock attribute — calling it produces a coroutine that nothing
+    # awaits, leaking a "coroutine was never awaited" warning that surfaces in a
+    # later test during gc. Patch lock_device directly to keep the mock chain
+    # purely synchronous past the awaited call.
+    monkeypatch.setattr(
+        "app.services.bulk_service.device_locking.lock_device",
+        AsyncMock(side_effect=lambda _db, device_id, **_: next(d for d in devices if d.id == device_id)),
+    )
     monkeypatch.setattr(
         "app.services.bulk_service.delete_device",
         AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),

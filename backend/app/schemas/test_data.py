@@ -11,6 +11,8 @@ TEST_DATA_MAX_BYTES = 64 * 1024
 class TestDataPayload(RootModel[dict[str, Any]]):
     """Free-form operator-attached data exposed to testkit. Top-level object only."""
 
+    __test__ = False
+
     @model_validator(mode="after")
     def _validate(self) -> TestDataPayload:
         if not isinstance(self.root, dict):
