@@ -23,7 +23,6 @@ from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.lifecycle_policy_actions import (
     complete_auto_stop,
-    exclude_run_if_needed,
     has_running_client_session,
     record_auto_stopped_incident,
     record_recovery_suppressed,
@@ -306,12 +305,15 @@ async def note_connectivity_loss(
     # Persist intent before any await/commit (see handle_health_failure).
     write_state(device, current_state)
 
-    run, _entry = await exclude_run_if_needed(db, device, reason=reason, source="connectivity")
+    # D1: connectivity loss is not exclusion-worthy. The device transitions
+    # to offline through the connectivity loop's _stop_disconnected_node /
+    # node_health paths; the reservation entry stays intact and the scheduler
+    # treats offline devices as temporarily unavailable until recovery.
     await record_auto_stopped_incident(
         db,
         device,
         current_state,
-        run=run,
+        run=None,
         reason=reason,
         source="connectivity",
         detail="Manager marked the device offline after connectivity loss",
