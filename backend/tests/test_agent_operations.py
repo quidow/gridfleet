@@ -172,6 +172,47 @@ async def test_pack_device_health_get_request() -> None:
     ]
 
 
+async def test_pack_device_health_forwards_ip_ping_params() -> None:
+    client = StrictAgentClient(
+        get_response=_response(
+            "GET",
+            "http://10.0.0.5:5100/agent/pack/devices/serial-1/health",
+            payload={"healthy": True, "checks": []},
+        )
+    )
+
+    payload = await agent_operations.pack_device_health(
+        "10.0.0.5",
+        5100,
+        "serial-1",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        ip_ping_timeout_sec=1.5,
+        ip_ping_count=2,
+        http_client_factory=_strict_client_factory(client),
+        timeout=10,
+    )
+
+    assert payload["healthy"] is True
+    assert client.get_calls == [
+        (
+            "http://10.0.0.5:5100/agent/pack/devices/serial-1/health",
+            {
+                "params": {
+                    "pack_id": "appium-uiautomator2",
+                    "platform_id": "android_mobile",
+                    "device_type": "real_device",
+                    "allow_boot": False,
+                    "ip_ping_timeout_sec": 1.5,
+                    "ip_ping_count": 2,
+                },
+                "headers": {},
+                "timeout": 10,
+            },
+        )
+    ]
+
+
 async def test_pack_device_health_forwards_headless_when_explicitly_requested() -> None:
     client = StrictAgentClient(
         get_response=_response(
