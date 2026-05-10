@@ -64,3 +64,41 @@ async def test_icmp_reachable_failure_when_no_received(monkeypatch: pytest.Monke
     monkeypatch.setattr(sys, "platform", "linux")
     ok = await adapter_utils.icmp_reachable("10.0.0.7", timeout=2.0, count=1)
     assert ok is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_timeout", [float("nan"), float("inf"), -1.0, 0.0])
+async def test_icmp_reachable_rejects_non_finite_or_non_positive_timeout(
+    monkeypatch: pytest.MonkeyPatch, bad_timeout: float
+) -> None:
+    called = False
+
+    async def fake_run_cmd(cmd: list[str], *, timeout: float) -> str:
+        nonlocal called
+        called = True
+        return "1 packets transmitted, 1 received"
+
+    monkeypatch.setattr(adapter_utils, "run_cmd", fake_run_cmd)
+    monkeypatch.setattr(sys, "platform", "linux")
+    ok = await adapter_utils.icmp_reachable("10.0.0.7", timeout=bad_timeout, count=1)
+    assert ok is False
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_icmp_reachable_subprocess_timeout_accounts_for_inter_probe_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_timeouts: list[float] = []
+
+    async def fake_run_cmd(cmd: list[str], *, timeout: float) -> str:
+        captured_timeouts.append(timeout)
+        return "10 packets transmitted, 10 received"
+
+    monkeypatch.setattr(adapter_utils, "run_cmd", fake_run_cmd)
+    monkeypatch.setattr(sys, "platform", "linux")
+    await adapter_utils.icmp_reachable("10.0.0.7", timeout=0.5, count=10)
+    # ping sends ~1 probe/sec; need (count-1)*1.0 + timeout + buffer to cover
+    # the full run. With count=10 the older formula was 6.0s — now we need >=
+    # 9.5s + buffer.
+    assert captured_timeouts[0] >= 9 + 0.5

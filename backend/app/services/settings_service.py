@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
@@ -186,6 +187,8 @@ class SettingsService:
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 return f"Expected float for {key}, got {type(value).__name__}"
             fval = float(value)
+            if not math.isfinite(fval):
+                return f"Expected finite float for {key}, got {fval!r}"
             if defn.min_value is not None and fval < defn.min_value:
                 return f"Value {fval} is below minimum {defn.min_value} for {key}"
             if defn.max_value is not None and fval > defn.max_value:

@@ -164,3 +164,21 @@ def test_validate_float_setting_rejects_above_max() -> None:
     error = settings_service._validate_value(_FLOAT_KEY, 60.0)
     assert error is not None
     assert "exceeds maximum" in error
+
+
+def test_validate_float_setting_rejects_nan() -> None:
+    error = settings_service._validate_value(_FLOAT_KEY, float("nan"))
+    assert error is not None
+    assert "finite" in error
+
+
+def test_validate_float_setting_rejects_positive_infinity() -> None:
+    error = settings_service._validate_value(_FLOAT_KEY, float("inf"))
+    assert error is not None
+    assert "finite" in error
+
+
+def test_validate_float_setting_rejects_negative_infinity() -> None:
+    error = settings_service._validate_value(_FLOAT_KEY, float("-inf"))
+    assert error is not None
+    assert "finite" in error
