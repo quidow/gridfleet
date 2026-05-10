@@ -42,6 +42,26 @@ async def test_service_start_and_stop_publish_lifecycle_events() -> None:
     assert [event["type"] for event in bus.events] == ["NODE_ADDED", "NODE_STATUS", "NODE_REMOVED"]
 
 
+@pytest.mark.asyncio
+async def test_drain_publishes_drain_complete_and_requests_stop() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus)
+    await service.start()
+    service.state.mark_drain()
+    await service.run_heartbeat_once()
+    assert bus.events[-1]["type"] == "NODE_DRAIN_COMPLETE"
+    assert service.snapshot()["requested_stop"] is True
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_called_from_heartbeat_task_raises_runtime_error() -> None:
+    service = GridNodeService(config=_config(), bus=RecordingBus())
+    await service.start()
+    with pytest.raises(RuntimeError, match="owner"):
+        await service.call_stop_from_heartbeat_for_test()
+
+
 def _config() -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",
