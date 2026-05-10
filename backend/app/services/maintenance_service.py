@@ -22,7 +22,6 @@ async def enter_maintenance(
     db: AsyncSession,
     device: Device,
     *,
-    drain: bool = False,
     commit: bool = True,
     allow_reserved: bool = False,
 ) -> Device:
@@ -35,7 +34,7 @@ async def enter_maintenance(
         reason="Operator entered maintenance",
     )
 
-    if not drain and device.appium_node and device.appium_node.state == NodeState.running:
+    if device.appium_node and device.appium_node.state == NodeState.running:
         try:
             await stop_node(db, device)
             # stop_node commits via mark_node_stopped, releasing our row lock.
