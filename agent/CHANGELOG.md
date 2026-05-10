@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.6.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.0...gridfleet-agent-v0.6.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **agent:** split grid node bind host from advertised uri to fix linux docker setups ([#157](https://github.com/quidow/gridfleet/issues/157)) ([8e98a0d](https://github.com/quidow/gridfleet/commit/8e98a0dc28f9d5eedb5aa35566a83e48a6cca4fa))
+
 ## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.5.0...gridfleet-agent-v0.6.0) (2026-05-10)
 
 
