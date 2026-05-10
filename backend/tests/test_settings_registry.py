@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.services import settings_registry
+from app.services.settings_registry import SETTINGS_REGISTRY
 
 
 @pytest.mark.parametrize(
@@ -129,6 +130,30 @@ def test_terminal_toggle_env_fallback_resolves_default(monkeypatch: pytest.Monke
     monkeypatch.setenv("GRIDFLEET_ENABLE_WEB_TERMINAL", "true")
     defn = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
     assert settings_registry.resolve_default(defn) is True
+
+
+@pytest.mark.parametrize(
+    "key,expected_default,expected_min,expected_max,expected_type",
+    [
+        ("device_checks.ip_ping.consecutive_fail_threshold", 3, 1, 50, "int"),
+        ("device_checks.ip_ping.timeout_sec", 2.0, 0.5, 30.0, "float"),
+        ("device_checks.ip_ping.count_per_cycle", 1, 1, 10, "int"),
+    ],
+)
+def test_ip_ping_settings_registered(
+    key: str,
+    expected_default: float,
+    expected_min: float,
+    expected_max: float,
+    expected_type: str,
+) -> None:
+    assert key in SETTINGS_REGISTRY, f"{key} should be registered"
+    setting = SETTINGS_REGISTRY[key]
+    assert setting.setting_type == expected_type
+    assert setting.default == expected_default
+    assert setting.min_value == expected_min
+    assert setting.max_value == expected_max
+    assert setting.category == "device_checks"
 
 
 def test_device_cooldown_escalation_threshold_default_and_bounds() -> None:

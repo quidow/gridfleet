@@ -149,3 +149,24 @@ def record_heartbeat_cycle(duration_seconds: float, *, interval_seconds: float) 
     HEARTBEAT_CYCLE_DURATION_SECONDS.observe(duration_seconds)
     if duration_seconds > interval_seconds:
         HEARTBEAT_CYCLE_OVERRUN_TOTAL.inc()
+
+
+ip_ping_failures_total = Counter(
+    "gridfleet_ip_ping_failures_total",
+    "Total ICMP ping misses observed by the connectivity loop.",
+    ["device_identity", "host"],
+)
+
+ip_ping_consecutive_failures = Gauge(
+    "gridfleet_ip_ping_consecutive_failures",
+    "Current consecutive ICMP ping miss counter, per device.",
+    ["device_identity", "host"],
+)
+
+
+def record_ip_ping_failure(*, device_identity: str, host: str) -> None:
+    ip_ping_failures_total.labels(device_identity=device_identity, host=host).inc()
+
+
+def set_ip_ping_consecutive_failures(*, device_identity: str, host: str, value: int) -> None:
+    ip_ping_consecutive_failures.labels(device_identity=device_identity, host=host).set(value)

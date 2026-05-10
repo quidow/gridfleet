@@ -85,8 +85,8 @@ def test_platform_accepts_health_check_labels() -> None:
     manifest = load_manifest_yaml(yaml_text)
 
     assert [check.model_dump() for check in manifest.platforms[0].health_checks] == [
-        {"id": "adb_connected", "label": "ADB Connected"},
-        {"id": "boot_completed", "label": "Boot Completed"},
+        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None},
+        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None},
     ]
 
 
@@ -160,6 +160,52 @@ def test_manifest_rejects_legacy_discovery_block() -> None:
     )
     with pytest.raises(ManifestValidationError, match=r"discovery"):
         load_manifest_yaml(yaml_text)
+
+
+def test_health_check_entry_accepts_applies_when() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    health_checks:\n"
+            "      - id: ip_ping\n"
+            "        label: IP Ping\n"
+            "        applies_when:\n"
+            "          connection_types: [usb]\n"
+            "          requires_ip_address: true\n"
+        ),
+    )
+    manifest = load_manifest_yaml(yaml_text)
+    check = manifest.platforms[0].health_checks[0]
+    assert check.applies_when is not None
+    assert check.applies_when.connection_types == ["usb"]
+    assert check.applies_when.requires_ip_address is True
+
+
+def test_health_check_entry_rejects_invalid_applies_when_connection_type() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    health_checks:\n"
+            "      - id: ip_ping\n"
+            "        label: IP Ping\n"
+            "        applies_when:\n"
+            "          connection_types: [bluetooth]\n"
+        ),
+    )
+    with pytest.raises(ManifestValidationError):
+        load_manifest_yaml(yaml_text)
+
+
+def test_health_check_entry_applies_when_optional() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (_IDENTITY_LINE + "\n    health_checks:\n      - id: adb_connected\n        label: ADB Connected\n"),
+    )
+    manifest = load_manifest_yaml(yaml_text)
+    check = manifest.platforms[0].health_checks[0]
+    assert check.applies_when is None
 
 
 def test_curated_manifests_pin_appium_and_driver_versions() -> None:

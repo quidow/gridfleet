@@ -13,6 +13,9 @@ class _Ctx:
     platform_id = "ios"
     device_type = "real_device"
     connection_type = "usb"
+    ip_address: str | None = None
+    ip_ping_timeout_sec: float | None = None
+    ip_ping_count: int | None = None
 
 
 DEVICECTL_DETAILS = {
@@ -243,3 +246,102 @@ async def test_health_real_device_reports_missing_devicectl_visibility(
     assert len(result) == 1
     assert result[0].check_id == "devicectl_visible"
     assert result[0].ok is False
+
+
+# ---------------------------------------------------------------------------
+# ip_ping health check tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
+@patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
+@patch("adapter.health.icmp_reachable", new_callable=AsyncMock, return_value=True)
+async def test_health_check_emits_ip_ping_when_ip_set(
+    mock_icmp: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
+) -> None:
+    ctx = _Ctx()
+    ctx.connection_type = "usb"
+    ctx.ip_address = "10.0.0.7"
+
+    results = await health_check(ctx)
+
+    ip_ping_results = [r for r in results if r.check_id == "ip_ping"]
+    assert len(ip_ping_results) == 1
+    assert ip_ping_results[0].ok is True
+    assert ip_ping_results[0].detail == ""
+
+
+@pytest.mark.asyncio
+@patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
+@patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
+async def test_health_check_omits_ip_ping_when_ip_unset(
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    icmp_called: list[str] = []
+
+    async def recording_icmp_reachable(host: str, *, timeout: float = 2.0, count: int = 1) -> bool:
+        icmp_called.append(host)
+        return True
+
+    monkeypatch.setattr("adapter.health.icmp_reachable", recording_icmp_reachable)
+
+    ctx = _Ctx()
+    ctx.connection_type = "usb"
+    ctx.ip_address = None
+
+    results = await health_check(ctx)
+
+    assert not any(r.check_id == "ip_ping" for r in results)
+    assert icmp_called == [], "icmp_reachable must not be called when ip_address is None"
+
+
+@pytest.mark.asyncio
+@patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
+@patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
+async def test_health_check_omits_ip_ping_when_connection_type_not_usb(
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    icmp_called: list[str] = []
+
+    async def recording_icmp_reachable(host: str, *, timeout: float = 2.0, count: int = 1) -> bool:
+        icmp_called.append(host)
+        return True
+
+    monkeypatch.setattr("adapter.health.icmp_reachable", recording_icmp_reachable)
+
+    ctx = _Ctx()
+    ctx.connection_type = "network"
+    ctx.ip_address = "10.0.0.7"
+
+    results = await health_check(ctx)
+
+    assert not any(r.check_id == "ip_ping" for r in results)
+    assert icmp_called == [], "icmp_reachable must not be called when connection_type != 'usb'"
+
+
+@pytest.mark.asyncio
+@patch("adapter.health._simulator_state", new_callable=AsyncMock, return_value=None)
+@patch("adapter.health._devicectl_device_details", new_callable=AsyncMock, return_value=DEVICECTL_DETAILS)
+@patch("adapter.health.icmp_reachable", new_callable=AsyncMock, return_value=False)
+async def test_health_check_marks_ip_ping_failure(
+    mock_icmp: AsyncMock,
+    _mock_details: AsyncMock,
+    _mock_state: AsyncMock,
+) -> None:
+    ctx = _Ctx()
+    ctx.connection_type = "usb"
+    ctx.ip_address = "10.0.0.7"
+
+    results = await health_check(ctx)
+
+    ip_ping_results = [r for r in results if r.check_id == "ip_ping"]
+    assert len(ip_ping_results) == 1
+    assert ip_ping_results[0].ok is False
+    assert ip_ping_results[0].detail != ""

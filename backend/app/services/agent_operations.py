@@ -517,6 +517,8 @@ async def pack_device_health(
     ip_address: str | None = None,
     allow_boot: bool = False,
     headless: bool | None = None,
+    ip_ping_timeout_sec: float | None = None,
+    ip_ping_count: int | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
 ) -> dict[str, Any]:
@@ -532,6 +534,10 @@ async def pack_device_health(
         params["ip_address"] = ip_address
     if headless is not None:
         params["headless"] = headless
+    if ip_ping_timeout_sec is not None:
+        params["ip_ping_timeout_sec"] = ip_ping_timeout_sec
+    if ip_ping_count is not None:
+        params["ip_ping_count"] = ip_ping_count
     response = await _send_request(
         "GET",
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/health",

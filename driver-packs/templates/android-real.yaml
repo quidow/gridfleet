@@ -52,6 +52,11 @@ platforms:
         label: Boot Completed
       - id: ping
         label: IP Reachable
+      - id: ip_ping
+        label: ICMP Reachable
+        applies_when:
+          connection_types: [usb]
+          requires_ip_address: true
     lifecycle_actions:
       - id: state
       - id: reconnect

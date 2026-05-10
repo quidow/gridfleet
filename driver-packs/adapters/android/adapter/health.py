@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import re
 
-from agent_app.pack.adapter_types import HealthCheckResult, HealthContext
-from agent_app.pack.adapter_utils import run_cmd, tcp_reachable
-
 from adapter.tools import find_adb, get_running_emulator_avd_name
+from agent_app.pack.adapter_types import HealthCheckResult, HealthContext
+from agent_app.pack.adapter_utils import icmp_reachable, run_cmd, tcp_reachable
 
 _IP_PORT_RE = re.compile(r"^(?P<host>\d+\.\d+\.\d+\.\d+):(?P<port>\d+)$")
 _EMULATOR_SERIAL_RE = re.compile(r"^emulator-\d+$")
@@ -40,6 +39,17 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
     ping_result = await _network_ping(serial)
     if ping_result is not None:
         results.append(ping_result)
+    if getattr(ctx, "connection_type", None) == "usb" and getattr(ctx, "ip_address", None):
+        timeout = float(getattr(ctx, "ip_ping_timeout_sec", None) or 2.0)
+        count = int(getattr(ctx, "ip_ping_count", None) or 1)
+        reachable = await icmp_reachable(ctx.ip_address, timeout=timeout, count=count)
+        results.append(
+            HealthCheckResult(
+                check_id="ip_ping",
+                ok=reachable,
+                detail="" if reachable else "ICMP echo unanswered",
+            )
+        )
     return results
 
 

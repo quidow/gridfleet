@@ -83,6 +83,9 @@ class HealthContext(Protocol):
     platform_id: str | None
     device_type: str | None
     connection_type: str | None
+    ip_address: str | None
+    ip_ping_timeout_sec: float | None
+    ip_ping_count: int | None
 
 
 class DoctorContext(Protocol):

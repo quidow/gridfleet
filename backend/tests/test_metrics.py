@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.metrics import DEVICES_IN_COOLDOWN, refresh_system_gauges
@@ -73,3 +74,19 @@ async def test_refresh_system_gauges_counts_active_cooldowns(
     await refresh_system_gauges(db_session)
 
     assert DEVICES_IN_COOLDOWN._value.get() == 1
+
+
+def test_ip_ping_metrics_registered() -> None:
+    from app.metrics import (
+        record_ip_ping_failure,
+        set_ip_ping_consecutive_failures,
+    )
+
+    record_ip_ping_failure(device_identity="dev-1", host="host-a")
+    set_ip_ping_consecutive_failures(device_identity="dev-1", host="host-a", value=2)
+
+    # prometheus_client strips the _total suffix from Counter metric names when
+    # iterating REGISTRY.collect(); samples are still emitted as *_total.
+    registered_names = {m.name for m in REGISTRY.collect()}
+    assert "gridfleet_ip_ping_failures" in registered_names
+    assert "gridfleet_ip_ping_consecutive_failures" in registered_names

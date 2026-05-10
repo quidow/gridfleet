@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode, NodeState
@@ -33,6 +34,8 @@ from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
+IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
+IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
 
 
@@ -99,7 +102,12 @@ async def _get_agent_devices(host: Host) -> set[str] | None:
         return None
 
 
-async def _get_device_health(device: Device) -> dict[str, Any] | None:
+async def _get_device_health(
+    device: Device,
+    *,
+    ip_ping_timeout_sec: float | None = None,
+    ip_ping_count: int | None = None,
+) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
         return None
@@ -114,6 +122,8 @@ async def _get_device_health(device: Device) -> dict[str, Any] | None:
             device_type=device.device_type.value if device.device_type else "real_device",
             connection_type=device.connection_type.value if device.connection_type else None,
             ip_address=device.ip_address,
+            ip_ping_timeout_sec=ip_ping_timeout_sec,
+            ip_ping_count=ip_ping_count,
             http_client_factory=httpx.AsyncClient,
         )
     except AgentCallError:
@@ -188,6 +198,41 @@ def _summarize_unhealthy_result(result: dict[str, Any] | None) -> str:
     return "Device health checks failed"
 
 
+def _split_ip_ping(checks: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Separate the ip_ping check entry from the remaining checks list."""
+    ip_ping: dict[str, Any] | None = None
+    others: list[dict[str, Any]] = []
+    for entry in checks:
+        if isinstance(entry, dict) and entry.get("check_id") == IP_PING_CHECK_ID:
+            ip_ping = entry
+        else:
+            others.append(entry)
+    return ip_ping, others
+
+
+async def _apply_ip_ping_hysteresis(
+    db: AsyncSession,
+    device: Device,
+    *,
+    ok: bool,
+    threshold: int,
+) -> bool:
+    """Increment / reset the consecutive-failure counter and return the gated boolean.
+
+    Returns True while the failure count is below threshold (suppressing the
+    failure), False once the count reaches or exceeds threshold, and always
+    True (plus counter reset) on success.
+    """
+    if ok:
+        await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
+        return True
+
+    current = await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+    counter = int(current) + 1 if isinstance(current, int) else 1
+    await control_plane_state_store.set_value(db, IP_PING_NAMESPACE, device.identity_value, counter)
+    return counter < threshold
+
+
 async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
     """Stop an Appium node through the host agent."""
     return await stop_node_via_agent_helper(device, node, http_client_factory=httpx.AsyncClient)
@@ -222,6 +267,10 @@ async def track_previously_offline_device(db: AsyncSession, identity_value: str)
 
 
 async def _check_connectivity(db: AsyncSession) -> None:
+    ip_ping_threshold = int(settings_service.get("device_checks.ip_ping.consecutive_fail_threshold"))
+    ip_ping_timeout = float(settings_service.get("device_checks.ip_ping.timeout_sec"))
+    ip_ping_count = int(settings_service.get("device_checks.ip_ping.count_per_cycle"))
+
     stmt = select(Host).where(Host.status == HostStatus.online)
     result = await db.execute(stmt)
     hosts = result.scalars().all()
@@ -246,33 +295,78 @@ async def _check_connectivity(db: AsyncSession) -> None:
 
             if _device_expected_aliases(device) & connected_targets:
                 # Device is connected
-                health_result = await _get_device_health(device)
+                health_result = await _get_device_health(
+                    device,
+                    ip_ping_timeout_sec=ip_ping_timeout,
+                    ip_ping_count=ip_ping_count,
+                )
                 await assert_current_leader(db)
-                if health_result is not None and not health_result.get("healthy", False):
-                    await device_health.update_device_checks(
-                        db,
-                        device,
-                        healthy=False,
-                        summary=_summarize_unhealthy_result(health_result),
-                    )
-                    await lifecycle_policy.handle_health_failure(
-                        db,
-                        device,
-                        source="device_checks",
-                        reason=_summarize_unhealthy_result(health_result),
-                    )
-                    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
-                    continue
                 if health_result is not None:
-                    summary = (
-                        "Healthy" if health_result.get("healthy", False) else _summarize_unhealthy_result(health_result)
-                    )
-                    await device_health.update_device_checks(
-                        db,
-                        device,
-                        healthy=bool(health_result.get("healthy", False)),
-                        summary=summary,
-                    )
+                    raw_checks = health_result.get("checks") or []
+                    raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
+                    ip_ping_entry, other_checks = _split_ip_ping(raw_checks_list)
+
+                    # When no checks are listed at all, trust the top-level healthy flag.
+                    # When checks are listed, derive health from individual check results.
+                    if not raw_checks_list:
+                        others_ok = bool(health_result.get("healthy", True))
+                    else:
+                        others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
+                    gated_ip_ping_ok = True
+                    if ip_ping_entry is not None and device.hold != DeviceHold.maintenance and device.auto_manage:
+                        gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
+                            db,
+                            device,
+                            ok=bool(ip_ping_entry.get("ok")),
+                            threshold=ip_ping_threshold,
+                        )
+                        if not bool(ip_ping_entry.get("ok")):
+                            metrics.record_ip_ping_failure(device_identity=device.identity_value, host=host.hostname)
+                        counter_value = await control_plane_state_store.get_value(
+                            db, IP_PING_NAMESPACE, device.identity_value
+                        )
+                        metrics.set_ip_ping_consecutive_failures(
+                            device_identity=device.identity_value,
+                            host=host.hostname,
+                            value=int(counter_value or 0),
+                        )
+                    healthy = others_ok and gated_ip_ping_ok
+
+                    if not healthy:
+                        summary = _summarize_unhealthy_result(health_result)
+                        await device_health.update_device_checks(
+                            db,
+                            device,
+                            healthy=False,
+                            summary=summary,
+                        )
+                        await lifecycle_policy.handle_health_failure(
+                            db,
+                            device,
+                            source="device_checks",
+                            reason=summary,
+                        )
+                        await control_plane_state_store.set_value(
+                            db, CONNECTIVITY_NAMESPACE, device.identity_value, True
+                        )
+                        continue
+                    else:
+                        counter = (
+                            await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+                            if ip_ping_entry is not None
+                            else None
+                        )
+                        summary = (
+                            f"Healthy (ip_ping miss {counter}/{ip_ping_threshold})"
+                            if isinstance(counter, int) and counter > 0
+                            else "Healthy"
+                        )
+                        await device_health.update_device_checks(
+                            db,
+                            device,
+                            healthy=True,
+                            summary=summary,
+                        )
 
                 if device.operational_state == DeviceOperationalState.offline:
                     if not await is_ready_for_use_async(db, device):
@@ -306,54 +400,103 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         )
             else:
                 if await _uses_endpoint_health(db, device):
-                    health_result = await _get_device_health(device)
+                    health_result = await _get_device_health(
+                        device,
+                        ip_ping_timeout_sec=ip_ping_timeout,
+                        ip_ping_count=ip_ping_count,
+                    )
                     await assert_current_leader(db)
-                    if health_result is not None and health_result.get("healthy", False):
-                        await device_health.update_device_checks(db, device, healthy=True, summary="Healthy")
-                        if device.operational_state == DeviceOperationalState.offline:
-                            if not await is_ready_for_use_async(db, device):
-                                logger.debug("Device %s is healthy but still awaiting setup/verification", device.name)
-                                await control_plane_state_store.delete_value(
-                                    db, CONNECTIVITY_NAMESPACE, device.identity_value
-                                )
-                                continue
-                            if not device.auto_manage:
-                                logger.debug(
-                                    "Device %s is healthy but auto_manage is off — skipping auto-start",
-                                    device.name,
-                                )
-                                await control_plane_state_store.delete_value(
-                                    db, CONNECTIVITY_NAMESPACE, device.identity_value
-                                )
-                                continue
-                            previously_offline = await control_plane_state_store.get_value(
-                                db,
-                                CONNECTIVITY_NAMESPACE,
-                                device.identity_value,
-                            )
-                            restored = await lifecycle_policy.attempt_auto_recovery(
+                    if health_result is not None:
+                        raw_checks = health_result.get("checks") or []
+                        raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
+                        ip_ping_entry, other_checks = _split_ip_ping(raw_checks_list)
+
+                        # When no checks are listed at all, trust the top-level healthy flag.
+                        # When checks are listed, derive health from individual check results.
+                        if not raw_checks_list:
+                            others_ok = bool(health_result.get("healthy", True))
+                        else:
+                            others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
+                        gated_ip_ping_ok = True
+                        if ip_ping_entry is not None and device.hold != DeviceHold.maintenance and device.auto_manage:
+                            gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                                 db,
                                 device,
-                                source="device_checks",
-                                reason=(
-                                    "Device reconnected and passed endpoint health checks"
-                                    if previously_offline
-                                    else "Startup recovery after healthy endpoint check"
-                                ),
+                                ok=bool(ip_ping_entry.get("ok")),
+                                threshold=ip_ping_threshold,
                             )
-                            if restored:
+                            if not bool(ip_ping_entry.get("ok")):
+                                metrics.record_ip_ping_failure(
+                                    device_identity=device.identity_value, host=host.hostname
+                                )
+                            counter_value = await control_plane_state_store.get_value(
+                                db, IP_PING_NAMESPACE, device.identity_value
+                            )
+                            metrics.set_ip_ping_consecutive_failures(
+                                device_identity=device.identity_value,
+                                host=host.hostname,
+                                value=int(counter_value or 0),
+                            )
+                        healthy = others_ok and gated_ip_ping_ok
+
+                        if healthy:
+                            counter = (
+                                await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+                                if ip_ping_entry is not None
+                                else None
+                            )
+                            summary = (
+                                f"Healthy (ip_ping miss {counter}/{ip_ping_threshold})"
+                                if isinstance(counter, int) and counter > 0
+                                else "Healthy"
+                            )
+                            await device_health.update_device_checks(db, device, healthy=True, summary=summary)
+                            if device.operational_state == DeviceOperationalState.offline:
+                                if not await is_ready_for_use_async(db, device):
+                                    logger.debug(
+                                        "Device %s is healthy but still awaiting setup/verification", device.name
+                                    )
+                                    await control_plane_state_store.delete_value(
+                                        db, CONNECTIVITY_NAMESPACE, device.identity_value
+                                    )
+                                    continue
+                                if not device.auto_manage:
+                                    logger.debug(
+                                        "Device %s is healthy but auto_manage is off — skipping auto-start",
+                                        device.name,
+                                    )
+                                    await control_plane_state_store.delete_value(
+                                        db, CONNECTIVITY_NAMESPACE, device.identity_value
+                                    )
+                                    continue
+                                previously_offline = await control_plane_state_store.get_value(
+                                    db,
+                                    CONNECTIVITY_NAMESPACE,
+                                    device.identity_value,
+                                )
+                                restored = await lifecycle_policy.attempt_auto_recovery(
+                                    db,
+                                    device,
+                                    source="device_checks",
+                                    reason=(
+                                        "Device reconnected and passed endpoint health checks"
+                                        if previously_offline
+                                        else "Startup recovery after healthy endpoint check"
+                                    ),
+                                )
+                                if restored:
+                                    await control_plane_state_store.delete_value(
+                                        db, CONNECTIVITY_NAMESPACE, device.identity_value
+                                    )
+                                else:
+                                    await control_plane_state_store.set_value(
+                                        db, CONNECTIVITY_NAMESPACE, device.identity_value, True
+                                    )
+                            else:
                                 await control_plane_state_store.delete_value(
                                     db, CONNECTIVITY_NAMESPACE, device.identity_value
                                 )
-                            else:
-                                await control_plane_state_store.set_value(
-                                    db, CONNECTIVITY_NAMESPACE, device.identity_value, True
-                                )
-                        else:
-                            await control_plane_state_store.delete_value(
-                                db, CONNECTIVITY_NAMESPACE, device.identity_value
-                            )
-                        continue
+                            continue
                 # Device disconnected
                 # Maintenance devices are placed there by operators; transient
                 # disconnects are not actionable — skip silently to match pre-PR
