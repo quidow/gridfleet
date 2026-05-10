@@ -32,6 +32,7 @@ from agent_app.capabilities import (
 from agent_app.config import agent_settings
 from agent_app.driver_doctor import run_driver_doctor
 from agent_app.error_codes import AgentErrorCode, http_exc
+from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
 from agent_app.host_telemetry import get_host_telemetry
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
@@ -64,6 +65,7 @@ configure_logging()
 
 appium_mgr = AppiumProcessManager()
 tools_ensure_lock = asyncio.Lock()
+GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
 def _manager_auth() -> httpx.BasicAuth | None:
@@ -164,6 +166,30 @@ def _build_adapter_loader(
     return _load
 
 
+async def _stop_grid_node_supervisors_for_shutdown(
+    manager: AppiumProcessManager,
+    *,
+    timeout_sec: float = GRID_NODE_SHUTDOWN_TIMEOUT_SEC,
+) -> None:
+    supervisors = list(manager._grid_supervisors.items())
+    if not supervisors:
+        return
+
+    async def _stop_one(port: int, supervisor: GridNodeSupervisorHandle) -> None:
+        try:
+            await supervisor.stop()
+        finally:
+            manager._grid_supervisors.pop(port, None)
+
+    tasks = [asyncio.create_task(_stop_one(port, supervisor)) for port, supervisor in supervisors]
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_sec)
+    except TimeoutError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 def _get_network_devices() -> list[dict[str, Any]]:
     """Return network devices from currently running Appium processes."""
     devices: list[dict[str, Any]] = []
@@ -222,6 +248,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             pack_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
+        await _stop_grid_node_supervisors_for_shutdown(appium_mgr)
         await appium_mgr.shutdown()
         await sidecar_supervisor.shutdown()
         await close_shared_http_client()
