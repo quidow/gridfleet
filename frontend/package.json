@@ -26,7 +26,11 @@
     "test:watch": "vitest",
     "test:e2e": "npm run test:e2e:mocked && npm run test:e2e:live",
     "test:e2e:mocked": "node scripts/run-playwright.mjs test --config playwright.config.ts",
-    "test:e2e:live": "node scripts/run-playwright.mjs test --config playwright.live.config.ts"
+    "test:e2e:live": "node scripts/run-playwright.mjs test --config playwright.live.config.ts",
+    "openapi:dump": "cd ../backend && uv run python -m app.scripts.dump_openapi --out ../frontend/openapi.json",
+    "openapi:generate": "openapi-typescript ./openapi.json --output ./src/api/openapi.ts",
+    "types:generate": "npm run openapi:dump && npm run openapi:generate",
+    "types:check": "npm run types:generate && git diff --exit-code -- src/api/openapi.ts"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
@@ -61,6 +65,7 @@
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
     "knip": "^6.12.1",
+    "openapi-typescript": "^7.13.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.11",

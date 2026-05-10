@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# OpenAPI dump used by openapi-typescript; the .ts file is the committed contract.
+openapi.json
