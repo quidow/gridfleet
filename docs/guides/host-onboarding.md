@@ -74,7 +74,7 @@ Approval behavior:
 
 - sets the host to `online`
 - triggers automatic discovery
-- ensures configured Appium and Selenium JAR versions
+- ensures the configured Appium version
 - triggers automatic Appium driver sync after tool version checks
 
 Rejection behavior:
@@ -89,7 +89,7 @@ Open the host in Hosts or Host Detail and confirm:
 - the reported IP and OS are correct
 - the reported agent version is not marked `outdated`
 - the capabilities block matches what the machine should support
-- the Tool Versions section shows the expected Appium, Node, and Selenium JAR versions
+- the Tool Versions section shows the expected Appium, Node, Node provider, and iOS helper versions
 - the Appium Drivers section is present and can be synced
 
 The Host Detail page is the best place to confirm all of that before importing devices.

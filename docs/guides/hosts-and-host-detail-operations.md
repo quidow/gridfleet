@@ -61,11 +61,11 @@ Main sections:
 - `Capabilities`
   - platform and tool summary reported by the agent
 - `Diagnostics`
-  - per-host circuit-breaker state, latest managed Appium processes snapshot, and recent agent-local Appium or Grid relay recovery events
+  - per-host circuit-breaker state, latest managed Appium processes snapshot, and recent agent-local Appium recovery events
 - `Devices`
   - current attached device records for that host
 - `Tool Versions`
-  - Appium, Node provider, Node, and Selenium JAR versions plus a background `Ensure Versions` job
+  - Appium, Node provider, Node, and iOS helper versions plus a background `Ensure Versions` job
 - `Appium Drivers`
   - required versus installed driver versions plus `Sync Drivers`
 
@@ -80,7 +80,7 @@ Use it when you need to answer:
 - is the shared backend agent circuit currently open for this host
 - when did this host last report managed Appium process state
 - which Appium ports are currently reported as running, including unmapped process ports
-- whether the agent recently detected a local Appium or Grid relay crash, recovered it, or exhausted local restart attempts
+- whether the agent recently detected a local Appium crash, recovered it, or exhausted local restart attempts
 
 This surface is diagnostic only. It does not add manual diagnostics controls.
 

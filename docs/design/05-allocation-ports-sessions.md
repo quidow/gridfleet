@@ -67,7 +67,7 @@ Two ranges, two owners:
 | Range | Owner | Purpose | Default |
 | --- | --- | --- | --- |
 | `appium.port_range_start..appium.port_range_end` | manager (DB-tracked via `AppiumNode.port`) | one Appium server per managed node | `4723..4823` |
-| `AGENT_GRID_NODE_PORT_START` upward | agent (host-local) | one Selenium Grid relay per Appium node | per-host setting |
+| `AGENT_GRID_NODE_PORT_START` upward | agent (host-local) | one Python Grid Node HTTP server per Appium node | per-host setting |
 | Per-device parallel resources (e.g. `mjpegServerPort`, `chromedriverPort`) | typed claim table | extra Appium-side ports the pack manifest declares | depends on manifest |
 
 Only the first range is the "main" Appium port. The other two come into play after `/agent/appium/start` succeeds and Appium spawns its own helpers.
@@ -109,13 +109,13 @@ The operator `restart_node` path marks the old node stopped after an acknowledge
 
 ## Grid sessions and Selenium Grid registration
 
-Each Appium node is paired on the agent host with a Selenium Grid relay process — a Java sidecar that registers the Appium server with the central hub. The backend sees this only indirectly via `grid_service.get_grid_status()` (`backend/app/services/grid_service.py`), which fetches `/status` from the hub.
+Each Appium node is paired on the agent host with an in-process Python Grid Node service that registers the Appium server with the central hub over Selenium Grid's event bus. The backend sees this only indirectly via `grid_service.get_grid_status()` (`backend/app/services/grid_service.py`), which fetches `/status` from the hub.
 
 Two consequences for the lifecycle:
 
-1. **Started Appium != usable node.** A successful `/agent/appium/start` returns 2xx as soon as Appium is alive, but the Grid relay registration is asynchronous on the agent side. `node_health_loop` gives a "registration grace window" equal to `appium.startup_timeout_sec` before treating "not in Grid status" as a failure. Inside that window the derived node health stays running.
+1. **Started Appium != usable node.** A successful `/agent/appium/start` returns 2xx as soon as Appium is alive, but Grid Node registration is asynchronous on the agent side. `node_health_loop` gives a "registration grace window" equal to `appium.startup_timeout_sec` before treating "not in Grid status" as a failure. Inside that window the derived node health stays running.
 
-2. **Stopped Appium ≠ no Grid registration.** Killing the Appium process should also tear down the Grid relay, but only if the agent acknowledged the stop. An orphan Appium plus its still-registered relay means Grid will keep routing sessions to it. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because Grid is still using the slot.
+2. **Stopped Appium does not guarantee no Grid registration.** Killing the Appium process should also tear down the Python Grid Node, but only if the agent acknowledged the stop. An orphan Appium plus its still-registered Grid Node means Grid will keep routing sessions to it. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because Grid is still using the slot.
 
 `available_node_device_ids` (`grid_service.py`) extracts the set of GridFleet-tagged device IDs from `/status` so loops can see "what does Grid think is available right now" without scraping HTML.
 

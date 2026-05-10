@@ -13,7 +13,7 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 | `node_service` (`backend/app/services/node_service.py`) | All operator + loop-driven node lifecycle: start/stop/restart, `mark_node_*`, agent dispatch helpers |
 | `node_health_loop` (`backend/app/services/node_health.py`) | Periodic health probe, owns auto-restart |
 | `agent_operations` (`backend/app/services/agent_operations.py`) | Typed wrapper around agent HTTP endpoints |
-| Host agent (`agent/agent_app/`) | Spawns Appium + Selenium Grid relay subprocesses |
+| Host agent (`agent/agent_app/`) | Spawns Appium subprocesses and in-process Python Grid Node services |
 
 ## The DB↔agent contract in one sentence
 
