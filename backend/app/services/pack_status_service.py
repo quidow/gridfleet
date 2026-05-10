@@ -100,16 +100,16 @@ async def apply_status(session: AsyncSession, payload: dict[str, Any]) -> None:
             if pack.get("status") == "installed":
                 existing_pack.installed_at = datetime.now(UTC)
 
-    posted_pack_ids = {p["pack_id"] for p in payload.get("packs", [])}
-    if posted_pack_ids:
+    doctor_scope_pack_ids = {p["pack_id"] for p in payload.get("packs", []) if p.get("status") == "installed"}
+    if doctor_scope_pack_ids:
         await session.execute(
             delete(HostPackDoctorResult).where(
                 HostPackDoctorResult.host_id == host_id,
-                HostPackDoctorResult.pack_id.in_(posted_pack_ids),
+                HostPackDoctorResult.pack_id.in_(doctor_scope_pack_ids),
             )
         )
     for d in payload.get("doctor", []):
-        if d["pack_id"] not in posted_pack_ids:
+        if d["pack_id"] not in doctor_scope_pack_ids:
             continue
         session.add(
             HostPackDoctorResult(

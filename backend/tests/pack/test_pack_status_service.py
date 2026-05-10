@@ -431,3 +431,67 @@ async def test_apply_status_ignores_doctor_entries_for_unreported_packs(db_sessi
     )
     pack_ids = {row.pack_id for row in rows}
     assert pack_ids == {"appium-uiautomator2"}
+
+
+@pytest.mark.asyncio
+async def test_apply_status_preserves_doctor_rows_for_blocked_packs(db_session: AsyncSession) -> None:
+    """Blocked packs did not run doctor; previously-recorded rows must not be wiped."""
+    await seed_test_packs(db_session)
+
+    host = Host(
+        hostname="h-doctor-blocked.local",
+        ip="10.0.0.44",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+
+    db_session.add(
+        HostPackDoctorResult(
+            host_id=host.id,
+            pack_id="appium-uiautomator2",
+            check_id="adb",
+            ok=True,
+            message="last good check",
+        )
+    )
+    await db_session.commit()
+
+    payload = {
+        "host_id": str(host.id),
+        "runtimes": [],
+        "packs": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "pack_release": "2026.04.0",
+                "runtime_id": None,
+                "status": "blocked",
+                "resolved_install_spec": None,
+                "installer_log_excerpt": None,
+                "resolver_version": None,
+                "blocked_reason": "runtime install failed",
+            }
+        ],
+        "doctor": [],
+    }
+
+    await apply_status(db_session, payload)
+    await db_session.commit()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(HostPackDoctorResult).where(
+                    HostPackDoctorResult.host_id == host.id,
+                    HostPackDoctorResult.pack_id == "appium-uiautomator2",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].check_id == "adb"
+    assert rows[0].message == "last good check"
