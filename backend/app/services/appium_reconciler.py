@@ -193,7 +193,7 @@ async def appium_reconciler_loop_tick(
         except Exception:
             logger.warning("appium_reconciler_host_failed", exc_info=True, host_id=str(host_id))
             continue
-        total_stopped += len(list(stopped))
+        total_stopped += len(stopped)
     return total_stopped
 
 

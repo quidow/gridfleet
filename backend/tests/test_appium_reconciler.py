@@ -187,9 +187,7 @@ async def test_reconcile_host_orphans_continues_after_stop_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_appium_reconciler_loop_tick_visits_each_online_host(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_appium_reconciler_loop_tick_visits_each_online_host() -> None:
     host_a = uuid.uuid4()
     host_b = uuid.uuid4()
     list_hosts = AsyncMock(
