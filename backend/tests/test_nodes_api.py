@@ -365,7 +365,13 @@ async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
 
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200
-    assert detail.json()["appium_node"] is None
+    node = detail.json()["appium_node"]
+    assert node["state"] == "stopped"
+    # Rollback writes desired_state='stopped' on inline-RPC failure so the
+    # AppiumNode row is consistent. Phase 4 reconciler would otherwise try to
+    # converge a desired-running row whose agent-side start never succeeded.
+    assert node["desired_state"] == "stopped"
+    assert node["desired_port"] is None
 
 
 async def test_start_node_retries_next_port_when_agent_reports_port_conflict(

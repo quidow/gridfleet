@@ -23,6 +23,7 @@ from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_state_machine import DeviceStateMachine
@@ -245,6 +246,13 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None or locked_node.state == NodeState.stopped:
         return None
+
+    await write_desired_state(
+        db,
+        node=locked_node,
+        target=NodeState.stopped,
+        caller="connectivity",
+    )
 
     stopped = await _stop_node_via_agent(locked_device, locked_node)
     new_state = NodeState.stopped if stopped else NodeState.error

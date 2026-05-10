@@ -14,6 +14,7 @@ from app.errors import AgentCallError
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
+from app.services.desired_state_writer import DesiredStateCaller
 from app.services.device_service import delete_device
 from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.maintenance_service import enter_maintenance, exit_maintenance, schedule_device_recovery
@@ -48,7 +49,7 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-ManagerCall = Callable[[AsyncSession, Device], Awaitable[object]]
+ManagerCall = Callable[..., Awaitable[object]]
 
 
 async def _run_per_device_node_action(
@@ -57,6 +58,7 @@ async def _run_per_device_node_action(
     *,
     operation: str,
     manager_call: ManagerCall,
+    caller: DesiredStateCaller,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
     session_factory = _session_factory_from_db(db)
@@ -67,7 +69,7 @@ async def _run_per_device_node_action(
         async with sem, session_factory() as session:
             try:
                 device = await device_locking.lock_device(session, device_id)
-                await manager_call(session, device)
+                await manager_call(session, device, caller=caller)
                 await session.commit()
             except NoResultFound:
                 errors[str(device_id)] = "Device not found"
@@ -90,30 +92,48 @@ async def _run_per_device_node_action(
     return _result(len(existing_device_ids), succeeded, errors)
 
 
-async def bulk_start_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_start_nodes(
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    caller: DesiredStateCaller = "bulk",
+) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
         device_ids,
         operation="start_nodes",
         manager_call=start_node,
+        caller=caller,
     )
 
 
-async def bulk_stop_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_stop_nodes(
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    caller: DesiredStateCaller = "bulk",
+) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
         device_ids,
         operation="stop_nodes",
         manager_call=stop_node,
+        caller=caller,
     )
 
 
-async def bulk_restart_nodes(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_restart_nodes(
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    caller: DesiredStateCaller = "bulk",
+) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
         device_ids,
         operation="restart_nodes",
         manager_call=restart_node,
+        caller=caller,
     )
 
 

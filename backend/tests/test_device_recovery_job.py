@@ -22,7 +22,7 @@ def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSessio
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
 
-async def _make_device_available(_db: AsyncSession, device: Device) -> None:
+async def _make_device_available(_db: AsyncSession, device: Device, *, caller: str = "operator_route") -> None:
     """Side-effect for start_managed_node stub — marks device available."""
     device.operational_state = DeviceOperationalState.available
 

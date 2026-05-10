@@ -78,17 +78,17 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         ),
     ]
 
-    async def fake_start_node(_db: AsyncSession, device: Device) -> object:
+    async def fake_start_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot start")
         return object()
 
-    async def fake_stop_node(_db: AsyncSession, device: Device) -> object:
+    async def fake_stop_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
         if device.id == devices[1].id:
             raise RuntimeError("cannot stop")
         return object()
 
-    async def fake_restart_node(_db: AsyncSession, device: Device) -> object:
+    async def fake_restart_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot restart")
         return object()

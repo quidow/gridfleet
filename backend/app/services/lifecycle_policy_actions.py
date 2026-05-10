@@ -15,6 +15,7 @@ from app.services import (
     lifecycle_incident_service,
     run_reservation_service,
 )
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_event_service import record_event
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import (
@@ -207,7 +208,7 @@ async def handle_node_crash(
 
     if node is not None and node.state == NodeState.running:
         try:
-            await stop_managed_node(db, device)
+            await stop_managed_node(db, device, caller="lifecycle_crash")
         except Exception:
             # stop_managed_node may commit before raising, releasing both row locks.
             # Re-acquire in the documented Device -> AppiumNode order before
@@ -220,6 +221,12 @@ async def handle_node_crash(
                 reason=f"Node crash recorded ({source}): {reason}",
             )
             if locked_node is not None:
+                await write_desired_state(
+                    db,
+                    node=locked_node,
+                    target=NodeState.stopped,
+                    caller="lifecycle_crash",
+                )
                 locked_node.state = NodeState.error
                 locked_node.pid = None
             await db.commit()
@@ -229,9 +236,16 @@ async def handle_node_crash(
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
         )
-        if node is not None and node.state == NodeState.running:
-            node.state = NodeState.stopped
-            node.pid = None
+        if node is not None:
+            await write_desired_state(
+                db,
+                node=node,
+                target=NodeState.stopped,
+                caller="lifecycle_crash",
+            )
+            if node.state == NodeState.running:
+                node.state = NodeState.stopped
+                node.pid = None
         await db.commit()
 
 

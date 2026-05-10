@@ -50,6 +50,21 @@ APPIUM_RECONCILER_LAST_CYCLE_SECONDS = Gauge(
     "appium_reconciler_last_cycle_seconds",
     "Wall-clock duration of the most recent reconciler cycle.",
 )
+APPIUM_DESIRED_STATE_WRITES = Counter(
+    "appium_desired_state_writes_total",
+    "Total writes of AppiumNode.desired_state by Phase 3 writers.",
+    labelnames=("caller", "target_state"),
+)
+APPIUM_TRANSITION_TOKEN_WRITES = Counter(
+    "appium_transition_token_writes_total",
+    "Total transition_token allocations by Phase 3 writers.",
+    labelnames=("caller",),
+)
+APPIUM_TRANSITION_TOKEN_OVERRIDDEN = Counter(
+    "appium_transition_token_overridden_total",
+    "Counts every time one writer overrode another writer's pending transition_token.",
+    labelnames=("losing_source", "winning_source"),
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "webhook_deliveries_total",
     "Webhook delivery state transitions.",

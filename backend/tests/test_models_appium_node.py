@@ -32,3 +32,9 @@ async def test_appium_node_desired_state_defaults_to_stopped(
     assert node.transition_token is None
     assert node.transition_deadline is None
     assert node.last_observed_at is None
+
+
+async def test_device_event_type_includes_desired_state_changed() -> None:
+    from app.models.device_event import DeviceEventType
+
+    assert DeviceEventType.desired_state_changed.value == "desired_state_changed"

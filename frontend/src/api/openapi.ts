@@ -2520,7 +2520,7 @@ export interface components {
          * DeviceEventType
          * @enum {string}
          */
-        DeviceEventType: "health_check_fail" | "connectivity_lost" | "node_crash" | "node_restart" | "hardware_health_changed" | "connectivity_restored" | "lifecycle_deferred_stop" | "lifecycle_auto_stopped" | "lifecycle_recovery_suppressed" | "lifecycle_recovery_failed" | "lifecycle_recovery_backoff" | "lifecycle_recovered" | "lifecycle_run_excluded" | "lifecycle_run_restored" | "lifecycle_run_cooldown_set" | "lifecycle_run_cooldown_escalated" | "maintenance_entered" | "maintenance_exited" | "session_started" | "session_ended" | "auto_stopped";
+        DeviceEventType: "health_check_fail" | "connectivity_lost" | "node_crash" | "node_restart" | "hardware_health_changed" | "connectivity_restored" | "lifecycle_deferred_stop" | "lifecycle_auto_stopped" | "lifecycle_recovery_suppressed" | "lifecycle_recovery_failed" | "lifecycle_recovery_backoff" | "lifecycle_recovered" | "lifecycle_run_excluded" | "lifecycle_run_restored" | "lifecycle_run_cooldown_set" | "lifecycle_run_cooldown_escalated" | "maintenance_entered" | "maintenance_exited" | "session_started" | "session_ended" | "auto_stopped" | "desired_state_changed";
         /** DeviceGroupCreate */
         DeviceGroupCreate: {
             /** Description */

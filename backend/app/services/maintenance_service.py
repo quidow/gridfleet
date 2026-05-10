@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold
-from app.services import device_locking
+from app.services import appium_node_locking, device_locking
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.lifecycle_state_machine import DeviceStateMachine
@@ -37,7 +38,7 @@ async def enter_maintenance(
 
     if device.appium_node and device.appium_node.state == NodeState.running:
         try:
-            await stop_node(db, device)
+            await stop_node(db, device, caller="maintenance_enter")
             # stop_node commits via mark_node_stopped, releasing our row lock.
             # Re-acquire and re-assert maintenance — the second transition is a
             # no-op when the row is already (offline, maintenance), and re-applies
@@ -72,6 +73,16 @@ async def exit_maintenance(
         reason="Operator exited maintenance",
     )
     clear_maintenance_recovery_suppression(device)
+
+    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+    if node is not None:
+        await write_desired_state(
+            db,
+            node=node,
+            target=NodeState.running,
+            caller="maintenance_exit",
+            desired_port=node.port if node.port else None,
+        )
 
     if commit:
         await db.commit()

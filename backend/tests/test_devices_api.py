@@ -95,7 +95,7 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
     )
 
 
-async def _fake_start_node(db: AsyncSession, device: Device) -> AppiumNode:
+async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
     node = AppiumNode(
         device_id=device.id,
         port=4723,
@@ -109,7 +109,7 @@ async def _fake_start_node(db: AsyncSession, device: Device) -> AppiumNode:
     return node
 
 
-async def _fake_stop_node(db: AsyncSession, device: Device) -> AppiumNode:
+async def _fake_stop_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
     assert device.appium_node is not None
     device.appium_node.state = NodeState.stopped
     await db.commit()

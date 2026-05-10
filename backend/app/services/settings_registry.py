@@ -426,6 +426,30 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
+        key="appium_reconciler.restart_window_sec",
+        category="grid",
+        setting_type="int",
+        default=120,
+        description=(
+            "Wall-clock window (seconds) the Phase 3 restart_node writer uses to populate "
+            "appium_nodes.transition_deadline. The reconciler clears the lease past this deadline."
+        ),
+        min_value=30,
+        max_value=600,
+    ),
+    SettingDefinition(
+        key="appium_reconciler.start_failure_threshold",
+        category="grid",
+        setting_type="int",
+        default=5,
+        description=(
+            "Consecutive desired-state convergence failures before lifecycle policy treats the device as "
+            "backoff-suppressed. Read by Phase 4 reconciler; registered here so Phase 3 callers can record failures."
+        ),
+        min_value=1,
+        max_value=100,
+    ),
+    SettingDefinition(
         key="appium.session_override",
         category="grid",
         setting_type="bool",

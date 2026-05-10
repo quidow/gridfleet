@@ -1,9 +1,9 @@
 import asyncio
 import os
-import uuid  # noqa: TC003 — runtime use in defaultdict type annotation below
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -31,6 +31,7 @@ from app.services.agent_operations import appium_probe_session as fetch_appium_p
 from app.services.agent_operations import appium_status as fetch_appium_status
 from app.services.agent_probe_result import ProbeResult, from_probe_session_response, from_status_response
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
@@ -366,6 +367,18 @@ async def _process_node_health(
             return
 
         logger.error("Node for device %s reached max failures, attempting restart", device.name)
+
+        window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+        await write_desired_state(
+            db,
+            node=node,
+            target=NodeState.running,
+            caller="health_restart",
+            desired_port=node.port,
+            transition_token=uuid.uuid4(),
+            transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+        )
+        await db.commit()
 
         restarted = await _restart_node_via_agent(db, device, node)
         if restarted:
