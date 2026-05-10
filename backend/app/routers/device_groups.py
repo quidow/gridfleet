@@ -97,19 +97,19 @@ async def remove_members(
 @router.post("/{group_id}/bulk/start-nodes", response_model=BulkOperationResult)
 async def group_bulk_start(group_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_start_nodes(db, device_ids)
+    return await bulk_service.bulk_start_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_id}/bulk/stop-nodes", response_model=BulkOperationResult)
 async def group_bulk_stop(group_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_stop_nodes(db, device_ids)
+    return await bulk_service.bulk_stop_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_id}/bulk/restart-nodes", response_model=BulkOperationResult)
 async def group_bulk_restart(group_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_restart_nodes(db, device_ids)
+    return await bulk_service.bulk_restart_nodes(db, device_ids, caller="group")
 
 
 @router.post("/{group_id}/bulk/enter-maintenance", response_model=BulkOperationResult)

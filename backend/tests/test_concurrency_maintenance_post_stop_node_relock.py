@@ -56,7 +56,7 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
 
     monkeypatch.setattr(device_locking, "lock_device", observed_lock_device)
 
-    async def stop_node_commits(db: AsyncSession, device: Device) -> AppiumNode:
+    async def stop_node_commits(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
         assert device.appium_node is not None
         node = device.appium_node
         node.state = NodeState.stopped

@@ -32,7 +32,7 @@ def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
 
 
-async def _mark_device_available(_db: AsyncSession, device: Device) -> None:
+async def _mark_device_available(_db: AsyncSession, device: Device, *, caller: str = "operator_route") -> None:
     device.operational_state = DeviceOperationalState.available
 
 

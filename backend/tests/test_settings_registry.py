@@ -120,6 +120,24 @@ def test_appium_reconciler_transition_default_window_setting_is_registered() -> 
     assert setting.max_value == 600
 
 
+def test_appium_reconciler_restart_window_setting_is_registered() -> None:
+    setting = settings_registry.SETTINGS_REGISTRY["appium_reconciler.restart_window_sec"]
+    assert setting.category == "grid"
+    assert setting.setting_type == "int"
+    assert setting.default == 120
+    assert setting.min_value == 30
+    assert setting.max_value == 600
+
+
+def test_appium_reconciler_start_failure_threshold_setting_is_registered() -> None:
+    setting = settings_registry.SETTINGS_REGISTRY["appium_reconciler.start_failure_threshold"]
+    assert setting.category == "grid"
+    assert setting.setting_type == "int"
+    assert setting.default == 5
+    assert setting.min_value == 1
+    assert setting.max_value == 100
+
+
 def test_terminal_settings_are_registered_under_agent_category() -> None:
     toggle = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
     origins = settings_registry.SETTINGS_REGISTRY["agent.web_terminal_allowed_origins"]

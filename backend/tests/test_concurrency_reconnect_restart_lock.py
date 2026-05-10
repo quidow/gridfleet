@@ -39,12 +39,12 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     restart_entered = asyncio.Event()
     allow_restart = asyncio.Event()
 
-    async def fake_restart_node(db: AsyncSession, dev: Device) -> AppiumNode:
+    async def fake_restart_node(db: AsyncSession, dev: Device, *, caller: str = "operator_restart") -> AppiumNode:
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
         return await node_service.mark_node_started(db, dev, port=4723, pid=123)
 
-    async def fake_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
+    async def fake_stop_node(db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
         # Simulate the node stop being refused by the agent (no real agent
         # running in tests). enter_maintenance catches NodeManagerError and
         # proceeds with the maintenance hold — the test still verifies that

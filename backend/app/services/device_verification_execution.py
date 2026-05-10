@@ -19,6 +19,7 @@ from app.services import (
     session_viability,
 )
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_state import ready_operational_state, set_operational_state
@@ -169,7 +170,7 @@ async def stop_existing_managed_node_for_update(
         detail="Stopping existing managed node before starting updated verification node",
     )
     try:
-        await stop_node(db, existing_device)
+        await stop_node(db, existing_device, caller="verification")
     except NodeManagerError as exc:
         detail = f"Failed to stop existing managed node before verification: {exc}"
         await set_stage(job, "node_start", "failed", detail=detail)
@@ -213,6 +214,13 @@ async def retain_verified_node(
             node.pid = handle.pid
             node.active_connection_target = handle.active_connection_target
             node.state = NodeState.running
+        await write_desired_state(
+            db,
+            node=node,
+            target=NodeState.running,
+            caller="verification",
+            desired_port=handle.port,
+        )
 
         target_owner_key = f"device:{device.id}"
         source_owner_key = handle.owner_key
@@ -250,7 +258,7 @@ async def retain_verified_node(
                 "running",
                 detail="Refreshing retained node Grid registration",
             )
-            refreshed_node = await restart_node(db, device)
+            refreshed_node = await restart_node(db, device, caller="verification")
             handle.port = refreshed_node.port
             handle.pid = refreshed_node.pid
             handle.active_connection_target = refreshed_node.active_connection_target

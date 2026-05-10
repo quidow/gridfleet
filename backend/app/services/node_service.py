@@ -32,6 +32,7 @@ from app.services.agent_operations import (
     parse_agent_error_detail,
     response_json_dict,
 )
+from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
@@ -774,28 +775,100 @@ async def _start_with_owner(
     return handle
 
 
-async def start_node(db: AsyncSession, device: Device) -> AppiumNode:
+async def start_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller = "operator_route",
+) -> AppiumNode:
     if device.appium_node and device.appium_node.state == NodeState.running:
         raise NodeManagerError(f"Node already running for device {device.id}")
     if not await is_ready_for_use_async(db, device):
         raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
     owner_key = _build_device_owner_key(device)
-    handle = await start_temporary_node(db, device, owner_key=owner_key)
-    return await mark_node_started(
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned")
+    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+    if device.appium_node is None:
+        node = AppiumNode(
+            device_id=device.id,
+            port=desired_port,
+            grid_url=settings_service.get("grid.hub_url"),
+            state=NodeState.stopped,
+        )
+        db.add(node)
+        await db.flush()
+        device.appium_node = node
+
+    await write_desired_state(
         db,
-        device,
-        port=handle.port,
-        pid=handle.pid,
-        active_connection_target=handle.active_connection_target,
-        allocated_caps=handle.allocated_caps,
+        node=device.appium_node,
+        target=NodeState.running,
+        caller=caller,
+        desired_port=desired_port,
     )
+    await db.commit()
+
+    try:
+        handle = await start_temporary_node(db, device, owner_key=owner_key, port=desired_port)
+        return await mark_node_started(
+            db,
+            device,
+            port=handle.port,
+            pid=handle.pid,
+            active_connection_target=handle.active_connection_target,
+            allocated_caps=handle.allocated_caps,
+        )
+    except Exception:
+        await _rollback_desired_running(db, device.id, caller=caller)
+        raise
 
 
-async def stop_node(db: AsyncSession, device: Device) -> AppiumNode:
+async def _rollback_desired_running(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    caller: DesiredStateCaller,
+) -> None:
+    """Revert a fresh desired_state='running' commit when the inline start fails.
+
+    Best-effort; never masks the original failure. Without this rollback the
+    AppiumNode row would land in (state=stopped, desired_state=running), which
+    Phase 4 reconciler would later try to converge against an agent-side
+    process that never started.
+    """
+    try:
+        locked = await device_locking.lock_device(db, device_id)
+        if locked.appium_node is not None and locked.appium_node.state != NodeState.running:
+            await write_desired_state(
+                db,
+                node=locked.appium_node,
+                target=NodeState.stopped,
+                caller=caller,
+            )
+            await db.commit()
+    except Exception:
+        logger.warning("desired_state rollback failed for device %s", device_id, exc_info=True)
+
+
+async def stop_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller = "operator_route",
+) -> AppiumNode:
     node = device.appium_node
     if not node or node.state != NodeState.running:
         raise NodeManagerError(f"No running node for device {device.id}")
+
+    await write_desired_state(
+        db,
+        node=node,
+        target=NodeState.stopped,
+        caller=caller,
+    )
+    await db.commit()
 
     handle = TemporaryNodeHandle(
         port=node.port,
@@ -884,14 +957,31 @@ async def stop_temporary_node(
     return stopped
 
 
-async def restart_node(db: AsyncSession, device: Device) -> AppiumNode:
+async def restart_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller = "operator_restart",
+) -> AppiumNode:
     if not device.appium_node or device.appium_node.state != NodeState.running:
-        node = await start_node(db, device)
+        node = await start_node(db, device, caller=caller)
         await _clear_manual_recovery_suppression(db, device.id)
         return node
 
     node = device.appium_node
     owner_key = _build_device_owner_key(device)
+    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+    await write_desired_state(
+        db,
+        node=node,
+        target=NodeState.running,
+        caller=caller,
+        desired_port=node.port,
+        transition_token=uuid.uuid4(),
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+    )
+    await db.commit()
+
     handle = TemporaryNodeHandle(
         port=node.port,
         pid=node.pid,

@@ -35,6 +35,7 @@ class DeviceEventType(enum.StrEnum):
     session_started = "session_started"
     session_ended = "session_ended"
     auto_stopped = "auto_stopped"
+    desired_state_changed = "desired_state_changed"
 
 
 class DeviceEvent(Base):

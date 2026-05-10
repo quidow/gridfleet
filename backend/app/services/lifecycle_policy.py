@@ -432,7 +432,7 @@ async def attempt_auto_recovery(
     node = loaded_node(device)
     if node is None or node.state != NodeState.running:
         try:
-            await start_managed_node(db, device)
+            await start_managed_node(db, device, caller="lifecycle_recovery")
         except NodeManagerError as exc:
             backoff_until_iso = _set_backoff(current_state)
             record_recovery_failed(

@@ -14,7 +14,7 @@ from app.services.lifecycle_policy import attempt_auto_recovery, build_lifecycle
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-async def _mark_device_available(_db: AsyncSession, device: Device) -> None:
+async def _mark_device_available(_db: AsyncSession, device: Device, *, caller: str = "operator_route") -> None:
     device.operational_state = DeviceOperationalState.available
 
 

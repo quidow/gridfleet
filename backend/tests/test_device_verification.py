@@ -252,7 +252,9 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
 
     restart_observed: dict[str, Any] = {}
 
-    async def restart_after_save(restart_db: AsyncSession, saved_device: Device) -> AppiumNode:
+    async def restart_after_save(
+        restart_db: AsyncSession, saved_device: Device, *, caller: str = "verification"
+    ) -> AppiumNode:
         assert saved_device.id is not None
         assert saved_device.appium_node is not None
         # Node row + ownership transfer must be committed before restart_node runs.
@@ -1081,7 +1083,9 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
 
     events: list[str] = []
 
-    async def stop_running_node(_db: AsyncSession, stopped_device: Device) -> AppiumNode:
+    async def stop_running_node(
+        _db: AsyncSession, stopped_device: Device, *, caller: str = "verification"
+    ) -> AppiumNode:
         events.append(f"stop:{stopped_device.id}")
         assert stopped_device.id == device.id
         assert stopped_device.appium_node is not None

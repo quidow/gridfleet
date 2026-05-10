@@ -64,7 +64,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
             await proceed_delete.wait()
         return locked
 
-    async def observed_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
+    async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
         dev.appium_node.state = NodeState.stopped
@@ -164,7 +164,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     starter_committed = asyncio.Event()
     stop_calls = 0
 
-    async def observed_stop_node(db: AsyncSession, dev: Device) -> AppiumNode:
+    async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
         nonlocal stop_calls
 
         stop_calls += 1
