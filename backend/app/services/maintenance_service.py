@@ -4,41 +4,48 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceHold, DeviceOperationalState
+from app.models.device import Device, DeviceHold
 from app.services import device_locking
-from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
+from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
 
 logger = logging.getLogger(__name__)
+
+_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
 
 
 async def enter_maintenance(
     db: AsyncSession,
     device: Device,
     *,
+    drain: bool = False,
     commit: bool = True,
     allow_reserved: bool = False,
 ) -> Device:
     if not allow_reserved and device.hold == DeviceHold.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
-    await set_hold(
+    await _MACHINE.transition(
         device,
-        DeviceHold.maintenance,
+        TransitionEvent.MAINTENANCE_ENTERED,
         reason="Operator entered maintenance",
     )
 
-    if device.appium_node and device.appium_node.state == NodeState.running:
+    if not drain and device.appium_node and device.appium_node.state == NodeState.running:
         try:
             await stop_node(db, device)
             # stop_node commits via mark_node_stopped, releasing our row lock.
-            # Re-acquire the Device row before restoring maintenance.
+            # Re-acquire and re-assert maintenance — the second transition is a
+            # no-op when the row is already (offline, maintenance), and re-applies
+            # if stop_node raced a concurrent writer.
             device = await device_locking.lock_device(db, device.id)
-            await set_hold(
+            await _MACHINE.transition(
                 device,
-                DeviceHold.maintenance,
+                TransitionEvent.MAINTENANCE_ENTERED,
                 reason="Operator entered maintenance (re-asserted after node stop)",
             )
         except NodeManagerError as exc:
@@ -59,8 +66,11 @@ async def exit_maintenance(
     if device.hold != DeviceHold.maintenance:
         raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
 
-    await set_hold(device, None, reason="Operator exited maintenance")
-    await set_operational_state(device, DeviceOperationalState.offline, reason="Operator exited maintenance")
+    await _MACHINE.transition(
+        device,
+        TransitionEvent.MAINTENANCE_EXITED,
+        reason="Operator exited maintenance",
+    )
     clear_maintenance_recovery_suppression(device)
 
     if commit:
