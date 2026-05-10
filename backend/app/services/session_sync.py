@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
-from app.models.device import Device, DeviceHold, DeviceOperationalState
+from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
@@ -199,14 +199,6 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
         # Mark device busy under row lock
         locked_device = await device_locking.lock_device(db, device.id)
-        if locked_device.hold == DeviceHold.maintenance:
-            logger.warning(
-                "Grid reports session %s on maintenance-held device %s — "
-                "skipping session tracking; operator should investigate",
-                sid,
-                locked_device.name,
-            )
-            continue
         await _MACHINE.transition(
             locked_device,
             TransitionEvent.SESSION_STARTED,
@@ -287,16 +279,6 @@ async def _sync_sessions(db: AsyncSession) -> None:
             continue
         locked_device = await device_locking.lock_device(db, device.id)
         if locked_device.operational_state != DeviceOperationalState.busy:
-            continue
-        if locked_device.hold == DeviceHold.maintenance:
-            # Defensive: clean installs cannot reach (busy, maintenance) after
-            # the maintenance gate, but legacy rows from pre-fix deployments
-            # may. Skip the transition so the sync loop does not abort on
-            # InvalidTransitionError; operator intervention required.
-            logger.warning(
-                "Device %s in (busy, maintenance) — skipping session-end transition; manual cleanup required",
-                locked_device.name,
-            )
             continue
         # Authoritative recheck under the row lock. ``handle_session_finished``
         # only does the locked running-session check when ``stop_pending`` is

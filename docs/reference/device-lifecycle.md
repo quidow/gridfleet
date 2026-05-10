@@ -24,7 +24,7 @@ on commit.
 
 | Event | Source operational state | Target | Notes |
 |-------|--------------------------|--------|-------|
-| `MAINTENANCE_ENTERED` | any | `(offline, maintenance)` | Idempotent from `(offline, maintenance)` so `enter_maintenance` can re-assert after `stop_node` releases the row lock. |
+| `MAINTENANCE_ENTERED` | any | `(<unchanged>, maintenance)` | Hold-only mutation; operational follows from any subsequent `stop_node` cascade. Idempotent from `(*, maintenance)`. |
 | `MAINTENANCE_EXITED` | `(*, maintenance)` | `(offline, None)` | Raises if hold is not maintenance. |
 | `CONNECTIVITY_LOST` | `available`, `busy` | `offline` (hold preserved) | Idempotent from `offline` for any hold. |
 | `CONNECTIVITY_RESTORED` | `offline` | `available` (hold preserved) | Idempotent from `available` for `None` / `reserved` hold. |
@@ -42,6 +42,15 @@ on commit.
 run owns the device. The machine treats reserved as orthogonal to non-
 maintenance events: connectivity, session, and auto-stop transitions all
 preserve the reserved hold value.
+
+### Maintenance-hold transparency
+
+`hold == DeviceHold.maintenance` is set by operator-driven `enter_maintenance`. The
+machine treats maintenance as orthogonal to non-maintenance events: connectivity,
+session, and auto-stop transitions all preserve the maintenance hold. The
+operational axis only flips to `offline` via the stop_node cascade triggered by
+`enter_maintenance` when a node is running, or via `MAINTENANCE_EXITED` (which
+forces operational to `offline` on exit so the recovery path can re-promote).
 
 ### Errors
 

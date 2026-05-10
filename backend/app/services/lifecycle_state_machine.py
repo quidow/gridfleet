@@ -78,7 +78,7 @@ class DeviceStateMachine:
     ) -> tuple[DeviceOperationalState, DeviceHold | None] | None:
         """Return target (operational, hold). None signals invalid transition."""
         if event is TransitionEvent.MAINTENANCE_ENTERED:
-            return (DeviceOperationalState.offline, DeviceHold.maintenance)
+            return (before.operational, DeviceHold.maintenance)
         if event is TransitionEvent.MAINTENANCE_EXITED:
             if before.hold is not DeviceHold.maintenance:
                 return None
@@ -87,13 +87,6 @@ class DeviceStateMachine:
             return (before.operational, before.hold)
         if event is TransitionEvent.DEVICE_DISCOVERED:
             return (before.operational, before.hold)
-
-        # Maintenance hold blocks all non-maintenance state changes.
-        # Idempotent re-entries are caught earlier in transition() via
-        # _IDEMPOTENT_NOOPS, so this gate only fires for real attempts to
-        # mutate state on a maintenance-held device.
-        if before.hold is DeviceHold.maintenance:
-            return None
 
         target_operational = _OPERATIONAL_TRANSITIONS.get(before.operational, {}).get(event)
         if target_operational is None:
@@ -132,32 +125,15 @@ class DeviceStateMachine:
         target_operational, target_hold = targets
         changed = False
 
-        # Apply hold first when going *into* maintenance; apply hold last when
-        # exiting so observers see (offline, None) atomically per tick.
-        if event is TransitionEvent.MAINTENANCE_ENTERED:
-            if target_hold != before.hold:
-                changed = (
-                    await set_hold(device, target_hold, reason=reason, publish_event=not suppress_events) or changed
+        if target_operational != before.operational:
+            changed = (
+                await set_operational_state(
+                    device, target_operational, reason=reason, publish_event=not suppress_events
                 )
-            if target_operational != before.operational:
-                changed = (
-                    await set_operational_state(
-                        device, target_operational, reason=reason, publish_event=not suppress_events
-                    )
-                    or changed
-                )
-        else:
-            if target_operational != before.operational:
-                changed = (
-                    await set_operational_state(
-                        device, target_operational, reason=reason, publish_event=not suppress_events
-                    )
-                    or changed
-                )
-            if target_hold != before.hold:
-                changed = (
-                    await set_hold(device, target_hold, reason=reason, publish_event=not suppress_events) or changed
-                )
+                or changed
+            )
+        if target_hold != before.hold:
+            changed = await set_hold(device, target_hold, reason=reason, publish_event=not suppress_events) or changed
 
         if changed and not skip_hooks:
             after = DeviceStateModel.from_device(device)
