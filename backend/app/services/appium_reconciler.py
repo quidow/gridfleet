@@ -220,6 +220,7 @@ async def appium_reconciler_loop() -> None:
             # Agent IO and stops happen outside the DB session — no point holding it open.
             await _reconcile_all(hosts, rows)
         except LeadershipLost as exc:
+            APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
             logger.error(
                 "appium_reconciler_leadership_lost",
                 reason=str(exc),
