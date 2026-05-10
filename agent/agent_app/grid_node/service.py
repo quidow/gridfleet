@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
+import httpx
 import uvicorn
 
 from agent_app.grid_node.http_server import build_app
@@ -61,6 +62,7 @@ class UvicornGridNodeHttpServer:
         self._node_status_payload = node_status_payload
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
+        self._http_client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -68,9 +70,11 @@ class UvicornGridNodeHttpServer:
         parsed = urlparse(self._config.node_uri)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None or parsed.port is None:
             raise RuntimeError(f"invalid grid node URI: {self._config.node_uri}")
+        self._http_client = httpx.AsyncClient(timeout=self._config.proxy_timeout_sec)
         app = build_app(
             state=self._state,
             appium_upstream=self._config.appium_upstream,
+            http_client=self._http_client,
             bus=self._bus,
             proxy_timeout=self._config.proxy_timeout_sec,
             node_status_payload=self._node_status_payload,
@@ -105,6 +109,10 @@ class UvicornGridNodeHttpServer:
                 await self._task
             self._task = None
         self._server = None
+        if self._http_client is not None:
+            with contextlib.suppress(Exception):
+                await self._http_client.aclose()
+            self._http_client = None
 
 
 class GridNodeService:

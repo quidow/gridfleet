@@ -43,6 +43,7 @@ def build_app(
     *,
     state: NodeState,
     appium_upstream: str,
+    http_client: httpx.AsyncClient,
     bus: EventPublisher | None = None,
     proxy_request_func: Callable[..., Awaitable[Response]] = proxy_request,
     proxy_websocket_func: Callable[..., Awaitable[None]] = proxy_websocket,
@@ -52,6 +53,10 @@ def build_app(
     node_id: str | None = None,
     slots: list[Slot] | None = None,
 ) -> Starlette:
+    # A single httpx.AsyncClient is shared across all routes for the lifetime
+    # of the app. Instantiating one per request leaks ~0.8 MB per call on
+    # macOS — TLS contexts, anyio sync primitives, and certifi parse caches
+    # are not fully released by the native allocator even after `aclose()`.
     publisher = bus or NoopPublisher()
     stereotypes_by_slot_id: dict[str, dict[str, object]] = {
         slot.id: slot.stereotype.to_dict() for slot in (slots or [])
@@ -110,13 +115,12 @@ def build_app(
             return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await proxy_request_func(
-                    request,
-                    upstream=appium_upstream,
-                    timeout=proxy_timeout,
-                    client=client,
-                )
+            response = await proxy_request_func(
+                request,
+                upstream=appium_upstream,
+                timeout=proxy_timeout,
+                client=http_client,
+            )
         except Exception:
             state.abort(reservation.id)
             logger.warning("upstream session creation proxy failed", exc_info=True)
@@ -191,16 +195,15 @@ def build_app(
         except NoFreeSlotError:
             return JSONResponse({"value": {"error": "session not created"}}, status_code=503)
 
-        async with httpx.AsyncClient() as client:
-            try:
-                upstream = await client.post(
-                    f"{appium_upstream}/session",
-                    json={"capabilities": w3c_capabilities},
-                    timeout=proxy_timeout,
-                )
-            except httpx.HTTPError:
-                state.abort(reservation.id)
-                return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
+        try:
+            upstream = await http_client.post(
+                f"{appium_upstream}/session",
+                json={"capabilities": w3c_capabilities},
+                timeout=proxy_timeout,
+            )
+        except httpx.HTTPError:
+            state.abort(reservation.id)
+            return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
 
         if upstream.status_code < 200 or upstream.status_code >= 300:
             state.abort(reservation.id)
@@ -262,13 +265,12 @@ def build_app(
         await proxy_websocket_func(websocket, upstream=appium_upstream)
 
     async def _proxy_http(request: Request) -> Response:
-        async with httpx.AsyncClient() as client:
-            return await proxy_request_func(
-                request,
-                upstream=appium_upstream,
-                timeout=proxy_timeout,
-                client=client,
-            )
+        return await proxy_request_func(
+            request,
+            upstream=appium_upstream,
+            timeout=proxy_timeout,
+            client=http_client,
+        )
 
     return Starlette(
         routes=[

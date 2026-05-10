@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 from starlette.responses import JSONResponse, Response
 from starlette.testclient import TestClient
@@ -12,6 +13,8 @@ from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.websockets import WebSocket
@@ -74,10 +77,23 @@ def proxy() -> RecordingProxy:
 
 
 @pytest.fixture
-def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy) -> Starlette:
+def http_client() -> Iterator[httpx.AsyncClient]:
+    # Tests override `proxy_request_func`, so this client is never actually
+    # invoked. Constructed only to satisfy `build_app`'s required arg.
+    client = httpx.AsyncClient()
+    try:
+        yield client
+    finally:
+        # `aclose()` is async; not awaited because the client is never used.
+        pass
+
+
+@pytest.fixture
+def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient) -> Starlette:
     return build_app(
         state=state,
         appium_upstream="http://appium",
+        http_client=http_client,
         bus=bus,
         proxy_request_func=proxy.request,
         proxy_websocket_func=proxy.websocket,
@@ -85,8 +101,14 @@ def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy) -> Star
 
 
 @pytest.fixture
-def app_with_connect_error_proxy(state: NodeState, bus: RecordingBus) -> Starlette:
-    return build_app(state=state, appium_upstream="http://appium", bus=bus, proxy_request_func=_connect_error_proxy)
+def app_with_connect_error_proxy(state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient) -> Starlette:
+    return build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=bus,
+        proxy_request_func=_connect_error_proxy,
+    )
 
 
 def test_get_status_returns_node_snapshot(test_app: Starlette) -> None:
@@ -161,11 +183,19 @@ def test_post_session_returns_400_for_invalid_json_encoding(test_app: Starlette,
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_post_session_aborts_reservation_when_proxy_raises(state: NodeState, bus: RecordingBus) -> None:
+def test_post_session_aborts_reservation_when_proxy_raises(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
     async def raising_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
         raise RuntimeError("proxy failed")
 
-    app = build_app(state=state, appium_upstream="http://appium", bus=bus, proxy_request_func=raising_proxy)
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=bus,
+        proxy_request_func=raising_proxy,
+    )
     response = TestClient(app, raise_server_exceptions=False).post(
         "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
     )
@@ -173,10 +203,13 @@ def test_post_session_aborts_reservation_when_proxy_raises(state: NodeState, bus
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_post_session_commit_survives_session_started_publish_failure(state: NodeState, proxy: RecordingProxy) -> None:
+def test_post_session_commit_survives_session_started_publish_failure(
+    state: NodeState, proxy: RecordingProxy, http_client: httpx.AsyncClient
+) -> None:
     app = build_app(
         state=state,
         appium_upstream="http://appium",
+        http_client=http_client,
         bus=FailingBus(),
         proxy_request_func=proxy.request,
         proxy_websocket_func=proxy.websocket,
@@ -200,7 +233,7 @@ def test_delete_session_releases_slot_and_publishes_session_closed(
 
 
 def test_delete_session_releases_slot_when_upstream_session_is_gone(
-    state: NodeState, proxy: RecordingProxy, bus: RecordingBus
+    state: NodeState, proxy: RecordingProxy, bus: RecordingBus, http_client: httpx.AsyncClient
 ) -> None:
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="missing-session", started_at=1.0)
@@ -213,6 +246,7 @@ def test_delete_session_releases_slot_when_upstream_session_is_gone(
     app = build_app(
         state=state,
         appium_upstream="http://appium",
+        http_client=http_client,
         bus=bus,
         proxy_request_func=missing_session_proxy,
         proxy_websocket_func=proxy.websocket,
