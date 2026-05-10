@@ -330,10 +330,7 @@ async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
 
 @pytest.mark.asyncio
 async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
-    """Without a registered adapter, an xcuitest pack contributes no doctor entries.
-
-    No driver_doctor_runner is consulted.
-    """
+    """Without a registered adapter, an xcuitest pack contributes no doctor entries."""
     client = _FakeClient(_make_desired([_ios_pack()]))
     loop = PackStateLoop(
         client=client,

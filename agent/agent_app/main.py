@@ -31,7 +31,6 @@ from agent_app.capabilities import (
     refresh_capabilities_snapshot,
 )
 from agent_app.config import agent_settings
-from agent_app.driver_doctor import run_driver_doctor
 from agent_app.error_codes import AgentErrorCode, http_exc
 from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
 from agent_app.host_telemetry import get_host_telemetry
@@ -129,10 +128,6 @@ async def _start_pack_loop_when_ready(
     )
     app.state.pack_state_loop = loop
     await loop.run_forever()
-
-
-async def _run_driver_doctor(driver_name: str, env: RuntimeEnv) -> dict[str, object]:
-    return await run_driver_doctor(driver_name, appium_bin=env.appium_bin, appium_home=env.appium_home)
 
 
 def _build_adapter_loader(
