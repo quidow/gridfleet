@@ -5,10 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.services import device_locking, job_queue
+from app.services import device_locking
 from app.services.device_state import legacy_label_for_audit, set_hold, set_operational_state
-from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
-from app.services.job_status_constants import JOB_STATUS_PENDING
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError
@@ -93,7 +91,17 @@ async def schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> No
 
     Creates and commits one row in the durable job queue. Safe to call
     after the device-state mutations are already committed.
+
+    Lazy import of job_queue + the job-kind/status constants breaks an
+    import cycle (maintenance_service → job_queue → device_recovery_job →
+    lifecycle_policy → maintenance_service) that CodeQL flags. The cycle
+    is benign at runtime today but lazy import keeps the dependency graph
+    clean and avoids future surprise on analyzer changes.
     """
+    from app.services import job_queue  # noqa: PLC0415
+    from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY  # noqa: PLC0415
+    from app.services.job_status_constants import JOB_STATUS_PENDING  # noqa: PLC0415
+
     await job_queue.create_job(
         db,
         kind=JOB_KIND_DEVICE_RECOVERY,
