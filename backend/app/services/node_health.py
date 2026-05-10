@@ -37,7 +37,6 @@ from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.lifecycle_incident_service import record_lifecycle_incident
 from app.services.node_service import require_management_host
-from app.services.node_service import restart_node_via_agent as restart_node_via_agent_helper
 from app.services.node_service_types import NodeManagerError
 from app.services.session_viability import build_probe_capabilities
 from app.services.settings_service import settings_service
@@ -143,14 +142,6 @@ def _grid_registration_grace_active(node: AppiumNode) -> bool:
         started_at = started_at.replace(tzinfo=UTC)
     age_seconds = (datetime.now(UTC) - started_at).total_seconds()
     return 0 <= age_seconds < int(settings_service.get("appium.startup_timeout_sec"))
-
-
-async def _restart_node_via_agent(db: AsyncSession, device: Device, node: AppiumNode) -> bool:
-    """Attempt to restart a node through its host agent."""
-    try:
-        return await restart_node_via_agent_helper(db, device, node, http_client_factory=httpx.AsyncClient)
-    except NodeManagerError:
-        return False
 
 
 async def _process_node_health(
@@ -379,106 +370,7 @@ async def _process_node_health(
             transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
         )
         await db.commit()
-
-        restarted = await _restart_node_via_agent(db, device, node)
-        if restarted:
-            await lifecycle_policy.record_control_action(
-                db,
-                device,
-                action="auto_recovered",
-                failure_source="node_health",
-                failure_reason="Node restarted after health failures",
-            )
-            queue_event_for_session(
-                db,
-                "node.state_changed",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "old_state": "error",
-                    "new_state": "running",
-                    "port": node.port,
-                },
-            )
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.node_restart,
-                {"recovered_from": "auto_restart", "port": node.port},
-            )
-            await record_lifecycle_incident(
-                db,
-                device,
-                DeviceEventType.lifecycle_recovered,
-                summary_state=DeviceLifecyclePolicySummaryState.idle,
-                reason="Node restarted after health failures",
-                detail="Automatic node restart succeeded after repeated health check failures",
-                source="node_health",
-            )
-            await device_health.apply_node_state_transition(
-                db,
-                device,
-                new_state=NodeState.running,
-                health_running=None,
-                health_state=None,
-                mark_offline=False,
-            )
-        else:
-            logger.error("Restart failed for device %s — marking offline", device.name)
-            # Do not release parallel-resource claims here. A restart failure
-            # does not prove the Appium process is gone, so freeing ports here
-            # can race a still-listening process. Confirmed stop paths release;
-            # node deletion cascades managed claims.
-            await lifecycle_policy.record_control_action(
-                db,
-                device,
-                action="recovery_failed",
-                failure_source="node_health",
-                failure_reason="Node restart failed",
-                recovery_suppressed_reason="Node restart failed",
-            )
-            queue_event_for_session(
-                db,
-                "node.crash",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "error": "Restart failed",
-                    "will_restart": False,
-                },
-            )
-            queue_device_crashed_event(
-                db,
-                device_id=str(device.id),
-                device_name=device.name,
-                source="health_check_fail",
-                reason="Restart failed",
-                will_restart=False,
-                process=None,
-            )
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.node_crash,
-                {"error": "Restart failed", "will_restart": False},
-            )
-            await record_lifecycle_incident(
-                db,
-                device,
-                DeviceEventType.lifecycle_recovery_failed,
-                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-                reason="Node restart failed",
-                detail="Automatic node restart failed after repeated health check failures",
-                source="node_health",
-            )
-            await device_health.apply_node_state_transition(
-                db,
-                device,
-                new_state=NodeState.error,
-                health_running=False,
-                health_state="error",
-                mark_offline=True,
-            )
+        return
 
 
 async def _check_nodes(db: AsyncSession) -> None:

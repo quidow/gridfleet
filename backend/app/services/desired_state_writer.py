@@ -33,6 +33,7 @@ DesiredStateCaller = Literal[
     "group",
     "verification",
     "device_delete",
+    "admin_clear_transition",
 ]
 
 

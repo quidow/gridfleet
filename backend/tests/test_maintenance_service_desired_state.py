@@ -60,3 +60,30 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     assert events[0].details is not None
     assert events[0].details["caller"] == "maintenance_exit"
     assert events[0].details["new_desired_state"] == "running"
+
+
+async def test_enter_maintenance_writes_desired_stopped_and_returns_without_waiting_for_agent(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="m-enter", verified=True)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=1,
+        state=NodeState.running,
+        desired_state=NodeState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    from app.services import maintenance_service
+
+    await maintenance_service.enter_maintenance(db_session, device)
+
+    await db_session.refresh(node)
+    assert node.desired_state == NodeState.stopped
+    assert node.state == NodeState.running

@@ -450,6 +450,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=100,
     ),
     SettingDefinition(
+        key="appium_reconciler.host_parallelism",
+        category="grid",
+        setting_type="int",
+        default=8,
+        description="Max number of hosts the Appium reconciler converges in parallel per cycle",
+        min_value=1,
+        max_value=32,
+    ),
+    SettingDefinition(
         key="appium.session_override",
         category="grid",
         setting_type="bool",

@@ -237,7 +237,7 @@ async def _apply_ip_ping_hysteresis(
 
 
 async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
-    """Stop an Appium node through the host agent."""
+    """Compatibility seam for tests; production convergence owns disconnected-node stops."""
     return await stop_node_via_agent_helper(device, node, http_client_factory=httpx.AsyncClient)
 
 
@@ -253,13 +253,8 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
         target=NodeState.stopped,
         caller="connectivity",
     )
-
-    stopped = await _stop_node_via_agent(locked_device, locked_node)
-    new_state = NodeState.stopped if stopped else NodeState.error
-    if stopped:
-        locked_node.pid = None
-    await device_health.apply_node_state_transition(db, locked_device, new_state=new_state, mark_offline=True)
-    return stopped
+    await device_health.apply_node_state_transition(db, locked_device, new_state=locked_node.state, mark_offline=True)
+    return None
 
 
 async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:

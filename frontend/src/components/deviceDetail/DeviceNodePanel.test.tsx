@@ -17,6 +17,7 @@ vi.mock('../../hooks/useDevices', () => ({
   useStartNode: () => mutation,
   useStopNode: () => mutation,
   useToggleDeviceAutoManage: () => mutation,
+  useClearAppiumNodeTransition: () => mutation,
 }));
 
 vi.mock('../../hooks/usePlatformDescriptor', () => ({

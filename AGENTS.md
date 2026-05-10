@@ -111,6 +111,8 @@ Any code that writes `Device.operational_state`, `Device.hold`, or `Device.lifec
 
 All writes to `Device.operational_state` and `Device.hold` MUST go through `app.services.lifecycle_state_machine.DeviceStateMachine.transition` under the device row lock. The machine routes through `set_operational_state` / `set_hold` so event-bus emissions and `EventLogHook` writes are preserved. Direct attribute assignment (`device.operational_state = ...`) is forbidden outside the writers themselves. See `docs/reference/device-lifecycle.md`.
 
+All writes to `AppiumNode.state`, `AppiumNode.port`, `AppiumNode.pid`, and `AppiumNode.active_connection_target` MUST go through `app.services.appium_reconciler` under the device row lock. Operator routes, lifecycle policy, health loops, and verification flows write only `desired_state`, `desired_port`, `transition_token`, and `transition_deadline` via `app.services.desired_state_writer.write_desired_state`. The reconciler reads desired state, drives the agent, and writes observed columns.
+
 ### Frontend conventions
 - `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror `app/schemas/`.
 - `src/hooks/` wraps `react-query` with explicit polling intervals (5–15s) — operator screens are real-time dashboards, not request/response.

@@ -192,3 +192,12 @@ def test_device_cooldown_escalation_threshold_default_and_bounds() -> None:
     assert setting.max_value == 100
     assert setting.env_var == "GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD"
     assert setting.category == "general"
+
+
+def test_appium_reconciler_host_parallelism_is_registered() -> None:
+    setting = settings_registry.SETTINGS_REGISTRY["appium_reconciler.host_parallelism"]
+    assert setting.category == "grid"
+    assert setting.setting_type == "int"
+    assert setting.default == 8
+    assert setting.min_value == 1
+    assert setting.max_value == 32

@@ -14,16 +14,21 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
+from app.config import reconciler_convergence_enabled
 from app.database import async_session
 from app.metrics_recorders import (
     APPIUM_RECONCILER_CYCLE_FAILURES,
+    APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
     APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
     APPIUM_RECONCILER_ORPHANS_STOPPED,
+    APPIUM_RECONCILER_START_FAILURES,
 )
 from app.models.appium_node import AppiumNode
 from app.models.device import Device
@@ -31,7 +36,12 @@ from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
 from app.services.agent_operations import agent_base_url, agent_health, appium_stop
 from app.services.agent_snapshot import parse_running_nodes
+from app.services.appium_reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.lifecycle_policy_state import state as lifecycle_policy_state
+from app.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
+from app.services.node_service import mark_node_started, mark_node_stopped, start_temporary_node, stop_temporary_node
+from app.services.node_service_types import TemporaryNodeHandle
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -74,7 +84,8 @@ def detect_orphans(
     """Return entries running on the agent that no DB row claims.
 
     `db_running_rows` is a list of dicts with keys
-    `host_id`, `device_connection_target`, `node_port`, `node_state`.
+    `host_id`, `device_connection_target`, `node_port`, `node_state`,
+    and optionally `node_desired_state`.
     Pass all AppiumNode rows for the host (any state) — classification
     needs the full picture to surface stopped-row desyncs as
     `db_state_not_running` rather than `no_db_row`.
@@ -100,7 +111,9 @@ def detect_orphans(
                 )
             )
             continue
-        running_rows = [r for r in matched_rows if r.get("node_state") == "running"]
+        running_rows = [
+            r for r in matched_rows if r.get("node_desired_state") == "running" or r.get("node_state") == "running"
+        ]
         if any(r.get("node_port") == entry.port for r in running_rows):
             continue
         if running_rows:
@@ -220,8 +233,12 @@ async def appium_reconciler_loop() -> None:
                 await assert_current_leader(db)
                 hosts = await _fetch_online_hosts(db)
                 rows = await _fetch_node_rows(db)
+                desired = await _fetch_desired_rows(db)
+                backoff = await _fetch_backoff_until(db)
             # Agent IO and stops happen outside the DB session — no point holding it open.
             await _reconcile_all(hosts, rows)
+            if reconciler_convergence_enabled():
+                await _drive_convergence(hosts, desired, backoff)
         except LeadershipLost as exc:
             APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
             logger.error(
@@ -297,6 +314,7 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
         target_expr.label("device_connection_target"),
         AppiumNode.port,
         AppiumNode.state,
+        AppiumNode.desired_state,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
     result = await db.execute(stmt)
     return [
@@ -305,6 +323,292 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
             "device_connection_target": row.device_connection_target,
             "node_port": row.port,
             "node_state": row.state.value,
+            "node_desired_state": row.desired_state.value,
         }
         for row in result.all()
     ]
+
+
+async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
+    target_expr = func.coalesce(Device.connection_target, Device.identity_value)
+    stmt = (
+        select(
+            Device.id.label("device_id"),
+            Device.host_id,
+            AppiumNode.id.label("node_id"),
+            target_expr.label("connection_target"),
+            AppiumNode.desired_state,
+            AppiumNode.desired_port,
+            AppiumNode.transition_token,
+            AppiumNode.transition_deadline,
+            AppiumNode.state,
+            AppiumNode.port,
+            AppiumNode.pid,
+            AppiumNode.active_connection_target,
+        )
+        .join(AppiumNode, AppiumNode.device_id == Device.id)
+        .join(Host, Host.id == Device.host_id)
+        .where(Host.status == HostStatus.online)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        DesiredRow(
+            device_id=row.device_id,
+            host_id=row.host_id,
+            node_id=row.node_id,
+            connection_target=row.connection_target,
+            desired_state=row.desired_state.value,
+            desired_port=row.desired_port,
+            transition_token=row.transition_token,
+            transition_deadline=row.transition_deadline,
+            state=row.state.value,
+            port=row.port,
+            pid=row.pid,
+            active_connection_target=row.active_connection_target,
+        )
+        for row in rows
+    ]
+
+
+async def _fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
+    rows = (await db.execute(select(Device.id, Device.lifecycle_policy_state))).all()
+    backoff: dict[uuid.UUID, datetime] = {}
+    for device_id, state_json in rows:
+        if not isinstance(state_json, dict):
+            continue
+        raw = state_json.get("backoff_until")
+        if not isinstance(raw, str):
+            continue
+        try:
+            backoff[device_id] = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+    return backoff
+
+
+async def _drive_convergence(
+    hosts: list[dict[str, object]],
+    desired: list[DesiredRow],
+    backoff_until_by_device: dict[uuid.UUID, datetime],
+) -> None:
+    semaphore = asyncio.Semaphore(int(settings_service.get("appium_reconciler.host_parallelism")))
+    now = datetime.now(UTC)
+    rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
+    for row in desired:
+        backoff_until = backoff_until_by_device.get(row.device_id)
+        if backoff_until is not None and backoff_until > now:
+            continue
+        rows_by_host.setdefault(row.host_id, []).append(row)
+
+    async def _reconcile_host(host: dict[str, object]) -> None:
+        host_id = host.get("id")
+        host_ip = host.get("ip")
+        agent_port = host.get("agent_port")
+        if not isinstance(host_id, uuid.UUID) or not isinstance(host_ip, str) or not isinstance(agent_port, int):
+            return
+        rows = rows_by_host.get(host_id, [])
+        if not rows:
+            return
+        async with semaphore:
+            cycle_start = time.monotonic()
+            try:
+                payload = await agent_health(host_ip, agent_port, http_client_factory=httpx.AsyncClient) or {}
+                appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+                if not isinstance(appium_processes, dict):
+                    return
+                running = parse_running_nodes(appium_processes)
+                observed = [
+                    ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+                    for entry in running
+                ]
+                await _touch_last_observed(rows)
+                await converge_host_rows(
+                    host_id=host_id,
+                    rows=rows,
+                    agent_running=observed,
+                    now=datetime.now(UTC),
+                    start_agent=_make_start_agent(),
+                    stop_agent=_make_stop_agent(host_ip, agent_port),
+                    write_observed=_write_observed_factory(),
+                    clear_token=_clear_token_factory(),
+                )
+            finally:
+                APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
+                    time.monotonic() - cycle_start
+                )
+
+    await asyncio.gather(*(_reconcile_host(host) for host in hosts))
+
+
+def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
+    async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
+        async with async_session() as db:
+            device = await _load_device_for_reconciler(db, row.device_id)
+            if device is None:
+                raise RuntimeError(f"Device {row.device_id} no longer exists")
+            try:
+                handle = await start_temporary_node(db, device, owner_key=f"device:{row.device_id}", port=port)
+            except Exception as exc:
+                APPIUM_RECONCILER_START_FAILURES.labels(reason=_classify_start_failure(exc)).inc()
+                await _record_start_failure(row, reason=_classify_start_failure(exc))
+                raise
+            return {
+                "port": handle.port,
+                "pid": handle.pid,
+                "active_connection_target": handle.active_connection_target,
+                "allocated_caps": handle.allocated_caps,
+            }
+
+    return _start
+
+
+def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[None]]:
+    async def _stop(*, row: DesiredRow, port: int | None) -> None:
+        if port is None:
+            return
+        async with async_session() as db:
+            device = await _load_device_for_reconciler(db, row.device_id)
+            if device is None:
+                return
+            handle = TemporaryNodeHandle(
+                port=port,
+                pid=row.pid,
+                active_connection_target=row.active_connection_target,
+                agent_base=agent_base_url(host_ip, agent_port),
+                owner_key=f"device:{row.device_id}",
+            )
+            if not await stop_temporary_node(db, device, handle):
+                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
+
+    return _stop
+
+
+def _write_observed_factory() -> Callable[..., Awaitable[None]]:
+    async def _write(
+        *,
+        row: DesiredRow,
+        state: str,
+        port: int | None,
+        pid: int | None,
+        active_connection_target: str | None,
+        clear_desired_port: bool = False,
+        clear_transition: bool = False,
+        allocated_caps: object = None,
+    ) -> None:
+        async with async_session() as db:
+            device = await _load_device_for_reconciler(db, row.device_id)
+            if device is None:
+                return
+            if state == "running":
+                await mark_node_started(
+                    db,
+                    device,
+                    port=port or row.port or 0,
+                    pid=pid,
+                    active_connection_target=active_connection_target,
+                    allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
+                )
+            else:
+                await mark_node_stopped(db, device)
+            if clear_desired_port or clear_transition:
+                device = await _load_device_for_reconciler(db, row.device_id)
+                if device is None or device.appium_node is None:
+                    return
+                if clear_desired_port:
+                    device.appium_node.desired_port = None
+                if clear_transition:
+                    device.appium_node.transition_token = None
+                    device.appium_node.transition_deadline = None
+                await db.commit()
+
+    return _write
+
+
+def _clear_token_factory() -> Callable[..., Awaitable[None]]:
+    async def _clear(*, row: DesiredRow, reason: str) -> None:
+        async with async_session() as db:
+            device = await _load_device_for_reconciler(db, row.device_id)
+            if device is None or device.appium_node is None:
+                return
+            device.appium_node.transition_token = None
+            device.appium_node.transition_deadline = None
+            await db.commit()
+
+    return _clear
+
+
+async def _load_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
+    result = await db.execute(
+        select(Device)
+        .where(Device.id == device_id)
+        .options(selectinload(Device.host), selectinload(Device.appium_node))
+    )
+    return result.scalar_one_or_none()
+
+
+async def _touch_last_observed(rows: list[DesiredRow]) -> None:
+    if not rows:
+        return
+    async with async_session() as db:
+        for row in rows:
+            node = await db.scalar(select(AppiumNode).where(AppiumNode.id == row.node_id).with_for_update())
+            if node is not None:
+                node.last_observed_at = datetime.now(UTC)
+        await db.commit()
+
+
+def _classify_start_failure(exc: Exception) -> str:
+    if isinstance(exc, asyncio.TimeoutError):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        text = exc.response.text.lower() if exc.response is not None else ""
+        if "already_running" in text:
+            return "already_running"
+        if "port" in text or exc.response.status_code == 409:
+            return "port_occupied"
+    if isinstance(exc, httpx.HTTPError):
+        return "http_error"
+    return "http_error"
+
+
+async def _record_start_failure(row: DesiredRow, *, reason: str) -> None:
+    threshold = int(settings_service.get("appium_reconciler.start_failure_threshold"))
+    backoff_seconds = int(settings_service.get("appium.startup_timeout_sec")) * 4
+    async with async_session() as db:
+        device = await _load_device_for_reconciler(db, row.device_id)
+        if device is None:
+            return
+        current = lifecycle_policy_state(device)
+        attempts = int(current.get("recovery_backoff_attempts", 0)) + 1
+        current["recovery_backoff_attempts"] = attempts
+        current["last_failure_source"] = "appium_reconciler"
+        current["last_failure_reason"] = reason
+        if attempts >= threshold:
+            current["backoff_until"] = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
+        write_lifecycle_policy_state(device, current)
+        await db.commit()
+
+
+async def _reset_start_failure(row: DesiredRow) -> None:
+    async with async_session() as db:
+        device = await _load_device_for_reconciler(db, row.device_id)
+        if device is None:
+            return
+        current = lifecycle_policy_state(device)
+        if not current.get("recovery_backoff_attempts") and not current.get("backoff_until"):
+            return
+        current["recovery_backoff_attempts"] = 0
+        current["backoff_until"] = None
+        write_lifecycle_policy_state(device, current)
+        await db.commit()
+
+
+async def run_one_cycle_for_test() -> None:
+    async with async_session() as db:
+        hosts = await _fetch_online_hosts(db)
+        rows = await _fetch_node_rows(db)
+        desired = await _fetch_desired_rows(db)
+        backoff = await _fetch_backoff_until(db)
+    await _reconcile_all(hosts, rows)
+    if reconciler_convergence_enabled():
+        await _drive_convergence(hosts, desired, backoff)
