@@ -27,3 +27,22 @@ async def test_event_bus_publish_reaches_subscriber() -> None:
         await asyncio.sleep(0.05)
     await bus.stop()
     assert received == [event_envelope(EventType.NODE_DRAIN, {"id": "node-1"})]
+
+
+@pytest.mark.asyncio
+async def test_event_bus_records_failed_publish_and_recreates_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = EventBus(publish_url="inproc://reconnect", subscribe_url="inproc://reconnect", heartbeat_sec=0.1)
+    await bus.start()
+    original_socket = bus.publish_socket
+
+    async def fail_once(_frames: list[bytes]) -> None:
+        raise RuntimeError("send failed")
+
+    monkeypatch.setattr(bus, "_send_multipart", fail_once)
+    with pytest.raises(RuntimeError):
+        await bus.publish({"type": "NODE_STATUS", "data": {}})
+    assert bus.last_publish_ok_at is None
+    assert bus.last_publish_failed_at is not None
+    assert bus.publish_failures == 1
+    assert bus.publish_socket is not original_socket
+    await bus.stop()
