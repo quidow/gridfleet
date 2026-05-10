@@ -186,6 +186,15 @@ class TestIdempotency:
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold == DeviceHold.maintenance
 
+    async def test_auto_stop_executed_from_offline_is_noop(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="i4"
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_EXECUTED)
+        assert changed is False
+        assert device.operational_state == DeviceOperationalState.offline
+
 
 class TestInvalidTransitions:
     async def test_maintenance_exited_without_maintenance_hold_raises(

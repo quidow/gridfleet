@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 
 from app.models.appium_node import NodeState
-from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
@@ -17,7 +16,6 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.device_event_service import record_event
-from app.services.device_state import set_operational_state
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
@@ -27,13 +25,18 @@ from app.services.lifecycle_policy_state import (
     write_state,
 )
 from app.services.lifecycle_policy_state import state as policy_state
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import stop_node as stop_managed_node
+
+_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
 
 if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.models.device import Device
     from app.models.device_reservation import DeviceReservation
     from app.models.test_run import TestRun
 
@@ -210,9 +213,9 @@ async def handle_node_crash(
             # writing offline/error state.
             device = await device_locking.lock_device(db, device.id, load_sessions=True)
             locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-            await set_operational_state(
+            await _MACHINE.transition(
                 device,
-                DeviceOperationalState.offline,
+                TransitionEvent.AUTO_STOP_EXECUTED,
                 reason=f"Node crash recorded ({source}): {reason}",
             )
             if locked_node is not None:
@@ -220,9 +223,9 @@ async def handle_node_crash(
                 locked_node.pid = None
             await db.commit()
     else:
-        await set_operational_state(
+        await _MACHINE.transition(
             device,
-            DeviceOperationalState.offline,
+            TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
         )
         if node is not None and node.state == NodeState.running:

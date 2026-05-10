@@ -49,6 +49,8 @@ from app.services.lifecycle_policy_state import (
 from app.services.lifecycle_policy_state import (
     state as policy_state,
 )
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
 from app.services.settings_service import settings_service
@@ -57,6 +59,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+_MACHINE = DeviceStateMachine()  # hooks wired in Task 9
 
 build_lifecycle_policy = lifecycle_policy_summary.build_lifecycle_policy
 build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy_summary
@@ -588,11 +592,26 @@ async def attempt_auto_recovery(
             {"recovered_from": source, "reason": reason},
         )
         if device.operational_state != DeviceOperationalState.available:
-            await set_operational_state(
-                device,
-                await ready_operational_state(db, device),
-                reason=f"Connectivity restored ({source}): {reason}",
-            )
+            target = await ready_operational_state(db, device)
+            if (
+                device.operational_state == DeviceOperationalState.offline
+                and target == DeviceOperationalState.available
+            ):
+                await _MACHINE.transition(
+                    device,
+                    TransitionEvent.CONNECTIVITY_RESTORED,
+                    reason=f"Connectivity restored ({source}): {reason}",
+                )
+            else:
+                # Fallback: probe says device is not ready (target=offline) or
+                # the device is in an operational state the CONNECTIVITY_RESTORED
+                # transition doesn't model from. Drop through to the direct
+                # writer to preserve existing behavior.
+                await set_operational_state(
+                    device,
+                    target,
+                    reason=f"Connectivity restored ({source}): {reason}",
+                )
         await db.commit()
 
     await record_event(
