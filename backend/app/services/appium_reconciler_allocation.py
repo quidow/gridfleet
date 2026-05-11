@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -71,42 +70,29 @@ async def reserve_appium_port(
     *,
     host_id: uuid.UUID,
     port: int,
-    owner_token: str,
+    node_id: uuid.UUID,
 ) -> int:
-    """Reserve exactly one main Appium port as a temporary resource claim."""
-    ttl_sec = float(settings_service.get("appium.reservation_ttl_sec"))
+    """Reserve exactly one main Appium port for a node."""
     reserved = await resource_claims.reserve(
         db,
         host_id=host_id,
         capability_key=APPIUM_PORT_CAPABILITY,
         start_port=port,
-        owner_token=owner_token,
-        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_sec),
+        node_id=node_id,
     )
     if reserved == port:
         return reserved
-    await resource_claims.release_temporary_capability(
-        db,
-        host_id=host_id,
-        owner_token=owner_token,
-        capability_key=APPIUM_PORT_CAPABILITY,
-    )
+    await resource_claims.release_managed(db, node_id=node_id)
     APPIUM_RECONCILER_ALLOCATION_COLLISIONS.inc()
     raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
 
 
-release_temporary = resource_claims.release_temporary
-release_temporary_capability = resource_claims.release_temporary_capability
 release_managed = resource_claims.release_managed
-transfer_temporary_to_managed = resource_claims.transfer_temporary_to_managed
 
 
 __all__ = [
     "APPIUM_PORT_CAPABILITY",
     "candidate_ports",
     "release_managed",
-    "release_temporary",
-    "release_temporary_capability",
     "reserve_appium_port",
-    "transfer_temporary_to_managed",
 ]

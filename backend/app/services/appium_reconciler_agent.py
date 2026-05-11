@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
-from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -34,7 +33,6 @@ from app.services.agent_operations import (
 from app.services.appium_reconciler_allocation import (
     APPIUM_PORT_CAPABILITY,
     candidate_ports,
-    release_temporary_capability,
     reserve_appium_port,
 )
 from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
@@ -56,7 +54,7 @@ from app.services.node_service_common import (
     build_grid_stereotype_caps,
     get_default_plugins,
 )
-from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
 from app.services.pack_capability_service import (
     render_default_capabilities,
     render_device_field_capabilities,
@@ -94,7 +92,7 @@ __all__ = [
     "RESTART_MAX_RETRIES",
     "NodeManagerError",
     "NodePortConflictError",
-    "TemporaryNodeHandle",
+    "RemoteStartResult",
     "agent_url",
     "allocate_port",
     "build_agent_start_payload",
@@ -105,11 +103,11 @@ __all__ = [
     "restart_node",
     "restart_node_via_agent",
     "start_node",
-    "start_remote_temporary_node",
+    "start_remote_node",
     "start_temporary_node",
     "stop_node",
     "stop_node_via_agent",
-    "stop_remote_temporary_node",
+    "stop_remote_node",
     "stop_temporary_node",
 ]
 
@@ -169,19 +167,6 @@ async def mark_node_started(
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")
-    owner_token = _build_device_owner_key(device)
-    promoted = await appium_node_resource_service.transfer_temporary_to_managed(
-        db,
-        host_id=device.host_id,
-        owner_token=owner_token,
-        node_id=node.id,
-    )
-    if promoted == 0:
-        logger.warning(
-            "mark_node_started: 0 temporary claims promoted for owner_token=%s node=%s",
-            owner_token,
-            node.id,
-        )
     for key, value in (allocated_caps or {}).items():
         if isinstance(value, int):
             continue
@@ -254,16 +239,6 @@ def require_management_host(device: Device, *, action: str = "use remote managem
 async def agent_url(device: Device) -> str:
     host = require_management_host(device)
     return f"http://{host.ip}:{host.agent_port}"
-
-
-def _build_device_owner_key(device: Device) -> str:
-    if device.id is None:
-        host_id = device.host_id
-        if host_id is None:
-            raise NodeManagerError(f"Device {device.identity_value} has no host assigned")
-        identity = device.connection_target or device.identity_value
-        return f"temp:{host_id}:{identity}"
-    return f"device:{device.id}"
 
 
 def build_agent_start_payload(
@@ -345,7 +320,7 @@ def _agent_start_timeout(device: Device) -> float | int:
     return base
 
 
-async def start_remote_temporary_node(
+async def start_remote_node(
     db: AsyncSession,
     device: Device,
     *,
@@ -353,7 +328,7 @@ async def start_remote_temporary_node(
     allocated_caps: dict[str, Any] | None,
     agent_base: str,
     http_client_factory: AgentClientFactory,
-) -> TemporaryNodeHandle:
+) -> RemoteStartResult:
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
 
@@ -419,7 +394,7 @@ async def start_remote_temporary_node(
 
     data = response_json_dict(resp)
     active_connection_target = data.get("connection_target")
-    return TemporaryNodeHandle(
+    return RemoteStartResult(
         port=port,
         pid=data.get("pid"),
         active_connection_target=active_connection_target if isinstance(active_connection_target, str) else None,
@@ -459,7 +434,7 @@ async def _build_session_aligned_start_caps(
     return caps
 
 
-async def stop_remote_temporary_node(
+async def stop_remote_node(
     *,
     port: int,
     agent_base: str,
@@ -535,7 +510,7 @@ async def restart_node_via_agent(
     allocated_caps = await appium_node_resource_service.get_capabilities(db, node_id=node.id) or None
 
     try:
-        stopped = await stop_remote_temporary_node(
+        stopped = await stop_remote_node(
             port=node.port,
             agent_base=agent_base,
             host=host.ip,
@@ -550,13 +525,13 @@ async def restart_node_via_agent(
             return False
 
         last_conflict: NodePortConflictError | None = None
-        started_handle: TemporaryNodeHandle | None = None
+        started_handle: RemoteStartResult | None = None
         # The DB row still says the old node is running, so candidate_ports()
         # intentionally excludes node.port here. That is desirable after an
         # unmanaged-listener conflict: restart on the next free managed port.
         for candidate_port in await candidate_ports(db, host_id=device.host_id, preferred_port=node.port):
             try:
-                started_handle = await start_remote_temporary_node(
+                started_handle = await start_remote_node(
                     db,
                     device,
                     port=candidate_port,
@@ -584,7 +559,7 @@ async def restart_node_via_agent(
     except (AgentCallError, httpx.HTTPError):
         return False
     except NodeManagerError:
-        await stop_remote_temporary_node(
+        await stop_remote_node(
             port=node.port,
             agent_base=agent_base,
             host=host.ip,
@@ -594,14 +569,13 @@ async def restart_node_via_agent(
         return False
 
 
-async def _start_with_owner(
+async def _start_for_node(
     db: AsyncSession,
     device: Device,
     *,
-    owner_key: str,
+    node: AppiumNode,
     preferred_port: int | None = None,
-    release_allocations_on_failure: bool = True,
-) -> TemporaryNodeHandle:
+) -> RemoteStartResult:
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
     resource_ports: dict[str, int] = {}
@@ -620,23 +594,10 @@ async def _start_with_owner(
         # resource allocation. Devices without a pack still start, the
         # allocator simply gets no port/derived-data-path hints.
         pass
-    existing_caps: dict[str, Any] = {}
-    if device.appium_node is not None:
-        existing_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)
-    if not existing_caps:
-        short_session = _short_session_factory(db)
-        async with short_session() as read_db:
-            existing_caps = await appium_node_resource_service.get_temporary_capabilities(
-                read_db,
-                host_id=device.host_id,
-                owner_token=owner_key,
-            )
-    allocated_caps: dict[str, Any] = dict(existing_caps)
+    allocated_caps: dict[str, Any] = await appium_node_resource_service.get_capabilities(db, node_id=node.id)
     try:
         short_session = _short_session_factory(db)
         async with short_session() as reserve_db:
-            ttl_sec = float(settings_service.get("appium.reservation_ttl_sec"))
-            expires_at = datetime.now(UTC) + timedelta(seconds=ttl_sec)
             for capability_key, start in resource_ports.items():
                 if capability_key in allocated_caps:
                     continue
@@ -645,20 +606,14 @@ async def _start_with_owner(
                     host_id=device.host_id,
                     capability_key=capability_key,
                     start_port=start,
-                    owner_token=owner_key,
-                    expires_at=expires_at,
+                    node_id=node.id,
                 )
             await reserve_db.commit()
     except Exception:
-        if release_allocations_on_failure:
-            short_session = _short_session_factory(db)
-            async with short_session() as cleanup_db:
-                await appium_node_resource_service.release_temporary(
-                    cleanup_db,
-                    host_id=device.host_id,
-                    owner_token=owner_key,
-                )
-                await cleanup_db.commit()
+        short_session = _short_session_factory(db)
+        async with short_session() as cleanup_db:
+            await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
+            await cleanup_db.commit()
         raise
 
     if needs_derived_data_path and "appium:derivedDataPath" not in allocated_caps:
@@ -675,10 +630,10 @@ async def _start_with_owner(
                         reserve_db,
                         host_id=device.host_id,
                         port=port,
-                        owner_token=owner_key,
+                        node_id=node.id,
                     )
                     await reserve_db.commit()
-                handle = await start_remote_temporary_node(
+                handle = await start_remote_node(
                     db,
                     device,
                     port=port,
@@ -691,10 +646,9 @@ async def _start_with_owner(
                 last_conflict = exc
                 short_session = _short_session_factory(db)
                 async with short_session() as cleanup_db:
-                    await release_temporary_capability(
+                    await appium_node_resource_service.release_capability(
                         cleanup_db,
-                        host_id=device.host_id,
-                        owner_token=owner_key,
+                        node_id=node.id,
                         capability_key=APPIUM_PORT_CAPABILITY,
                     )
                     await cleanup_db.commit()
@@ -707,17 +661,11 @@ async def _start_with_owner(
             assert last_conflict is not None
             raise last_conflict
     except Exception:
-        if release_allocations_on_failure:
-            short_session = _short_session_factory(db)
-            async with short_session() as cleanup_db:
-                await appium_node_resource_service.release_temporary(
-                    cleanup_db,
-                    host_id=device.host_id,
-                    owner_token=owner_key,
-                )
-                await cleanup_db.commit()
+        short_session = _short_session_factory(db)
+        async with short_session() as cleanup_db:
+            await appium_node_resource_service.release_managed(cleanup_db, node_id=node.id)
+            await cleanup_db.commit()
         raise
-    handle.owner_key = owner_key
     handle.allocated_caps = allocated_caps
     return handle
 
@@ -759,6 +707,31 @@ async def start_node(
     return node
 
 
+async def start_temporary_node(
+    db: AsyncSession,
+    device: Device,
+    *,
+    owner_key: str | None = None,
+    port: int | None = None,
+) -> RemoteStartResult:
+    """Compatibility shim until verification flow uses start_node directly."""
+    del owner_key
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned")
+    if device.appium_node is None:
+        desired_port = port or (await candidate_ports(db, host_id=device.host_id))[0]
+        node = AppiumNode(
+            device_id=device.id,
+            port=desired_port,
+            grid_url=settings_service.get("grid.hub_url"),
+        )
+        db.add(node)
+        await db.flush()
+        device.appium_node = node
+    node = cast("AppiumNode", device.appium_node)
+    return await _start_for_node(db, device, node=node, preferred_port=port)
+
+
 async def stop_node(
     db: AsyncSession,
     device: Device,
@@ -780,61 +753,25 @@ async def stop_node(
     return node
 
 
-async def start_temporary_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    owner_key: str | None = None,
-    port: int | None = None,
-) -> TemporaryNodeHandle:
-    resolved_owner_key = owner_key or _build_device_owner_key(device)
-    return await _start_with_owner(
-        db,
-        device,
-        owner_key=resolved_owner_key,
-        preferred_port=port,
-    )
-
-
 async def stop_temporary_node(
     db: AsyncSession,
     device: Device,
-    handle: TemporaryNodeHandle,
+    handle: RemoteStartResult,
     *,
     release_allocations: bool = True,
 ) -> bool:
-    """Stop the temporary node identified by ``handle`` via its agent.
-
-    Returns True on confirmed agent acknowledgement (or when the handle
-    represents a re-used pre-existing node that the caller never owned and
-    therefore should not stop). Returns False when the agent did not
-    acknowledge — caller MUST NOT mutate DB node state in that case.
-    """
-    if handle.reused_existing:
-        return True
+    """Compatibility shim until verification flow uses stop_node directly."""
     agent_base = handle.agent_base or await agent_url(device)
     host = require_management_host(device, action="stop Appium nodes")
-    stopped = await stop_remote_temporary_node(
+    stopped = await stop_remote_node(
         port=handle.port,
         agent_base=agent_base,
         host=host.ip,
         agent_port=host.agent_port,
         http_client_factory=httpx.AsyncClient,
     )
-    # Only release the owner allocation when the agent confirmed the stop.
-    # An unacknowledged stop may leave the Appium process and its allocated
-    # ports in use; freeing the owner here would let the allocator hand the
-    # same resources to a new owner while the orphan is still running.
-    if stopped and release_allocations and handle.owner_key:
-        node = await db.scalar(select(AppiumNode).where(AppiumNode.device_id == device.id))
-        if node is not None:
-            await appium_node_resource_service.release_managed(db, node_id=node.id)
-        if device.host_id is not None:
-            await appium_node_resource_service.release_temporary(
-                db,
-                host_id=device.host_id,
-                owner_token=handle.owner_key,
-            )
+    if stopped and release_allocations and device.appium_node is not None:
+        await appium_node_resource_service.release_managed(db, node_id=device.appium_node.id)
         await db.commit()
     return stopped
 
