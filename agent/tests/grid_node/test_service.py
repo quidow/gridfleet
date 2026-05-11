@@ -168,6 +168,47 @@ async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(mon
     assert [event["type"] for event in bus.events][-2:] == ["session-closed", "node-heartbeat"]
 
 
+@pytest.mark.asyncio
+async def test_reregister_with_stereotype_publishes_drain_remove_add_sequence() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    bus.events.clear()
+
+    await service.reregister_with_stereotype(
+        new_caps={"platformName": "Android", "gridfleet:run_id": "abc-123"},
+        drain_grace_sec=0,
+    )
+
+    assert [event["type"] for event in bus.events] == [
+        "node-drain-started",
+        "node-drain-complete",
+        "node-removed",
+        "node-added",
+        "node-heartbeat",
+    ]
+    assert service.state.snapshot_slots()[0].stereotype.caps["gridfleet:run_id"] == "abc-123"
+    assert bus.events[-1]["data"]["slots"][0]["stereotype"]["gridfleet:run_id"] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    reservation = service.state.reserve({"platformName": "Android"})
+    service.state.commit(reservation.id, session_id="session-1", started_at=time.monotonic())
+    bus.events.clear()
+
+    await service.reregister_with_stereotype(
+        new_caps={"platformName": "Android", "gridfleet:run_id": "xyz"},
+        drain_grace_sec=0.01,
+    )
+
+    assert "node-drain-started" in [event["type"] for event in bus.events]
+    assert "node-added" in [event["type"] for event in bus.events]
+
+
 def _config() -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import platform
 import time
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from agent_app.grid_node.config import GridNodeConfig
 
 _GRID_NODE_VERSION = "4.41.0"
+logger = logging.getLogger(__name__)
 
 
 def _build_os_info() -> dict[str, str]:
@@ -237,6 +239,36 @@ class GridNodeService:
                 return
             await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
             return
+        await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+
+    async def reregister_with_stereotype(
+        self,
+        *,
+        new_caps: dict[str, object],
+        drain_grace_sec: float | None = None,
+    ) -> None:
+        if not self._started:
+            raise RuntimeError("GridNodeService.reregister_with_stereotype called before start()")
+
+        grace = self.config.session_timeout_sec if drain_grace_sec is None else drain_grace_sec
+        await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
+
+        deadline = asyncio.get_running_loop().time() + grace
+        while True:
+            if not any(slot.state == "BUSY" for slot in self.state.snapshot().slots):
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning("grid_node_drain_timeout", extra={"node_id": self.config.node_id, "waited_sec": grace})
+                break
+            await asyncio.sleep(0.05)
+
+        await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
+        await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
+
+        self.state.replace_slot_stereotype(new_caps)
+
+        await asyncio.sleep(0.25)
+        await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
     def snapshot(self) -> dict[str, object]:
