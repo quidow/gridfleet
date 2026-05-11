@@ -118,7 +118,7 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
                 {
                     "port": 4723,
                     "pid": 12345,
-                    "connection_target": device.identity_value,
+                    "connection_target": device.connection_target,
                     "platform_id": device.platform_id,
                 }
             ],
@@ -163,7 +163,14 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
 
     payload = {
         "appium_processes": {
-            "running_nodes": [{"port": 4723, "pid": 111, "connection_target": device.identity_value}],
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 111,
+                    "connection_target": device.connection_target,
+                    "platform_id": device.platform_id,
+                }
+            ],
         }
     }
     start_mock = AsyncMock(
@@ -262,7 +269,7 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
     assert recovered_state["backoff_until"] is None
 
 
-async def test_reconciler_stop_failure_clears_restart_token(
+async def test_reconciler_stop_failure_preserves_restart_token(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -287,7 +294,14 @@ async def test_reconciler_stop_failure_clears_restart_token(
 
     payload = {
         "appium_processes": {
-            "running_nodes": [{"port": 4723, "pid": 111, "connection_target": device.identity_value}],
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 111,
+                    "connection_target": device.connection_target,
+                    "platform_id": device.platform_id,
+                }
+            ],
         }
     }
     with (
@@ -299,9 +313,45 @@ async def test_reconciler_stop_failure_clears_restart_token(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.transition_token is None
-    assert node.transition_deadline is None
+    assert node.transition_token == token
+    assert node.transition_deadline is not None
     assert node.state == NodeState.running
+
+
+async def test_reconciler_touches_backed_off_rows_when_host_responds(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="conv-backoff-touch", verified=True)
+    device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        state=NodeState.stopped,
+        desired_state=NodeState.running,
+        desired_port=4723,
+        last_observed_at=None,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    from app.services import appium_reconciler
+
+    start_mock = AsyncMock()
+    with (
+        patch.object(
+            appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
+        ),
+        patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
+        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+    ):
+        await appium_reconciler.run_one_cycle_for_test()
+
+    await db_session.refresh(node)
+    assert node.last_observed_at is not None
+    start_mock.assert_not_awaited()
 
 
 async def test_reconciler_rejects_zero_port_start_result(

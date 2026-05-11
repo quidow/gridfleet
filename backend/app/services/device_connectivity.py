@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import NodeState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -29,7 +29,6 @@ from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import stop_node_via_agent as stop_node_via_agent_helper
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.settings_service import settings_service
@@ -234,11 +233,6 @@ async def _apply_ip_ping_hysteresis(
     counter = int(current) + 1 if isinstance(current, int) else 1
     await control_plane_state_store.set_value(db, IP_PING_NAMESPACE, device.identity_value, counter)
     return counter < threshold
-
-
-async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
-    """Compatibility seam for tests; production convergence owns disconnected-node stops."""
-    return await stop_node_via_agent_helper(device, node, http_client_factory=httpx.AsyncClient)
 
 
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:

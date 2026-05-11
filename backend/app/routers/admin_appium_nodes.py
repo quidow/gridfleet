@@ -48,6 +48,7 @@ async def clear_transition(
         caller="admin_clear_transition",
         desired_port=locked_node.desired_port,
         actor=username,
+        reason=body.reason,
     )
     await db.commit()
     await db.refresh(locked_node)

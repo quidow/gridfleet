@@ -60,6 +60,7 @@ async def test_admin_clear_transition_clears_token_and_records_event(
         and event.details is not None
         and event.details.get("caller") == "admin_clear_transition"
         and event.details.get("actor") == "anonymous-admin"
+        and event.details.get("reason") == "stuck on agent restart"
         for event in events
     )
 

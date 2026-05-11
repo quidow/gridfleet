@@ -21,16 +21,22 @@ from app.services import (
     appium_capability_keys,
     appium_node_locking,
     appium_node_resource_service,
-    appium_reconciler_agent,
     device_health,
     device_locking,
 )
 from app.services.agent_error_codes import AgentErrorCode
 from app.services.agent_operations import (
+    appium_start,
+    appium_stop,
     parse_agent_error_detail,
     response_json_dict,
 )
-from app.services.appium_reconciler_allocation import candidate_ports
+from app.services.appium_reconciler_allocation import (
+    APPIUM_PORT_CAPABILITY,
+    candidate_ports,
+    release_temporary_capability,
+    reserve_appium_port,
+)
 from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
@@ -73,8 +79,6 @@ RESTART_BACKOFF_BASE = 2
 RESTART_MAX_RETRIES = 3
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 
-appium_start = appium_reconciler_agent.appium_start
-appium_stop = appium_reconciler_agent.appium_stop
 appium_status = agent_operations.appium_status
 
 
@@ -395,7 +399,7 @@ async def start_remote_temporary_node(
             if key in pack_overrides:
                 payload[key] = pack_overrides[key]
     try:
-        resp = await appium_start(  # appium_reconciler_agent shim; raw agent call owned by reconciler module.
+        resp = await appium_start(
             agent_base,
             host=host.ip,
             agent_port=host.agent_port,
@@ -474,7 +478,7 @@ async def stop_remote_temporary_node(
     its Selenium Grid registration intact.
     """
     try:
-        resp = await appium_stop(  # appium_reconciler_agent shim; raw agent call owned by reconciler module.
+        resp = await appium_stop(
             agent_base,
             host=host,
             agent_port=agent_port,
@@ -498,7 +502,7 @@ async def stop_node_via_agent(
     except NodeManagerError:
         return False
     try:
-        resp = await appium_stop(  # appium_reconciler_agent shim; raw agent call owned by reconciler module.
+        resp = await appium_stop(
             f"http://{host.ip}:{host.agent_port}",
             host=host.ip,
             agent_port=host.agent_port,
@@ -666,6 +670,15 @@ async def _start_with_owner(
         last_conflict: NodePortConflictError | None = None
         for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port):
             try:
+                short_session = _short_session_factory(db)
+                async with short_session() as reserve_db:
+                    await reserve_appium_port(
+                        reserve_db,
+                        host_id=device.host_id,
+                        port=port,
+                        owner_token=owner_key,
+                    )
+                    await reserve_db.commit()
                 handle = await start_remote_temporary_node(
                     db,
                     device,
@@ -677,6 +690,15 @@ async def _start_with_owner(
                 break
             except NodePortConflictError as exc:
                 last_conflict = exc
+                short_session = _short_session_factory(db)
+                async with short_session() as cleanup_db:
+                    await release_temporary_capability(
+                        cleanup_db,
+                        host_id=device.host_id,
+                        owner_token=owner_key,
+                        capability_key=APPIUM_PORT_CAPABILITY,
+                    )
+                    await cleanup_db.commit()
                 logger.warning(
                     "Managed Appium port conflict for device %s on port %d; trying next candidate",
                     device.id,

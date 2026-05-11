@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-APPIUM_PORT_CAPABILITY = "gridfleet:appiumPort"
+APPIUM_PORT_CAPABILITY = resource_claims.INTERNAL_APPIUM_PORT_CAPABILITY
 
 
 async def candidate_ports(
@@ -82,12 +82,18 @@ async def reserve_appium_port(
     )
     if reserved == port:
         return reserved
-    await resource_claims.release_temporary(db, host_id=host_id, owner_token=owner_token)
+    await resource_claims.release_temporary_capability(
+        db,
+        host_id=host_id,
+        owner_token=owner_token,
+        capability_key=APPIUM_PORT_CAPABILITY,
+    )
     APPIUM_RECONCILER_ALLOCATION_COLLISIONS.inc()
     raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
 
 
 release_temporary = resource_claims.release_temporary
+release_temporary_capability = resource_claims.release_temporary_capability
 release_managed = resource_claims.release_managed
 transfer_temporary_to_managed = resource_claims.transfer_temporary_to_managed
 
@@ -97,6 +103,7 @@ __all__ = [
     "candidate_ports",
     "release_managed",
     "release_temporary",
+    "release_temporary_capability",
     "reserve_appium_port",
     "transfer_temporary_to_managed",
 ]

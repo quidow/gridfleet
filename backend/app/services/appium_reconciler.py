@@ -403,11 +403,13 @@ async def _drive_convergence(
     semaphore = asyncio.Semaphore(int(settings_service.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
     rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
+    active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
     for row in desired:
+        rows_by_host.setdefault(row.host_id, []).append(row)
         backoff_until = backoff_until_by_device.get(row.device_id)
         if backoff_until is not None and backoff_until > now:
             continue
-        rows_by_host.setdefault(row.host_id, []).append(row)
+        active_rows_by_host.setdefault(row.host_id, []).append(row)
 
     async def _reconcile_host(host: dict[str, object]) -> None:
         host_id = host.get("id")
@@ -433,9 +435,12 @@ async def _drive_convergence(
                     for entry in running
                 ]
                 await _touch_last_observed(rows)
+                active_rows = active_rows_by_host.get(host_id, [])
+                if not active_rows:
+                    return
                 await converge_host_rows(
                     host_id=host_id,
-                    rows=rows,
+                    rows=active_rows,
                     agent_running=observed,
                     now=datetime.now(UTC),
                     start_agent=_make_start_agent(),
@@ -480,7 +485,7 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
 
 def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[None]]:
     async def _stop(*, row: DesiredRow, port: int | None) -> None:
-        if port is None:
+        if port is None or port <= 0:
             return
         async with async_session() as db:
             await assert_current_leader(db)
@@ -498,13 +503,9 @@ def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[N
                 stopped = await stop_temporary_node(db, device, handle)
             except Exception:
                 APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()
-                if row.transition_token is not None:
-                    await _clear_transition_token(db, row)
                 raise
             if not stopped:
                 APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
-                if row.transition_token is not None:
-                    await _clear_transition_token(db, row)
                 raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
 
     return _stop
@@ -541,14 +542,23 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
             else:
                 await mark_node_stopped(db, device)
             if clear_desired_port or clear_transition:
-                device = await _load_device_for_reconciler(db, row.device_id)
+                device = await _lock_device_for_reconciler(db, row.device_id)
                 if device is None or device.appium_node is None:
                     return
-                if clear_desired_port:
-                    device.appium_node.desired_port = None
-                if clear_transition:
-                    device.appium_node.transition_token = None
-                    device.appium_node.transition_deadline = None
+                node = device.appium_node
+                target = node.desired_state if node.desired_state != NodeState.error else NodeState.stopped
+                desired_port = None if clear_desired_port else node.desired_port
+                transition_token = None if clear_transition else node.transition_token
+                transition_deadline = None if clear_transition else node.transition_deadline
+                await write_desired_state(
+                    db,
+                    node=node,
+                    target=target,
+                    caller="appium_reconciler",
+                    desired_port=desired_port,
+                    transition_token=transition_token,
+                    transition_deadline=transition_deadline,
+                )
                 await db.commit()
 
     return _write
@@ -610,7 +620,7 @@ def _classify_start_failure(exc: Exception) -> str:
         text = exc.response.text.lower() if exc.response is not None else ""
         if "already_running" in text:
             return "already_running"
-        if "port" in text or exc.response.status_code == 409:
+        if "port" in text or (exc.response is not None and exc.response.status_code == 409):
             return "port_occupied"
     if isinstance(exc, httpx.HTTPError):
         return "http_error"

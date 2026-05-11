@@ -48,6 +48,7 @@ async def write_desired_state(
     transition_token: uuid.UUID | None = None,
     transition_deadline: datetime | None = None,
     actor: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """Write desired Appium state on an already locked node row. Caller commits."""
     if target == NodeState.error:
@@ -103,6 +104,7 @@ async def write_desired_state(
             "transition_token": str(transition_token) if transition_token else None,
             "caller": caller,
             "actor": actor,
+            "reason": reason,
         },
     )
 

@@ -43,10 +43,27 @@ def test_desired_running_no_token_no_observed_picks_start() -> None:
 
 
 def test_desired_running_no_token_observed_matching_picks_noop() -> None:
-    row = _row(desired_state="running", desired_port=4723, state="running", port=4723)
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        state="running",
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
     obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
     assert action.kind == "no_op"
+
+
+def test_desired_running_observed_but_db_stopped_repairs_observed_state() -> None:
+    row = _row(desired_state="running", desired_port=4723, state="stopped", port=4723)
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "db_mark_running"
+    assert action.port == 4723
+    assert action.pid == 12345
+    assert action.active_connection_target == row.connection_target
 
 
 def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry() -> None:
@@ -71,6 +88,20 @@ def test_desired_running_active_token_picks_restart() -> None:
     assert action.kind == "restart"
     assert action.stop_port == 4723
     assert action.start_port == 4723
+
+
+def test_desired_running_active_token_without_observation_restarts_without_stop() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4724,
+        transition_token=uuid.uuid4(),
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+        port=4723,
+    )
+    action = decide_convergence_action(row, observed=None, now=datetime.now(UTC))
+    assert action.kind == "restart"
+    assert action.stop_port is None
+    assert action.start_port == 4724
 
 
 def test_desired_running_expired_token_picks_clear_then_running_no_token() -> None:
@@ -128,6 +159,32 @@ async def test_converge_host_rows_calls_start_for_running_intent_no_observation(
     start_agent.assert_awaited_once()
     stop_agent.assert_not_awaited()
     write_observed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_converge_host_rows_repairs_observed_running_db_stopped() -> None:
+    row = _row(desired_state="running", desired_port=4723, state="stopped", port=4723)
+    observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
+    write_observed = AsyncMock()
+
+    await converge_host_rows(
+        host_id=row.host_id,
+        rows=[row],
+        agent_running=[observed],
+        now=datetime.now(UTC),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=write_observed,
+        clear_token=AsyncMock(),
+    )
+
+    write_observed.assert_awaited_once_with(
+        row=row,
+        state="running",
+        port=4723,
+        pid=12345,
+        active_connection_target=row.connection_target,
+    )
 
 
 @pytest.mark.asyncio

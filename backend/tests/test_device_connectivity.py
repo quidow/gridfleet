@@ -109,14 +109,12 @@ async def test_endpoint_only_device_stays_available_when_health_passes(db_sessio
             new_callable=AsyncMock,
             return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]},
         ) as health,
-        patch("app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock) as mock_stop,
     ):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
     health.assert_awaited_once()
-    mock_stop.assert_not_called()
     assert host.status == HostStatus.online
 
 
@@ -179,13 +177,11 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
-        patch("app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock) as mock_stop,
     ):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
-    mock_stop.assert_not_called()
     assert node is not None
     await db_session.refresh(node)
     assert node.state == NodeState.running
@@ -213,13 +209,11 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
-        patch("app.services.device_connectivity._stop_node_via_agent", new_callable=AsyncMock) as mock_stop,
     ):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
-    mock_stop.assert_not_called()
     assert node is not None
     await db_session.refresh(node)
     assert node.state == NodeState.running

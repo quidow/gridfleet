@@ -47,6 +47,7 @@ ActionKind = Literal[
     "stop",
     "restart",
     "no_op",
+    "db_mark_running",
     "db_clear_stale_running",
     "clear_expired_token",
 ]
@@ -58,6 +59,8 @@ class ConvergenceAction:
     port: int | None = None
     stop_port: int | None = None
     start_port: int | None = None
+    pid: int | None = None
+    active_connection_target: str | None = None
     clear_desired_port: bool = False
 
 
@@ -87,12 +90,24 @@ def decide_convergence_action(
         if token_active:
             return ConvergenceAction(
                 kind="restart",
-                stop_port=observed.port if observed is not None else row.port,
-                start_port=row.desired_port or row.port,
+                stop_port=observed.port if observed is not None else None,
+                start_port=_positive_or_none(row.desired_port) or _positive_or_none(row.port),
             )
         if observed is None:
             return ConvergenceAction(kind="start", port=row.desired_port)
         if row.desired_port is None or observed.port == row.desired_port:
+            if (
+                row.state != "running"
+                or row.port != observed.port
+                or row.pid != observed.pid
+                or row.active_connection_target != observed.connection_target
+            ):
+                return ConvergenceAction(
+                    kind="db_mark_running",
+                    port=observed.port,
+                    pid=observed.pid,
+                    active_connection_target=observed.connection_target,
+                )
             return ConvergenceAction(kind="no_op")
         return ConvergenceAction(kind="stop", port=observed.port, clear_desired_port=True)
 
@@ -171,6 +186,15 @@ async def _execute_action(
     if action.kind == "db_clear_stale_running":
         await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)
         return
+    if action.kind == "db_mark_running":
+        await write_observed(
+            row=row,
+            state="running",
+            port=action.port,
+            pid=action.pid,
+            active_connection_target=action.active_connection_target,
+        )
+        return
     if action.kind == "start":
         result = await start_agent(row=row, port=action.port)
         await write_observed(
@@ -210,6 +234,10 @@ async def _execute_action(
 
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _positive_or_none(value: int | None) -> int | None:
+    return value if value is not None and value > 0 else None
 
 
 def _str_or_none(value: object) -> str | None:

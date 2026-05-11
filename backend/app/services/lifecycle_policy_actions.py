@@ -29,7 +29,6 @@ from app.services.lifecycle_policy_state import state as policy_state
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import stop_node as stop_managed_node  # noqa: F401 - retained test patch seam
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 

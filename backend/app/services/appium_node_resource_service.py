@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.type_defs import JsonValue
 
 POOL_SIZE = 1000
+INTERNAL_APPIUM_PORT_CAPABILITY = "gridfleet:appiumPort"
 
 
 class PoolExhaustedError(Exception):
@@ -107,6 +108,24 @@ async def release_temporary(
     return _rowcount(result)
 
 
+async def release_temporary_capability(
+    db: AsyncSession,
+    *,
+    host_id: uuid.UUID,
+    owner_token: str,
+    capability_key: str,
+) -> int:
+    result = await db.execute(
+        delete(AppiumNodeResourceClaim).where(
+            AppiumNodeResourceClaim.host_id == host_id,
+            AppiumNodeResourceClaim.owner_token == owner_token,
+            AppiumNodeResourceClaim.capability_key == capability_key,
+            AppiumNodeResourceClaim.node_id.is_(None),
+        )
+    )
+    return _rowcount(result)
+
+
 async def transfer_temporary_to_managed(
     db: AsyncSession,
     *,
@@ -131,7 +150,8 @@ async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str,
     port_rows = (
         await db.execute(
             select(AppiumNodeResourceClaim.capability_key, AppiumNodeResourceClaim.port).where(
-                AppiumNodeResourceClaim.node_id == node_id
+                AppiumNodeResourceClaim.node_id == node_id,
+                AppiumNodeResourceClaim.capability_key != INTERNAL_APPIUM_PORT_CAPABILITY,
             )
         )
     ).all()
