@@ -31,7 +31,15 @@ async def test_node_health_failure_path_locks_appium_node(
         verified=True,
         auto_manage=False,
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

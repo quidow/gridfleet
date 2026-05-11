@@ -28,7 +28,9 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
         )
     )
     await db_session.commit()

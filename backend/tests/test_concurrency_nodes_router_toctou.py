@@ -53,7 +53,10 @@ async def test_start_node_locks_device_before_reservation_check(
             device_id=dev.id,
             port=4723,
             grid_url="http://grid:4444",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
         db.add(node)
         await db.flush()
