@@ -82,3 +82,9 @@ def test_appium_node_read_exposes_effective_state() -> None:
     schema = app.openapi()
     appium = schema["components"]["schemas"]["AppiumNodeRead"]
     assert "effective_state" in appium["properties"]
+
+
+def test_appium_node_read_does_not_expose_legacy_state() -> None:
+    schema = app.openapi()
+    appium = schema["components"]["schemas"]["AppiumNodeRead"]
+    assert "state" not in appium["properties"], "Phase 6: legacy 'state' field must not appear in the API"

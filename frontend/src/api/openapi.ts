@@ -2242,8 +2242,6 @@ export interface components {
              * Format: date-time
              */
             started_at: string;
-            /** @deprecated */
-            readonly state: components["schemas"]["NodeState"];
             /** Transition Deadline */
             transition_deadline?: string | null;
             /** Transition Token */
@@ -4006,11 +4004,6 @@ export interface components {
             /** Id */
             id: string;
         };
-        /**
-         * NodeState
-         * @enum {string}
-         */
-        NodeState: "running" | "stopped" | "error";
         /** NotificationListRead */
         NotificationListRead: {
             /** Items */
