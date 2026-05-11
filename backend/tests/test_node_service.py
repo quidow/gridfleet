@@ -176,7 +176,13 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     await db_session.flush()
 
     node = AppiumNode(
-        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=9876,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.commit()
@@ -329,7 +335,13 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     db_session.add(device)
     await db_session.flush()
     node = AppiumNode(
-        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=9876,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db_session.add(node)
     device.appium_node = node
@@ -387,7 +399,13 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     db_session.add(device)
     await db_session.flush()
     node = AppiumNode(
-        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=9876,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db_session.add(node)
     device.appium_node = node
@@ -707,7 +725,13 @@ async def test_stop_node_writes_stopped_intent_without_agent_ack(
         operational_state="available",
     )
     node = AppiumNode(
-        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1, state=AppiumDesiredState.running
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=1,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.commit()
@@ -750,7 +774,13 @@ async def test_stop_node_records_intent_when_agent_would_acknowledge(
         operational_state="available",
     )
     node = AppiumNode(
-        device_id=device.id, port=4724, grid_url="http://hub:4444", pid=1, state=AppiumDesiredState.running
+        device_id=device.id,
+        port=4724,
+        grid_url="http://hub:4444",
+        pid=1,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4724,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.commit()
@@ -865,7 +895,8 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
         grid_url="http://hub:4444",
         pid=12345,
         active_connection_target="stop-no-ack-alloc-001",
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
     )
     db_session.add(node)
     await db_session.flush()
@@ -925,7 +956,8 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
         grid_url="http://hub:4444",
         pid=12345,
         active_connection_target="stop-ack-alloc-001",
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
     )
     db_session.add(node)
     await db_session.flush()
@@ -981,7 +1013,9 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
         port=4723,
         grid_url="http://hub:4444",
         pid=123,
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.commit()

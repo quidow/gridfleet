@@ -179,7 +179,6 @@ async def test_stop_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             active_connection_target="emulator-5554",
@@ -223,7 +222,7 @@ async def test_restart_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
@@ -280,7 +279,7 @@ async def test_restart_node_clears_stale_recovery_suppression(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
@@ -437,7 +436,7 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
@@ -493,7 +492,7 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
