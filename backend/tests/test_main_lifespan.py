@@ -46,7 +46,6 @@ async def _forever() -> None:
 
 def _setting_value(key: str) -> int:
     values = {
-        "appium.reservation_ttl_sec": 120,
         "appium.startup_timeout_sec": 30,
         "general.leader_keepalive_interval_sec": 5,
         "general.leader_stale_threshold_sec": 30,
@@ -123,7 +122,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_resource_sweeper_loop", _forever)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -142,7 +140,6 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "session_viability_loop",
             "fleet_capacity_collector_loop",
             "pack_drain_loop",
-            "appium_resource_sweeper_loop",
         }
         task_names = {task.get_name() for task in created_tasks}
         assert task_names >= expected_leader_loop_names
@@ -313,7 +310,6 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_resource_sweeper_loop", _forever)
 
     async with main.lifespan(main.app):
         pass

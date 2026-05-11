@@ -27,24 +27,17 @@ async def test_appium_node_resource_claims_table_exists(db_session: AsyncSession
             "capability_key",
             "port",
             "node_id",
-            "owner_token",
             "claimed_at",
-            "expires_at",
         }
         assert cols["host_id"]["nullable"] is False
         assert cols["capability_key"]["nullable"] is False
         assert cols["port"]["nullable"] is False
-        assert cols["node_id"]["nullable"] is True
-        assert cols["owner_token"]["nullable"] is True
-        assert cols["expires_at"]["nullable"] is True
+        assert cols["node_id"]["nullable"] is False
 
         unique_cols = {
             tuple(sorted(c["column_names"])) for c in insp.get_unique_constraints("appium_node_resource_claims")
         }
         assert ("capability_key", "host_id", "port") in unique_cols
-
-        check_names = {c["name"] for c in insp.get_check_constraints("appium_node_resource_claims")}
-        assert "ck_appium_node_resource_claims_flavour" in check_names
 
         fks = insp.get_foreign_keys("appium_node_resource_claims")
         node_fk = next((f for f in fks if "node_id" in f["constrained_columns"]), None)

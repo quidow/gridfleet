@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 
 from app.services.agent_error_codes import AgentErrorCode
-from app.services.appium_reconciler_agent import start_remote_temporary_node
+from app.services.appium_reconciler_agent import start_remote_node
 from app.services.node_service_types import NodePortConflictError
 from tests.helpers import create_device_record
 
@@ -74,7 +74,7 @@ async def test_port_conflict_detected_via_code(
     monkeypatch.setattr("app.services.appium_reconciler_agent.appium_start", fake_appium_start)
 
     with pytest.raises(NodePortConflictError):
-        await start_remote_temporary_node(
+        await start_remote_node(
             db,
             device,
             port=4723,

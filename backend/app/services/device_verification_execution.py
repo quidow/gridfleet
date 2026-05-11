@@ -11,15 +11,13 @@ from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
-    appium_node_locking,
-    appium_node_resource_service,
     capability_service,
     device_locking,
     device_service,
     session_viability,
 )
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
-from app.services.appium_reconciler_agent import start_node, stop_node, stop_temporary_node, wait_for_node_running
+from app.services.appium_reconciler_agent import start_node, stop_node, wait_for_node_running
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
@@ -27,7 +25,7 @@ from app.services.device_state import ready_operational_state, set_operational_s
 from app.services.device_verification_job_state import enum_value, set_stage
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.services.settings_service import settings_service
@@ -131,28 +129,6 @@ async def run_device_health(
     return detail
 
 
-async def run_cleanup(
-    job: dict[str, Any],
-    db: AsyncSession,
-    device: Device,
-    handle: TemporaryNodeHandle | None,
-) -> str | None:
-    if handle is None:
-        await set_stage(job, "cleanup", "skipped", detail="No temporary node to clean up")
-        return None
-
-    await set_stage(job, "cleanup", "running")
-    try:
-        await stop_temporary_node(db, device, handle)
-    except Exception as exc:
-        detail = f"Temporary node cleanup failed: {exc}"
-        await set_stage(job, "cleanup", "failed", detail=detail)
-        return detail
-
-    await set_stage(job, "cleanup", "passed", detail="Temporary verification node cleaned up")
-    return None
-
-
 async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) -> AppiumNode:
     """Write stopped desired state for verification update path."""
     node: AppiumNode | None = device.appium_node
@@ -195,79 +171,9 @@ async def stop_existing_managed_node_for_update(
     except NodeManagerError as exc:
         detail = f"Failed to stop existing managed node before verification: {exc}"
         await set_stage(job, "node_start", "failed", detail=detail)
-        await set_stage(job, "cleanup", "skipped", detail="Existing node stop failed before temporary node startup")
+        await set_stage(job, "cleanup", "skipped", detail="Existing node stop failed before verification node startup")
         return detail
 
-    return None
-
-
-async def retain_verified_node(
-    job: dict[str, Any],
-    db: AsyncSession,
-    device: Device,
-    handle: TemporaryNodeHandle,
-) -> str | None:
-    await set_stage(job, "cleanup", "running", detail="Retaining verified node as the managed Appium node")
-    try:
-        # Hold a row lock for the read-modify-write window that ends at the next commit.
-        # On the refresh path, restart_node commits internally and drives availability
-        # via mark_node_started; that path's locking is tracked separately.
-        device = await device_locking.lock_device(db, device.id)
-        if device.host_id is None:
-            raise NodeManagerError(f"Verification device {device.identity_value} has no host assigned")
-
-        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-        if node is None:
-            node = AppiumNode(
-                device_id=device.id,
-                port=handle.port,
-                grid_url=settings_service.get("grid.hub_url"),
-                pid=handle.pid,
-                active_connection_target=handle.active_connection_target,
-            )
-            db.add(node)
-            await db.flush()
-            device.appium_node = node
-        else:
-            node.port = handle.port
-            node.grid_url = settings_service.get("grid.hub_url")
-            node.pid = handle.pid
-            node.active_connection_target = handle.active_connection_target
-        await write_desired_state(
-            db,
-            node=node,
-            target=AppiumDesiredState.running,
-            caller="verification",
-            desired_port=handle.port,
-        )
-
-        for key, value in (handle.allocated_caps or {}).items():
-            if isinstance(value, int):
-                continue
-            await appium_node_resource_service.set_node_extra_capability(
-                db,
-                node_id=node.id,
-                capability_key=key,
-                value=value,
-            )
-
-        next_state = await ready_operational_state(db, device)
-        await set_operational_state(device, next_state)
-        await db.commit()
-
-        await db.refresh(device)
-    except Exception as exc:
-        detail = f"Failed to retain verified node: {exc}"
-        await set_stage(job, "cleanup", "failed", detail=detail)
-        return detail
-
-    await set_stage(
-        job,
-        "cleanup",
-        "passed",
-        detail="Verified node retained as the managed Appium node",
-        data={"port": handle.port, "pid": handle.pid},
-    )
     return None
 
 
@@ -276,10 +182,8 @@ async def run_probe(
     db: AsyncSession,
     device: Device,
     *,
-    owner_key: str,
     probe_session_fn: ProbeSessionFn,
 ) -> tuple[AppiumNode | None, str | None]:
-    del owner_key
     await set_stage(job, "node_start", "running")
     try:
         node = await start_node(db, device, caller="verification")
@@ -542,7 +446,6 @@ async def execute_verification_context(
             job,
             db,
             device,
-            owner_key=f"device:{context.save_device_id}",
             probe_session_fn=probe_session_fn,
         )
         if probe_error is not None:

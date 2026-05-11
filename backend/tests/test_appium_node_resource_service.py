@@ -103,19 +103,6 @@ async def test_release_managed_deletes_claim(db_session: AsyncSession) -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_reserve_rejects_owner_token(db_session: AsyncSession) -> None:
-    with pytest.raises(TypeError):
-        await svc.reserve(
-            db_session,
-            host_id=uuidlib.uuid4(),
-            capability_key="appium:mjpegServerPort",
-            start_port=8001,
-            owner_token="probe:xyz",  # type: ignore[call-arg]
-        )
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_reserve_is_race_safe_under_contention(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:

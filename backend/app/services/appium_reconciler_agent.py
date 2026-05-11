@@ -106,11 +106,9 @@ __all__ = [
     "restart_node_via_agent",
     "start_node",
     "start_remote_node",
-    "start_temporary_node",
     "stop_node",
     "stop_node_via_agent",
     "stop_remote_node",
-    "stop_temporary_node",
 ]
 
 
@@ -466,10 +464,6 @@ async def stop_remote_node(
         return False
 
 
-start_remote_temporary_node = start_remote_node
-stop_remote_temporary_node = stop_remote_node
-
-
 async def stop_node_via_agent(
     device: Device,
     node: AppiumNode,
@@ -714,31 +708,6 @@ async def start_node(
     return node
 
 
-async def start_temporary_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    owner_key: str | None = None,
-    port: int | None = None,
-) -> RemoteStartResult:
-    """Compatibility shim until verification flow uses start_node directly."""
-    del owner_key
-    if device.host_id is None:
-        raise NodeManagerError(f"Device {device.id} has no host assigned")
-    if device.appium_node is None:
-        desired_port = port or (await candidate_ports(db, host_id=device.host_id))[0]
-        node = AppiumNode(
-            device_id=device.id,
-            port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
-        )
-        db.add(node)
-        await db.flush()
-        device.appium_node = node
-    node = cast("AppiumNode", device.appium_node)
-    return await _start_for_node(db, device, node=node, preferred_port=port)
-
-
 async def stop_node(
     db: AsyncSession,
     device: Device,
@@ -758,29 +727,6 @@ async def stop_node(
     await db.commit()
     await db.refresh(node)
     return node
-
-
-async def stop_temporary_node(
-    db: AsyncSession,
-    device: Device,
-    handle: RemoteStartResult,
-    *,
-    release_allocations: bool = True,
-) -> bool:
-    """Compatibility shim until verification flow uses stop_node directly."""
-    agent_base = handle.agent_base or await agent_url(device)
-    host = require_management_host(device, action="stop Appium nodes")
-    stopped = await stop_remote_node(
-        port=handle.port,
-        agent_base=agent_base,
-        host=host.ip,
-        agent_port=host.agent_port,
-        http_client_factory=httpx.AsyncClient,
-    )
-    if stopped and release_allocations and device.appium_node is not None:
-        await appium_node_resource_service.release_managed(db, node_id=device.appium_node.id)
-        await db.commit()
-    return stopped
 
 
 async def wait_for_node_running(

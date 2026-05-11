@@ -125,7 +125,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    await appium_reconciler_agent.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_node(
         db_session,
         _android_real_device,
         port=4723,
@@ -196,7 +196,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         },
     )
 
-    await appium_reconciler_agent.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_node(
         db_session,
         device,
         port=4723,
@@ -250,7 +250,7 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
     monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
     monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
 
-    await appium_reconciler_agent.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_node(
         db_session,
         device,
         port=4724,

@@ -23,8 +23,4 @@ class RemoteStartResult:
     reused_existing: bool = False
     process: asyncio.subprocess.Process | None = None
     agent_base: str | None = None
-    owner_key: str | None = None
     allocated_caps: dict[str, Any] | None = None
-
-
-TemporaryNodeHandle = RemoteStartResult
