@@ -20,8 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute("ALTER TYPE deviceoperationalstate ADD VALUE IF NOT EXISTS 'verifying'")
+    op.execute("ALTER TYPE deviceoperationalstate ADD VALUE IF NOT EXISTS 'verifying'")
 
     op.execute("DELETE FROM appium_node_resource_claims WHERE node_id IS NULL")
 

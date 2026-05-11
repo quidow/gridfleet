@@ -136,9 +136,7 @@ class TestValidTransitions:
         assert device.operational_state is DeviceOperationalState.verifying
         assert device.hold is None
 
-    async def test_verification_failed_returns_to_offline(
-        self, db_session: AsyncSession, db_host: Host
-    ) -> None:
+    async def test_verification_failed_returns_to_offline(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed_device(
             db_session,
             db_host,
