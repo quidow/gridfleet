@@ -477,7 +477,6 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
                     device,
                     owner_key=f"device:{row.device_id}",
                     port=port,
-                    reuse_existing=False,
                 )
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")

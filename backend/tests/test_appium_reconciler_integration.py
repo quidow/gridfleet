@@ -131,7 +131,6 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
         await appium_reconciler.run_one_cycle_for_test()
 
     start_mock.assert_awaited_once()
-    assert start_mock.await_args.kwargs["reuse_existing"] is False
     await db_session.refresh(node)
     assert node.observed_running
     assert node.pid == 222
