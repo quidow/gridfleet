@@ -32,6 +32,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
@@ -489,6 +490,19 @@ async def _attempt_create_run(
     db.add_all(reservations)
     await db.flush()
 
+    for device in all_matched:
+        node = device.appium_node
+        if node is None:
+            continue
+        await write_desired_grid_run_id(
+            db,
+            node=node,
+            run_id=run.id,
+            caller="run_create",
+            actor=data.created_by,
+            reason=f"reserved for run {run.id}",
+        )
+
     return run, device_infos
 
 
@@ -616,6 +630,18 @@ async def exclude_device_from_run(
     entry.exclusion_reason = reason
     entry.excluded_at = datetime.now(UTC)
     entry.excluded_until = None
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=False)
+    except NoResultFound:
+        device = None
+    if device is not None and device.appium_node is not None:
+        await write_desired_grid_run_id(
+            db,
+            node=device.appium_node,
+            run_id=None,
+            caller="run_exclude_device",
+            reason=reason,
+        )
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -1366,6 +1392,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
         raise ValueError(f"Run is already in terminal state '{run.state.value}'")
 
     now = datetime.now(UTC)
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_complete")
     run.state = RunState.completed
     run.completed_at = now
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
@@ -1396,6 +1423,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run.state in TERMINAL_STATES:
         raise ValueError(f"Run is already in terminal state '{run.state.value}'")
 
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_cancel")
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
@@ -1420,6 +1448,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run is None:
         raise ValueError("Run not found")
 
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_force_release")
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
@@ -1450,6 +1479,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         await db.commit()
         return
 
+    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=reason)
     locked_run.state = RunState.expired
     locked_run.error = reason
     locked_run.completed_at = datetime.now(UTC)
@@ -1521,6 +1551,34 @@ async def _device_has_running_session(db: AsyncSession, device_id: uuid.UUID) ->
     return result.scalar_one_or_none() is not None
 
 
+async def _clear_desired_grid_run_id_for_run(
+    db: AsyncSession,
+    *,
+    run: TestRun,
+    caller: DesiredGridRunIdCaller,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> None:
+    for reservation in run.device_reservations:
+        if reservation.released_at is not None:
+            continue
+        try:
+            device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
+        except NoResultFound:
+            continue
+        node = device.appium_node
+        if node is None:
+            continue
+        await write_desired_grid_run_id(
+            db,
+            node=node,
+            run_id=None,
+            caller=caller,
+            actor=actor,
+            reason=reason,
+        )
+
+
 async def _release_devices(
     db: AsyncSession,
     run: TestRun,
@@ -1559,8 +1617,6 @@ async def _release_devices(
 
     for reservation in active_reservations:
         reservation.released_at = released_at
-        reservation.claimed_by = None
-        reservation.claimed_at = None
         device = locked_devices.get(reservation.device_id)
         if device is None:
             logger.warning(
