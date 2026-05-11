@@ -129,7 +129,6 @@ async def test_probe_failure_threshold_writes_restart_intent(
         device,
         result=ProbeResult(status="refused"),
         grid_device_ids=set(),
-        observed_state=NodeState.running,
         observed_port=node.port,
         observed_pid=node.pid,
         observed_active_connection_target=node.active_connection_target,
@@ -141,6 +140,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
     assert "node.crash" not in types
     assert "device.crashed" not in types
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
+    assert node.health_state == "error"
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None

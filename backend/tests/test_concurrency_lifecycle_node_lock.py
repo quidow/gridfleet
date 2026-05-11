@@ -19,7 +19,7 @@ async def test_handle_node_crash_locks_appium_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """``handle_node_crash`` writes ``node.state`` and ``node.pid``.
+    """``handle_node_crash`` writes node desired state.
     The AppiumNode row must be locked across those writes.
     """
     device = await create_device(
@@ -57,7 +57,14 @@ async def test_handle_node_crash_locks_appium_node(
         await stomper_can_go.wait()
         async with db_session_maker() as session:
             await session.execute(
-                update(AppiumNode).where(AppiumNode.device_id == device_id).values(state=NodeState.running, pid=12345)
+                update(AppiumNode)
+                .where(AppiumNode.device_id == device_id)
+                .values(
+                    desired_state=NodeState.running,
+                    desired_port=4723,
+                    pid=12345,
+                    active_connection_target="stomper-target",
+                )
             )
             await session.commit()
 
@@ -66,11 +73,12 @@ async def test_handle_node_crash_locks_appium_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == NodeState.running, (
-        f"Expected running but got {verify_node.state.value} — "
-        "handle_node_crash overwrote the concurrent running write "
+    assert verify_node.desired_state == NodeState.running, (
+        f"Expected desired running but got {verify_node.desired_state.value} — "
+        "handle_node_crash overwrote the concurrent desired-state write "
         "(missing AppiumNode lock)"
     )
     assert verify_node.pid == 12345, (
         f"Expected pid=12345 but got {verify_node.pid} — handle_node_crash overwrote the concurrent pid write"
     )
+    assert verify_node.active_connection_target == "stomper-target"

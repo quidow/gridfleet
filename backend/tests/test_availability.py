@@ -183,7 +183,6 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     await device_health.apply_node_state_transition(
         db_session,
         device,
-        new_state=NodeState.running,
         health_running=None,
         health_state=None,
         mark_offline=False,

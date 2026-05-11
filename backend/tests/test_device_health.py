@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -58,7 +59,14 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
     db, device = db_with_device
     device.device_checks_healthy = True
     device.session_viability_status = "passed"
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://h", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://h",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -145,6 +153,8 @@ async def test_last_checked_at_picks_max_of_signals_including_node(
         port=4723,
         grid_url="http://h",
         state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
         last_health_checked_at=datetime.now(UTC),
     )
     db.add(node)
@@ -211,17 +221,35 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
 ) -> None:
     db, device = db_with_device
     device.operational_state = DeviceOperationalState.available
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://h", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://h",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 
     await svc.apply_node_state_transition(
-        db, device, new_state=NodeState.error, mark_offline=False, reason="below threshold"
+        db,
+        device,
+        health_running=False,
+        health_state="error",
+        mark_offline=False,
+        reason="below threshold",
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
     assert device.operational_state == DeviceOperationalState.available
-    assert device.appium_node.state == NodeState.error
+    assert device.appium_node.observed_running is True
+    assert device.appium_node.health_state == "error"
+
+
+def test_apply_node_state_transition_does_not_accept_new_state() -> None:
+    sig = inspect.signature(svc.apply_node_state_transition)
+    assert "new_state" not in sig.parameters
 
 
 @pytest.mark.db
@@ -231,11 +259,18 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
     event_bus_capture: list[tuple[str, dict[str, object]]],
 ) -> None:
     db, device = db_with_device
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://h", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://h",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 
-    await svc.apply_node_state_transition(db, device, new_state=NodeState.stopped, mark_offline=False)
+    await svc.apply_node_state_transition(db, device, health_running=False, health_state="error", mark_offline=False)
     await db.commit()
     await _drain_after_commit_tasks()
     names = [name for name, _payload in event_bus_capture]
@@ -248,7 +283,14 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     db_with_device: tuple[AsyncSession, Device],
 ) -> None:
     db, device = db_with_device
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://h", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://h",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db.add(node)
     await db.flush()
 

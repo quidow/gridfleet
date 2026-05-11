@@ -1014,7 +1014,7 @@ async def test_enter_device_maintenance_stops_running_node(
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.status_code == 200
     assert device_resp.json()["hold"] == "maintenance"
-    assert device_resp.json()["appium_node"]["state"] == "running"
+    assert device_resp.json()["appium_node"]["effective_state"] == "stopping"
     assert device_resp.json()["appium_node"]["desired_state"] == "stopped"
 
 
@@ -1056,7 +1056,13 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
         connection_type=SimpleNamespace(value="usb"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-001",
+            observed_running=True,
+        ),
     )
 
     with (
@@ -1125,7 +1131,13 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
         connection_type=SimpleNamespace(value="usb"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-node-001",
+            observed_running=True,
+        ),
     )
 
     with (
@@ -1194,7 +1206,13 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
         connection_type=SimpleNamespace(value="virtual"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="emulator-5554",
+            observed_running=True,
+        ),
     )
     health_mock = AsyncMock(return_value={"healthy": True, "adb_connected": {"connected": True}})
 

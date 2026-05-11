@@ -76,3 +76,9 @@ def test_appium_node_read_exposes_desired_state_fields() -> None:
     desired_ref = properties["desired_state"]["$ref"]
     desired_schema = schema["components"]["schemas"][desired_ref.rsplit("/", 1)[-1]]
     assert desired_schema["enum"] == ["running", "stopped"]
+
+
+def test_appium_node_read_exposes_effective_state() -> None:
+    schema = app.openapi()
+    appium = schema["components"]["schemas"]["AppiumNodeRead"]
+    assert "effective_state" in appium["properties"]

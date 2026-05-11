@@ -22,8 +22,8 @@ from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.device import Device
 from app.models.host import Host, HostStatus, OSType
 from app.services import appium_node_resource_service
-from app.services.appium_reconciler_allocation import APPIUM_PORT_CAPABILITY, reserve_appium_port
-from app.services.node_service import candidate_ports, start_temporary_node
+from app.services.appium_reconciler_agent import start_temporary_node
+from app.services.appium_reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
 from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
 from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
@@ -232,7 +232,7 @@ async def test_start_temporary_node_reserves_main_appium_port_and_retries_collis
             agent_base="http://agent",
         )
     )
-    with patch("app.services.node_service.start_remote_temporary_node", new=remote_start):
+    with patch("app.services.appium_reconciler_agent.start_remote_temporary_node", new=remote_start):
         handle = await start_temporary_node(db_session, device, owner_key=f"device:{device.id}", port=start)
 
     assert handle.port == start + 1

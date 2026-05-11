@@ -540,7 +540,9 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch("app.services.node_service.start_remote_temporary_node", new=AsyncMock(side_effect=start_remote)),
+        patch(
+            "app.services.appium_reconciler_agent.start_remote_temporary_node", new=AsyncMock(side_effect=start_remote)
+        ),
         patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()

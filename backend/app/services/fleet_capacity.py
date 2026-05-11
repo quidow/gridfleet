@@ -8,7 +8,7 @@ from sqlalchemy import and_, func, or_, select, text
 
 from app.database import async_session
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.models.session import Session, SessionStatus
@@ -240,7 +240,8 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
             Device.verified_at.is_not(None),
             Device.operational_state != DeviceOperationalState.offline,
             Device.hold.is_(None),
-            AppiumNode.state == NodeState.running,
+            AppiumNode.pid.is_not(None),
+            AppiumNode.active_connection_target.is_not(None),
         )
     )
     return int((await db.execute(stmt)).scalar_one() or 0)

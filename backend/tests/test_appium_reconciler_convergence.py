@@ -26,7 +26,6 @@ def _row(**kw: object) -> DesiredRow:
         "desired_port": None,
         "transition_token": None,
         "transition_deadline": None,
-        "state": "stopped",
         "port": None,
         "pid": None,
         "active_connection_target": None,
@@ -46,7 +45,6 @@ def test_desired_running_no_token_observed_matching_picks_noop() -> None:
     row = _row(
         desired_state="running",
         desired_port=4723,
-        state="running",
         port=4723,
         pid=12345,
         active_connection_target="emulator-5554",
@@ -56,8 +54,8 @@ def test_desired_running_no_token_observed_matching_picks_noop() -> None:
     assert action.kind == "no_op"
 
 
-def test_desired_running_observed_but_db_stopped_repairs_observed_state() -> None:
-    row = _row(desired_state="running", desired_port=4723, state="stopped", port=4723)
+def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> None:
+    row = _row(desired_state="running", desired_port=4723, port=4723)
     obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
     assert action.kind == "db_mark_running"
@@ -110,8 +108,9 @@ def test_desired_running_expired_token_picks_clear_then_running_no_token() -> No
         desired_port=4723,
         transition_token=uuid.uuid4(),
         transition_deadline=datetime.now(UTC) - timedelta(seconds=1),
-        state="running",
         port=4723,
+        pid=1,
+        active_connection_target="emulator-5554",
     )
     obs = ObservedEntry(port=4723, pid=1, connection_target=row.connection_target)
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
@@ -119,7 +118,7 @@ def test_desired_running_expired_token_picks_clear_then_running_no_token() -> No
 
 
 def test_desired_stopped_with_observed_picks_stop() -> None:
-    row = _row(desired_state="stopped", state="running", port=4723)
+    row = _row(desired_state="stopped", port=4723, pid=1, active_connection_target="emulator-5554")
     obs = ObservedEntry(port=4723, pid=1, connection_target=row.connection_target)
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
     assert action.kind == "stop"
@@ -127,13 +126,13 @@ def test_desired_stopped_with_observed_picks_stop() -> None:
 
 
 def test_desired_stopped_no_observed_picks_noop_or_db_clear() -> None:
-    row = _row(desired_state="stopped", state="stopped")
+    row = _row(desired_state="stopped")
     action = decide_convergence_action(row, observed=None, now=datetime.now(UTC))
     assert action.kind == "no_op"
 
 
 def test_desired_stopped_no_observed_but_db_says_running_picks_db_clear() -> None:
-    row = _row(desired_state="stopped", state="running", port=4723)
+    row = _row(desired_state="stopped", port=4723, pid=1, active_connection_target="emulator-5554")
     action = decide_convergence_action(row, observed=None, now=datetime.now(UTC))
     assert action.kind == "db_clear_stale_running"
 
@@ -162,8 +161,8 @@ async def test_converge_host_rows_calls_start_for_running_intent_no_observation(
 
 
 @pytest.mark.asyncio
-async def test_converge_host_rows_repairs_observed_running_db_stopped() -> None:
-    row = _row(desired_state="running", desired_port=4723, state="stopped", port=4723)
+async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> None:
+    row = _row(desired_state="running", desired_port=4723, port=4723)
     observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     write_observed = AsyncMock()
 

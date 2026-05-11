@@ -929,7 +929,6 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     await device_health.apply_node_state_transition(
         db_session,
         device,
-        new_state=NodeState.running,
         health_running=None,
         health_state=None,
         mark_offline=False,
@@ -1190,7 +1189,6 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     await device_health.apply_node_state_transition(
         db_session,
         device,
-        new_state=NodeState.running,
         health_running=None,
         health_state=None,
         mark_offline=False,

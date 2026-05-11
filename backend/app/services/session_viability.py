@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
-from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
@@ -268,7 +267,7 @@ async def probe_session_via_agent_node(
     timeout_sec: int,
 ) -> tuple[bool, str | None]:
     node = device.appium_node
-    if node is None or node.state != NodeState.running:
+    if node is None or not node.observed_running:
         return False, "Appium node is not running"
     if device.host_id is None:
         return False, "Device has no management host"
@@ -318,7 +317,7 @@ async def run_session_viability_probe(
     try:
         config_changed = _clear_session_viability_from_config(device)
         timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
-        if not device.appium_node or device.appium_node.state != NodeState.running:
+        if not device.appium_node or not device.appium_node.observed_running:
             state = await _write_session_viability(
                 db,
                 device,

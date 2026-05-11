@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
-from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceOperationalState
 from app.observability import get_logger
 from app.services import appium_node_locking, device_locking
@@ -93,7 +92,7 @@ async def _restore_available_for_healthy_signal(
     if not locked.auto_manage:
         return
     node = locked.appium_node
-    if node is None or node.state != NodeState.running:
+    if node is None or not node_running_signal(node):
         return
     if not await is_ready_for_use_async(db, locked):
         return
@@ -153,7 +152,6 @@ async def apply_node_state_transition(
     db: AsyncSession,
     device: Device,
     *,
-    new_state: NodeState | None = None,
     health_running: bool | None = None,
     health_state: str | None = None,
     mark_offline: bool = True,
@@ -169,8 +167,6 @@ async def apply_node_state_transition(
     locked.appium_node = locked_node
     previous = build_public_summary(locked)
 
-    if new_state is not None:
-        locked_node.state = new_state
     locked_node.health_running = health_running
     locked_node.health_state = health_state
     locked_node.last_health_checked_at = _now()

@@ -92,7 +92,9 @@ async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(
         await asyncio.wait_for(probe_complete.wait(), timeout=2.0)
         async with db_session_maker() as session:
             await session.execute(
-                update(AppiumNode).where(AppiumNode.device_id == device_id).values(state=NodeState.stopped, pid=None)
+                update(AppiumNode)
+                .where(AppiumNode.device_id == device_id)
+                .values(pid=None, active_connection_target=None, health_running=None, health_state=None)
             )
             await session.commit()
         allow_processing.set()
@@ -134,9 +136,10 @@ async def test_stale_unhealthy_probe_skips_when_node_restarted_before_lock(
                 update(AppiumNode)
                 .where(AppiumNode.device_id == device_id)
                 .values(
-                    state=NodeState.running,
                     pid=2222,
                     active_connection_target="new-target",
+                    health_running=None,
+                    health_state=None,
                 )
             )
             await session.commit()

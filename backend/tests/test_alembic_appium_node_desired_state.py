@@ -212,7 +212,7 @@ async def test_appium_node_desired_state_backfills_from_legacy_state() -> None:
                     await session.execute(
                         text(
                             """
-                        SELECT state, port, desired_state, desired_port
+                        SELECT port, desired_state, desired_port
                         FROM appium_nodes
                         ORDER BY port
                         """
@@ -224,9 +224,9 @@ async def test_appium_node_desired_state_backfills_from_legacy_state() -> None:
             )
 
         assert rows == [
-            {"state": "running", "port": 4723, "desired_state": "running", "desired_port": 4723},
-            {"state": "stopped", "port": 4724, "desired_state": "stopped", "desired_port": None},
-            {"state": "error", "port": 4725, "desired_state": "stopped", "desired_port": None},
+            {"port": 4723, "desired_state": "running", "desired_port": 4723},
+            {"port": 4724, "desired_state": "stopped", "desired_port": None},
+            {"port": 4725, "desired_state": "stopped", "desired_port": None},
         ]
     finally:
         async with engine.begin() as conn:

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import NodeState
-
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -22,11 +20,13 @@ if TYPE_CHECKING:
 def node_running_signal(node: AppiumNode) -> bool:
     if node.health_running is not None:
         return node.health_running
-    return node.state == NodeState.running
+    return node.pid is not None and node.active_connection_target is not None
 
 
 def node_summary_label(node: AppiumNode) -> str:
-    return node.health_state or node.state.value
+    if node.health_state:
+        return node.health_state
+    return "running" if node_running_signal(node) else "stopped"
 
 
 def _summary_parts(device: Device) -> list[str]:

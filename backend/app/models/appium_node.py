@@ -37,7 +37,6 @@ class AppiumNode(Base):
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     container_id: Mapped[str | None] = mapped_column(String, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
-    state: Mapped[NodeState] = mapped_column(Enum(NodeState), default=NodeState.stopped, nullable=False)
     # DB constraints keep desired_state to running/stopped and require stopped intent to have no desired_port.
     desired_state: Mapped[NodeState] = mapped_column(
         Enum(NodeState, name="nodestate", create_type=False),
@@ -60,6 +59,36 @@ class AppiumNode(Base):
     last_health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     health_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     health_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def observed_running(self) -> bool:
+        return self.pid is not None and self.active_connection_target is not None
+
+    @property
+    def state(self) -> NodeState:
+        if self.health_state == NodeState.error.value:
+            return NodeState.error
+        return NodeState.running if self.observed_running else NodeState.stopped
+
+    @state.setter
+    def state(self, value: NodeState | str) -> None:
+        state = NodeState(value)
+        if state == NodeState.running:
+            if self.pid is None:
+                self.pid = 0
+            if self.active_connection_target is None:
+                self.active_connection_target = ""
+            self.health_running = None
+            self.health_state = None
+            return
+        if state == NodeState.error:
+            self.health_running = False
+            self.health_state = NodeState.error.value
+            return
+        self.pid = None
+        self.active_connection_target = None
+        self.health_running = None
+        self.health_state = None
 
     device: Mapped[Any] = relationship("Device", back_populates="appium_node")
     resource_claims: Mapped[list[Any]] = relationship(

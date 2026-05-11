@@ -5,7 +5,6 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
@@ -247,7 +246,7 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
 
     summary = device_health.build_public_summary(device)
     node = loaded_node(device)
-    node_running = node is not None and node.state == NodeState.running
+    node_running = node is not None and node.observed_running
 
     if summary.get("healthy") is True and node_running:
         # Defense in depth: ``clear_pending_auto_stop_on_recovery`` should
@@ -359,7 +358,7 @@ async def attempt_auto_recovery(
     node = loaded_node(device)
     if (
         node is not None
-        and node.state == NodeState.running
+        and node.observed_running
         and device.operational_state != DeviceOperationalState.offline
         and not run_reservation_service.reservation_entry_is_excluded(entry)
     ):
@@ -430,7 +429,7 @@ async def attempt_auto_recovery(
     write_state(device, current_state)
 
     node = loaded_node(device)
-    if node is None or node.state != NodeState.running:
+    if node is None or not node.observed_running:
         try:
             await start_managed_node(db, device, caller="lifecycle_recovery")
         except NodeManagerError as exc:

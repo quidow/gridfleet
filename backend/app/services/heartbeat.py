@@ -19,7 +19,7 @@ from app.errors import (
     CircuitOpenError,
 )
 from app.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
@@ -262,14 +262,12 @@ def _restart_event_observation_changed(
     *,
     observed_id: uuid.UUID,
     observed_port: int,
-    observed_state: NodeState,
     observed_pid: int | None,
     observed_active_connection_target: str | None,
 ) -> bool:
     return (
         locked.id != observed_id
         or locked.port != observed_port
-        or locked.state != observed_state
         or locked.pid != observed_pid
         or locked.active_connection_target != observed_active_connection_target
     )
@@ -370,7 +368,6 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             continue
         observed_id = node.id
         observed_port = node.port
-        observed_state = node.state
         observed_pid = node.pid
         observed_active_connection_target = node.active_connection_target
         # Acquire Device → AppiumNode locks before mutating node state.
@@ -383,7 +380,6 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             locked_node,
             observed_id=observed_id,
             observed_port=observed_port,
-            observed_state=observed_state,
             observed_pid=observed_pid,
             observed_active_connection_target=observed_active_connection_target,
         ):
@@ -449,7 +445,6 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             await device_health.apply_node_state_transition(
                 db,
                 device,
-                new_state=NodeState.running if process == "appium" else None,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,

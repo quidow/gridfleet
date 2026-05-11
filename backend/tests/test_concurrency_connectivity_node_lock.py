@@ -62,7 +62,9 @@ async def test_stop_disconnected_node_locks_device_and_node(
         await stomper_can_go.wait()
         async with db_session_maker() as session:
             await session.execute(
-                update(AppiumNode).where(AppiumNode.device_id == device_id).values(state=NodeState.error)
+                update(AppiumNode)
+                .where(AppiumNode.device_id == device_id)
+                .values(health_running=False, health_state=NodeState.error.value)
             )
             await session.commit()
 

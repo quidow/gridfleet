@@ -35,7 +35,10 @@ async def candidate_ports(
         .join(Device, Device.id == AppiumNode.device_id)
         .where(
             Device.host_id == host_id,
-            (AppiumNode.state == NodeState.running) | (AppiumNode.desired_state == NodeState.running),
+            (
+                (AppiumNode.pid.is_not(None) & AppiumNode.active_connection_target.is_not(None))
+                | (AppiumNode.desired_state == NodeState.running)
+            ),
         )
     )
     result = await db.execute(stmt)

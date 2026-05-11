@@ -29,7 +29,6 @@ class DesiredRow:
     desired_port: int | None
     transition_token: uuid.UUID | None
     transition_deadline: datetime | None
-    state: str
     port: int | None
     pid: int | None
     active_connection_target: str | None
@@ -97,8 +96,7 @@ def decide_convergence_action(
             return ConvergenceAction(kind="start", port=row.desired_port)
         if row.desired_port is None or observed.port == row.desired_port:
             if (
-                row.state != "running"
-                or row.port != observed.port
+                row.port != observed.port
                 or row.pid != observed.pid
                 or row.active_connection_target != observed.connection_target
             ):
@@ -113,7 +111,7 @@ def decide_convergence_action(
 
     if observed is not None:
         return ConvergenceAction(kind="stop", port=observed.port)
-    if row.state == "running":
+    if row.pid is not None or row.active_connection_target is not None:
         return ConvergenceAction(kind="db_clear_stale_running")
     return ConvergenceAction(kind="no_op")
 

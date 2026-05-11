@@ -1,10 +1,10 @@
 import enum
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator
 
 from app.models.appium_node import NodeState
 from app.models.device import (
@@ -23,6 +23,17 @@ DeviceTags = dict[str, str]
 class DesiredNodeState(enum.StrEnum):
     running = "running"
     stopped = "stopped"
+
+
+EffectiveNodeState = Literal[
+    "starting",
+    "running",
+    "stopping",
+    "stopped",
+    "restarting",
+    "blocked",
+    "error",
+]
 
 
 class DeviceCreate(BaseModel):
@@ -151,13 +162,64 @@ class AppiumNodeRead(BaseModel):
     pid: int | None
     container_id: str | None
     active_connection_target: str | None
-    state: NodeState
     started_at: datetime
     desired_state: DesiredNodeState
     desired_port: int | None = None
     transition_token: uuid.UUID | None = None
     transition_deadline: datetime | None = None
     last_observed_at: datetime | None = None
+    health_running: bool | None = None
+    health_state: str | None = None
+    lifecycle_policy_state: dict[str, Any] | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_state(self) -> EffectiveNodeState:
+        now = datetime.now(UTC)
+
+        if (
+            self.transition_token is not None
+            and self.transition_deadline is not None
+            and self.transition_deadline > now
+        ):
+            return "restarting"
+
+        lifecycle_state = self.lifecycle_policy_state or {}
+        suppression_reason = lifecycle_state.get("recovery_suppressed_reason")
+        if isinstance(suppression_reason, str) and suppression_reason:
+            backoff_raw = lifecycle_state.get("backoff_until")
+            backoff_active = False
+            if isinstance(backoff_raw, str):
+                try:
+                    backoff_until = datetime.fromisoformat(backoff_raw)
+                    if backoff_until.tzinfo is None:
+                        backoff_until = backoff_until.replace(tzinfo=UTC)
+                    backoff_active = backoff_until > now
+                except ValueError:
+                    backoff_active = False
+            if backoff_raw is None or backoff_active:
+                return "blocked"
+
+        if self.health_state == "error" or self.health_running is False:
+            return "error"
+
+        if self.desired_state == DesiredNodeState.running and self.pid is None:
+            return "starting"
+        if self.desired_state == DesiredNodeState.stopped and self.pid is not None:
+            return "stopping"
+        if self.desired_state == DesiredNodeState.running and self.pid is not None:
+            return "running"
+        return "stopped"
+
+    @computed_field(deprecated=True)  # type: ignore[prop-decorator]
+    @property
+    def state(self) -> NodeState:
+        eff = self.effective_state
+        if eff in {"running", "restarting"}:
+            return NodeState.running
+        if eff == "error":
+            return NodeState.error
+        return NodeState.stopped
 
 
 class SessionRead(BaseModel):

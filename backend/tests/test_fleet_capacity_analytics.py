@@ -12,6 +12,7 @@ from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host, HostStatus, OSType
 from app.models.session import Session, SessionStatus
 from app.services.fleet_capacity import (
+    _count_schedulable_capacity,
     collect_capacity_snapshot_once,
     get_fleet_capacity_timeline,
     is_unmet_demand_session,
@@ -245,6 +246,33 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
 
     stored = (await db_session.execute(select(AnalyticsCapacitySnapshot))).scalars().all()
     assert len(stored) == 1
+
+
+async def test_count_schedulable_capacity_uses_pid_not_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="capacity-no-pid",
+        name="Capacity No PID",
+        operational_state=DeviceOperationalState.available,
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid",
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            pid=None,
+            active_connection_target=None,
+        )
+    )
+    await db_session.commit()
+
+    assert await _count_schedulable_capacity(db_session) == 0
 
 
 async def test_capacity_snapshot_collector_skips_unreachable_grid(db_session: AsyncSession) -> None:

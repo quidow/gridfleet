@@ -20,12 +20,13 @@ from app.services import (
     session_viability,
 )
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
+from app.services.appium_reconciler_agent import start_temporary_node, stop_temporary_node
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification_job_state import enum_value, set_stage
-from app.services.node_service import start_temporary_node, stop_node, stop_temporary_node
+from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.settings_service import settings_service
@@ -161,7 +162,7 @@ async def stop_existing_managed_node_for_update(
 
     existing_device = context.existing_device
     node = existing_device.appium_node
-    if node is None or node.state != NodeState.running:
+    if node is None or not node.observed_running:
         return None
 
     await set_stage(
@@ -202,9 +203,8 @@ async def retain_verified_node(
                 device_id=device.id,
                 port=handle.port,
                 grid_url=settings_service.get("grid.hub_url"),
-                pid=None,
-                active_connection_target=None,
-                state=NodeState.stopped,
+                pid=handle.pid,
+                active_connection_target=handle.active_connection_target,
             )
             db.add(node)
             await db.flush()
@@ -212,9 +212,8 @@ async def retain_verified_node(
         else:
             node.port = handle.port
             node.grid_url = settings_service.get("grid.hub_url")
-            node.pid = None
-            node.active_connection_target = None
-            node.state = NodeState.stopped
+            node.pid = handle.pid
+            node.active_connection_target = handle.active_connection_target
         await write_desired_state(
             db,
             node=node,
