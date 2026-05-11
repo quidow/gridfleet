@@ -16,10 +16,9 @@ from app.services.appium_reconciler_agent import (
     agent_url,
     build_agent_start_payload,
     restart_node_via_agent,
-    start_remote_temporary_node,
-    stop_temporary_node,
+    start_remote_node,
 )
-from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, RemoteStartResult
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -147,6 +146,28 @@ async def test_remote_start_node_attaches_node_to_device_instance(
     assert not loaded_device.appium_node.observed_running
     assert loaded_device.appium_node.desired_state == AppiumDesiredState.running
     assert loaded_device.operational_state == DeviceOperationalState.offline
+
+
+async def test_start_node_with_verification_caller_skips_readiness(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verification-start-unready",
+        connection_target="verification-start-unready",
+        name="Verification Start Unready",
+        operational_state="offline",
+        mark_verified=False,
+    )
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return False
+
+    monkeypatch.setattr("app.services.appium_reconciler_agent.is_ready_for_use_async", fake_ready)
+    node = await node_agent.start_node(db_session, device, caller="verification")
+    assert node.desired_state is AppiumDesiredState.running
 
 
 async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -> None:
@@ -410,10 +431,10 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     assert loaded.appium_node is not None
 
     with (
-        patch("app.services.appium_reconciler_agent.stop_remote_temporary_node", new_callable=AsyncMock),
-        patch("app.services.appium_reconciler_agent.start_remote_temporary_node", new_callable=AsyncMock) as start_mock,
+        patch("app.services.appium_reconciler_agent.stop_remote_node", new_callable=AsyncMock),
+        patch("app.services.appium_reconciler_agent.start_remote_node", new_callable=AsyncMock) as start_mock,
     ):
-        start_mock.return_value = TemporaryNodeHandle(
+        start_mock.return_value = RemoteStartResult(
             port=4724,
             pid=456,
             active_connection_target="restart-port-conflict-001",
@@ -533,7 +554,7 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
 
 
 @pytest.mark.asyncio
-async def test_start_remote_temporary_node_aligns_simulator_caps_with_probe_request(
+async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -582,7 +603,7 @@ async def test_start_remote_temporary_node_aligns_simulator_caps_with_probe_requ
             "appium.session_override": True,
             "appium.startup_timeout_sec": 30,
         }[key]
-        await start_remote_temporary_node(
+        await start_remote_node(
             db_session,
             loaded,
             port=4724,
@@ -598,7 +619,7 @@ async def test_start_remote_temporary_node_aligns_simulator_caps_with_probe_requ
     assert "appium:simulatorRunning" not in payload["extra_caps"]
 
 
-async def test_start_remote_temporary_node_rejects_disabled_pack(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_session: AsyncSession) -> None:
     from sqlalchemy import select
 
     from app.errors import PackDisabledError
@@ -632,7 +653,7 @@ async def test_start_remote_temporary_node_rejects_disabled_pack(client: AsyncCl
         patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj),
         pytest.raises(PackDisabledError),
     ):
-        await start_remote_temporary_node(
+        await start_remote_node(
             db_session,
             device,
             port=4723,
@@ -644,7 +665,7 @@ async def test_start_remote_temporary_node_rejects_disabled_pack(client: AsyncCl
     mock_client_obj.post.assert_not_called()
 
 
-async def test_start_remote_temporary_node_renders_stereotype_once(
+async def test_start_remote_node_renders_stereotype_once(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.services import appium_reconciler_agent as node_service
@@ -692,7 +713,7 @@ async def test_start_remote_temporary_node_renders_stereotype_once(
         return mock_client_obj
 
     with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj):
-        await start_remote_temporary_node(
+        await start_remote_node(
             db_session,
             loaded,
             port=4723,
@@ -727,17 +748,17 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
-async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -> None:
-    """``stop_remote_temporary_node`` must report agent failures via False
+async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
+    """``stop_remote_node`` must report agent failures via False
     return so callers gate DB mutations correctly."""
     from app.errors import AgentUnreachableError
-    from app.services.appium_reconciler_agent import stop_remote_temporary_node
+    from app.services.appium_reconciler_agent import stop_remote_node
 
     with patch(
         "app.services.appium_reconciler_agent.appium_stop",
         AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "boom")),
     ):
-        result = await stop_remote_temporary_node(
+        result = await stop_remote_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
             host="10.0.0.1",
@@ -747,16 +768,16 @@ async def test_stop_remote_temporary_node_returns_false_on_agent_unreachable() -
     assert result is False
 
 
-async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
+async def test_stop_remote_node_returns_true_on_agent_ack() -> None:
     """Successful agent acknowledgement is a True return."""
-    from app.services.appium_reconciler_agent import stop_remote_temporary_node
+    from app.services.appium_reconciler_agent import stop_remote_node
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.raise_for_status = MagicMock()
 
     with patch("app.services.appium_reconciler_agent.appium_stop", AsyncMock(return_value=mock_resp)):
-        result = await stop_remote_temporary_node(
+        result = await stop_remote_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
             host="10.0.0.1",
@@ -764,127 +785,6 @@ async def test_stop_remote_temporary_node_returns_true_on_agent_ack() -> None:
             http_client_factory=AsyncMock,
         )
     assert result is True
-
-
-async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_acknowledge(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """If the agent never confirms the stop, the owner allocation MUST stay
-    intact — releasing it would let the allocator hand the same parallel-resource
-    ports to a new owner while the orphan Appium process is still using them."""
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
-    from app.services import appium_node_resource_service
-
-    device = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="stop-no-ack-alloc-001",
-        connection_target="stop-no-ack-alloc-001",
-        name="Stop No Ack Allocation",
-        operational_state="available",
-    )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=12345,
-        active_connection_target="stop-no-ack-alloc-001",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-    )
-    db_session.add(node)
-    await db_session.flush()
-    owner_key = f"device:{device.id}"
-    await appium_node_resource_service.reserve(
-        db_session,
-        host_id=db_host.id,
-        capability_key="appium:mjpegServerPort",
-        start_port=9200,
-        node_id=node.id,
-    )
-    await db_session.commit()
-    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
-        "appium:mjpegServerPort": 9200
-    }
-
-    handle = TemporaryNodeHandle(
-        port=4723,
-        pid=12345,
-        active_connection_target="stop-no-ack-alloc-001",
-        agent_base=f"http://{db_host.ip}:{db_host.agent_port}",
-        owner_key=owner_key,
-    )
-
-    with patch(
-        "app.services.appium_reconciler_agent.stop_remote_temporary_node",
-        AsyncMock(return_value=False),
-    ):
-        stopped = await stop_temporary_node(db_session, device, handle)
-
-    assert stopped is False
-    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
-        "appium:mjpegServerPort": 9200
-    }
-
-
-async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowledges(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Symmetric to the unacknowledged case: a confirmed stop MUST release the
-    owner allocation so the parallel-resource ports become reusable."""
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
-    from app.services import appium_node_resource_service
-
-    device = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="stop-ack-alloc-001",
-        connection_target="stop-ack-alloc-001",
-        name="Stop Ack Allocation",
-        operational_state="available",
-    )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=12345,
-        active_connection_target="stop-ack-alloc-001",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-    )
-    db_session.add(node)
-    await db_session.flush()
-    owner_key = f"device:{device.id}"
-    await appium_node_resource_service.reserve(
-        db_session,
-        host_id=db_host.id,
-        capability_key="appium:mjpegServerPort",
-        start_port=9200,
-        node_id=node.id,
-    )
-    await db_session.commit()
-    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {
-        "appium:mjpegServerPort": 9200
-    }
-
-    handle = TemporaryNodeHandle(
-        port=4723,
-        pid=12345,
-        active_connection_target="stop-ack-alloc-001",
-        agent_base=f"http://{db_host.ip}:{db_host.agent_port}",
-        owner_key=owner_key,
-    )
-
-    with patch(
-        "app.services.appium_reconciler_agent.stop_remote_temporary_node",
-        AsyncMock(return_value=True),
-    ):
-        stopped = await stop_temporary_node(db_session, device, handle)
-
-    assert stopped is True
-    assert await appium_node_resource_service.get_capabilities(db_session, node_id=node.id) == {}
 
 
 async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
@@ -921,11 +821,11 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
 
     with (
         patch(
-            "app.services.appium_reconciler_agent.stop_remote_temporary_node",
+            "app.services.appium_reconciler_agent.stop_remote_node",
             AsyncMock(return_value=False),
         ),
         patch(
-            "app.services.appium_reconciler_agent.start_remote_temporary_node",
+            "app.services.appium_reconciler_agent.start_remote_node",
             new_callable=AsyncMock,
         ) as start_mock,
     ):

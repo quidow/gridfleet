@@ -111,6 +111,21 @@ async def test_ready_operational_state_returns_available_when_ready(
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_ready_operational_state_preserves_verifying(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await _persisted_device(db_session, default_host_id)
+    device.operational_state = DeviceOperationalState.verifying
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.verifying
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_ready_operational_state_returns_offline_when_not_ready(
     db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

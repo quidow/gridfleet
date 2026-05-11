@@ -35,14 +35,14 @@ from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import device_locking
+from app.services import appium_node_resource_service, device_locking
 from app.services.agent_operations import agent_base_url, agent_health, appium_stop
 from app.services.agent_snapshot import parse_running_nodes
 from app.services.appium_reconciler_agent import (
+    _start_for_node,
     mark_node_started,
     mark_node_stopped,
-    start_temporary_node,
-    stop_temporary_node,
+    stop_remote_node,
 )
 from app.services.appium_reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
@@ -52,7 +52,6 @@ from app.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
 )
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.node_service_types import TemporaryNodeHandle
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -472,12 +471,10 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
             if device is None:
                 raise RuntimeError(f"Device {row.device_id} no longer exists")
             try:
-                handle = await start_temporary_node(
-                    db,
-                    device,
-                    owner_key=f"device:{row.device_id}",
-                    port=port,
-                )
+                node = device.appium_node
+                if node is None:
+                    raise RuntimeError(f"Device {row.device_id} has no AppiumNode row to converge")
+                handle = await _start_for_node(db, device, node=node, preferred_port=port)
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")
             except Exception as exc:
@@ -490,7 +487,7 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
                 "port": handle.port,
                 "pid": handle.pid,
                 "active_connection_target": handle.active_connection_target,
-                "allocated_caps": handle.allocated_caps,
+                "allocated_caps": await appium_node_resource_service.get_capabilities(db, node_id=node.id),
             }
 
     return _start
@@ -500,26 +497,20 @@ def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[N
     async def _stop(*, row: DesiredRow, port: int | None) -> None:
         if port is None or port <= 0:
             return
-        async with async_session() as db:
-            await assert_current_leader(db)
-            device = await _load_device_for_reconciler(db, row.device_id)
-            if device is None:
-                return
-            handle = TemporaryNodeHandle(
+        try:
+            stopped = await stop_remote_node(
                 port=port,
-                pid=row.pid,
-                active_connection_target=row.active_connection_target,
                 agent_base=agent_base_url(host_ip, agent_port),
-                owner_key=f"device:{row.device_id}",
+                host=host_ip,
+                agent_port=agent_port,
+                http_client_factory=httpx.AsyncClient,
             )
-            try:
-                stopped = await stop_temporary_node(db, device, handle)
-            except Exception:
-                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()
-                raise
-            if not stopped:
-                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
-                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
+        except Exception:
+            APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()
+            raise
+        if not stopped:
+            APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
+            raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
 
     return _stop
 

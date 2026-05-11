@@ -28,6 +28,7 @@ class DeviceOperationalState(enum.StrEnum):
     available = "available"
     busy = "busy"
     offline = "offline"
+    verifying = "verifying"
 
 
 class DeviceHold(enum.StrEnum):

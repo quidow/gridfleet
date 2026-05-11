@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.errors import AgentCallError
-from app.models.device import ConnectionType, Device, DeviceType
+from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
+from app.schemas.device import DeviceVerificationCreate
 from app.services import device_readiness, device_service, device_write
 from app.services.agent_operations import normalize_pack_device, pack_device_lifecycle_action
 from app.services.device_identity import (
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_client import AgentClientFactory
-    from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+    from app.schemas.device import DeviceVerificationUpdate
 
 
 @dataclass
@@ -276,6 +277,16 @@ async def validate_create_request(
     except DeviceIdentityConflictError as exc:
         return await _validation_failed(job, str(exc))
 
+    saved_device = await device_service.create_device(
+        db,
+        DeviceVerificationCreate.model_validate(payload),
+        initial_operational_state=DeviceOperationalState.verifying,
+    )
+    await db.commit()
+    await db.refresh(saved_device)
+    if host is not None:
+        set_committed_value(saved_device, "host", host)
+
     await set_stage(
         job,
         "validation",
@@ -284,13 +295,15 @@ async def validate_create_request(
         data={
             "platform_id": payload.get("platform_id"),
             "host_id": str(payload["host_id"]) if payload.get("host_id") else None,
+            "device_id": str(saved_device.id),
         },
     )
     return (
         PreparedVerificationContext(
             mode="create",
-            transient_device=build_transient_device(payload, host),
+            transient_device=saved_device,
             save_payload=payload,
+            save_device_id=saved_device.id,
             host=host,
             keep_running_after_verify=should_keep_verified_node_running(payload),
         ),

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, text
 
 from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
@@ -32,16 +31,9 @@ async def reserve(
     host_id: uuid.UUID,
     capability_key: str,
     start_port: int,
-    node_id: uuid.UUID | None = None,
-    owner_token: str | None = None,
-    expires_at: datetime | None = None,
+    node_id: uuid.UUID,
 ) -> int:
     """Reserve the first free port in [start_port, start_port + POOL_SIZE)."""
-    if (node_id is None) == (owner_token is None):
-        raise ValueError("Exactly one of node_id or owner_token must be provided")
-    if owner_token is not None and expires_at is None:
-        raise ValueError("Temporary reservations require expires_at")
-
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:host_id AS text) || ':' || :capability_key, 0))"),
         {"host_id": str(host_id), "capability_key": capability_key},
@@ -50,10 +42,10 @@ async def reserve(
     stmt = text(
         """
         INSERT INTO appium_node_resource_claims
-            (host_id, capability_key, port, node_id, owner_token, expires_at)
+            (host_id, capability_key, port, node_id)
         SELECT
             CAST(:host_id AS uuid), CAST(:capability_key AS varchar), candidate.port,
-            CAST(:node_id AS uuid), CAST(:owner_token AS varchar), CAST(:expires_at AS timestamptz)
+            CAST(:node_id AS uuid)
         FROM generate_series(CAST(:start_port AS integer), CAST(:end_port AS integer)) AS candidate(port)
         WHERE NOT EXISTS (
             SELECT 1 FROM appium_node_resource_claims existing
@@ -72,8 +64,6 @@ async def reserve(
             "host_id": host_id,
             "capability_key": capability_key,
             "node_id": node_id,
-            "owner_token": owner_token,
-            "expires_at": expires_at,
             "start_port": start_port,
             "end_port": start_port + POOL_SIZE - 1,
         },
@@ -92,55 +82,13 @@ async def release_managed(db: AsyncSession, *, node_id: uuid.UUID) -> int:
     return _rowcount(result)
 
 
-async def release_temporary(
-    db: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    owner_token: str,
-) -> int:
+async def release_capability(db: AsyncSession, *, node_id: uuid.UUID, capability_key: str) -> int:
+    """Delete one managed capability claim for the given node."""
     result = await db.execute(
         delete(AppiumNodeResourceClaim).where(
-            AppiumNodeResourceClaim.host_id == host_id,
-            AppiumNodeResourceClaim.owner_token == owner_token,
-            AppiumNodeResourceClaim.node_id.is_(None),
-        )
-    )
-    return _rowcount(result)
-
-
-async def release_temporary_capability(
-    db: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    owner_token: str,
-    capability_key: str,
-) -> int:
-    result = await db.execute(
-        delete(AppiumNodeResourceClaim).where(
-            AppiumNodeResourceClaim.host_id == host_id,
-            AppiumNodeResourceClaim.owner_token == owner_token,
+            AppiumNodeResourceClaim.node_id == node_id,
             AppiumNodeResourceClaim.capability_key == capability_key,
-            AppiumNodeResourceClaim.node_id.is_(None),
         )
-    )
-    return _rowcount(result)
-
-
-async def transfer_temporary_to_managed(
-    db: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    owner_token: str,
-    node_id: uuid.UUID,
-) -> int:
-    result = await db.execute(
-        update(AppiumNodeResourceClaim)
-        .where(
-            AppiumNodeResourceClaim.host_id == host_id,
-            AppiumNodeResourceClaim.owner_token == owner_token,
-            AppiumNodeResourceClaim.node_id.is_(None),
-        )
-        .values(node_id=node_id, owner_token=None, expires_at=None)
     )
     return _rowcount(result)
 
@@ -163,6 +111,15 @@ async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str,
     return merged
 
 
+async def list_claims_for_node(db: AsyncSession, *, node_id: uuid.UUID) -> list[AppiumNodeResourceClaim]:
+    rows = await db.scalars(
+        select(AppiumNodeResourceClaim)
+        .where(AppiumNodeResourceClaim.node_id == node_id)
+        .order_by(AppiumNodeResourceClaim.capability_key)
+    )
+    return list(rows)
+
+
 async def set_node_extra_capability(
     db: AsyncSession,
     *,
@@ -180,36 +137,6 @@ async def set_node_extra_capability(
         ),
         {"k": capability_key, "v": json.dumps(value), "node_id": node_id},
     )
-
-
-async def get_temporary_capabilities(
-    db: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    owner_token: str,
-) -> dict[str, JsonValue]:
-    rows = (
-        await db.execute(
-            select(AppiumNodeResourceClaim.capability_key, AppiumNodeResourceClaim.port).where(
-                AppiumNodeResourceClaim.host_id == host_id,
-                AppiumNodeResourceClaim.owner_token == owner_token,
-                AppiumNodeResourceClaim.node_id.is_(None),
-            )
-        )
-    ).all()
-    return {key: port for key, port in rows}
-
-
-async def sweep_expired(db: AsyncSession) -> int:
-    now = datetime.now(UTC)
-    result = await db.execute(
-        delete(AppiumNodeResourceClaim).where(
-            AppiumNodeResourceClaim.expires_at.is_not(None),
-            AppiumNodeResourceClaim.expires_at < now,
-            AppiumNodeResourceClaim.node_id.is_(None),
-        )
-    )
-    return _rowcount(result)
 
 
 def _rowcount(result: object) -> int:

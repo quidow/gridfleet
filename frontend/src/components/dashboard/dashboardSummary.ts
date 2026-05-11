@@ -66,12 +66,18 @@ interface GroupedLifecycleIncident {
 }
 
 function countByAvailability(devices: DeviceRead[], status: DeviceChipStatus) {
-  return devices.filter((device) => deviceChipStatus(device) === status).length;
+  return devices.filter((device) => {
+    const chipStatus = deviceChipStatus(device);
+    return status === 'busy' ? chipStatus === 'busy' || chipStatus === 'verifying' : chipStatus === status;
+  }).length;
 }
 
 export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): DashboardFleetSummary {
   const lifecycleDevices = devices.filter((device) => isLifecycleSummaryActive(device.lifecycle_policy_summary));
-  const busyDevices = devices.filter((device) => device.operational_state === 'busy');
+  const busyDevices = devices.filter((device) => {
+    const status = deviceChipStatus(device);
+    return status === 'busy' || status === 'verifying';
+  });
   const hardwareWarning = devices.filter((device) => device.hardware_health_status === 'warning').length;
   const hardwareCritical = devices.filter((device) => device.hardware_health_status === 'critical').length;
   const staleTelemetry = devices.filter((device) => device.hardware_telemetry_state === 'stale').length;

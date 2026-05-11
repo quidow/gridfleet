@@ -48,7 +48,6 @@ from app.services import auth as auth_service
 from app.services import device_health, device_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
-from app.services.appium_resource_sweeper import appium_resource_sweeper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
@@ -91,17 +90,6 @@ def _freeze_background_loops() -> bool:
     devices offline.
     """
     return freeze_background_loops_enabled()
-
-
-def _validate_appium_reservation_settings() -> None:
-    ttl = int(settings_service.get("appium.reservation_ttl_sec"))
-    startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
-    if ttl <= startup_timeout + 5:
-        raise RuntimeError(
-            f"Misconfigured Appium settings: appium.reservation_ttl_sec ({ttl}) "
-            f"must exceed appium.startup_timeout_sec ({startup_timeout}) + 5s. "
-            "Lower startup_timeout_sec or raise reservation_ttl_sec."
-        )
 
 
 def _validate_leader_keepalive_settings() -> None:
@@ -149,7 +137,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
         await settings_service.initialize(db)
-    _validate_appium_reservation_settings()
     _validate_leader_keepalive_settings()
 
     tasks: list[asyncio.Task[None]] = []
@@ -198,7 +185,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
                 asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
                 asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
-                asyncio.create_task(appium_resource_sweeper_loop(), name="appium_resource_sweeper_loop"),
                 asyncio.create_task(appium_reconciler_loop(), name="appium_reconciler_loop"),
                 asyncio.create_task(grid_node_run_id_reconciler_loop(), name="grid_node_run_id_reconciler_loop"),
             ]

@@ -45,6 +45,7 @@ export const DEVICE_STATUS_LABELS: Record<DeviceChipStatus, string> = {
   offline: 'Offline',
   maintenance: 'Maintenance',
   reserved: 'Reserved',
+  verifying: 'Verifying',
 };
 
 export const SESSION_STATUS_LABELS: Record<SessionStatus, string> = {

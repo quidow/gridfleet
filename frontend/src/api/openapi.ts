@@ -2535,7 +2535,7 @@ export interface components {
             /** Platform Id */
             platform_id?: string | null;
             /** Status */
-            status?: ("available" | "busy" | "offline" | "maintenance" | "reserved") | null;
+            status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
             /** Tags */
             tags?: {
                 [key: string]: string;
@@ -2640,7 +2640,7 @@ export interface components {
          * DeviceOperationalState
          * @enum {string}
          */
-        DeviceOperationalState: "available" | "busy" | "offline";
+        DeviceOperationalState: "available" | "busy" | "offline" | "verifying";
         /** DevicePatch */
         DevicePatch: {
             /** Auto Manage */
@@ -5829,7 +5829,7 @@ export interface operations {
                 offset?: number | null;
                 pack_id?: string | null;
                 platform_id?: string | null;
-                status?: ("available" | "busy" | "offline" | "maintenance" | "reserved") | null;
+                status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
                 host_id?: string | null;
                 identity_value?: string | null;
                 connection_target?: string | null;

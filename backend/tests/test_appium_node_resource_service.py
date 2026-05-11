@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid as uuidlib
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -104,65 +103,6 @@ async def test_release_managed_deletes_claim(db_session: AsyncSession) -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_temporary_claim_lifecycle(db_session: AsyncSession) -> None:
-    host_id = uuidlib.uuid4()
-    token = "intake:abc123"
-    expires = datetime.now(UTC) + timedelta(minutes=10)
-    port = await svc.reserve(
-        db_session,
-        host_id=host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=8001,
-        owner_token=token,
-        expires_at=expires,
-    )
-    assert port == 8001
-    await db_session.commit()
-
-    new_node = await _make_node(db_session, host_id)
-    await svc.transfer_temporary_to_managed(
-        db_session,
-        host_id=host_id,
-        owner_token=token,
-        node_id=new_node,
-    )
-    await db_session.commit()
-
-    caps = await svc.get_capabilities(db_session, node_id=new_node)
-    assert caps == {"appium:mjpegServerPort": 8001}
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_release_temporary_drops_only_temporary(db_session: AsyncSession) -> None:
-    host_id = uuidlib.uuid4()
-    node_id = await _make_node(db_session, host_id)
-    await svc.reserve(
-        db_session,
-        host_id=host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=8001,
-        node_id=node_id,
-    )
-    await svc.reserve(
-        db_session,
-        host_id=host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=8002,
-        owner_token="probe:xyz",
-        expires_at=datetime.now(UTC) + timedelta(minutes=5),
-    )
-    await db_session.commit()
-
-    await svc.release_temporary(db_session, host_id=host_id, owner_token="probe:xyz")
-    await db_session.commit()
-
-    managed = await svc.get_capabilities(db_session, node_id=node_id)
-    assert managed == {"appium:mjpegServerPort": 8001}
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_reserve_is_race_safe_under_contention(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -171,7 +111,7 @@ async def test_reserve_is_race_safe_under_contention(
     host_id = uuidlib.uuid4()
 
     async with db_session_maker() as bootstrap:
-        await _make_node(bootstrap, host_id)
+        node_ids = [await _make_node(bootstrap, host_id) for _ in range(32)]
         await bootstrap.commit()
 
     async def one_reserver(idx: int) -> int:
@@ -181,8 +121,7 @@ async def test_reserve_is_race_safe_under_contention(
                 host_id=host_id,
                 capability_key="appium:mjpegServerPort",
                 start_port=8001,
-                owner_token=f"contend:{idx}",
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                node_id=node_ids[idx],
             )
             await session.commit()
             return port
@@ -203,7 +142,7 @@ async def test_reserve_same_owner_idempotent_under_contention(
 
     host_id = uuidlib.uuid4()
     async with db_session_maker() as bootstrap:
-        await _make_node(bootstrap, host_id)
+        node_id = await _make_node(bootstrap, host_id)
         await bootstrap.commit()
 
     async def one_reserver() -> int | None:
@@ -214,8 +153,7 @@ async def test_reserve_same_owner_idempotent_under_contention(
                     host_id=host_id,
                     capability_key="appium:mjpegServerPort",
                     start_port=8001,
-                    owner_token="probe:samesame",
-                    expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                    node_id=node_id,
                 )
                 await session.commit()
                 return port
@@ -226,35 +164,6 @@ async def test_reserve_same_owner_idempotent_under_contention(
     results = await asyncio.gather(*(one_reserver() for _ in range(8)))
     successful = [p for p in results if p is not None]
     assert len(successful) == 1, f"Expected exactly one winner under same-owner contention: {results}"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_sweep_expired_temporary_claims(db_session: AsyncSession) -> None:
-    host_id = uuidlib.uuid4()
-    expired = datetime.now(UTC) - timedelta(minutes=1)
-    fresh = datetime.now(UTC) + timedelta(minutes=10)
-    await svc.reserve(
-        db_session,
-        host_id=host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=8001,
-        owner_token="probe:expired",
-        expires_at=expired,
-    )
-    await svc.reserve(
-        db_session,
-        host_id=host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=8002,
-        owner_token="probe:fresh",
-        expires_at=fresh,
-    )
-    await db_session.commit()
-
-    swept = await svc.sweep_expired(db_session)
-    await db_session.commit()
-    assert swept == 1
 
 
 async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib.UUID:

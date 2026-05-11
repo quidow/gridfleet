@@ -16,12 +16,11 @@ class NodePortConflictError(NodeManagerError):
 
 
 @dataclass
-class TemporaryNodeHandle:
+class RemoteStartResult:
     port: int
     pid: int | None
     active_connection_target: str | None = None
     reused_existing: bool = False
     process: asyncio.subprocess.Process | None = None
     agent_base: str | None = None
-    owner_key: str | None = None
     allocated_caps: dict[str, Any] | None = None

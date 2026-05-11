@@ -21,10 +21,9 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.device import Device
 from app.models.host import Host, HostStatus, OSType
-from app.services import appium_node_resource_service
-from app.services.appium_reconciler_agent import start_temporary_node
+from app.services import appium_node_resource_service, appium_reconciler_agent
 from app.services.appium_reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
-from app.services.node_service_types import NodeManagerError, NodePortConflictError, TemporaryNodeHandle
+from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
 from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
 
@@ -198,17 +197,78 @@ async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) ->
 
 async def test_reserve_appium_port_increments_collision_metric(db_session: AsyncSession) -> None:
     host = await _make_host(db_session, ip="10.0.0.80")
+    first_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-reserve-a",
+        connection_target="dev-main-port-reserve-a",
+        name="dev-main-port-reserve-a",
+    )
+    second_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-reserve-b",
+        connection_target="dev-main-port-reserve-b",
+        name="dev-main-port-reserve-b",
+    )
+    first_node = AppiumNode(device_id=first_device.id, port=4723, grid_url=settings_service.get("grid.hub_url"))
+    second_node = AppiumNode(device_id=second_device.id, port=4724, grid_url=settings_service.get("grid.hub_url"))
+    db_session.add_all([first_node, second_node])
+    await db_session.flush()
     start = settings_service.get("appium.port_range_start")
     before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()
 
-    await reserve_appium_port(db_session, host_id=host.id, port=start, owner_token="owner-a")
+    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=first_node.id)
     with pytest.raises(NodePortConflictError):
-        await reserve_appium_port(db_session, host_id=host.id, port=start, owner_token="owner-b")
+        await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=second_node.id)
 
     assert APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get() == before + 1
 
 
-async def test_start_temporary_node_reserves_main_appium_port_and_retries_collision(
+async def test_reserve_appium_port_conflict_preserves_other_node_claims(db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, ip="10.0.0.82")
+    first_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-preserve-a",
+        connection_target="dev-main-port-preserve-a",
+        name="dev-main-port-preserve-a",
+    )
+    second_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-preserve-b",
+        connection_target="dev-main-port-preserve-b",
+        name="dev-main-port-preserve-b",
+    )
+    first_node = AppiumNode(device_id=first_device.id, port=4723, grid_url=settings_service.get("grid.hub_url"))
+    second_node = AppiumNode(device_id=second_device.id, port=4724, grid_url=settings_service.get("grid.hub_url"))
+    db_session.add_all([first_node, second_node])
+    await db_session.flush()
+    start = settings_service.get("appium.port_range_start")
+    derived_data_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=host.id,
+        capability_key="appium:derivedDataPort",
+        start_port=8200,
+        node_id=second_node.id,
+    )
+    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=first_node.id)
+
+    with pytest.raises(NodePortConflictError):
+        await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=second_node.id)
+
+    claim = await db_session.scalar(
+        select(AppiumNodeResourceClaim).where(
+            AppiumNodeResourceClaim.node_id == second_node.id,
+            AppiumNodeResourceClaim.capability_key == "appium:derivedDataPort",
+        )
+    )
+    assert claim is not None
+    assert claim.port == derived_data_port
+
+
+async def test_start_node_reserves_main_appium_port_and_retries_collision(
     db_session: AsyncSession,
 ) -> None:
     host = await _make_host(db_session, ip="10.0.0.81")
@@ -219,9 +279,20 @@ async def test_start_temporary_node_reserves_main_appium_port_and_retries_collis
         connection_target="dev-main-port-reserve",
         name="dev-main-port-reserve",
     )
+    other_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-other",
+        connection_target="dev-main-port-other",
+        name="dev-main-port-other",
+    )
     start = settings_service.get("appium.port_range_start")
+    other_node = AppiumNode(device_id=other_device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+    node = AppiumNode(device_id=device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+    db_session.add_all([other_node, node])
+    await db_session.flush()
     before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()
-    await reserve_appium_port(db_session, host_id=host.id, port=start, owner_token="other-owner")
+    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=other_node.id)
     await db_session.commit()
     device = (
         await db_session.execute(
@@ -232,15 +303,20 @@ async def test_start_temporary_node_reserves_main_appium_port_and_retries_collis
     ).scalar_one()
 
     remote_start = AsyncMock(
-        return_value=TemporaryNodeHandle(
+        return_value=RemoteStartResult(
             port=start + 1,
             pid=1234,
             active_connection_target=device.identity_value,
             agent_base="http://agent",
         )
     )
-    with patch("app.services.appium_reconciler_agent.start_remote_temporary_node", new=remote_start):
-        handle = await start_temporary_node(db_session, device, owner_key=f"device:{device.id}", port=start)
+    with patch("app.services.appium_reconciler_agent.start_remote_node", new=remote_start):
+        handle = await appium_reconciler_agent._start_for_node(
+            db_session,
+            device,
+            node=node,
+            preferred_port=start,
+        )
 
     assert handle.port == start + 1
     assert remote_start.await_args.kwargs["port"] == start + 1
@@ -249,14 +325,10 @@ async def test_start_temporary_node_reserves_main_appium_port_and_retries_collis
         await db_session.execute(
             select(AppiumNodeResourceClaim).where(
                 AppiumNodeResourceClaim.host_id == host.id,
-                AppiumNodeResourceClaim.owner_token == f"device:{device.id}",
+                AppiumNodeResourceClaim.node_id == node.id,
             )
         )
     ).scalars()
     claims_by_key = {claim.capability_key: claim.port for claim in claims}
     assert claims_by_key[APPIUM_PORT_CAPABILITY] == start + 1
-    await appium_node_resource_service.release_temporary(
-        db_session,
-        host_id=host.id,
-        owner_token=f"device:{device.id}",
-    )
+    await appium_node_resource_service.release_managed(db_session, node_id=node.id)

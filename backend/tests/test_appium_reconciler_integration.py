@@ -11,7 +11,7 @@ import pytest
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.node_service_types import TemporaryNodeHandle
+from app.services.node_service_types import RemoteStartResult
 from app.services.settings_service import settings_service
 from tests.helpers import create_device
 
@@ -66,12 +66,11 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
     from app.services import appium_reconciler
 
     start_mock = AsyncMock(
-        return_value=TemporaryNodeHandle(
+        return_value=RemoteStartResult(
             port=4723,
             pid=12345,
             active_connection_target=device.identity_value,
             agent_base="http://agent",
-            owner_key=f"device:{device.id}",
         )
     )
 
@@ -80,8 +79,8 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -112,12 +111,11 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
     from app.services import appium_reconciler
 
     start_mock = AsyncMock(
-        return_value=TemporaryNodeHandle(
+        return_value=RemoteStartResult(
             port=4723,
             pid=222,
             active_connection_target=device.identity_value,
             agent_base="http://agent",
-            owner_key=f"device:{device.id}",
         )
     )
     with (
@@ -125,8 +123,8 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -171,8 +169,8 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
     with (
         patch.object(appium_reconciler, "agent_health", new=AsyncMock(return_value=payload)),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=AsyncMock()),
-        patch.object(appium_reconciler, "stop_temporary_node", new=stop_mock),
+        patch.object(appium_reconciler, "_start_for_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "stop_remote_node", new=stop_mock),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -217,8 +215,8 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
     with (
         patch.object(appium_reconciler, "agent_health", new=AsyncMock(return_value=payload)),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=AsyncMock()),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock(return_value=True)),
+        patch.object(appium_reconciler, "_start_for_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock(return_value=True)),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -263,12 +261,11 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
         }
     }
     start_mock = AsyncMock(
-        return_value=TemporaryNodeHandle(
+        return_value=RemoteStartResult(
             port=4724,
             pid=222,
             active_connection_target=device.identity_value,
             agent_base="http://agent",
-            owner_key=f"device:{device.id}",
         )
     )
     stop_mock = AsyncMock(return_value=True)
@@ -276,8 +273,8 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
     with (
         patch.object(appium_reconciler, "agent_health", new=AsyncMock(return_value=payload)),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
-        patch.object(appium_reconciler, "stop_temporary_node", new=stop_mock),
+        patch.object(appium_reconciler, "_start_for_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_remote_node", new=stop_mock),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -318,8 +315,8 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=failing_start),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=failing_start),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -335,12 +332,11 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
     db_session.add_all([device, node])
     await db_session.commit()
     success_start = AsyncMock(
-        return_value=TemporaryNodeHandle(
+        return_value=RemoteStartResult(
             port=node.desired_port,
             pid=333,
             active_connection_target=device.identity_value,
             agent_base="http://agent",
-            owner_key=f"device:{device.id}",
         )
     )
     with (
@@ -348,8 +344,8 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=success_start),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=success_start),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -396,8 +392,8 @@ async def test_reconciler_stop_failure_preserves_restart_token(
     with (
         patch.object(appium_reconciler, "agent_health", new=AsyncMock(return_value=payload)),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=AsyncMock()),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock(return_value=False)),
+        patch.object(appium_reconciler, "_start_for_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock(return_value=False)),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -434,8 +430,8 @@ async def test_reconciler_touches_backed_off_rows_when_host_responds(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -464,15 +460,15 @@ async def test_reconciler_rejects_zero_port_start_result(
     from app.services import appium_reconciler
 
     start_mock = AsyncMock(
-        return_value=TemporaryNodeHandle(port=0, pid=444, active_connection_target=device.identity_value)
+        return_value=RemoteStartResult(port=0, pid=444, active_connection_target=device.identity_value)
     )
     with (
         patch.object(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "_start_for_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 
@@ -523,12 +519,12 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
 
     from app.services import appium_reconciler
 
-    async def start_remote(*args: object, **kwargs: object) -> TemporaryNodeHandle:
+    async def start_remote(*args: object, **kwargs: object) -> RemoteStartResult:
         device = args[1]
         assert hasattr(device, "identity_value")
         port = kwargs["port"]
         assert isinstance(port, int)
-        return TemporaryNodeHandle(
+        return RemoteStartResult(
             port=port,
             pid=1000 + port,
             active_connection_target=device.identity_value,
@@ -540,10 +536,8 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch(
-            "app.services.appium_reconciler_agent.start_remote_temporary_node", new=AsyncMock(side_effect=start_remote)
-        ),
-        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+        patch("app.services.appium_reconciler_agent.start_remote_node", new=AsyncMock(side_effect=start_remote)),
+        patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()
 

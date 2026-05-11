@@ -23,6 +23,9 @@ class TransitionEvent(StrEnum):
     AUTO_STOP_EXECUTED = "auto_stop_executed"
     PREPARATION_FAILED = "preparation_failed"
     CLOUD_ESCROW = "cloud_escrow"
+    VERIFICATION_STARTED = "verification_started"
+    VERIFICATION_PASSED = "verification_passed"
+    VERIFICATION_FAILED = "verification_failed"
 
 
 class DeviceStateModel(BaseModel):

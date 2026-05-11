@@ -120,6 +120,52 @@ class TestValidTransitions:
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold == DeviceHold.reserved
 
+    async def test_verification_started_from_offline_transitions_to_verifying(
+        self, db_session: AsyncSession, db_host: Host
+    ) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.offline,
+            hold=None,
+            name_suffix="verify-start",
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_STARTED)
+        assert changed is True
+        assert device.operational_state is DeviceOperationalState.verifying
+        assert device.hold is None
+
+    async def test_verification_failed_returns_to_offline(self, db_session: AsyncSession, db_host: Host) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.verifying,
+            hold=None,
+            name_suffix="verify-fail",
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_FAILED)
+        assert changed is True
+        assert device.operational_state is DeviceOperationalState.offline
+        assert device.hold is None
+
+    async def test_verification_passed_returns_to_offline_baseline(
+        self, db_session: AsyncSession, db_host: Host
+    ) -> None:
+        device = await _seed_device(
+            db_session,
+            db_host,
+            operational=DeviceOperationalState.verifying,
+            hold=None,
+            name_suffix="verify-pass",
+        )
+        machine = DeviceStateMachine()
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_PASSED)
+        assert changed is True
+        assert device.operational_state is DeviceOperationalState.offline
+        assert device.hold is None
+
 
 class TestReservedHoldTransparent:
     async def test_session_started_works_while_reserved(self, db_session: AsyncSession, db_host: Host) -> None:

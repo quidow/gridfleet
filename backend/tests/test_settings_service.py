@@ -75,20 +75,6 @@ async def test_bulk_update_rejects_terminal_enable_without_token(
     assert rows.scalars().all() == []
 
 
-def test_appium_reservation_ttl_must_exceed_startup_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    values = {
-        "appium.startup_timeout_sec": 120,
-        "appium.reservation_ttl_sec": 125,
-    }
-    monkeypatch.setattr(settings_service, "get", lambda key: values[key])
-
-    with pytest.raises(RuntimeError, match="reservation_ttl_sec"):
-        main._validate_appium_reservation_settings()
-
-    values["appium.reservation_ttl_sec"] = 126
-    main._validate_appium_reservation_settings()
-
-
 async def test_leader_keepalive_interval_must_leave_stale_threshold_margin(db_session: AsyncSession) -> None:
     with pytest.raises(ValueError, match="leader_stale_threshold_sec"):
         await settings_service.update(db_session, "general.leader_keepalive_interval_sec", 60)

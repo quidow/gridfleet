@@ -65,10 +65,17 @@ async def prepare_device_update_payload(
     return await device_write.prepare_device_update_payload_async(db, device, data)
 
 
-async def create_device(db: AsyncSession, data: DeviceVerificationCreate, *, mark_verified: bool = False) -> Device:
+async def create_device(
+    db: AsyncSession,
+    data: DeviceVerificationCreate,
+    *,
+    mark_verified: bool = False,
+    initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
+) -> Device:
     payload = await prepare_device_create_payload(db, data)
     if mark_verified:
         payload["verified_at"] = datetime.now(UTC)
+    payload["operational_state"] = initial_operational_state
     await ensure_device_payload_identity_available(db, payload)
     try:
         return await device_write.create_device_record(db, payload)
@@ -125,19 +132,25 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         if filters.status == "available":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
         elif filters.status == "busy":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.busy)
+            stmt = stmt.where(
+                Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying])
+            )
         elif filters.status == "offline":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None))
         elif filters.status == "maintenance":
             stmt = stmt.where(
                 Device.hold == DeviceHold.maintenance,
                 Device.operational_state != DeviceOperationalState.busy,
+                Device.operational_state != DeviceOperationalState.verifying,
             )
         elif filters.status == "reserved":
             stmt = stmt.where(
                 Device.hold == DeviceHold.reserved,
                 Device.operational_state != DeviceOperationalState.busy,
+                Device.operational_state != DeviceOperationalState.verifying,
             )
+        elif filters.status == "verifying":
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.verifying)
     if filters.host_id is not None:
         stmt = stmt.where(Device.host_id == filters.host_id)
     if filters.identity_value is not None:

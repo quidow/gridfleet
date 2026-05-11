@@ -35,7 +35,10 @@ interface DevicesSummaryHrefOptions {
 }
 
 function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceChipStatus) {
-  return devices.filter((device) => deviceChipStatus(device) === status).length;
+  return devices.filter((device) => {
+    const chipStatus = deviceChipStatus(device);
+    return status === 'busy' ? chipStatus === 'busy' || chipStatus === 'verifying' : chipStatus === status;
+  }).length;
 }
 
 export function deriveDevicesSummaryStats(devices: DeviceRead[]): DevicesSummaryStats {
