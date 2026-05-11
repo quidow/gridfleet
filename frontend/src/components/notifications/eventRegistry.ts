@@ -172,10 +172,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
     render: (data) => `${firstString(data, ['name'], 'Run')} created`,
     severity: 'info',
   },
-  'run.ready': {
-    render: (data) => `${firstString(data, ['name'], 'Run')} ready`,
-    severity: 'info',
-  },
   'run.active': {
     render: (data) => `${firstString(data, ['name'], 'Run')} active`,
     severity: 'info',

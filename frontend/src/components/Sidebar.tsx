@@ -22,7 +22,7 @@ type NavGroup = {
   links: NavLinkDef[];
 };
 
-const ACTIVE_RUN_STATES: RunState[] = ['pending', 'preparing', 'ready', 'active', 'completing'];
+const ACTIVE_RUN_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 function AppMark() {
   return (

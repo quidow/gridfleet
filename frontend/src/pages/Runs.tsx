@@ -24,10 +24,10 @@ import DateInput from '../components/ui/DateInput';
 import { resolvePlatformLabel } from '../lib/labels';
 
 const RUN_STATES: RunState[] = [
-  'pending', 'preparing', 'ready', 'active', 'completing',
+  'pending', 'preparing', 'active', 'completing',
   'completed', 'failed', 'expired', 'cancelled',
 ];
-const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'ready', 'active', 'completing'];
+const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 function readEnumSearchParam<T extends string>(searchParams: URLSearchParams, key: string, values: readonly T[]): T | '' {
   const value = searchParams.get(key);

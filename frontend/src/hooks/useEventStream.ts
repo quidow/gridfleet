@@ -21,7 +21,6 @@ const EVENT_QUERY_MAP: Record<string, string[][]> = {
   'session.started': [['sessions'], ['grid-queue'], ['grid-status'], ['devices'], ['device'], ['runs'], ['run']],
   'session.ended': [['sessions'], ['grid-queue'], ['grid-status'], ['devices'], ['device'], ['runs'], ['run']],
   'run.created': [['runs'], ['run'], ['devices']],
-  'run.ready': [['runs'], ['run'], ['devices']],
   'run.active': [['runs'], ['run'], ['devices']],
   'run.completed': [['runs'], ['run'], ['devices'], ['sessions']],
   'run.cancelled': [['runs'], ['run'], ['devices'], ['sessions']],

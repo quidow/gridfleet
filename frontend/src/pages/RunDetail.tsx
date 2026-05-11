@@ -18,8 +18,8 @@ import { formatDateTime, formatDuration } from '../utils/dateFormatting';
 import DefinitionList from '../components/ui/DefinitionList';
 import { resolvePlatformLabel } from '../lib/labels';
 
-const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'ready', 'active', 'completing'];
-const STATE_ORDER: RunState[] = ['pending', 'preparing', 'ready', 'active', 'completing', 'completed'];
+const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
+const STATE_ORDER: RunState[] = ['pending', 'preparing', 'active', 'completing', 'completed'];
 
 function formatDate(dateStr: string | null): string {
   return formatDateTime(dateStr);
