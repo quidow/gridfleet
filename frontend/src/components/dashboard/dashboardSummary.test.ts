@@ -130,11 +130,13 @@ describe('dashboardSummary', () => {
       makeDevice({ id: 'excluded1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'excluded', label: 'Excluded', detail: null, backoff_until: null } }),
       makeDevice({ id: 'maintenance', needs_attention: false, operational_state: 'available', hold: 'maintenance' }),
       makeDevice({ id: 'reserved', needs_attention: false, operational_state: 'available', hold: 'reserved' }),
+      makeDevice({ id: 'verifying', needs_attention: false, operational_state: 'verifying', hold: null }),
       makeDevice({ id: 'ok1', needs_attention: false }),
     ]);
     expect(summary.needsAttention).toBe(3);
     expect(summary.maintenance).toBe(1);
     expect(summary.reserved).toBe(1);
+    expect(summary.busy).toBe(1);
     expect(summary.available).toBe(4);
   });
 

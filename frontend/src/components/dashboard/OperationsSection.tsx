@@ -76,6 +76,7 @@ function availabilityTone(status: DeviceChipStatus) {
   switch (status) {
     case 'available': return 'success' as const;
     case 'busy': return 'warning' as const;
+    case 'verifying': return 'warning' as const;
     case 'offline': return 'danger' as const;
     case 'maintenance': return 'neutral' as const;
     case 'reserved': return 'info' as const;

@@ -63,6 +63,7 @@ describe('devicesSummary', () => {
     const stats = deriveDevicesSummaryStats([
       makeDevice({ id: 'available', operational_state: 'available', hold: null }),
       makeDevice({ id: 'busy', operational_state: 'busy', hold: null }),
+      makeDevice({ id: 'verifying', operational_state: 'verifying', hold: null }),
       makeDevice({ id: 'reserved', operational_state: 'available', hold: 'reserved' }),
       makeDevice({ id: 'offline', operational_state: 'offline', hold: null }),
       makeDevice({ id: 'maintenance', operational_state: 'available', hold: 'maintenance' }),
@@ -70,7 +71,7 @@ describe('devicesSummary', () => {
     ]);
 
     expect(stats.available).toBe(2);
-    expect(stats.busy).toBe(1);
+    expect(stats.busy).toBe(2);
     expect(stats.reserved).toBe(1);
     expect(stats.offline).toBe(1);
     expect(stats.maintenance).toBe(1);

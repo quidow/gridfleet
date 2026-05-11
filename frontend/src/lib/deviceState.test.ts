@@ -18,7 +18,7 @@ describe('deviceChipStatus', () => {
     })).toBe('maintenance');
   });
 
-  it('returns busy when operational_state is busy, regardless of hold', () => {
+  it('returns busy-like operational state regardless of hold', () => {
     expect(deviceChipStatus({
       operational_state: 'busy' as DeviceOperationalState,
       hold: 'reserved' as DeviceHold,
@@ -27,6 +27,10 @@ describe('deviceChipStatus', () => {
       operational_state: 'busy' as DeviceOperationalState,
       hold: 'maintenance' as DeviceHold,
     })).toBe('busy');
+    expect(deviceChipStatus({
+      operational_state: 'verifying' as DeviceOperationalState,
+      hold: 'maintenance' as DeviceHold,
+    })).toBe('verifying');
   });
 
   it('returns operational_state when hold is null', () => {
@@ -42,5 +46,9 @@ describe('deviceChipStatus', () => {
       operational_state: 'offline' as DeviceOperationalState,
       hold: null,
     })).toBe('offline');
+    expect(deviceChipStatus({
+      operational_state: 'verifying' as DeviceOperationalState,
+      hold: null,
+    })).toBe('verifying');
   });
 });

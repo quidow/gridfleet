@@ -76,6 +76,10 @@ export function composeDeviceStatusNarrative(device: DeviceRead): DeviceStatusNa
     return { text: 'Busy. Currently running a session.', actions: [] };
   }
 
+  if (status === 'verifying') {
+    return { text: 'Verifying. A device verification job is running.', actions: [] };
+  }
+
   if (status === 'reserved') {
     return { text: 'Reserved.', actions: [] };
   }

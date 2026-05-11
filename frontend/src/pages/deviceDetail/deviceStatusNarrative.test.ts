@@ -87,6 +87,13 @@ describe('composeDeviceStatusNarrative', () => {
     expect(result.actions).toEqual([]);
   });
 
+  it('verifying → status describes verification, no actions', () => {
+    const device = { ...baseDevice, operational_state: 'verifying', hold: null } as unknown as DeviceRead;
+    const result = composeDeviceStatusNarrative(device);
+    expect(result.text.toLowerCase()).toContain('verifying');
+    expect(result.actions).toEqual([]);
+  });
+
   it('reserved → no actions', () => {
     const device = { ...baseDevice, operational_state: 'available', hold: 'reserved' } as unknown as DeviceRead;
     const result = composeDeviceStatusNarrative(device);
