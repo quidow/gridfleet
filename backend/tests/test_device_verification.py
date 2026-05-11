@@ -1063,7 +1063,9 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
         )
     )
     await db_session.commit()
