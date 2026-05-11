@@ -42,7 +42,7 @@ from .client import (
     _default_grid_url,
     register_run_cleanup,
 )
-from .sessions import build_error_session_payload
+from .sessions import build_error_session_payload, resolve_device_handle_from_driver
 
 try:
     __version__ = version("gridfleet-testkit")
@@ -70,6 +70,7 @@ __all__ = [
     "hydrate_allocated_device",
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
+    "resolve_device_handle_from_driver",
 ]
 
 

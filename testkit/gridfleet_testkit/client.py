@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -313,19 +314,20 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
-    def resolve_device_id_by_connection_target(self, connection_target: str) -> str:
-        """Look up the backend device id for a runtime connection target."""
+    def get_device_by_connection_target(self, target: str) -> dict[str, Any]:
+        """Fetch one device detail row by runtime connection target."""
         resp = httpx.get(
-            f"{self.base_url}/devices",
-            params={"connection_target": connection_target},
+            f"{self.base_url}/devices/by-connection-target/{quote(target, safe='')}",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        devices = cast("list[dict[str, Any]]", resp.json())
-        if not devices:
-            raise ValueError(f"No device found with connection target: {connection_target}")
-        return cast("str", devices[0]["id"])
+        return cast("dict[str, Any]", resp.json())
+
+    def resolve_device_id_by_connection_target(self, connection_target: str) -> str:
+        """Look up the backend device id for a runtime connection target."""
+        device = self.get_device_by_connection_target(connection_target)
+        return cast("str", device["id"])
 
     def get_device_config(self, connection_target: str) -> dict[str, Any]:
         """Fetch device config by looking up the current runtime connection target."""
