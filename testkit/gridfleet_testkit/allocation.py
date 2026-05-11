@@ -19,7 +19,7 @@ class UnavailableInclude:
 
 @dataclass(frozen=True)
 class AllocatedDevice:
-    """Combined view of a claimed device, ready for driver creation."""
+    """Combined view of an allocated device, ready for driver creation."""
 
     run_id: str
     device_id: str
@@ -35,8 +35,6 @@ class AllocatedDevice:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    claimed_by: str
-    claimed_at: str
     config: dict[str, Any] | None
     live_capabilities: dict[str, Any] | None
     test_data: dict[str, Any] | None = None
@@ -115,7 +113,7 @@ def _parse_unavailable_includes(payload: dict[str, Any]) -> tuple[UnavailableInc
 
 
 def hydrate_allocated_device(
-    claim_response: dict[str, Any],
+    device_handle: dict[str, Any],
     *,
     run_id: str,
     client: GridFleetClient,
@@ -123,15 +121,8 @@ def hydrate_allocated_device(
     fetch_capabilities: bool = False,
     fetch_test_data: bool = False,
 ) -> AllocatedDevice:
-    """Combine a claim response with optional static config and live capabilities.
-
-    Accepts a ``ClaimResponse`` payload from ``GridFleetClient.claim_device`` only.
-    Reserve responses (``RunCreateResponse.devices`` entries before any worker
-    has claimed) lack ``claimed_by`` / ``claimed_at`` and will raise
-    ``ValueError``. Iterate ``reserve_response['devices']`` and call
-    ``claim_device`` per worker before hydrating.
-    """
-    payload = dict(claim_response)
+    """Combine a device handle with optional static config and live capabilities."""
+    payload = dict(device_handle)
     device_id = _string_value(payload, "device_id")
     if _needs_device_detail(payload):
         payload = _merge_device_detail(payload, client.get_device(device_id))
@@ -178,8 +169,6 @@ def hydrate_allocated_device(
         connection_type=_string_value(payload, "connection_type"),
         manufacturer=_optional_string_value(payload, "manufacturer"),
         model=_optional_string_value(payload, "model"),
-        claimed_by=_string_value(payload, "claimed_by"),
-        claimed_at=_string_value(payload, "claimed_at"),
         config=config,
         live_capabilities=live_capabilities,
         test_data=test_data,
