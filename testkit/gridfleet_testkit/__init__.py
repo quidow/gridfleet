@@ -44,7 +44,7 @@ from .sessions import build_error_session_payload, resolve_device_handle_from_dr
 try:
     __version__ = version("gridfleet-testkit")
 except PackageNotFoundError:
-    __version__ = "0.6.0"
+    __version__ = "0.7.0"
 
 __all__ = [
     "GRIDFLEET_API_URL",
