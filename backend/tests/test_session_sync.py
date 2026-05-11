@@ -726,7 +726,15 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4790, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4790,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4790,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     session = Session(session_id="sess-deferred-recovered", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)

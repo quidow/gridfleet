@@ -29,7 +29,15 @@ async def test_lock_appium_node_for_device_returns_locked_row(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="with-node", verified=True)
     db_session.add(
-        AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
     )
     await db_session.commit()
 
@@ -45,7 +53,15 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
 ) -> None:
     """Verifies the helper actually emits SELECT … FOR UPDATE on the node row."""
     device = await create_device(db_session, host_id=db_host.id, name="lock-block", verified=True)
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

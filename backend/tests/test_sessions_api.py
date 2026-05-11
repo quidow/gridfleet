@@ -362,7 +362,9 @@ async def test_register_session_by_active_connection_target(
             port=4723,
             grid_url="http://hub:4444",
             active_connection_target="emulator-5554",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
         )
     )
     await db_session.commit()
