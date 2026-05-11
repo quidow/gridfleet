@@ -58,7 +58,10 @@ async def _add_running_node(db_session: AsyncSession, *, host: Host, port: int) 
             device_id=device.id,
             port=port,
             grid_url=settings_service.get("grid.hub_url"),
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=0,
+            pid=0,
+            active_connection_target="",
         )
     )
     await db_session.flush()
@@ -77,7 +80,10 @@ async def _add_stopped_node(db_session: AsyncSession, *, host: Host, port: int) 
             device_id=device.id,
             port=port,
             grid_url=settings_service.get("grid.hub_url"),
-            state=AppiumDesiredState.stopped,
+            desired_state=AppiumDesiredState.stopped,
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
         )
     )
     await db_session.flush()
@@ -132,7 +138,8 @@ async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSe
             device_id=device.id,
             port=start,
             grid_url=settings_service.get("grid.hub_url"),
-            state=AppiumDesiredState.stopped,
+            pid=None,
+            active_connection_target=None,
             desired_state=AppiumDesiredState.running,
             desired_port=start,
         )

@@ -30,7 +30,9 @@ async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
         desired_state=AppiumDesiredState.stopped,
     )
     db_session.add(node)
@@ -64,7 +66,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.running,
+        active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=99,
@@ -110,7 +112,8 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.stopped,
+        pid=None,
+        active_connection_target=None,
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )

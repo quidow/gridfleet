@@ -464,7 +464,8 @@ async def test_recovery_reloads_device_before_starting_node(
                 grid_url="http://grid:4444",
                 pid=1234,
                 active_connection_target=device.connection_target,
-                state=AppiumDesiredState.running,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4724,
             )
         )
         await other_session.commit()
@@ -922,7 +923,15 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4781, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4781,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4781,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -1042,7 +1051,15 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     db_session.add(device)
     await db_session.flush()
     # Node already stopped - even if health checks read healthy, complete_auto_stop must still run.
-    node = AppiumNode(device_id=device.id, port=4783, grid_url="http://hub:4444", state=AppiumDesiredState.stopped)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4783,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.commit()
     await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
@@ -1180,7 +1197,15 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4795, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4795,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4795,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
