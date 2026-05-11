@@ -157,4 +157,17 @@ describe('DeviceNodePanel', () => {
 
     expect(screen.getByText(/Blocked/i)).toBeInTheDocument();
   });
+
+  it('shows Stop button when desired_state is running even before convergence', () => {
+    const device = makeDevice();
+    device.appium_node = {
+      ...device.appium_node!,
+      desired_state: 'running',
+      effective_state: 'starting',
+      pid: null,
+    };
+    render(<DeviceNodePanel device={device} />);
+    expect(screen.getByRole('button', { name: /Stop/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
+  });
 });
