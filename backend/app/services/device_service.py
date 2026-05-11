@@ -65,10 +65,17 @@ async def prepare_device_update_payload(
     return await device_write.prepare_device_update_payload_async(db, device, data)
 
 
-async def create_device(db: AsyncSession, data: DeviceVerificationCreate, *, mark_verified: bool = False) -> Device:
+async def create_device(
+    db: AsyncSession,
+    data: DeviceVerificationCreate,
+    *,
+    mark_verified: bool = False,
+    initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
+) -> Device:
     payload = await prepare_device_create_payload(db, data)
     if mark_verified:
         payload["verified_at"] = datetime.now(UTC)
+    payload["operational_state"] = initial_operational_state
     await ensure_device_payload_identity_available(db, payload)
     try:
         return await device_write.create_device_record(db, payload)
