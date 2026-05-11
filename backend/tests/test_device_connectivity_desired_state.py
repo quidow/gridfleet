@@ -28,7 +28,7 @@ async def test_stop_disconnected_node_writes_desired_stopped_with_connectivity_c
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.running,
+        active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=77,

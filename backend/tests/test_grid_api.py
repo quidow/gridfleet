@@ -110,7 +110,7 @@ async def test_grid_status_with_running_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=9999,
-            state=AppiumDesiredState.running,
+            active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )

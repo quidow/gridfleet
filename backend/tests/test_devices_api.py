@@ -101,7 +101,9 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
         port=4723,
         grid_url="http://grid:4444",
         pid=12345,
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db.add(node)
     await db.commit()
