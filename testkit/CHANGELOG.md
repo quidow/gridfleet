@@ -2,6 +2,35 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.6.0...gridfleet-testkit-v0.7.0) (2026-05-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** AllocatedDevice hydration now accepts device handles, not claim payloads.
+* **testkit:** GridFleetClient claim/release helpers and NoClaimableDevicesError are removed.
+
+### Features
+
+* **testkit:** drop claim release client api ([8d1f295](https://github.com/quidow/gridfleet/commit/8d1f29504e6d640ce9d85c70594a515868045be8))
+* **testkit:** inject grid run id capability ([b4ae38c](https://github.com/quidow/gridfleet/commit/b4ae38ce9969ae325bffdb9716ba7d6c52a699ac))
+* **testkit:** resolve device handle by connection target ([22b4299](https://github.com/quidow/gridfleet/commit/22b4299d6bc4302503a2c2b6f17018ceebc03084))
+
+
+### Bug Fixes
+
+* **agent:** release adapter-owned doctor refactor ([#165](https://github.com/quidow/gridfleet/issues/165)) ([f3ae257](https://github.com/quidow/gridfleet/commit/f3ae25787e2c8ef926312f11d2313c6513f8bfa9))
+
+
+### Dependencies
+
+* **deps:** bump urllib3 from 2.6.3 to 2.7.0 in /testkit ([#186](https://github.com/quidow/gridfleet/issues/186)) ([dd7a1df](https://github.com/quidow/gridfleet/commit/dd7a1df8fb29ae76f618abab947db2027471b536))
+
+
+### Code Refactoring
+
+* **testkit:** drop claim response allocation metadata ([f0eec3e](https://github.com/quidow/gridfleet/commit/f0eec3e9c9f804439241ddbbb56b196bc467effd))
+
 ## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.5.0...gridfleet-testkit-v0.6.0) (2026-05-10)
 
 
