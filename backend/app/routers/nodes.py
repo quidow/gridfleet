@@ -7,15 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold
+from app.observability import get_logger
 from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
 from app.services import run_service
+from app.services.appium_reconciler import converge_device_now
 from app.services.appium_reconciler_allocation import candidate_ports
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
 from app.services.settings_service import settings_service
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
+logger = get_logger(__name__)
 
 
 async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
@@ -120,5 +123,11 @@ async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         transition_deadline=deadline,
     )
     await db.commit()
+    try:
+        converged_node = await converge_device_now(device.id, db=db)
+        if converged_node is not None:
+            node = converged_node
+    except Exception:
+        logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device.id))
     await db.refresh(node)
     return node

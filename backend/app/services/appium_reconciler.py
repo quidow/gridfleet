@@ -12,7 +12,8 @@ import asyncio
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -56,6 +57,7 @@ from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,6 +85,10 @@ class OrphanAppiumNode:
 
 
 ReconcileHost = Callable[..., Awaitable[Sequence[OrphanAppiumNode]]]
+if TYPE_CHECKING:
+    SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+else:
+    SessionScope = Callable[[], object]
 
 
 def detect_orphans(
@@ -379,6 +385,43 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
     ]
 
 
+async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:
+    target_expr = func.coalesce(Device.connection_target, Device.identity_value)
+    stmt = (
+        select(
+            Device.id.label("device_id"),
+            Device.host_id,
+            AppiumNode.id.label("node_id"),
+            target_expr.label("connection_target"),
+            AppiumNode.desired_state,
+            AppiumNode.desired_port,
+            AppiumNode.transition_token,
+            AppiumNode.transition_deadline,
+            AppiumNode.port,
+            AppiumNode.pid,
+            AppiumNode.active_connection_target,
+        )
+        .join(AppiumNode, AppiumNode.device_id == Device.id)
+        .where(Device.id == device_id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        return None
+    return DesiredRow(
+        device_id=row.device_id,
+        host_id=row.host_id,
+        node_id=row.node_id,
+        connection_target=row.connection_target,
+        desired_state=row.desired_state.value,
+        desired_port=row.desired_port,
+        transition_token=row.transition_token,
+        transition_deadline=row.transition_deadline,
+        port=row.port,
+        pid=row.pid,
+        active_connection_target=row.active_connection_target,
+    )
+
+
 async def _fetch_backoff_until(db: AsyncSession) -> dict[uuid.UUID, datetime]:
     rows = (await db.execute(select(Device.id, Device.lifecycle_policy_state))).all()
     backoff: dict[uuid.UUID, datetime] = {}
@@ -404,6 +447,7 @@ async def _drive_convergence(
     backoff_until_by_device: dict[uuid.UUID, datetime],
     *,
     health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
+    require_leader: bool = True,
 ) -> None:
     semaphore = asyncio.Semaphore(int(settings_service.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
@@ -429,7 +473,8 @@ async def _drive_convergence(
             cycle_start = time.monotonic()
             try:
                 async with async_session() as db:
-                    await assert_current_leader(db)
+                    if require_leader:
+                        await assert_current_leader(db)
                 payload = (health_by_host or {}).get(host_id)
                 if payload is None:
                     payload = await agent_health(host_ip, agent_port, http_client_factory=httpx.AsyncClient) or {}
@@ -450,10 +495,10 @@ async def _drive_convergence(
                     rows=active_rows,
                     agent_running=observed,
                     now=datetime.now(UTC),
-                    start_agent=_make_start_agent(),
+                    start_agent=_make_start_agent(require_leader=require_leader),
                     stop_agent=_make_stop_agent(host_ip, agent_port),
-                    write_observed=_write_observed_factory(),
-                    clear_token=_clear_token_factory(),
+                    write_observed=_write_observed_factory(require_leader=require_leader),
+                    clear_token=_clear_token_factory(require_leader=require_leader),
                 )
             finally:
                 APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
@@ -463,10 +508,70 @@ async def _drive_convergence(
     await asyncio.gather(*(_reconcile_host(host) for host in hosts))
 
 
-def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
+def _session_scope(db: AsyncSession | None) -> SessionScope:
+    if db is None:
+        return async_session
+
+    @asynccontextmanager
+    async def _reuse_session() -> AsyncIterator[AsyncSession]:
+        yield db
+
+    return _reuse_session
+
+
+async def converge_device_now(device_id: uuid.UUID, *, db: AsyncSession | None = None) -> AppiumNode | None:
+    """Run one desired-state convergence pass for a single operator-requested device.
+
+    The periodic leader loop remains the durable fallback. This path only removes
+    operator-visible latency after a route has already accepted and committed a
+    desired-state change.
+    """
+    session_scope = _session_scope(db)
+    async with session_scope() as read_db:
+        row = await _fetch_desired_row(read_db, device_id)
+        if row is None:
+            return None
+        host = await read_db.get(Host, row.host_id)
+        if host is None or host.status != HostStatus.online:
+            return None
+
+    payload = await agent_health(host.ip, host.agent_port, http_client_factory=httpx.AsyncClient) or {}
+    appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+    if not isinstance(appium_processes, dict):
+        return None
+    observed = [
+        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+        for entry in parse_running_nodes(appium_processes)
+    ]
+    await converge_host_rows(
+        host_id=host.id,
+        rows=[row],
+        agent_running=observed,
+        now=datetime.now(UTC),
+        start_agent=_make_start_agent(require_leader=False, session_scope=session_scope),
+        stop_agent=_make_stop_agent(host.ip, host.agent_port),
+        write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope),
+        clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope),
+        raise_errors=True,
+    )
+    async with session_scope() as read_db:
+        node = await read_db.get(AppiumNode, row.node_id)
+        if node is not None:
+            await read_db.refresh(node)
+        return node
+
+
+def _make_start_agent(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    resolved_session_scope = session_scope or async_session
+
     async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
-        async with async_session() as db:
-            await assert_current_leader(db)
+        async with resolved_session_scope() as db:
+            if require_leader:
+                await assert_current_leader(db)
             device = await _load_device_for_reconciler(db, row.device_id)
             if device is None:
                 raise RuntimeError(f"Device {row.device_id} no longer exists")
@@ -480,9 +585,11 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
             except Exception as exc:
                 reason = _classify_start_failure(exc)
                 APPIUM_RECONCILER_START_FAILURES.labels(reason=reason).inc()
-                await _record_start_failure(row, reason=reason)
+                await _record_start_failure(
+                    row, reason=reason, require_leader=require_leader, session_scope=resolved_session_scope
+                )
                 raise
-            await _reset_start_failure(row)
+            await _reset_start_failure(row, require_leader=require_leader, session_scope=resolved_session_scope)
             return {
                 "port": handle.port,
                 "pid": handle.pid,
@@ -515,7 +622,13 @@ def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[N
     return _stop
 
 
-def _write_observed_factory() -> Callable[..., Awaitable[None]]:
+def _write_observed_factory(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> Callable[..., Awaitable[None]]:
+    resolved_session_scope = session_scope or async_session
+
     async def _write(
         *,
         row: DesiredRow,
@@ -527,8 +640,9 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
         clear_transition: bool = False,
         allocated_caps: object = None,
     ) -> None:
-        async with async_session() as db:
-            await assert_current_leader(db)
+        async with resolved_session_scope() as db:
+            if require_leader:
+                await assert_current_leader(db)
             device = await _load_device_for_reconciler(db, row.device_id)
             if device is None:
                 return
@@ -542,6 +656,20 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
                     allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
                     clear_transition=clear_transition,
                 )
+                if clear_desired_port:
+                    device = await _lock_device_for_reconciler(db, row.device_id)
+                    if device is None or device.appium_node is None:
+                        return
+                    node = device.appium_node
+                    await write_desired_state(
+                        db,
+                        node=node,
+                        target=node.desired_state,
+                        caller="appium_reconciler",
+                        transition_token=node.transition_token,
+                        transition_deadline=node.transition_deadline,
+                    )
+                    await db.commit()
                 return
             else:
                 await mark_node_stopped(db, device)
@@ -568,10 +696,17 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
     return _write
 
 
-def _clear_token_factory() -> Callable[..., Awaitable[None]]:
+def _clear_token_factory(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> Callable[..., Awaitable[None]]:
+    resolved_session_scope = session_scope or async_session
+
     async def _clear(*, row: DesiredRow, reason: str) -> None:
-        async with async_session() as db:
-            await assert_current_leader(db)
+        async with resolved_session_scope() as db:
+            if require_leader:
+                await assert_current_leader(db)
             await _clear_transition_token(db, row)
 
     return _clear
@@ -631,11 +766,19 @@ def _classify_start_failure(exc: Exception) -> str:
     return "http_error"
 
 
-async def _record_start_failure(row: DesiredRow, *, reason: str) -> None:
+async def _record_start_failure(
+    row: DesiredRow,
+    *,
+    reason: str,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> None:
     threshold = int(settings_service.get("appium_reconciler.start_failure_threshold"))
     backoff_seconds = int(settings_service.get("appium.startup_timeout_sec")) * 4
-    async with async_session() as db:
-        await assert_current_leader(db)
+    resolved_session_scope = session_scope or async_session
+    async with resolved_session_scope() as db:
+        if require_leader:
+            await assert_current_leader(db)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
@@ -653,9 +796,16 @@ async def _record_start_failure(row: DesiredRow, *, reason: str) -> None:
         await db.commit()
 
 
-async def _reset_start_failure(row: DesiredRow) -> None:
-    async with async_session() as db:
-        await assert_current_leader(db)
+async def _reset_start_failure(
+    row: DesiredRow,
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> None:
+    resolved_session_scope = session_scope or async_session
+    async with resolved_session_scope() as db:
+        if require_leader:
+            await assert_current_leader(db)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return

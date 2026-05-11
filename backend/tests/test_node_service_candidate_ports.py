@@ -268,6 +268,36 @@ async def test_reserve_appium_port_conflict_preserves_other_node_claims(db_sessi
     assert claim.port == derived_data_port
 
 
+async def test_reserve_appium_port_replaces_same_node_main_port_claim(db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, ip="10.0.0.83")
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-move",
+        connection_target="dev-main-port-move",
+        name="dev-main-port-move",
+    )
+    start = settings_service.get("appium.port_range_start")
+    node = AppiumNode(device_id=device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+    db_session.add(node)
+    await db_session.flush()
+
+    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=node.id)
+    moved_port = await reserve_appium_port(db_session, host_id=host.id, port=start + 1, node_id=node.id)
+
+    claims = (
+        await db_session.execute(
+            select(AppiumNodeResourceClaim).where(
+                AppiumNodeResourceClaim.node_id == node.id,
+                AppiumNodeResourceClaim.capability_key == APPIUM_PORT_CAPABILITY,
+            )
+        )
+    ).scalars()
+
+    assert moved_port == start + 1
+    assert [claim.port for claim in claims] == [start + 1]
+
+
 async def test_start_node_reserves_main_appium_port_and_retries_collision(
     db_session: AsyncSession,
 ) -> None:
