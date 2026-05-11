@@ -15,7 +15,7 @@ from app.services import (
     lifecycle_incident_service,
     run_reservation_service,
 )
-from app.services.desired_state_writer import write_desired_state
+from app.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.services.device_event_service import record_event
 from app.services.event_bus import queue_device_crashed_event
 from app.services.lifecycle_policy_state import (
@@ -134,6 +134,14 @@ async def exclude_run_if_needed(
     was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
     run = await run_reservation_service.exclude_device_from_run(db, device.id, reason=reason, commit=False)
     entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
+    if run is not None and device.appium_node is not None:
+        await write_desired_grid_run_id(
+            db,
+            node=device.appium_node,
+            run_id=None,
+            caller="run_exclude_device",
+            reason=reason,
+        )
     if run is not None and not was_excluded:
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -164,6 +172,14 @@ async def restore_run_if_needed(
     run = await run_reservation_service.restore_device_to_run(db, device.id, commit=False)
     entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
     if run is not None:
+        if device.appium_node is not None:
+            await write_desired_grid_run_id(
+                db,
+                node=device.appium_node,
+                run_id=run.id,
+                caller="run_restore_device",
+                reason=reason,
+            )
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,

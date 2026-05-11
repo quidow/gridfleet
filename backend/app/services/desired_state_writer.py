@@ -45,6 +45,7 @@ DesiredGridRunIdCaller = Literal[
     "run_expire",
     "run_preparation_failed",
     "run_exclude_device",
+    "run_restore_device",
     "reservation_backfill",
 ]
 
