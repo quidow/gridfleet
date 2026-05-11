@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
@@ -20,12 +19,14 @@ from app.services import (
     session_viability,
 )
 from app.services.agent_operations import pack_device_health as fetch_pack_device_health
-from app.services.appium_reconciler_agent import start_temporary_node, stop_temporary_node
+from app.services.appium_reconciler_agent import start_node, stop_node, stop_temporary_node, wait_for_node_running
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification_job_state import enum_value, set_stage
+from app.services.lifecycle_state_machine import DeviceStateMachine
+from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.session_viability_types import SessionViabilityCheckedBy
@@ -163,6 +164,8 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
         target=AppiumDesiredState.stopped,
         caller="verification",
     )
+    node.pid = None
+    node.active_connection_target = None
     await db.commit()
     await db.refresh(node)
     return node
@@ -238,57 +241,19 @@ async def retain_verified_node(
             desired_port=handle.port,
         )
 
-        target_owner_key = f"device:{device.id}"
-        source_owner_key = handle.owner_key
-        needs_registration_refresh = bool(source_owner_key and source_owner_key != target_owner_key)
-        if source_owner_key:
-            rowcount = await appium_node_resource_service.transfer_temporary_to_managed(
+        for key, value in (handle.allocated_caps or {}).items():
+            if isinstance(value, int):
+                continue
+            await appium_node_resource_service.set_node_extra_capability(
                 db,
-                host_id=device.host_id,
-                owner_token=source_owner_key,
                 node_id=node.id,
+                capability_key=key,
+                value=value,
             )
-            if rowcount == 0:
-                logger.warning(
-                    "verification: 0 claims promoted for owner_token=%s host=%s node=%s",
-                    source_owner_key,
-                    device.host_id,
-                    node.id,
-                )
-            for key, value in (handle.allocated_caps or {}).items():
-                if isinstance(value, int):
-                    continue
-                await appium_node_resource_service.set_node_extra_capability(
-                    db,
-                    node_id=node.id,
-                    capability_key=key,
-                    value=value,
-                )
-            handle.owner_key = target_owner_key
 
-        if needs_registration_refresh:
-            await db.commit()
-            await set_stage(
-                job,
-                "cleanup",
-                "running",
-                detail="Refreshing retained node Grid registration",
-            )
-            window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-            await write_desired_state(
-                db,
-                node=node,
-                target=AppiumDesiredState.running,
-                caller="verification",
-                desired_port=handle.port,
-                transition_token=uuid.uuid4(),
-                transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
-            )
-            await db.commit()
-        else:
-            next_state = await ready_operational_state(db, device)
-            await set_operational_state(device, next_state)
-            await db.commit()
+        next_state = await ready_operational_state(db, device)
+        await set_operational_state(device, next_state)
+        await db.commit()
 
         await db.refresh(device)
     except Exception as exc:
@@ -313,22 +278,31 @@ async def run_probe(
     *,
     owner_key: str,
     probe_session_fn: ProbeSessionFn,
-) -> tuple[TemporaryNodeHandle | None, str | None]:
+) -> tuple[AppiumNode | None, str | None]:
+    del owner_key
     await set_stage(job, "node_start", "running")
     try:
-        handle = await start_temporary_node(db, device, owner_key=owner_key)
+        node = await start_node(db, device, caller="verification")
     except NodeManagerError as exc:
         detail = str(exc)
         await set_stage(job, "node_start", "failed", detail=detail)
         await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
         return None, detail
 
+    timeout = int(settings_service.get("appium.startup_timeout_sec"))
+    started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
+    if started_node is None:
+        detail = "Verification node did not reach running state within timeout"
+        await set_stage(job, "node_start", "failed", detail=detail)
+        await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
+        return node, detail
+
     await set_stage(
         job,
         "node_start",
         "passed",
-        detail="Temporary verification node started",
-        data={"port": handle.port, "pid": handle.pid},
+        detail="Verification node started",
+        data={"port": started_node.port, "pid": started_node.pid},
     )
 
     await set_stage(job, "session_probe", "running")
@@ -336,18 +310,16 @@ async def run_probe(
     capabilities = await capability_service.get_device_capabilities(
         db,
         device,
-        active_connection_target=handle.active_connection_target,
+        active_connection_target=started_node.active_connection_target,
     )
-    if handle.allocated_caps:
-        capabilities.update(handle.allocated_caps)
     ok, error = await probe_session_fn(capabilities, timeout_sec)
     if ok:
         await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
-        return handle, None
+        return started_node, None
 
     failure = error or "Session probe failed"
     await set_stage(job, "session_probe", "failed", detail=failure)
-    return handle, failure
+    return started_node, failure
 
 
 async def save_verified_context(
@@ -408,6 +380,134 @@ async def save_verified_context(
     return saved_device, None
 
 
+async def _stop_verification_node_if_running(
+    job: dict[str, Any],
+    db: AsyncSession,
+    device: Device,
+    node: AppiumNode | None,
+) -> str | None:
+    if node is None:
+        return None
+    try:
+        await stop_node(db, device, caller="verification")
+        node.pid = None
+        node.active_connection_target = None
+        await db.flush()
+    except NodeManagerError:
+        return None
+    except Exception as exc:
+        node.pid = None
+        node.active_connection_target = None
+        await db.flush()
+        detail = f"Failed to stop verification node: {exc}"
+        await set_stage(job, "cleanup", "failed", detail=detail)
+        return detail
+    return None
+
+
+def _restore_create_payload_fields(device: Device, payload: dict[str, Any]) -> None:
+    for key in (
+        "pack_id",
+        "platform_id",
+        "identity_scheme",
+        "identity_scope",
+        "identity_value",
+        "connection_target",
+        "name",
+        "os_version",
+        "manufacturer",
+        "model",
+        "model_number",
+        "software_versions",
+        "device_type",
+        "connection_type",
+        "ip_address",
+        "device_config",
+    ):
+        if key in payload:
+            setattr(device, key, payload[key])
+
+
+async def _finalize_success(
+    db: AsyncSession,
+    context: PreparedVerificationContext,
+    *,
+    job: dict[str, Any],
+    node: AppiumNode | None,
+) -> VerificationExecutionOutcome:
+    assert context.save_device_id is not None
+    await set_stage(job, "save_device", "running")
+    if context.mode == "update":
+        updated = await device_service.update_device(
+            db,
+            context.save_device_id,
+            DeviceVerificationUpdate.model_validate(context.save_payload),
+            enforce_patch_contract=False,
+        )
+        if updated is None:
+            return VerificationExecutionOutcome(status="failed", error="Device was not found")
+        locked = updated
+    else:
+        locked = await device_locking.lock_device(db, context.save_device_id)
+        _restore_create_payload_fields(locked, context.save_payload)
+    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_PASSED, reason="verification")
+    locked.verified_at = datetime.now(UTC)
+
+    if not context.keep_running_after_verify:
+        cleanup_error = await _stop_verification_node_if_running(job, db, locked, node)
+        if cleanup_error is not None:
+            await device_service.delete_device(db, context.save_device_id)
+            await db.commit()
+            return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+    else:
+        data = {"port": node.port, "pid": node.pid} if node is not None else None
+        await set_stage(
+            job,
+            "cleanup",
+            "passed",
+            detail="Verified node retained as the managed Appium node",
+            data=data,
+        )
+
+    next_state = await ready_operational_state(db, locked)
+    if next_state is not locked.operational_state:
+        await set_operational_state(locked, next_state, reason="verification")
+    await session_viability.record_session_viability_result(
+        db,
+        locked,
+        status="passed",
+        checked_by=SessionViabilityCheckedBy.verification,
+    )
+    await db.commit()
+    detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
+    await set_stage(job, "save_device", "passed", detail=detail, data={"device_id": str(locked.id)})
+    return VerificationExecutionOutcome(status="completed", device_id=str(locked.id))
+
+
+async def _finalize_failure(
+    db: AsyncSession,
+    context: PreparedVerificationContext,
+    *,
+    error: str,
+    job: dict[str, Any],
+    node: AppiumNode | None = None,
+) -> VerificationExecutionOutcome:
+    assert context.save_device_id is not None
+    if context.mode == "create":
+        cleanup_error = await _stop_verification_node_if_running(job, db, context.transient_device, node)
+        await device_service.delete_device(db, context.save_device_id)
+        await db.commit()
+        if cleanup_error is not None:
+            return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+        return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
+
+    await _stop_verification_node_if_running(job, db, context.transient_device, node)
+    locked = await device_locking.lock_device(db, context.save_device_id)
+    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
+    await db.commit()
+    return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
+
+
 async def execute_verification_context(
     job: dict[str, Any],
     db: AsyncSession,
@@ -417,69 +517,38 @@ async def execute_verification_context(
     probe_session_fn: ProbeSessionFn,
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
-    handle: TemporaryNodeHandle | None = None
-    if context.save_device_id is not None:
-        probe_owner_key = f"device:{context.save_device_id}"
-    else:
-        host_id = device.host_id
-        if host_id is None:
-            raise NodeManagerError(f"Verification device {device.identity_value} has no host assigned")
-        identity = device.connection_target or device.identity_value
-        probe_owner_key = f"temp:{host_id}:{identity}"
+    node: AppiumNode | None = None
+    if context.save_device_id is None:
+        raise NodeManagerError(f"Verification device {device.identity_value} has no persisted device id")
 
     try:
-        existing_stop_error = await stop_existing_managed_node_for_update(job, db, context)
-        if existing_stop_error is not None:
-            return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
+        if context.mode == "update":
+            existing_stop_error = await stop_existing_managed_node_for_update(job, db, context)
+            if existing_stop_error is not None:
+                return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
+            locked = await device_locking.lock_device(db, context.save_device_id)
+            await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_STARTED, reason="verification")
+            await db.commit()
+            device = locked
+            for key, value in context.save_payload.items():
+                if key != "replace_device_config":
+                    setattr(device, key, value)
 
         health_error = await run_device_health(job, device, http_client_factory=http_client_factory)
         if health_error is not None:
-            return VerificationExecutionOutcome(status="failed", error=health_error)
+            return await _finalize_failure(db, context, error=health_error, job=job)
 
-        handle, probe_error = await run_probe(
+        node, probe_error = await run_probe(
             job,
             db,
             device,
-            owner_key=probe_owner_key,
+            owner_key=f"device:{context.save_device_id}",
             probe_session_fn=probe_session_fn,
         )
         if probe_error is not None:
-            cleanup_error = await run_cleanup(job, db, device, handle)
-            if cleanup_error is not None:
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error)
-            return VerificationExecutionOutcome(status="failed", error=probe_error)
+            return await _finalize_failure(db, context, error=probe_error, job=job, node=node)
 
-        if not context.keep_running_after_verify:
-            cleanup_error = await run_cleanup(job, db, device, handle)
-            if cleanup_error is not None:
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error)
-            handle = None
-
-        saved_device, save_error = await save_verified_context(job, db, context)
-        if save_error is not None or saved_device is None:
-            if handle is not None:
-                cleanup_error = await run_cleanup(job, db, device, handle)
-                if cleanup_error is not None:
-                    return VerificationExecutionOutcome(status="failed", error=cleanup_error)
-            return VerificationExecutionOutcome(status="failed", error=save_error)
-
-        if handle is not None and context.keep_running_after_verify:
-            cleanup_error = await retain_verified_node(job, db, saved_device, handle)
-            if cleanup_error is not None:
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error)
-
-        await session_viability.record_session_viability_result(
-            db,
-            saved_device,
-            status="passed",
-            checked_by=SessionViabilityCheckedBy.verification,
-        )
-        await db.commit()
-
-        return VerificationExecutionOutcome(status="completed", device_id=str(saved_device.id))
+        return await _finalize_success(db, context, job=job, node=node)
     except Exception:
-        if handle is not None:
-            cleanup_error = await run_cleanup(job, db, device, handle)
-            if cleanup_error is not None:
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error)
+        await _finalize_failure(db, context, error="Verification crashed unexpectedly", job=job, node=node)
         raise

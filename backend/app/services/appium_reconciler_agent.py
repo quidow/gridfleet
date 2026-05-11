@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -680,6 +682,7 @@ async def start_node(
     *,
     caller: DesiredStateCaller = "operator_route",
 ) -> AppiumNode:
+    await db.refresh(device, attribute_names=["appium_node"])
     if device.appium_node and device.appium_node.observed_running:
         raise NodeManagerError(f"Node already running for device {device.id}")
     if caller != "verification" and not await is_ready_for_use_async(db, device):
@@ -778,6 +781,25 @@ async def stop_temporary_node(
         await appium_node_resource_service.release_managed(db, node_id=device.appium_node.id)
         await db.commit()
     return stopped
+
+
+async def wait_for_node_running(
+    db: AsyncSession,
+    node_id: uuid.UUID,
+    *,
+    timeout_sec: int,
+    poll_interval_sec: float = 0.5,
+) -> AppiumNode | None:
+    """Poll until an AppiumNode reaches observed running state."""
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        node = await db.get(AppiumNode, node_id)
+        if node is not None:
+            await db.refresh(node)
+            if node.observed_running:
+                return node
+        await asyncio.sleep(poll_interval_sec)
+    return None
 
 
 async def restart_node(
