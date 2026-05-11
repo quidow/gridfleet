@@ -1,11 +1,11 @@
 """Schema-parity test: every Python DeviceEventType value must be declared in
 the Alembic migration chain.
 
-Bug history: PR #54 added `lifecycle_run_cooldown_set` to the Python enum but
+Bug history: PR #54 added a lifecycle event to the Python enum but
 forgot the accompanying `ALTER TYPE deviceeventtype ADD VALUE ...` migration,
-so production / dev DBs (which run migrations) returned 500 on
-`release-with-cooldown` while pytest (which uses `Base.metadata.create_all`)
-passed. This test would have caught the gap.
+so production / dev DBs (which run migrations) returned 500 while pytest
+(which uses `Base.metadata.create_all`) passed. This test would have caught
+the gap.
 """
 
 from __future__ import annotations
