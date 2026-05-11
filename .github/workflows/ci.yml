@@ -92,11 +92,11 @@ jobs:
             exit 1
           fi
 
-          forbidden=$(git grep -nE '\.state\s*=' backend \
+          forbidden=$(git grep -nE '\b(appium_node|node)\.state\s*=' backend/app \
             | grep -vE '^backend/tests/|^backend/alembic/versions/' \
             || true)
           if [ -n "$forbidden" ]; then
-            echo "Forbidden .state assignment remains outside tests:"
+            echo "Forbidden AppiumNode.state assignment remains outside tests:"
             echo "$forbidden"
             exit 1
           fi
