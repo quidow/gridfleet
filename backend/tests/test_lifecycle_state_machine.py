@@ -150,7 +150,7 @@ class TestValidTransitions:
         assert device.operational_state is DeviceOperationalState.offline
         assert device.hold is None
 
-    async def test_verification_passed_returns_to_offline_baseline(
+    async def test_verification_passed_returns_to_available_baseline(
         self, db_session: AsyncSession, db_host: Host
     ) -> None:
         device = await _seed_device(
@@ -163,7 +163,7 @@ class TestValidTransitions:
         machine = DeviceStateMachine()
         changed = await machine.transition(device, TransitionEvent.VERIFICATION_PASSED)
         assert changed is True
-        assert device.operational_state is DeviceOperationalState.offline
+        assert device.operational_state is DeviceOperationalState.available
         assert device.hold is None
 
 

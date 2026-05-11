@@ -25,7 +25,7 @@ export { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS };
 export const VERIFICATION_STAGE_LABELS: Record<string, string> = {
   validation: 'Validate Input',
   device_health: 'Check Device Health',
-  node_start: 'Start Temporary Node',
+  node_start: 'Start Appium Node',
   session_probe: 'Probe Appium Session',
   cleanup: 'Clean Up Probe',
   save_device: 'Save Device',

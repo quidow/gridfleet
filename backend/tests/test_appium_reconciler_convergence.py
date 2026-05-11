@@ -161,6 +161,34 @@ async def test_converge_host_rows_calls_start_for_running_intent_no_observation(
 
 
 @pytest.mark.asyncio
+async def test_converge_host_rows_clears_desired_port_when_start_uses_fallback_port() -> None:
+    row = _row(desired_state="running", desired_port=4723)
+    start_agent = AsyncMock(return_value={"pid": 1234, "port": 4724})
+    write_observed = AsyncMock()
+
+    await converge_host_rows(
+        host_id=row.host_id,
+        rows=[row],
+        agent_running=[],
+        now=datetime.now(UTC),
+        start_agent=start_agent,
+        stop_agent=AsyncMock(),
+        write_observed=write_observed,
+        clear_token=AsyncMock(),
+    )
+
+    write_observed.assert_awaited_once_with(
+        row=row,
+        state="running",
+        port=4724,
+        pid=1234,
+        active_connection_target=row.connection_target,
+        clear_desired_port=True,
+        allocated_caps=None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> None:
     row = _row(desired_state="running", desired_port=4723, port=4723)
     observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
