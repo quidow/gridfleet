@@ -41,7 +41,7 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
     stale_run = TestRun(
         name="TTL Timeout",
         created_by="qa",
-        state=RunState.ready,
+        state=RunState.active,
         requirements=[],
         created_at=datetime.now(UTC) - timedelta(minutes=31),
         ttl_minutes=30,

@@ -188,12 +188,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("run_id", "name", "device_count", "created_by"),
     ),
     PublicEventDefinition(
-        name="run.ready",
-        category="sessions_and_runs",
-        description="Run moved into ready state.",
-        typical_data_fields=("run_id", "name"),
-    ),
-    PublicEventDefinition(
         name="run.active",
         category="sessions_and_runs",
         description="Run moved into active state.",

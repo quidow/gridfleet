@@ -551,8 +551,8 @@ async def test_sync_promotes_ready_run_to_active(db_session: AsyncSession, db_ho
     await db_session.flush()
 
     run = TestRun(
-        name="Ready Run",
-        state=RunState.ready,
+        name="Active Run",
+        state=RunState.active,
         requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ttl_minutes=60,
         heartbeat_timeout_sec=120,

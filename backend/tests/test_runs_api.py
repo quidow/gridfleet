@@ -435,12 +435,12 @@ async def test_run_lifecycle(client: AsyncClient, db_session: AsyncSession, defa
     run = await _create_run(client)
     run_id = run["id"]
 
-    # preparing -> ready
+    # preparing -> active
     resp = await client.post(f"/api/runs/{run_id}/ready")
     assert resp.status_code == 200
-    assert resp.json()["state"] == "ready"
+    assert resp.json()["state"] == "active"
 
-    # ready -> active
+    # active endpoint remains an idempotent alias
     resp = await client.post(f"/api/runs/{run_id}/active")
     assert resp.status_code == 200
     assert resp.json()["state"] == "active"

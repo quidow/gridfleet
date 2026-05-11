@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models.appium_node import AppiumNode
+from app.models.test_run import RunState
 from app.schemas.run import DeviceRequirement, RunCreate
 from app.services import run_service
 from tests.helpers import create_device_record
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def test_ready_state_removed_from_enum() -> None:
+    assert not hasattr(RunState, "ready")
 
 
 async def _seed_schedulable_node(

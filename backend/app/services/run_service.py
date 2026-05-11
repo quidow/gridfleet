@@ -780,9 +780,11 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run.state != RunState.preparing:
         raise ValueError(f"Cannot signal ready from state '{run.state.value}', expected 'preparing'")
 
-    run.state = RunState.ready
-    run.last_heartbeat = datetime.now(UTC)
-    queue_event_for_session(db, "run.ready", {"run_id": str(run.id), "name": run.name})
+    now = datetime.now(UTC)
+    run.state = RunState.active
+    run.started_at = now
+    run.last_heartbeat = now
+    queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -790,40 +792,48 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    await _signal_active_no_commit(db, run_id)
-    await db.commit()
-    run = await get_run(db, run_id)
-    assert run is not None
-    return run
-
-
-async def _signal_active_no_commit(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
-    if run.state != RunState.ready:
-        raise ValueError(f"Cannot signal active from state '{run.state.value}', expected 'ready'")
+    if run.state == RunState.active:
+        await db.commit()
+        return run
+    if run.state != RunState.preparing:
+        raise ValueError(
+            f"Cannot signal active from state '{run.state.value}', expected 'preparing' or 'active'"
+        )
 
     now = datetime.now(UTC)
     run.state = RunState.active
     run.started_at = now
     run.last_heartbeat = now
     queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
+    await db.commit()
+    run = await get_run(db, run_id)
+    assert run is not None
     return run
 
 
 async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
     run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
+    if run is None or run.state != RunState.preparing or reservation_entry_is_excluded(entry):
         return None
-    return await signal_active(db, run.id)
+    return await signal_ready(db, run.id)
 
 
 async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
     run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
+    if run is None or run.state != RunState.preparing or reservation_entry_is_excluded(entry):
         return None
-    return await _signal_active_no_commit(db, run.id)
+    locked_run = await _get_run_for_update(db, run.id)
+    if locked_run is None:
+        return None
+    now = datetime.now(UTC)
+    locked_run.state = RunState.active
+    locked_run.started_at = now
+    locked_run.last_heartbeat = now
+    queue_event_for_session(db, "run.active", {"run_id": str(locked_run.id), "name": locked_run.name})
+    return locked_run
 
 
 async def report_preparation_failure(

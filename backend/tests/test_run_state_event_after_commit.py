@@ -63,7 +63,7 @@ async def test_run_created_dropped_on_rollback(
     assert [n for n, _ in event_bus_capture if n == "run.created"] == []
 
 
-async def test_signal_ready_then_active_emit_in_order(
+async def test_signal_ready_emits_active(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
@@ -73,10 +73,6 @@ async def test_signal_ready_then_active_emit_in_order(
     event_bus_capture.clear()
 
     await run_service.signal_ready(db_session, run.id)
-    await settle_after_commit_tasks()
-    assert any(n == "run.ready" for n, _ in event_bus_capture)
-
-    await run_service.signal_active(db_session, run.id)
     await settle_after_commit_tasks()
     assert any(n == "run.active" for n, _ in event_bus_capture)
 
