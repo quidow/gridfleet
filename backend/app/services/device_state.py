@@ -90,6 +90,8 @@ async def set_hold(
 
 async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOperationalState:
     """Project readiness into the operational axis."""
+    if device.operational_state is DeviceOperationalState.verifying:
+        return DeviceOperationalState.verifying
     if await is_ready_for_use_async(db, device) and device_allows_allocation(device):
         return DeviceOperationalState.available
     return DeviceOperationalState.offline
