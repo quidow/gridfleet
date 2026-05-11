@@ -21,8 +21,7 @@ async def test_node_health_failure_path_locks_appium_node(
     db_host: Host,
 ) -> None:
     """When ``_process_node_health`` enters the auto_manage=False branch and
-    writes ``node.state = NodeState.error``, the AppiumNode row must be
-    locked.
+    writes node health error fields, the AppiumNode row must be locked.
     """
     device = await create_device(
         db_session,
@@ -67,7 +66,11 @@ async def test_node_health_failure_path_locks_appium_node(
             # Use a core UPDATE to guarantee a real SQL statement is always
             # issued, bypassing ORM dirty-tracking (which would skip the UPDATE
             # when the value matches the in-memory snapshot).
-            await session.execute(update(AppiumNode).where(AppiumNode.id == node_id).values(state=NodeState.running))
+            await session.execute(
+                update(AppiumNode)
+                .where(AppiumNode.id == node_id)
+                .values(pid=12345, active_connection_target="stomper-target", health_running=None, health_state=None)
+            )
             await session.commit()
 
     from app.services.settings_service import settings_service
@@ -85,3 +88,5 @@ async def test_node_health_failure_path_locks_appium_node(
         f"Expected running but got {verify_node.state.value} — "
         "node_health overwrote the concurrent running write (missing AppiumNode lock)"
     )
+    assert verify_node.pid == 12345
+    assert verify_node.active_connection_target == "stomper-target"

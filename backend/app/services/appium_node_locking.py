@@ -1,9 +1,9 @@
 """Row-level locking helper for the AppiumNode table.
 
-INVARIANT: Any code path that writes ``AppiumNode.state``, ``AppiumNode.pid``,
-``AppiumNode.port``, or ``AppiumNode.active_connection_target`` must acquire the
-row lock via ``lock_appium_node_for_device`` within the same transaction as the
-write.
+INVARIANT: Any code path that writes ``AppiumNode.pid``, ``AppiumNode.port``,
+``AppiumNode.active_connection_target``, or node health-observation fields must
+acquire the row lock via ``lock_appium_node_for_device`` within the same
+transaction as the write.
 
 LOCK ORDERING (deadlock avoidance): When a code path also locks the device row,
 it MUST acquire the locks in the order **Device first, then AppiumNode**. All

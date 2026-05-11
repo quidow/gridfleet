@@ -8,7 +8,6 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import NodeState
 from app.models.device import (
     ConnectionType,
     Device,
@@ -331,7 +330,7 @@ async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Dev
 
 
 async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device_id: uuid.UUID) -> Device | None:
-    while device.appium_node and device.appium_node.state == NodeState.running:
+    while device.appium_node and device.appium_node.observed_running:
         try:
             await stop_node(db, device, caller="device_delete")
         except Exception as e:
@@ -354,7 +353,7 @@ async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
         return False
 
     # Stop the running Appium node on the agent before deleting
-    if device.appium_node and device.appium_node.state == NodeState.running:
+    if device.appium_node and device.appium_node.observed_running:
         device = await _stop_running_node_for_delete(db, device, device_id)
         if device is None:
             return True

@@ -35,7 +35,7 @@ async def enter_maintenance(
         reason="Operator entered maintenance",
     )
 
-    if device.appium_node and device.appium_node.state == NodeState.running:
+    if device.appium_node and device.appium_node.observed_running:
         node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if node is not None:
             await write_desired_state(

@@ -61,6 +61,29 @@ async def _ensure_appium_node_loaded(db: AsyncSession, device: Device) -> None:
         await db.refresh(device, attribute_names=["appium_node"])
 
 
+def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
+    node = device.appium_node
+    if node is None:
+        return None
+    return {
+        "id": node.id,
+        "port": node.port,
+        "grid_url": node.grid_url,
+        "pid": node.pid,
+        "container_id": node.container_id,
+        "active_connection_target": node.active_connection_target,
+        "started_at": node.started_at,
+        "desired_state": node.desired_state,
+        "desired_port": node.desired_port,
+        "transition_token": node.transition_token,
+        "transition_deadline": node.transition_deadline,
+        "last_observed_at": node.last_observed_at,
+        "health_running": node.health_running,
+        "health_state": node.health_state,
+        "lifecycle_policy_state": copy.deepcopy(device.lifecycle_policy_state or {}),
+    }
+
+
 async def serialize_device(
     db: AsyncSession,
     device: Device,
@@ -154,6 +177,6 @@ async def serialize_device_detail(
         health_summary=health_summary,
         platform_label=platform_label,
     )
-    payload["appium_node"] = device.appium_node
+    payload["appium_node"] = _serialize_appium_node_for_detail(device)
     payload["sessions"] = device.sessions
     return payload

@@ -136,7 +136,9 @@ async def _build_appium_processes_snapshot(db: AsyncSession, host: Host) -> Host
                 platform_id=node_payload.get("platform_id") or (device.platform_id if device is not None else None),
                 managed=matched_node is not None,
                 node_id=matched_node.id if matched_node is not None else None,
-                node_state=matched_node.state.value if matched_node is not None else None,
+                node_state=("running" if matched_node.observed_running else "stopped")
+                if matched_node is not None
+                else None,
                 device_id=device.id if device is not None else None,
                 device_name=device.name if device is not None else None,
             )

@@ -14,23 +14,25 @@ Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a prod
 - Sync stray sessions on Appium that don't belong to the internal state.
 - Transition device maintenance lifecycles.
 
-### Appium reconciler
+### Appium node lifecycle
 
-`backend/app/services/appium_reconciler.py` runs on the elected control-plane
-leader every `appium_reconciler.interval_sec` seconds (default 30s). For each
-host with `Host.status = online`, it fetches `/agent/health`, parses
-`appium_processes.running_nodes`, and stops any agent-side Appium process whose
-`(connection_target, port)` is not claimed by an `AppiumNode` row in
-`state = running` for that host. Reasons surfaced via metrics:
+Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
+plus optional `desired_port`, `transition_token`, and `transition_deadline`,
+then return in milliseconds. The leader-elected reconciler
+(`app/services/appium_reconciler*.py`) reads intent each cycle, drives the host
+agent's Appium processes (`appium_start` / `appium_stop`), and writes observed
+columns (`pid`, `active_connection_target`, health fields). The reconciler is
+the primary writer of observed Appium-node process state.
 
-- `no_db_row` — agent has a process, no `Device.connection_target` matches.
-- `db_state_not_running` — DB row exists but `AppiumNode.state ≠ running`.
-- `port_mismatch` — DB row exists, state running, but on a different port.
+The same loop is the canonical orphan reaper. For each online host, it fetches
+`/agent/health`, parses `appium_processes.running_nodes`, and stops agent-side
+processes that no DB row claims by `(connection_target, port)`. Reasons surfaced
+via metrics include `no_db_row`, `db_state_not_running`, and `port_mismatch`.
 
-The loop is the canonical orphan reaper. Failures of an individual stop
-call are logged and skipped — one bad host must not stall the rest.
-Future phases (Phases 2–5 of the desired-state migration) extend this loop
-to drive convergence of `desired_state` to observed state.
+Migration history: Phase 1 added the orphan reconciler scaffold; Phase 2 added
+desired-state schema; Phase 3 dual-wrote intent beside legacy inline RPC; Phase
+4 enabled convergence; Phase 5 dropped the legacy `state` column and exposed
+API `effective_state` as the derived read model.
 
 ### Data Storage
 - Database: Async PostgreSQL via `asyncpg`.
@@ -61,7 +63,7 @@ The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operato
 1. A device is plugged into a lab machine with the Agent installed.
 2. The Agent discovers it through the relevant driver-pack probe and reports candidates to the manager-owned discovery flow.
 3. The Operator views the Intake drawer in the Dashboard and "Registers" the device.
-4. The Backend signals the Agent to start an Appium node for that device.
-5. The Appium node points to the hardware; the complementary Grid Node attaches to the Hub.
+4. The Backend records desired Appium-node intent for that device.
+5. The reconciler drives the Agent to start Appium and attach the complementary Grid Node to the Hub.
 6. A CI runner makes a reservation via `/api/runs`.
 7. Testing traffic is sent directly to the Hub (`http://localhost:4444`), where Selenium routing matches it by capabilities to the Python Grid Node, which proxies WebDriver traffic to the local Appium server and device.

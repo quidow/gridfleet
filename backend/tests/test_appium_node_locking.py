@@ -58,7 +58,7 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
             assert locked_node is not None
             stomper_started.set()
             await asyncio.sleep(0.2)
-            locked_node.state = NodeState.error
+            locked_node.pid = 222
             await session.commit()
             holder_done.set()
 
@@ -67,7 +67,7 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
         async with db_session_maker() as session:
             stmt = select(AppiumNode).where(AppiumNode.device_id == device_id)
             stomper_node = (await session.execute(stmt)).scalar_one()
-            stomper_node.state = NodeState.stopped
+            stomper_node.pid = 333
             await session.commit()
 
     await asyncio.gather(holder(), stomper())
@@ -76,4 +76,4 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     assert holder_done.is_set()
-    assert verify_node.state == NodeState.stopped
+    assert verify_node.pid == 333

@@ -65,7 +65,9 @@ async def test_ingest_appium_restart_events_skips_when_node_changes_before_lock(
         await asyncio.wait_for(about_to_lock.wait(), timeout=2.0)
         async with db_session_maker() as session:
             await session.execute(
-                update(AppiumNode).where(AppiumNode.device_id == device_id).values(port=4724, state=NodeState.stopped)
+                update(AppiumNode)
+                .where(AppiumNode.device_id == device_id)
+                .values(port=4724, pid=None, active_connection_target=None, health_running=None, health_state=None)
             )
             await session.commit()
         allow_lock.set()

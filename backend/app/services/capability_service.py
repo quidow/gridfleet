@@ -3,7 +3,6 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceType
 from app.services import (
     appium_capability_keys,
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _is_running_emulator(device: Device) -> bool:
     """Check whether the device is a running emulator with an active Appium node."""
     node = device.appium_node
-    return node is not None and node.state == NodeState.running and device.device_type == DeviceType.emulator
+    return node is not None and node.pid is not None and device.device_type == DeviceType.emulator
 
 
 def _appium_udid_for_capabilities(device: Device, active_connection_target: str | None = None) -> str:
@@ -157,7 +156,7 @@ async def get_device_capabilities(
         (device.device_config or {}).get("appium_caps"),
         manager_owned=manager_owned,
     )
-    if device.appium_node is None or device.appium_node.state != NodeState.running:
+    if device.appium_node is None or not device.appium_node.observed_running:
         live_caps = {}
     else:
         live_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)

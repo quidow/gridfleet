@@ -1,9 +1,9 @@
 """Leader-owned reconciler for agent-side Appium processes.
 
 Phase 1 scope: orphan cleanup. Walks `/agent/health.appium_processes.running_nodes`
-for each online host and stops any agent process that no DB AppiumNode row
-in `state == running` claims. Future phases extend this loop to drive
-desired-state convergence.
+for each online host and stops any agent process that no observed DB
+AppiumNode row claims. Future phases extend this loop to drive desired-state
+convergence.
 """
 
 from __future__ import annotations
@@ -38,6 +38,12 @@ from app.observability import get_logger, observe_background_loop
 from app.services import device_locking
 from app.services.agent_operations import agent_base_url, agent_health, appium_stop
 from app.services.agent_snapshot import parse_running_nodes
+from app.services.appium_reconciler_agent import (
+    mark_node_started,
+    mark_node_stopped,
+    start_temporary_node,
+    stop_temporary_node,
+)
 from app.services.appium_reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.desired_state_writer import write_desired_state
@@ -46,7 +52,6 @@ from app.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
 )
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.node_service import mark_node_started, mark_node_stopped, start_temporary_node, stop_temporary_node
 from app.services.node_service_types import TemporaryNodeHandle
 from app.services.settings_service import settings_service
 
@@ -90,9 +95,9 @@ def detect_orphans(
     """Return entries running on the agent that no DB row claims.
 
     `db_running_rows` is a list of dicts with keys
-    `host_id`, `device_connection_target`, `node_port`, `node_state`,
+    `host_id`, `device_connection_target`, `node_port`, `node_observed_running`,
     and optionally `node_desired_state`.
-    Pass all AppiumNode rows for the host (any state) — classification
+    Pass all AppiumNode rows for the host (any observed state) — classification
     needs the full picture to surface stopped-row desyncs as
     `db_state_not_running` rather than `no_db_row`.
     """
@@ -118,7 +123,9 @@ def detect_orphans(
             )
             continue
         running_rows = [
-            r for r in matched_rows if r.get("node_desired_state") == "running" or r.get("node_state") == "running"
+            r
+            for r in matched_rows
+            if r.get("node_desired_state") == "running" or r.get("node_observed_running") is True
         ]
         if any(r.get("node_port") == entry.port for r in running_rows):
             continue
@@ -324,7 +331,8 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
         Device.host_id,
         target_expr.label("device_connection_target"),
         AppiumNode.port,
-        AppiumNode.state,
+        AppiumNode.pid,
+        AppiumNode.active_connection_target,
         AppiumNode.desired_state,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
     result = await db.execute(stmt)
@@ -333,7 +341,7 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
             "host_id": row.host_id,
             "device_connection_target": row.device_connection_target,
             "node_port": row.port,
-            "node_state": row.state.value,
+            "node_observed_running": row.pid is not None and row.active_connection_target is not None,
             "node_desired_state": row.desired_state.value,
         }
         for row in result.all()
@@ -352,7 +360,6 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
             AppiumNode.desired_port,
             AppiumNode.transition_token,
             AppiumNode.transition_deadline,
-            AppiumNode.state,
             AppiumNode.port,
             AppiumNode.pid,
             AppiumNode.active_connection_target,
@@ -372,7 +379,6 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
             desired_port=row.desired_port,
             transition_token=row.transition_token,
             transition_deadline=row.transition_deadline,
-            state=row.state.value,
             port=row.port,
             pid=row.pid,
             active_connection_target=row.active_connection_target,

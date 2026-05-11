@@ -88,7 +88,7 @@ def remote_manager_client() -> Generator[AsyncMock, None, None]:
     mock_client.get.return_value = _mock_agent_response(
         {"running": True, "port": 4723, "appium_status": {"value": {"ready": True}}}
     )
-    with patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client):
+    with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client):
         yield mock_client
 
 
@@ -190,7 +190,8 @@ async def test_stop_node(
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.running.value
+    assert data["state"] == NodeState.stopped.value
+    assert data["effective_state"] == "stopping"
     assert data["desired_state"] == NodeState.stopped.value
     assert data["pid"] == 12345
     assert data["active_connection_target"] == "emulator-5554"
@@ -504,7 +505,8 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     # maintenance state.
     stop_resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert stop_resp.status_code == 200
-    assert stop_resp.json()["state"] == NodeState.running.value
+    assert stop_resp.json()["state"] == NodeState.stopped.value
+    assert stop_resp.json()["effective_state"] == "stopping"
     assert stop_resp.json()["desired_state"] == NodeState.stopped.value
 
     # Simulate the reconciler observing the stop before entering maintenance.

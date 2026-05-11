@@ -54,7 +54,14 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -90,7 +97,14 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4724, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4724,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -102,7 +116,8 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
     await db_session.refresh(node)
-    assert node.state == NodeState.running  # Not yet at max
+    assert node.observed_running is True  # Not yet at max
+    assert node.health_state == "error"
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
 
@@ -130,6 +145,8 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
         port=4740,
         grid_url="http://hub:4444",
         state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
         started_at=datetime.now(UTC) - timedelta(seconds=31),
     )
     db_session.add(node)
@@ -148,7 +165,8 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
+    assert node.health_state == "error"
 
 
 async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
@@ -177,6 +195,8 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
         port=4742,
         grid_url="http://hub:4444",
         state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
         started_at=datetime.now(UTC),
     )
     db_session.add(node)
@@ -216,7 +236,14 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4741, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4741,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
     await set_node_health_failure_count(db_session, str(node.id), 1)
@@ -274,7 +301,14 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4726, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4726,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -287,7 +321,8 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
+    assert node.health_state == "error"
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -316,7 +351,14 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4727, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4727,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -329,7 +371,8 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
+    assert node.health_state == "error"
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None
     await db_session.refresh(device)
@@ -354,7 +397,14 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4728, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4728,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -371,7 +421,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None
     await db_session.refresh(device)
@@ -398,7 +448,14 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4729, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4729,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -441,7 +498,14 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4734, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4734,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -511,7 +575,14 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4730, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -549,7 +620,14 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4733, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4733,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -602,12 +680,21 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
     db_session.add_all([first_device, second_device])
     await db_session.flush()
 
-    first_node = AppiumNode(device_id=first_device.id, port=4731, grid_url="http://hub:4444", state=NodeState.running)
+    first_node = AppiumNode(
+        device_id=first_device.id,
+        port=4731,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     second_node = AppiumNode(
         device_id=second_device.id,
         port=4732,
         grid_url="http://hub:4444",
         state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
     )
     db_session.add_all([first_node, second_node])
     await db_session.commit()
@@ -670,7 +757,14 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
     device = _build_tristate_device(db_host, "nh-tristate-1")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4730, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_status",
@@ -685,7 +779,14 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
     device = _build_tristate_device(db_host, "nh-tristate-2")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4731, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4731,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_status",
@@ -700,7 +801,14 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
     device = _build_tristate_device(db_host, "nh-tristate-3")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4732, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4732,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_status",
@@ -717,7 +825,14 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
     device = _build_tristate_device(db_host, "nh-tristate-4")
     device.host = None
     device.host_id = None
-    node = AppiumNode(device_id=None, port=4733, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=None,
+        port=4733,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     result = await _check_node_health(node, device, probe_capabilities=None)
     assert result.status == "refused"
@@ -727,7 +842,14 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
     device = _build_tristate_device(db_host, "nh-tristate-5")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4734, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4734,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_status",
@@ -746,7 +868,14 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
     device = _build_tristate_device(db_host, "nh-tristate-http-status")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4735, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4735,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_status",
@@ -764,7 +893,14 @@ async def test_check_node_health_probe_path_returns_none_on_http_error(db_sessio
     device = _build_tristate_device(db_host, "nh-tristate-http-probe")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4736, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4736,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_probe_session",
@@ -783,7 +919,14 @@ async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
     device = _build_tristate_device(db_host, "nh-tristate-probe-fail")
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4737, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4737,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
 
     with patch(
         "app.services.node_health.fetch_appium_probe_session",
@@ -812,7 +955,14 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4750, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4750,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -820,7 +970,6 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     await device_health.apply_node_state_transition(
         db_session,
         device,
-        new_state=NodeState.running,
         health_running=None,
         health_state=None,
         mark_offline=False,
@@ -873,6 +1022,8 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             port=4760 + index,
             grid_url="http://hub:4444",
             state=NodeState.running,
+            pid=1,
+            active_connection_target="target",
         )
         db_session.add(node)
         devices.append(device)
@@ -930,6 +1081,8 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
         port=4799,
         grid_url="http://hub:4444",
         state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
     )
     db_session.add(node)
     await db_session.commit()
@@ -957,7 +1110,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
     ):
         await _check_nodes(db_session)
 
-    await db_session.refresh(node, attribute_names=["consecutive_health_failures", "state"])
+    await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert node.consecutive_health_failures == initial_failures
     assert node.state == initial_state
@@ -993,7 +1146,14 @@ async def test_node_health_recovery_clears_pending_stop(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4780, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4780,
+        grid_url="http://hub:4444",
+        state=NodeState.running,
+        pid=1,
+        active_connection_target="target",
+    )
     db_session.add(node)
     await db_session.commit()
 

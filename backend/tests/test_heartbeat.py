@@ -525,7 +525,8 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running is True
+    assert node.health_state == "error"
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None
 

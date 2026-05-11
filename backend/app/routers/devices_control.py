@@ -134,7 +134,7 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     result: dict[str, Any] = {"platform": device.platform_id}
 
     node = device.appium_node
-    node_lifecycle_state = node.state.value if node else None
+    node_lifecycle_state = "running" if node is not None and node.observed_running else ("stopped" if node else None)
     node_health_running = getattr(node, "health_running", None) if node is not None else None
     node_health_state = getattr(node, "health_state", None) if node is not None else None
     node_running = node is not None and (

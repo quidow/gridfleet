@@ -79,6 +79,11 @@ Current auth behavior:
 | `POST` | `/api/devices/bulk/exit-maintenance` | Exit maintenance in bulk | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/reconnect` | Reconnect eligible network Android devices in bulk | `BulkDeviceIds` | `BulkOperationResult` |
 
+`AppiumNodeRead.state` is deprecated as of Phase 5. External consumers should
+migrate to `effective_state`, which is derived from desired state, observed
+process columns, transition leases, and health/lifecycle signals. Values are:
+`starting | running | stopping | stopped | restarting | blocked | error`.
+
 ## Hosts
 
 | Method | Path | Purpose | Main input | Primary response |

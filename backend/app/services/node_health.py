@@ -62,7 +62,6 @@ async def _bounded_check_node_health(
 class NodeHealthCheckRequest:
     node: AppiumNode
     device: Device
-    observed_state: NodeState
     observed_port: int
     observed_pid: int | None
     observed_active_connection_target: str | None
@@ -151,7 +150,6 @@ async def _process_node_health(
     *,
     result: ProbeResult,
     grid_device_ids: set[str] | None,
-    observed_state: NodeState | None = None,
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
@@ -162,15 +160,10 @@ async def _process_node_health(
         # quietly; lower layers will reconcile on the next sweep.
         return
 
-    if (
-        observed_state is not None
-        and observed_port is not None
-        and (
-            locked_node.state != observed_state
-            or locked_node.port != observed_port
-            or locked_node.pid != observed_pid
-            or locked_node.active_connection_target != observed_active_connection_target
-        )
+    if observed_port is not None and (
+        locked_node.port != observed_port
+        or locked_node.pid != observed_pid
+        or locked_node.active_connection_target != observed_active_connection_target
     ):
         logger.info(
             "Node health check for device %s skipped stale probe result after node changed",
@@ -180,7 +173,7 @@ async def _process_node_health(
 
     node = locked_node
 
-    if locked_node.state != NodeState.running:
+    if locked_node.pid is None or locked_node.active_connection_target is None:
         return
 
     if result.status == "indeterminate":
@@ -197,7 +190,6 @@ async def _process_node_health(
             await device_health.apply_node_state_transition(
                 db,
                 device,
-                new_state=NodeState.running,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
@@ -261,7 +253,6 @@ async def _process_node_health(
         await device_health.apply_node_state_transition(
             db,
             device,
-            new_state=NodeState.running,
             health_running=None,
             health_state=None,
             mark_offline=False,
@@ -274,7 +265,6 @@ async def _process_node_health(
     await device_health.apply_node_state_transition(
         db,
         device,
-        new_state=None,
         health_running=False,
         health_state="error",
         mark_offline=count >= max_failures,
@@ -350,7 +340,6 @@ async def _process_node_health(
             await device_health.apply_node_state_transition(
                 db,
                 device,
-                new_state=NodeState.error,
                 health_running=False,
                 health_state="error",
                 mark_offline=True,
@@ -376,7 +365,7 @@ async def _process_node_health(
 async def _check_nodes(db: AsyncSession) -> None:
     stmt = (
         select(AppiumNode)
-        .where(AppiumNode.state == NodeState.running)
+        .where(AppiumNode.pid.is_not(None), AppiumNode.active_connection_target.is_not(None))
         .options(
             selectinload(AppiumNode.device).selectinload(Device.host),
             selectinload(AppiumNode.device).selectinload(Device.appium_node),
@@ -390,7 +379,6 @@ async def _check_nodes(db: AsyncSession) -> None:
         NodeHealthCheckRequest(
             node=node,
             device=node.device,
-            observed_state=node.state,
             observed_port=node.port,
             observed_pid=node.pid,
             observed_active_connection_target=node.active_connection_target,
@@ -436,7 +424,6 @@ async def _check_nodes(db: AsyncSession) -> None:
             locked_device,
             result=result,
             grid_device_ids=grid_device_ids,
-            observed_state=request.observed_state,
             observed_port=request.observed_port,
             observed_pid=request.observed_pid,
             observed_active_connection_target=request.observed_active_connection_target,

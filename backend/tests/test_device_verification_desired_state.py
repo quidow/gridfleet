@@ -50,6 +50,8 @@ async def test_retain_verified_node_writes_desired_running_with_verification_cal
 
     await db_session.refresh(device, attribute_names=["appium_node"])
     assert device.appium_node is not None
+    assert device.appium_node.pid == 55
+    assert device.appium_node.active_connection_target == device.identity_value
     assert device.appium_node.desired_state == NodeState.running
 
     events = (

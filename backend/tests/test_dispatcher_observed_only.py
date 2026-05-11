@@ -44,3 +44,61 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
         DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
     )
     assert device.id not in {candidate.id for candidate in candidates}
+
+
+async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_state_column(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="disp-pid", verified=True)
+    device.operational_state = DeviceOperationalState.available
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+            pid=12345,
+            active_connection_target=device.identity_value,
+        )
+    )
+    await db_session.commit()
+
+    from app.services import run_service
+
+    candidates = await run_service._find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
+    )
+    assert device.id in {candidate.id for candidate in candidates}
+
+
+async def test_dispatcher_does_not_pick_device_when_pid_null(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="disp-no-pid", verified=True)
+    device.operational_state = DeviceOperationalState.available
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            state=NodeState.running,
+            desired_state=NodeState.running,
+            desired_port=4723,
+            pid=None,
+            active_connection_target=None,
+        )
+    )
+    await db_session.commit()
+
+    from app.services import run_service
+
+    candidates = await run_service._find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
+    )
+    assert device.id not in {candidate.id for candidate in candidates}

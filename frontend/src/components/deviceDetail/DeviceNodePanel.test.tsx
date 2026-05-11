@@ -82,6 +82,7 @@ function makeDevice(): DeviceDetail {
       container_id: null,
       active_connection_target: '192.168.1.254:5555',
       state: 'running',
+      effective_state: 'running',
       started_at: '2026-04-28T13:51:00Z',
       desired_state: 'running',
       desired_port: 4723,
@@ -103,37 +104,57 @@ describe('DeviceNodePanel', () => {
     expect(row?.className).not.toContain('grid-cols-[8rem,minmax(0,1fr)]');
   });
 
-  it('renders a Stopping hint when desired_state diverges from observed state', () => {
+  it('renders Running badge when effective_state is running', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
       state: 'running',
-      desired_state: 'stopped',
-      desired_port: null,
+      desired_state: 'running',
+      effective_state: 'running',
     };
 
     render(<DeviceNodePanel device={device} />);
 
-    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Stopping...');
+    expect(screen.getByText(/Running/i)).toBeInTheDocument();
   });
 
-  it('renders a Starting hint when desired_state is running but observed is stopped', () => {
+  it('renders Starting badge when effective_state is starting', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
       state: 'stopped',
       desired_state: 'running',
       desired_port: 4723,
+      effective_state: 'starting',
     };
 
     render(<DeviceNodePanel device={device} />);
 
-    expect(screen.getByTestId('appium-node-transition-hint')).toHaveTextContent('Starting...');
+    expect(screen.getByText(/Starting/i)).toBeInTheDocument();
   });
 
-  it('does not render a transitional hint when desired_state matches observed', () => {
-    render(<DeviceNodePanel device={makeDevice()} />);
+  it('renders Restarting badge when transition_token is active', () => {
+    const device = makeDevice();
+    device.appium_node = {
+      ...device.appium_node!,
+      transition_token: 'abc-token',
+      effective_state: 'restarting',
+    };
 
-    expect(screen.queryByTestId('appium-node-transition-hint')).not.toBeInTheDocument();
+    render(<DeviceNodePanel device={device} />);
+
+    expect(screen.getByText(/Restarting/i)).toBeInTheDocument();
+  });
+
+  it('renders Blocked badge when lifecycle policy suppressed recovery', () => {
+    const device = makeDevice();
+    device.appium_node = {
+      ...device.appium_node!,
+      effective_state: 'blocked',
+    };
+
+    render(<DeviceNodePanel device={device} />);
+
+    expect(screen.getByText(/Blocked/i)).toBeInTheDocument();
   });
 });

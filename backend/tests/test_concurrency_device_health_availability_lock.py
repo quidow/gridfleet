@@ -96,7 +96,6 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
             await device_health.apply_node_state_transition(
                 session,
                 loaded,
-                new_state=NodeState.running,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,

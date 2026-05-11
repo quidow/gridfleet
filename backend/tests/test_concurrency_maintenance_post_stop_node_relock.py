@@ -40,11 +40,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     final_status = (
         await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
     ).one()
-    node_status = (
-        await db_session.execute(
-            select(AppiumNode.state, AppiumNode.desired_state).where(AppiumNode.device_id == device_id)
-        )
-    ).one()
+    node_status = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     assert final_status.operational_state == DeviceOperationalState.available
     assert final_status.hold == DeviceHold.maintenance

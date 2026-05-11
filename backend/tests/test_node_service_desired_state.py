@@ -64,6 +64,7 @@ async def test_stop_node_writes_desired_stopped_before_inline_rpc(
         desired_state=NodeState.running,
         desired_port=4723,
         pid=999,
+        active_connection_target=device.identity_value,
     )
     db_session.add(node)
     await db_session.commit()
@@ -105,6 +106,7 @@ async def test_restart_node_writes_transition_token_and_desired_running(
         desired_state=NodeState.running,
         desired_port=4723,
         pid=42,
+        active_connection_target=device.identity_value,
     )
     db_session.add(node)
     await db_session.commit()

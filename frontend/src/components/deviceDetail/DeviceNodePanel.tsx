@@ -106,13 +106,8 @@ export default function DeviceNodePanel({ device }: Props) {
               <p className="mt-0.5 text-sm font-medium text-text-1">{node.grid_url}</p>
             </div>
             <div className="flex items-center gap-2">
-              {node.desired_state !== node.state && (
-                <span className="text-xs font-medium text-text-3" data-testid="appium-node-transition-hint">
-                  {node.desired_state === 'running' ? 'Starting...' : 'Stopping...'}
-                </span>
-              )}
               <ForceClearRestartButton nodeId={node.id} transitionToken={node.transition_token} />
-              <StatusBadge status={node.state} />
+              <StatusBadge status={node.effective_state} />
             </div>
           </div>
           <DefinitionList
@@ -166,7 +161,7 @@ export default function DeviceNodePanel({ device }: Props) {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {node.state === 'running' ? (
+            {node.effective_state === 'running' ? (
               <>
                 <Button
                   size="sm"

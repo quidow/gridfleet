@@ -861,6 +861,44 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 
 
 @pytest.mark.asyncio
+async def test_device_detail_surfaces_blocked_appium_effective_state(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id)
+    device_id = str(device.id)
+    device.lifecycle_policy_state = {
+        "last_failure_reason": "Node restart failed",
+        "last_action": "recovery_failed",
+        "last_action_at": "2026-03-30T10:00:00+00:00",
+        "stop_pending": False,
+        "stop_pending_reason": None,
+        "stop_pending_since": None,
+        "recovery_suppressed_reason": "Auto recovery suppressed",
+        "backoff_until": None,
+        "recovery_backoff_attempts": 0,
+    }
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=NodeState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device_id}")
+
+    assert resp.status_code == 200
+    node = resp.json()["appium_node"]
+    assert node["lifecycle_policy_state"]["recovery_suppressed_reason"] == "Auto recovery suppressed"
+    assert node["effective_state"] == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_delete_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
@@ -1014,7 +1052,7 @@ async def test_enter_device_maintenance_stops_running_node(
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.status_code == 200
     assert device_resp.json()["hold"] == "maintenance"
-    assert device_resp.json()["appium_node"]["state"] == "running"
+    assert device_resp.json()["appium_node"]["effective_state"] == "stopping"
     assert device_resp.json()["appium_node"]["desired_state"] == "stopped"
 
 
@@ -1056,7 +1094,13 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
         connection_type=SimpleNamespace(value="usb"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-001",
+            observed_running=True,
+        ),
     )
 
     with (
@@ -1125,7 +1169,13 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
         connection_type=SimpleNamespace(value="usb"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="health-node-001",
+            observed_running=True,
+        ),
     )
 
     with (
@@ -1194,7 +1244,13 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
         connection_type=SimpleNamespace(value="virtual"),
         ip_address=None,
         host=SimpleNamespace(ip="10.0.0.10", agent_port=5100),
-        appium_node=SimpleNamespace(state=SimpleNamespace(value="running"), port=4723),
+        appium_node=SimpleNamespace(
+            state=SimpleNamespace(value="running"),
+            port=4723,
+            pid=12345,
+            active_connection_target="emulator-5554",
+            observed_running=True,
+        ),
     )
     health_mock = AsyncMock(return_value={"healthy": True, "adb_connected": {"connected": True}})
 

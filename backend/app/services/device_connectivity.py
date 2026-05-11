@@ -238,7 +238,7 @@ async def _apply_ip_ping_hysteresis(
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:
     locked_device = await device_locking.lock_device(db, device.id)
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    if locked_node is None or locked_node.state == NodeState.stopped:
+    if locked_node is None or not locked_node.observed_running:
         return None
 
     await write_desired_state(
@@ -247,7 +247,7 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
         target=NodeState.stopped,
         caller="connectivity",
     )
-    await device_health.apply_node_state_transition(db, locked_device, new_state=locked_node.state, mark_offline=True)
+    await device_health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
 
 

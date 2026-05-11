@@ -225,7 +225,7 @@ async def handle_node_crash(
         process=None,
     )
 
-    if node is not None and node.state == NodeState.running:
+    if node is not None and node.observed_running:
         await _MACHINE.transition(
             device,
             TransitionEvent.AUTO_STOP_EXECUTED,

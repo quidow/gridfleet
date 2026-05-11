@@ -22,21 +22,21 @@ async def test_retain_verified_node_locks_appium_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """``retain_verified_node`` writes ``node.state`` and related fields. The
+    """``retain_verified_node`` writes observed node fields. The
     AppiumNode row must be locked across that write.
 
     Timeline of the correctly-locked path:
 
       Runner: lock_device() → lock_appium_node_for_device() (FOR UPDATE held)
       Runner: ready_operational_state() -> fires event, yields 0.15 s
-      Stomper: wakes up, issues UPDATE … SET state=error
+      Stomper: wakes up, issues UPDATE ... SET pid=11111
               → Postgres BLOCKS it (runner holds FOR UPDATE)
       Runner: set_operational_state(), commit -> releases lock
-      Stomper: UPDATE unblocks, commits state=error
-      Final:  state == error ✓
+      Stomper: UPDATE unblocks, commits pid=11111
+      Final:  pid == 11111 ✓
 
     Without the AppiumNode lock the stomper commits freely before the runner
-    releases anything, the runner's commit then overwrites with "running", and
+    releases anything, the runner's commit then overwrites with the retained handle, and
     the assertion fails.
     """
     device = await create_device(db_session, host_id=db_host.id, name="dve-lock", verified=True)
@@ -82,7 +82,9 @@ async def test_retain_verified_node_locks_appium_node(
         await stomper_can_go.wait()
         async with db_session_maker() as session:
             await session.execute(
-                update(AppiumNode).where(AppiumNode.device_id == device_id).values(state=NodeState.error)
+                update(AppiumNode)
+                .where(AppiumNode.device_id == device_id)
+                .values(pid=11111, active_connection_target="stomper-target")
             )
             await session.commit()
 
@@ -91,9 +93,12 @@ async def test_retain_verified_node_locks_appium_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == NodeState.error, (
-        f"Expected error but got {verify_node.state.value} — "
-        "retain_verified_node overwrote the concurrent error write (missing AppiumNode lock)"
+    assert verify_node.pid == 11111, (
+        f"Expected pid=11111 but got {verify_node.pid} - "
+        "retain_verified_node overwrote the concurrent pid write (missing AppiumNode lock)"
+    )
+    assert verify_node.active_connection_target == "stomper-target", (
+        "retain_verified_node overwrote the concurrent active target write (missing AppiumNode lock)"
     )
 
 

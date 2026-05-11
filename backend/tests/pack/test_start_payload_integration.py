@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.host import Host, HostStatus, OSType
-from app.services import appium_node_resource_service, node_service
+from app.services import appium_node_resource_service, appium_reconciler_agent
 from app.services.node_service import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
@@ -74,8 +74,8 @@ def _patched_remote_start(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
+    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", _noop_session_aligned)
     return captured
 
 
@@ -95,7 +95,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
     await db_session.commit()
 
     # Stub management host lookup and legacy stereotype so the assertions are deterministic.
-    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
 
     legacy_caps = {
         "appium:gridfleet:deviceId": str(_android_real_device.id),
@@ -107,7 +107,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         "appium:model": "Pixel 6",
     }
     monkeypatch.setattr(
-        node_service,
+        appium_reconciler_agent,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": "ABCD1234",
@@ -125,7 +125,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    await node_service.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_temporary_node(
         db_session,
         _android_real_device,
         port=4723,
@@ -176,9 +176,9 @@ async def test_temporary_start_forwards_pack_workaround_env(
         device_config={"wda_base_url": "http://192.168.1.5"},
     )
 
-    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
     monkeypatch.setattr(
-        node_service,
+        appium_reconciler_agent,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": device.connection_target,
@@ -196,7 +196,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         },
     )
 
-    await node_service.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_temporary_node(
         db_session,
         device,
         port=4723,
@@ -247,10 +247,10 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
             }
         )
 
-    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
 
-    await node_service.start_remote_temporary_node(
+    await appium_reconciler_agent.start_remote_temporary_node(
         db_session,
         device,
         port=4724,
@@ -347,13 +347,13 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         "appium:device_type": "real_device",
     }
 
-    monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_service, "appium_stop", _fake_appium_stop)
-    monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
+    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
+    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
+    monkeypatch.setattr(appium_reconciler_agent, "appium_stop", _fake_appium_stop)
+    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", _noop_session_aligned)
     monkeypatch.setattr(appium_node_resource_service, "get_capabilities", _noop_get_owner_capabilities)
     monkeypatch.setattr(
-        node_service,
+        appium_reconciler_agent,
         "build_agent_start_payload",
         lambda device, port, **kwargs: {
             "connection_target": "ABCD1234",
@@ -371,7 +371,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    from app.services.node_service import restart_node_via_agent
+    from app.services.appium_reconciler_agent import restart_node_via_agent
 
     node = MagicMock()
     node.port = 4723

@@ -30,7 +30,7 @@ def test_detect_orphans_returns_empty_when_every_running_node_has_matching_db_ro
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_state": "running",
+            "node_observed_running": True,
         }
     ]
 
@@ -62,7 +62,7 @@ def test_detect_orphans_flags_running_node_when_db_row_state_is_stopped() -> Non
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_state": "stopped",
+            "node_observed_running": False,
         }
     ]
 
@@ -86,7 +86,7 @@ def test_detect_orphans_treats_desired_running_as_claim() -> None:
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_state": "stopped",
+            "node_observed_running": False,
             "node_desired_state": "running",
         }
     ]
@@ -102,7 +102,7 @@ def test_detect_orphans_flags_port_mismatch() -> None:
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5003,
-            "node_state": "running",
+            "node_observed_running": True,
         }
     ]
 
@@ -129,13 +129,13 @@ def test_detect_orphans_disambiguates_multiple_rows_with_same_target() -> None:
             "host_id": host_id,
             "device_connection_target": "shared-target",
             "node_port": 5001,
-            "node_state": "running",
+            "node_observed_running": True,
         },
         {
             "host_id": host_id,
             "device_connection_target": "shared-target",
             "node_port": 5002,
-            "node_state": "running",
+            "node_observed_running": True,
         },
     ]
 
@@ -168,14 +168,14 @@ async def test_reconcile_host_orphans_stops_each_orphan() -> None:
             "host_id": host_id,
             "device_connection_target": "test-target-b",
             "node_port": 5002,
-            "node_state": "running",
+            "node_observed_running": True,
         },
         # test-target-a row has state=stopped, port=5001 — orphan.
         {
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_state": "stopped",
+            "node_observed_running": False,
         },
     ]
 

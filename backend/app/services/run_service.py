@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -302,7 +302,11 @@ async def _find_matching_devices(
         .where(
             or_(
                 AppiumNode.id.is_(None),
-                and_(AppiumNode.state == NodeState.running, AppiumNode.transition_token.is_(None)),
+                and_(
+                    AppiumNode.pid.is_not(None),
+                    AppiumNode.active_connection_target.is_not(None),
+                    AppiumNode.transition_token.is_(None),
+                ),
             )
         )
         .where(Device.pack_id == requirement.pack_id)
@@ -336,7 +340,11 @@ async def _find_matching_devices(
         .where(
             or_(
                 AppiumNode.id.is_(None),
-                and_(AppiumNode.state == NodeState.running, AppiumNode.transition_token.is_(None)),
+                and_(
+                    AppiumNode.pid.is_not(None),
+                    AppiumNode.active_connection_target.is_not(None),
+                    AppiumNode.transition_token.is_(None),
+                ),
             )
         )
         .where(~active_reservation_exists)

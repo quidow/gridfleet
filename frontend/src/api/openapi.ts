@@ -2245,8 +2245,17 @@ export interface components {
             /** Desired Port */
             desired_port?: number | null;
             desired_state: components["schemas"]["DesiredNodeState"];
+            /**
+             * Effective State
+             * @enum {string}
+             */
+            readonly effective_state: "starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error";
             /** Grid Url */
             grid_url: string;
+            /** Health Running */
+            health_running?: boolean | null;
+            /** Health State */
+            health_state?: string | null;
             /**
              * Id
              * Format: uuid
@@ -2254,6 +2263,10 @@ export interface components {
             id: string;
             /** Last Observed At */
             last_observed_at?: string | null;
+            /** Lifecycle Policy State */
+            lifecycle_policy_state?: {
+                [key: string]: unknown;
+            } | null;
             /** Pid */
             pid: number | null;
             /** Port */
@@ -2263,7 +2276,8 @@ export interface components {
              * Format: date-time
              */
             started_at: string;
-            state: components["schemas"]["NodeState"];
+            /** @deprecated */
+            readonly state: components["schemas"]["NodeState"];
             /** Transition Deadline */
             transition_deadline?: string | null;
             /** Transition Token */

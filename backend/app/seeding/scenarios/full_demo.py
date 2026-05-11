@@ -1254,7 +1254,8 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
                 grid_url="http://selenium-hub:4444",
                 pid=20_000 + port,
                 active_connection_target=device.connection_target,
-                state=NodeState.running,
+                desired_state=NodeState.running,
+                desired_port=port,
                 started_at=ctx.now - timedelta(minutes=ctx.rng.randint(10, 240)),
             )
         )
@@ -1276,7 +1277,8 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
                 grid_url="http://selenium-hub:4444",
                 pid=None,
                 active_connection_target=None,
-                state=NodeState.stopped,
+                desired_state=NodeState.stopped,
+                desired_port=None,
                 started_at=ctx.now - timedelta(hours=ctx.rng.randint(2, 12)),
             )
         )

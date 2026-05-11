@@ -352,7 +352,7 @@ async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSe
         ],
     )
 
-    with patch("app.services.node_service.httpx.AsyncClient", return_value=mock_client):
+    with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client):
         start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
         assert start_resp.status_code == 200
 

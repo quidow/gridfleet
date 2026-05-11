@@ -741,7 +741,6 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     await device_health.apply_node_state_transition(
         db_session,
         device,
-        new_state=NodeState.running,
         health_running=None,
         health_state=None,
         mark_offline=False,
