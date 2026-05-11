@@ -40,7 +40,7 @@ import type {
   DeviceType,
   DeviceVerificationCreate,
   DeviceVerificationUpdate,
-  NodeState,
+  DesiredNodeState,
   DeviceTestData,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
@@ -170,7 +170,7 @@ function updateEmulatorState(state: string): DeviceCacheUpdater {
 
 function updateNodeOperationalState(
   operationalState: DeviceRead['operational_state'],
-  nodeState: NodeState,
+  nodeState: DesiredNodeState,
 ): DeviceCacheUpdater {
   return <T extends DeviceRead>(device: T): T => {
     const nextDevice = {
@@ -181,7 +181,8 @@ function updateNodeOperationalState(
     if (nextDevice.appium_node) {
       nextDevice.appium_node = {
         ...nextDevice.appium_node,
-        state: nodeState,
+        desired_state: nodeState,
+        effective_state: nodeState === 'running' ? 'starting' : 'stopped',
         pid: nodeState === 'running' ? nextDevice.appium_node.pid : null,
       };
     }
