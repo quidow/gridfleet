@@ -126,6 +126,7 @@ async def converge_host_rows(
     stop_agent: StopAgent,
     write_observed: WriteObserved,
     clear_token: ClearToken,
+    raise_errors: bool = False,
 ) -> None:
     """Drive convergence for one host.
 
@@ -155,6 +156,8 @@ async def converge_host_rows(
                 device_id=str(row.device_id),
                 action=action.kind,
             )
+            if raise_errors:
+                raise
 
 
 async def _execute_action(
@@ -195,12 +198,14 @@ async def _execute_action(
         return
     if action.kind == "start":
         result = await start_agent(row=row, port=action.port)
+        result_port = _int_or_none(result.get("port"))
         await write_observed(
             row=row,
             state="running",
-            port=_int_or_none(result.get("port")) or action.port,
+            port=result_port or action.port,
             pid=_int_or_none(result.get("pid")),
             active_connection_target=_str_or_none(result.get("active_connection_target")) or row.connection_target,
+            clear_desired_port=_uses_fallback_port(requested=action.port, actual=result_port),
             allocated_caps=result.get("allocated_caps"),
         )
         return
@@ -220,13 +225,15 @@ async def _execute_action(
         if action.stop_port is not None:
             await stop_agent(row=row, port=action.stop_port)
         result = await start_agent(row=row, port=action.start_port)
+        result_port = _int_or_none(result.get("port"))
         await write_observed(
             row=row,
             state="running",
-            port=_int_or_none(result.get("port")) or action.start_port,
+            port=result_port or action.start_port,
             pid=_int_or_none(result.get("pid")),
             active_connection_target=_str_or_none(result.get("active_connection_target")) or row.connection_target,
             allocated_caps=result.get("allocated_caps"),
+            clear_desired_port=_uses_fallback_port(requested=action.start_port, actual=result_port),
             clear_transition=True,
         )
 
@@ -241,3 +248,7 @@ def _positive_or_none(value: int | None) -> int | None:
 
 def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _uses_fallback_port(*, requested: int | None, actual: int | None) -> bool:
+    return requested is not None and actual is not None and actual != requested
