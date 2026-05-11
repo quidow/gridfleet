@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.6.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.1...gridfleet-agent-v0.6.2) (2026-05-10)
+
+
+### Bug Fixes
+
+* **agent:** release adapter-owned doctor refactor ([#165](https://github.com/quidow/gridfleet/issues/165)) ([f3ae257](https://github.com/quidow/gridfleet/commit/f3ae25787e2c8ef926312f11d2313c6513f8bfa9))
+
 ## [0.6.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.0...gridfleet-agent-v0.6.1) (2026-05-10)
 
 
