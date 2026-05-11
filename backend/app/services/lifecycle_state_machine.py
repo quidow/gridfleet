@@ -36,6 +36,8 @@ _OPERATIONAL_TRANSITIONS: dict[
         TransitionEvent.AUTO_STOP_EXECUTED: DeviceOperationalState.offline,
         TransitionEvent.PREPARATION_FAILED: DeviceOperationalState.offline,
         TransitionEvent.CLOUD_ESCROW: DeviceOperationalState.offline,
+        TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
+        TransitionEvent.VERIFICATION_FAILED: DeviceOperationalState.offline,
     },
     DeviceOperationalState.offline: {
         TransitionEvent.CONNECTIVITY_RESTORED: DeviceOperationalState.available,

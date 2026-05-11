@@ -863,6 +863,143 @@ async def test_existing_device_verification_marks_device_verified(
     assert updated["verified_at"] is not None
 
 
+async def test_existing_running_device_verification_can_enter_verifying(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"running-verify-{uuid.uuid4()}",
+        connection_target="running-verify-target",
+        name="Running Verify Device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+    )
+    device.operational_state = DeviceOperationalState.busy
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    with (
+        _patch_running_node(active_connection_target=device.connection_target),
+        patch(
+            "app.services.device_verification_runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True}),
+        ),
+        patch(
+            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            new=AsyncMock(return_value=(True, None)),
+        ),
+    ):
+        resp = await client.post(f"/api/devices/{device.id}/verification-jobs", json={"host_id": default_host_id})
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "completed"
+    updated = (await client.get(f"/api/devices/{device.id}")).json()
+    assert updated["readiness_state"] == "verified"
+
+
+async def test_update_verification_cleanup_failure_does_not_delete_existing_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"cleanup-update-{uuid.uuid4()}",
+        connection_target="cleanup-update-target",
+        name="Cleanup Update Device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+    )
+
+    with (
+        _patch_running_node(active_connection_target=device.connection_target),
+        patch(
+            "app.services.device_verification_execution.stop_node",
+            AsyncMock(side_effect=RuntimeError("stop failed")),
+        ),
+        patch(
+            "app.services.device_verification_runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True}),
+        ),
+        patch(
+            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            new=AsyncMock(return_value=(True, None)),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/devices/{device.id}/verification-jobs",
+            json={"host_id": default_host_id, "auto_manage": False},
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "failed"
+    _assert_job_stage(job, stage="cleanup", status="failed", detail_contains="stop failed")
+    assert (await client.get(f"/api/devices/{device.id}")).status_code == 200
+
+
+async def test_update_verification_probe_failure_stops_persisted_node(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"probe-update-{uuid.uuid4()}",
+        connection_target="probe-update-target",
+        name="Probe Update Device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+    )
+
+    with (
+        _patch_running_node(active_connection_target=device.connection_target),
+        patch(
+            "app.services.device_verification_runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True}),
+        ),
+        patch(
+            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            new=AsyncMock(return_value=(False, "Session startup failed")),
+        ),
+    ):
+        resp = await client.post(f"/api/devices/{device.id}/verification-jobs", json={"host_id": default_host_id})
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "failed"
+    node = await db_session.scalar(select(AppiumNode).where(AppiumNode.device_id == device.id))
+    assert node is not None
+    assert node.desired_state == AppiumDesiredState.stopped
+
+
 async def test_existing_device_verification_requires_missing_setup_fields(
     client: AsyncClient,
     db_session: AsyncSession,

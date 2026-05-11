@@ -82,7 +82,7 @@ async def reserve_appium_port(
     )
     if reserved == port:
         return reserved
-    await resource_claims.release_managed(db, node_id=node_id)
+    await resource_claims.release_capability(db, node_id=node_id, capability_key=APPIUM_PORT_CAPABILITY)
     APPIUM_RECONCILER_ALLOCATION_COLLISIONS.inc()
     raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
 

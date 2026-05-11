@@ -354,15 +354,18 @@ async def _finalize_success(
     else:
         locked = await device_locking.lock_device(db, context.save_device_id)
         _restore_create_payload_fields(locked, context.save_payload)
-    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_PASSED, reason="verification")
-    locked.verified_at = datetime.now(UTC)
-
     if not context.keep_running_after_verify:
         cleanup_error = await _stop_verification_node_if_running(job, db, locked, node)
         if cleanup_error is not None:
-            await device_service.delete_device(db, context.save_device_id)
+            if context.mode == "create":
+                await device_service.delete_device(db, context.save_device_id)
+                await db.commit()
+                return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+            await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
             await db.commit()
-            return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+            return VerificationExecutionOutcome(
+                status="failed", error=cleanup_error, device_id=str(context.save_device_id)
+            )
     else:
         data = {"port": node.port, "pid": node.pid} if node is not None else None
         await set_stage(
@@ -373,6 +376,8 @@ async def _finalize_success(
             data=data,
         )
 
+    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_PASSED, reason="verification")
+    locked.verified_at = datetime.now(UTC)
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:
         await set_operational_state(locked, next_state, reason="verification")
@@ -405,8 +410,8 @@ async def _finalize_failure(
             return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
         return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
 
-    await _stop_verification_node_if_running(job, db, context.transient_device, node)
     locked = await device_locking.lock_device(db, context.save_device_id)
+    await _stop_verification_node_if_running(job, db, locked, node)
     await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))

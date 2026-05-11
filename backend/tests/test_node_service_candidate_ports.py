@@ -225,6 +225,49 @@ async def test_reserve_appium_port_increments_collision_metric(db_session: Async
     assert APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get() == before + 1
 
 
+async def test_reserve_appium_port_conflict_preserves_other_node_claims(db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, ip="10.0.0.82")
+    first_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-preserve-a",
+        connection_target="dev-main-port-preserve-a",
+        name="dev-main-port-preserve-a",
+    )
+    second_device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="dev-main-port-preserve-b",
+        connection_target="dev-main-port-preserve-b",
+        name="dev-main-port-preserve-b",
+    )
+    first_node = AppiumNode(device_id=first_device.id, port=4723, grid_url=settings_service.get("grid.hub_url"))
+    second_node = AppiumNode(device_id=second_device.id, port=4724, grid_url=settings_service.get("grid.hub_url"))
+    db_session.add_all([first_node, second_node])
+    await db_session.flush()
+    start = settings_service.get("appium.port_range_start")
+    derived_data_port = await appium_node_resource_service.reserve(
+        db_session,
+        host_id=host.id,
+        capability_key="appium:derivedDataPort",
+        start_port=8200,
+        node_id=second_node.id,
+    )
+    await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=first_node.id)
+
+    with pytest.raises(NodePortConflictError):
+        await reserve_appium_port(db_session, host_id=host.id, port=start, node_id=second_node.id)
+
+    claim = await db_session.scalar(
+        select(AppiumNodeResourceClaim).where(
+            AppiumNodeResourceClaim.node_id == second_node.id,
+            AppiumNodeResourceClaim.capability_key == "appium:derivedDataPort",
+        )
+    )
+    assert claim is not None
+    assert claim.port == derived_data_port
+
+
 async def test_start_node_reserves_main_appium_port_and_retries_collision(
     db_session: AsyncSession,
 ) -> None:
