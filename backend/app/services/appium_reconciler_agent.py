@@ -464,6 +464,10 @@ async def stop_remote_node(
         return False
 
 
+start_remote_temporary_node = start_remote_node
+stop_remote_temporary_node = stop_remote_node
+
+
 async def stop_node_via_agent(
     device: Device,
     node: AppiumNode,
