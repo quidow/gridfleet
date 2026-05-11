@@ -215,6 +215,7 @@ async def _execute_action(
             pid=None,
             active_connection_target=None,
             clear_desired_port=action.clear_desired_port,
+            clear_transition=row.transition_token is not None,
         )
         return
     if action.kind == "restart":

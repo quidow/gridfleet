@@ -242,9 +242,9 @@ async def appium_reconciler_loop() -> None:
                 desired = await _fetch_desired_rows(db)
                 backoff = await _fetch_backoff_until(db)
             # Agent IO and stops happen outside the DB session — no point holding it open.
-            await _reconcile_all(hosts, rows)
+            health_by_host = await _reconcile_all(hosts, rows)
             if reconciler_convergence_enabled():
-                await _drive_convergence(hosts, desired, backoff)
+                await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)
         except LeadershipLost as exc:
             APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
             logger.error(
@@ -264,7 +264,9 @@ async def appium_reconciler_loop() -> None:
 async def _reconcile_all(
     hosts: list[dict[str, object]],
     rows: list[dict[str, object]],
-) -> None:
+) -> dict[uuid.UUID, dict[str, object]]:
+    health_by_host: dict[uuid.UUID, dict[str, object]] = {}
+
     async def _reconcile(
         *,
         host_id: uuid.UUID,
@@ -274,7 +276,9 @@ async def _reconcile_all(
     ) -> list[OrphanAppiumNode]:
         async def _fetch_health(*, host: str, agent_port: int) -> dict[str, object]:
             payload = await agent_health(host, agent_port, http_client_factory=httpx.AsyncClient)
-            return payload or {}
+            health = payload or {}
+            health_by_host[host_id] = health
+            return health
 
         async def _stop(*, host: str, agent_port: int, port: int) -> None:
             response = await appium_stop(
@@ -306,6 +310,7 @@ async def _reconcile_all(
         list_db_running_rows=_list_rows,
         reconcile_host=_reconcile,
     )
+    return health_by_host
 
 
 async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:
@@ -399,6 +404,8 @@ async def _drive_convergence(
     hosts: list[dict[str, object]],
     desired: list[DesiredRow],
     backoff_until_by_device: dict[uuid.UUID, datetime],
+    *,
+    health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
 ) -> None:
     semaphore = asyncio.Semaphore(int(settings_service.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
@@ -425,7 +432,9 @@ async def _drive_convergence(
             try:
                 async with async_session() as db:
                     await assert_current_leader(db)
-                payload = await agent_health(host_ip, agent_port, http_client_factory=httpx.AsyncClient) or {}
+                payload = (health_by_host or {}).get(host_id)
+                if payload is None:
+                    payload = await agent_health(host_ip, agent_port, http_client_factory=httpx.AsyncClient) or {}
                 appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
                 if not isinstance(appium_processes, dict):
                     return
@@ -464,7 +473,13 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
             if device is None:
                 raise RuntimeError(f"Device {row.device_id} no longer exists")
             try:
-                handle = await start_temporary_node(db, device, owner_key=f"device:{row.device_id}", port=port)
+                handle = await start_temporary_node(
+                    db,
+                    device,
+                    owner_key=f"device:{row.device_id}",
+                    port=port,
+                    reuse_existing=False,
+                )
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")
             except Exception as exc:
@@ -668,6 +683,6 @@ async def run_one_cycle_for_test() -> None:
         rows = await _fetch_node_rows(db)
         desired = await _fetch_desired_rows(db)
         backoff = await _fetch_backoff_until(db)
-    await _reconcile_all(hosts, rows)
+    health_by_host = await _reconcile_all(hosts, rows)
     if reconciler_convergence_enabled():
-        await _drive_convergence(hosts, desired, backoff)
+        await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)

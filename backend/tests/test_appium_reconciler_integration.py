@@ -91,6 +91,52 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
     start_mock.assert_awaited_once()
 
 
+async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports_absent(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="conv-stale-running", verified=True)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=111,
+        state=NodeState.running,
+        desired_state=NodeState.running,
+        desired_port=4723,
+        active_connection_target=device.identity_value,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    from app.services import appium_reconciler
+
+    start_mock = AsyncMock(
+        return_value=TemporaryNodeHandle(
+            port=4723,
+            pid=222,
+            active_connection_target=device.identity_value,
+            agent_base="http://agent",
+            owner_key=f"device:{device.id}",
+        )
+    )
+    with (
+        patch.object(
+            appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
+        ),
+        patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
+        patch.object(appium_reconciler, "start_temporary_node", new=start_mock),
+        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+    ):
+        await appium_reconciler.run_one_cycle_for_test()
+
+    start_mock.assert_awaited_once()
+    assert start_mock.await_args.kwargs["reuse_existing"] is False
+    await db_session.refresh(node)
+    assert node.state == NodeState.running
+    assert node.pid == 222
+
+
 async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
     db_session: AsyncSession,
     db_host: Host,
@@ -136,6 +182,53 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
     assert node.state == NodeState.stopped
     assert node.pid is None
     stop_mock.assert_awaited_once()
+
+
+async def test_reconciler_stop_intent_clears_restart_transition_token(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="conv-stop-clears-token", verified=True)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=12345,
+        state=NodeState.running,
+        desired_state=NodeState.stopped,
+        transition_token=uuid.uuid4(),
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    from app.services import appium_reconciler
+
+    payload = {
+        "appium_processes": {
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 12345,
+                    "connection_target": device.connection_target,
+                    "platform_id": device.platform_id,
+                }
+            ],
+        }
+    }
+    with (
+        patch.object(appium_reconciler, "agent_health", new=AsyncMock(return_value=payload)),
+        patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
+        patch.object(appium_reconciler, "start_temporary_node", new=AsyncMock()),
+        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock(return_value=True)),
+    ):
+        await appium_reconciler.run_one_cycle_for_test()
+
+    await db_session.refresh(node)
+    assert node.state == NodeState.stopped
+    assert node.transition_token is None
+    assert node.transition_deadline is None
 
 
 async def test_reconciler_restarts_agent_and_clears_transition_token(
@@ -400,3 +493,62 @@ async def test_fetch_backoff_until_coerces_naive_datetimes_to_utc(db_session: As
     backoff = await appium_reconciler._fetch_backoff_until(db_session)
 
     assert backoff[device.id].tzinfo == UTC
+
+
+async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    start_port = settings_service.get("appium.port_range_start")
+    first = await create_device(db_session, host_id=db_host.id, name="conv-alloc-a", verified=True)
+    second = await create_device(db_session, host_id=db_host.id, name="conv-alloc-b", verified=True)
+    first_node = AppiumNode(
+        device_id=first.id,
+        port=start_port,
+        grid_url="http://hub:4444",
+        state=NodeState.stopped,
+        desired_state=NodeState.running,
+        desired_port=start_port,
+    )
+    second_node = AppiumNode(
+        device_id=second.id,
+        port=start_port + 1,
+        grid_url="http://hub:4444",
+        state=NodeState.stopped,
+        desired_state=NodeState.running,
+        desired_port=start_port,
+    )
+    db_session.add_all([first_node, second_node])
+    await db_session.commit()
+
+    from app.services import appium_reconciler
+
+    async def start_remote(*args: object, **kwargs: object) -> TemporaryNodeHandle:
+        device = args[1]
+        assert hasattr(device, "identity_value")
+        port = kwargs["port"]
+        assert isinstance(port, int)
+        return TemporaryNodeHandle(
+            port=port,
+            pid=1000 + port,
+            active_connection_target=device.identity_value,
+            agent_base="http://agent",
+        )
+
+    with (
+        patch.object(
+            appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
+        ),
+        patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
+        patch("app.services.node_service.start_remote_temporary_node", new=AsyncMock(side_effect=start_remote)),
+        patch.object(appium_reconciler, "stop_temporary_node", new=AsyncMock()),
+    ):
+        await appium_reconciler.run_one_cycle_for_test()
+
+    await db_session.refresh(first_node)
+    await db_session.refresh(second_node)
+    assert first_node.state == NodeState.running
+    assert second_node.state == NodeState.running
+    assert first_node.port != second_node.port
+    assert first_node.port >= start_port
+    assert second_node.port >= start_port

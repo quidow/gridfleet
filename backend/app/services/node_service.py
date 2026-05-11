@@ -788,9 +788,15 @@ async def start_temporary_node(
     *,
     owner_key: str | None = None,
     port: int | None = None,
+    reuse_existing: bool = True,
 ) -> TemporaryNodeHandle:
     resolved_owner_key = owner_key or _build_device_owner_key(device)
-    if device.id is not None and device.appium_node is not None and device.appium_node.state == NodeState.running:
+    if (
+        reuse_existing
+        and device.id is not None
+        and device.appium_node is not None
+        and device.appium_node.state == NodeState.running
+    ):
         return TemporaryNodeHandle(
             port=device.appium_node.port,
             pid=device.appium_node.pid,

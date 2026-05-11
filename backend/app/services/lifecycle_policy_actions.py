@@ -251,9 +251,6 @@ async def handle_node_crash(
                 target=NodeState.stopped,
                 caller="lifecycle_crash",
             )
-            if node.state == NodeState.running:
-                node.state = NodeState.stopped
-                node.pid = None
         await db.commit()
 
 

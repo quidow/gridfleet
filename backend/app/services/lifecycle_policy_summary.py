@@ -90,6 +90,10 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
         summary_state = DeviceLifecyclePolicySummaryState.suppressed
         label = "Suppressed"
         detail = policy.get("recovery_suppressed_reason") or policy.get("last_failure_reason")
+    elif policy.get("last_failure_source") == "appium_reconciler" and policy.get("last_failure_reason"):
+        summary_state = DeviceLifecyclePolicySummaryState.recoverable
+        label = "Node Start Failed"
+        detail = policy.get("last_failure_reason")
     elif current_state == "eligible":
         if policy.get("last_action") or policy.get("last_failure_reason"):
             summary_state = DeviceLifecyclePolicySummaryState.recoverable
