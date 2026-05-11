@@ -346,9 +346,9 @@ async def test_port_allocation_increments(
     r2 = await client.get(f"/api/devices/{d2['id']}")
 
     assert r1.json()["appium_node"]["port"] == 4723
-    assert r2.json()["appium_node"]["port"] == 4723
+    assert r2.json()["appium_node"]["port"] == 4724
     assert r1.json()["appium_node"]["desired_port"] == 4723
-    assert r2.json()["appium_node"]["desired_port"] == 4723
+    assert r2.json()["appium_node"]["desired_port"] == 4724
 
 
 async def test_start_node_agent_failure(

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device
 from app.services import appium_node_resource_service as resource_claims
@@ -32,7 +33,10 @@ async def candidate_ports(
     stmt = (
         select(AppiumNode.port)
         .join(Device, Device.id == AppiumNode.device_id)
-        .where(AppiumNode.state == NodeState.running, Device.host_id == host_id)
+        .where(
+            Device.host_id == host_id,
+            (AppiumNode.state == NodeState.running) | (AppiumNode.desired_state == NodeState.running),
+        )
     )
     result = await db.execute(stmt)
     used_ports = {row[0] for row in result.all()}
@@ -79,6 +83,7 @@ async def reserve_appium_port(
     if reserved == port:
         return reserved
     await resource_claims.release_temporary(db, host_id=host_id, owner_token=owner_token)
+    APPIUM_RECONCILER_ALLOCATION_COLLISIONS.inc()
     raise NodePortConflictError(f"Appium port {port} is already reserved on host {host_id}")
 
 

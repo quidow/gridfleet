@@ -34,6 +34,7 @@ DesiredStateCaller = Literal[
     "verification",
     "device_delete",
     "admin_clear_transition",
+    "appium_reconciler",
 ]
 
 

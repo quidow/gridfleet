@@ -59,6 +59,7 @@ async def test_admin_clear_transition_clears_token_and_records_event(
         event.event_type == DeviceEventType.desired_state_changed
         and event.details is not None
         and event.details.get("caller") == "admin_clear_transition"
+        and event.details.get("actor") == "anonymous-admin"
         for event in events
     )
 
@@ -66,3 +67,23 @@ async def test_admin_clear_transition_clears_token_and_records_event(
 async def test_admin_clear_transition_404_when_node_missing(client: AsyncClient) -> None:
     response = await client.post(f"/api/admin/appium-nodes/{uuid.uuid4()}/clear-transition", json={})
     assert response.status_code == 404
+
+
+async def test_admin_clear_transition_requires_admin_when_auth_enabled(
+    client: AsyncClient,
+) -> None:
+    from fastapi import HTTPException
+
+    from app.main import app
+    from app.services.auth_dependencies import require_admin
+
+    async def reject_admin() -> str:
+        raise HTTPException(status_code=418, detail="admin dependency used")
+
+    app.dependency_overrides[require_admin] = reject_admin
+    try:
+        response = await client.post(f"/api/admin/appium-nodes/{uuid.uuid4()}/clear-transition", json={})
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
+
+    assert response.status_code == 418

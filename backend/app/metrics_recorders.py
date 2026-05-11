@@ -88,6 +88,11 @@ APPIUM_RECONCILER_START_FAILURES = Counter(
     "Agent-start failures observed by the Appium reconciler, labeled by reason.",
     labelnames=("reason",),
 )
+APPIUM_RECONCILER_STOP_FAILURES = Counter(
+    "appium_reconciler_stop_failures_total",
+    "Agent-stop failures observed by the Appium reconciler, labeled by reason.",
+    labelnames=("reason",),
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "webhook_deliveries_total",
     "Webhook delivery state transitions.",

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold
 from app.services import appium_node_locking
+from app.services.appium_reconciler_allocation import candidate_ports
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
@@ -68,12 +69,15 @@ async def exit_maintenance(
 
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if node is not None:
+        desired_port = None
+        if device.host_id is not None:
+            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
         await write_desired_state(
             db,
             node=node,
             target=NodeState.running,
             caller="maintenance_exit",
-            desired_port=node.port if node.port else None,
+            desired_port=desired_port,
         )
 
     if commit:

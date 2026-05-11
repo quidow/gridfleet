@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -296,7 +297,14 @@ async def _find_matching_devices(
     candidate_stmt = (
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
+        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(
+            or_(
+                AppiumNode.id.is_(None),
+                and_(AppiumNode.state == NodeState.running, AppiumNode.transition_token.is_(None)),
+            )
+        )
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
@@ -322,11 +330,18 @@ async def _find_matching_devices(
     locked_stmt = (
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
+        .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id.in_(candidate_ids))
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(
+            or_(
+                AppiumNode.id.is_(None),
+                and_(AppiumNode.state == NodeState.running, AppiumNode.transition_token.is_(None)),
+            )
+        )
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
-        .with_for_update(skip_locked=True)
+        .with_for_update(of=Device, skip_locked=True)
         .execution_options(populate_existing=True)
     )
     locked_rows = list((await db.execute(locked_stmt)).scalars().all())

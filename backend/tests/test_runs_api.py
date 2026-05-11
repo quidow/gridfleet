@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack
@@ -1018,6 +1019,55 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     body = resp.json()
     reserved_ids = {dev["device_id"] for dev in body["devices"]}
     assert str(devices[0].id) not in reserved_ids
+
+
+@pytest.mark.asyncio
+async def test_create_run_excludes_device_mid_appium_restart(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    restarting = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="run-restarting-node",
+        connection_target="run-restarting-node",
+        name="Restarting Node",
+        operational_state="available",
+    )
+    available = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="run-ready-node",
+        connection_target="run-ready-node",
+        name="Ready Node",
+        operational_state="available",
+    )
+    db_session.add_all(
+        [
+            AppiumNode(
+                device_id=restarting.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                state=NodeState.running,
+                desired_state=NodeState.running,
+                transition_token=uuid.uuid4(),
+                transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+            ),
+            AppiumNode(
+                device_id=available.id,
+                port=4724,
+                grid_url="http://hub:4444",
+                state=NodeState.running,
+                desired_state=NodeState.running,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    data = await _create_run(client)
+
+    assert [device["device_id"] for device in data["devices"]] == [str(available.id)]
 
 
 async def test_claim_skips_active_cooldown_and_reclaims_after_expiry(

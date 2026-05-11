@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models.appium_node import AppiumNode, NodeState
 from app.schemas.device import AppiumNodeRead
 from app.services import appium_node_locking, device_locking
+from app.services.auth_dependencies import require_admin
 from app.services.desired_state_writer import write_desired_state
 
 router = APIRouter(prefix="/api/admin/appium-nodes", tags=["admin"])
@@ -26,6 +27,7 @@ async def clear_transition(
     node_id: uuid.UUID,
     body: ClearTransitionBody,
     db: AsyncSession = Depends(get_db),
+    username: str = Depends(require_admin),
 ) -> AppiumNode:
     node = await db.get(AppiumNode, node_id)
     if node is None:
@@ -45,7 +47,7 @@ async def clear_transition(
         target=locked_node.desired_state if locked_node.desired_state != NodeState.error else NodeState.stopped,
         caller="admin_clear_transition",
         desired_port=locked_node.desired_port,
-        actor=body.reason,
+        actor=username,
     )
     await db.commit()
     await db.refresh(locked_node)

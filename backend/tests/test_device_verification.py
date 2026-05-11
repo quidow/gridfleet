@@ -219,11 +219,13 @@ async def test_verification_job_success_keeps_verified_node_when_auto_manage_ena
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
     assert devices[0]["identity_value"] == DEVICE_PAYLOAD["identity_value"]
-    assert devices[0]["operational_state"] == "available"
+    assert devices[0]["operational_state"] == "offline"
 
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
     assert detail["appium_node"] is not None
-    assert detail["appium_node"]["active_connection_target"] == "emulator-5554"
+    assert detail["appium_node"]["state"] == "stopped"
+    assert detail["appium_node"]["desired_state"] == "running"
+    assert detail["appium_node"]["active_connection_target"] is None
 
     async with session_factory() as verify_db:
         persisted_device = await verify_db.get(Device, uuid.UUID(devices[0]["id"]))
@@ -273,8 +275,8 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
     assert cleanup_stage["status"] == "passed"
     assert cleanup_stage["data"] == {"port": 4723, "pid": 12345}
     assert node.port == 4723
-    assert node.pid == 12345
-    assert node.state == NodeState.running
+    assert node.pid is None
+    assert node.state == NodeState.stopped
     assert node.desired_state == NodeState.running
     assert node.transition_token is not None
 
@@ -410,7 +412,8 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
     assert devices[0]["connection_target"] == "Pixel_8_API_35"
     assert devices[0]["connection_type"] == "virtual"
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
-    assert detail["appium_node"]["active_connection_target"] == "emulator-5554"
+    assert detail["appium_node"]["desired_state"] == "running"
+    assert detail["appium_node"]["active_connection_target"] is None
 
 
 async def test_avd_verification_probe_uses_node_resolved_serial_when_already_running(

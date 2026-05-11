@@ -202,9 +202,9 @@ async def retain_verified_node(
                 device_id=device.id,
                 port=handle.port,
                 grid_url=settings_service.get("grid.hub_url"),
-                pid=handle.pid,
-                active_connection_target=handle.active_connection_target,
-                state=NodeState.running,
+                pid=None,
+                active_connection_target=None,
+                state=NodeState.stopped,
             )
             db.add(node)
             await db.flush()
@@ -212,9 +212,9 @@ async def retain_verified_node(
         else:
             node.port = handle.port
             node.grid_url = settings_service.get("grid.hub_url")
-            node.pid = handle.pid
-            node.active_connection_target = handle.active_connection_target
-            node.state = NodeState.running
+            node.pid = None
+            node.active_connection_target = None
+            node.state = NodeState.stopped
         await write_desired_state(
             db,
             node=node,

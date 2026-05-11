@@ -157,6 +157,7 @@ async def mark_node_started(
     pid: int | None,
     active_connection_target: str | None = None,
     allocated_caps: dict[str, Any] | None = None,
+    clear_transition: bool = False,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -193,6 +194,9 @@ async def mark_node_started(
         new_state=NodeState.running,
         mark_offline=False,
     )
+    if clear_transition:
+        node.transition_token = None
+        node.transition_deadline = None
     queue_event_for_session(
         db,
         "node.state_changed",
@@ -258,11 +262,6 @@ def _build_device_owner_key(device: Device) -> str:
         identity = device.connection_target or device.identity_value
         return f"temp:{host_id}:{identity}"
     return f"device:{device.id}"
-
-
-async def _wait_for_remote_appium_ready(*args: object, **kwargs: object) -> None:
-    """Deprecated compatibility seam; readiness is now observed by the reconciler."""
-    return None
 
 
 def build_agent_start_payload(

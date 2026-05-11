@@ -51,3 +51,9 @@ def test_appium_reconciler_start_failures_counter_exists() -> None:
     counter = metrics_recorders.APPIUM_RECONCILER_START_FAILURES
     assert counter._name == "appium_reconciler_start_failures"
     assert sorted(counter._labelnames) == ["reason"]
+
+
+def test_appium_reconciler_stop_failures_counter_exists() -> None:
+    counter = metrics_recorders.APPIUM_RECONCILER_STOP_FAILURES
+    assert counter._name == "appium_reconciler_stop_failures"
+    assert sorted(counter._labelnames) == ["reason"]

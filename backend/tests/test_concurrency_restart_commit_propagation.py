@@ -55,9 +55,6 @@ async def test_restart_mutations_visible_after_caller_commit(
             request=httpx.Request("POST", "http://example/start"),
         )
 
-    async def stub_wait(*_a: object, **_kw: object) -> None:
-        return None
-
     async with db_session_maker() as session:
         from sqlalchemy.orm import selectinload
 
@@ -73,7 +70,6 @@ async def test_restart_mutations_visible_after_caller_commit(
         with (
             patch("app.services.node_service.appium_stop", stub_stop),
             patch("app.services.node_service.appium_start", stub_start),
-            patch("app.services.node_service._wait_for_remote_appium_ready", stub_wait),
             patch("app.services.node_service.assert_runnable", return_value=None),
             patch("app.services.node_service.build_agent_start_payload", return_value={}),
             patch("app.services.node_service._merge_appium_default_pack_caps", return_value=None),

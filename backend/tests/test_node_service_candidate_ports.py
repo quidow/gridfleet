@@ -13,10 +13,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.host import Host, HostStatus, OSType
+from app.services.appium_reconciler_allocation import reserve_appium_port
 from app.services.node_service import candidate_ports
-from app.services.node_service_types import NodeManagerError
+from app.services.node_service_types import NodeManagerError, NodePortConflictError
 from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
 
@@ -109,6 +111,34 @@ async def test_candidate_ports_ignores_stopped_nodes_on_same_host(db_session: As
     assert ports[0] == start
 
 
+async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, ip="10.0.0.35")
+    start = settings_service.get("appium.port_range_start")
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value=f"dev-{uuid.uuid4().hex[:8]}",
+        connection_target=f"dev-{uuid.uuid4().hex[:8]}",
+        name="dev-desired-running",
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=start,
+            grid_url=settings_service.get("grid.hub_url"),
+            state=NodeState.stopped,
+            desired_state=NodeState.running,
+            desired_port=start,
+        )
+    )
+    await db_session.flush()
+
+    ports = await candidate_ports(db_session, host_id=host.id)
+
+    assert start not in ports
+    assert ports[0] == start + 1
+
+
 async def test_candidate_ports_preferred_port_first_when_free_on_host(db_session: AsyncSession) -> None:
     host_a = await _make_host(db_session, ip="10.0.0.40")
     host_b = await _make_host(db_session, ip="10.0.0.41")
@@ -151,3 +181,15 @@ async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) ->
 
     assert ports_for_a[0] != start, "Same host must skip the in-use port"
     assert ports_for_b[0] == start, "Different host must reuse the same port"
+
+
+async def test_reserve_appium_port_increments_collision_metric(db_session: AsyncSession) -> None:
+    host = await _make_host(db_session, ip="10.0.0.80")
+    start = settings_service.get("appium.port_range_start")
+    before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()
+
+    await reserve_appium_port(db_session, host_id=host.id, port=start, owner_token="owner-a")
+    with pytest.raises(NodePortConflictError):
+        await reserve_appium_port(db_session, host_id=host.id, port=start, owner_token="owner-b")
+
+    assert APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get() == before + 1
