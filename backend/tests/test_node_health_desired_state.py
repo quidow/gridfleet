@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.services.agent_probe_result import ProbeResult
 from tests.helpers import create_device
@@ -31,8 +31,8 @@ async def test_node_health_auto_restart_writes_transition_token_with_health_rest
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=88,
         consecutive_health_failures=999,

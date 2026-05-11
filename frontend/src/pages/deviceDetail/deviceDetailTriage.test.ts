@@ -54,8 +54,9 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       grid_url: 'http://hub:4444',
       pid: 100,
       container_id: null,
-      active_connection_target: null,
-      state: 'running',
+      active_connection_target: 'device-1',
+      desired_state: 'running',
+      effective_state: 'running',
       started_at: '2026-03-30T10:00:03Z',
     },
     sessions: [],
@@ -148,7 +149,13 @@ describe('deriveDeviceDetailTriage', () => {
   it('prioritizes node stopped after virtual device state', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
-        appium_node: { ...makeDevice().appium_node!, state: 'stopped' },
+        appium_node: {
+          ...makeDevice().appium_node!,
+          pid: null,
+          active_connection_target: null,
+          desired_state: 'stopped',
+          effective_state: 'stopped',
+        },
       }),
       { canTestSession: false },
     );

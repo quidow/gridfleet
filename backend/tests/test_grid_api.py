@@ -4,7 +4,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -110,8 +110,8 @@ async def test_grid_status_with_running_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=9999,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -29,20 +29,21 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
         return AppiumNode(
             device_id=dev.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            pid=0,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
 
     from app.services import bulk_service
 
-    monkeypatch.setattr(bulk_service, "start_node", fake_start)
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id])
 
@@ -59,20 +60,21 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
         return AppiumNode(
             device_id=dev.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            pid=0,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
 
     from app.services import bulk_service
 
-    monkeypatch.setattr(bulk_service, "start_node", fake_start)
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group")
 

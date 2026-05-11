@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import func, select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
@@ -158,7 +158,7 @@ async def test_full_demo_seeds_pack_runtime_and_node_surfaces(db_session) -> Non
 
     nodes = (await db_session.execute(select(AppiumNode).order_by(AppiumNode.port))).scalars().all()
     assert nodes
-    running_nodes = [node for node in nodes if node.state is NodeState.running]
+    running_nodes = [node for node in nodes if node.observed_running]
     assert len({node.port for node in running_nodes}) == len(running_nodes)
     device_by_id = {device.id: device for device in devices}
     host_by_id = {host.id: host for host in (await db_session.execute(select(Host))).scalars().all()}

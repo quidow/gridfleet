@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services.grid_node_run_id_reconciler import converge_grid_run_id_once, grid_node_run_id_reconciler_loop
 from tests.helpers import create_device
 
@@ -25,7 +25,7 @@ async def _seed_node(db_session: AsyncSession, host: Host, *, name: str) -> Appi
         device_id=device.id,
         port=4723,
         grid_url="http://grid:4444",
-        desired_state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
         pid=1234,
         active_connection_target=device.connection_target,
     )

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState
 from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
@@ -249,7 +249,7 @@ async def handle_node_crash(
         await write_desired_state(
             db,
             node=node,
-            target=NodeState.stopped,
+            target=AppiumDesiredState.stopped,
             caller="lifecycle_crash",
         )
         await db.commit()
@@ -263,7 +263,7 @@ async def handle_node_crash(
             await write_desired_state(
                 db,
                 node=node,
-                target=NodeState.stopped,
+                target=AppiumDesiredState.stopped,
                 caller="lifecycle_crash",
             )
         await db.commit()

@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceType
 from app.models.host import Host
 from app.services import capability_service
@@ -36,7 +36,9 @@ async def test_get_live_active_connection_target_locks_device_and_node(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
             active_connection_target=None,
         )
     )

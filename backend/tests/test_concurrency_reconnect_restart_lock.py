@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.routers import devices_control
 from app.services import device_locking, maintenance_service
@@ -28,7 +28,17 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         ip_address="10.0.0.50",
         verified=True,
     )
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running))
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
+    )
     await db_session.commit()
     device_id = device.id
 
@@ -38,16 +48,34 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     restart_entered = asyncio.Event()
     allow_restart = asyncio.Event()
 
-    async def fake_restart_node(db: AsyncSession, dev: Device, *, caller: str = "operator_restart") -> AppiumNode:
-        assert dev.appium_node is not None
+    async def fake_write_desired_state(
+        db: AsyncSession,
+        *,
+        node: AppiumNode,
+        target: AppiumDesiredState,
+        caller: str,
+        **kwargs: object,
+    ) -> None:
+        if caller != "operator_restart" and caller != "operator_route":
+            from app.services.desired_state_writer import write_desired_state as real_write
+
+            await real_write(
+                db,
+                node=node,
+                target=target,
+                caller=caller,
+                **kwargs,
+            )
+            return
+        assert node is not None
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        dev.appium_node.desired_state = NodeState.running
-        await db.commit()
-        return dev.appium_node
+        node.desired_state = target
+        if target == AppiumDesiredState.running:
+            node.transition_token = kwargs.get("transition_token")
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(devices_control, "restart_managed_node", fake_restart_node)
+    monkeypatch.setattr(devices_control, "write_desired_state", fake_write_desired_state)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:

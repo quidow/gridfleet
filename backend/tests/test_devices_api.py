@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,7 +8,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.models.host import Host
@@ -101,7 +102,9 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
         port=4723,
         grid_url="http://grid:4444",
         pid=12345,
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
     )
     db.add(node)
     await db.commit()
@@ -884,7 +887,7 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            desired_state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -1040,11 +1043,19 @@ async def test_enter_device_maintenance_stops_running_node(
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
 
-    with patch("app.routers.nodes.start_managed_node", new=_fake_start_node):
-        start_resp = await client.post(f"/api/devices/{device_id}/node/start")
-        assert start_resp.status_code == 200
+    start_resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert start_resp.status_code == 200
 
-        maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
+    # Simulate agent having started the node so maintenance sees it as running
+    from app.models.appium_node import AppiumNode as _AppiumNode
+
+    node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
+    assert node is not None
+    node.pid = 12345
+    node.active_connection_target = "emulator-5554"
+    await db_session.commit()
+
+    maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
 
     assert maintenance_resp.status_code == 200
     assert maintenance_resp.json()["hold"] == "maintenance"

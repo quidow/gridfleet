@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.services.node_service_types import TemporaryNodeHandle
 from app.services.settings_service import settings_service
@@ -55,8 +55,9 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
         device_id=device.id,
         port=0,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
     db_session.add(node)
@@ -85,7 +86,7 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running
     assert node.port == 4723
     assert node.pid == 12345
     start_mock.assert_awaited_once()
@@ -101,8 +102,7 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
         port=4723,
         grid_url="http://hub:4444",
         pid=111,
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         active_connection_target=device.identity_value,
     )
@@ -131,9 +131,8 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
         await appium_reconciler.run_one_cycle_for_test()
 
     start_mock.assert_awaited_once()
-    assert start_mock.await_args.kwargs["reuse_existing"] is False
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running
     assert node.pid == 222
 
 
@@ -147,8 +146,7 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
         port=4723,
         grid_url="http://hub:4444",
         pid=12345,
-        state=NodeState.running,
-        desired_state=NodeState.stopped,
+        desired_state=AppiumDesiredState.stopped,
         desired_port=None,
         active_connection_target=device.identity_value,
     )
@@ -179,7 +177,7 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert not node.observed_running
     assert node.pid is None
     stop_mock.assert_awaited_once()
 
@@ -194,8 +192,7 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
         port=4723,
         grid_url="http://hub:4444",
         pid=12345,
-        state=NodeState.running,
-        desired_state=NodeState.stopped,
+        desired_state=AppiumDesiredState.stopped,
         transition_token=uuid.uuid4(),
         transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
         active_connection_target=device.connection_target,
@@ -226,7 +223,7 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert not node.observed_running
     assert node.transition_token is None
     assert node.transition_deadline is None
 
@@ -242,8 +239,7 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
         port=4723,
         grid_url="http://hub:4444",
         pid=111,
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4724,
         transition_token=token,
         transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
@@ -286,7 +282,7 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running
     assert node.port == 4724
     assert node.pid == 222
     assert node.transition_token is None
@@ -305,8 +301,9 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
         device_id=device.id,
         port=settings_service.get("appium.port_range_start"),
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=settings_service.get("appium.port_range_start"),
     )
     db_session.add(node)
@@ -373,8 +370,7 @@ async def test_reconciler_stop_failure_preserves_restart_token(
         port=4723,
         grid_url="http://hub:4444",
         pid=111,
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4724,
         transition_token=token,
         transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
@@ -408,7 +404,7 @@ async def test_reconciler_stop_failure_preserves_restart_token(
     await db_session.refresh(node)
     assert node.transition_token == token
     assert node.transition_deadline is not None
-    assert node.state == NodeState.running
+    assert node.observed_running
 
 
 async def test_reconciler_touches_backed_off_rows_when_host_responds(
@@ -421,8 +417,9 @@ async def test_reconciler_touches_backed_off_rows_when_host_responds(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         last_observed_at=None,
     )
@@ -456,8 +453,9 @@ async def test_reconciler_rejects_zero_port_start_result(
         device_id=device.id,
         port=0,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
     db_session.add(node)
@@ -479,7 +477,7 @@ async def test_reconciler_rejects_zero_port_start_result(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert not node.observed_running
     assert node.pid is None
 
 
@@ -506,16 +504,18 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
         device_id=first.id,
         port=start_port,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=start_port,
     )
     second_node = AppiumNode(
         device_id=second.id,
         port=start_port + 1,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        pid=None,
+        active_connection_target=None,
+        desired_state=AppiumDesiredState.running,
         desired_port=start_port,
     )
     db_session.add_all([first_node, second_node])
@@ -549,8 +549,8 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
 
     await db_session.refresh(first_node)
     await db_session.refresh(second_node)
-    assert first_node.state == NodeState.running
-    assert second_node.state == NodeState.running
+    assert first_node.observed_running
+    assert second_node.observed_running
     assert first_node.port != second_node.port
     assert first_node.port >= start_port
     assert second_node.port >= start_port

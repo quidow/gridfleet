@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_db
 from app.main import app
-from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
@@ -45,25 +44,18 @@ async def test_start_node_locks_device_before_reservation_check(
     inside_start = asyncio.Event()
     proceed_start = asyncio.Event()
 
-    async def gated_start_node(db: AsyncSession, dev: Device) -> AppiumNode:
+    original_assert_not_reserved = None
+
+    async def gated_assert_not_reserved(device: Device, db: AsyncSession) -> None:
         inside_start.set()
         await proceed_start.wait()
 
-        node = AppiumNode(
-            device_id=dev.id,
-            port=4723,
-            grid_url="http://grid:4444",
-            state=NodeState.running,
-        )
-        db.add(node)
-        await db.flush()
-        return node
-
     try:
-        with patch(
-            "app.routers.nodes.start_managed_node",
-            new=gated_start_node,
-        ):
+        import app.routers.nodes as nodes_module
+
+        original_assert_not_reserved = nodes_module._assert_device_not_reserved
+        nodes_module._assert_device_not_reserved = gated_assert_not_reserved
+        with patch.object(nodes_module, "_assert_device_not_reserved", new=gated_assert_not_reserved):
 
             async def caller_start() -> int:
                 async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -96,6 +88,10 @@ async def test_start_node_locks_device_before_reservation_check(
                 timeout=10.0,
             )
     finally:
+        if original_assert_not_reserved is not None:
+            import app.routers.nodes as nodes_module
+
+            nodes_module._assert_device_not_reserved = original_assert_not_reserved
         app.dependency_overrides.pop(get_db, None)
 
     async with db_session_maker() as verify:

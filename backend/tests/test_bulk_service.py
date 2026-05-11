@@ -78,24 +78,24 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         ),
     ]
 
-    async def fake_start_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
+    async def fake_start_node(_db: AsyncSession, device: Device, caller: str) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot start")
         return object()
 
-    async def fake_stop_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
+    async def fake_stop_node(_db: AsyncSession, device: Device, caller: str) -> object:
         if device.id == devices[1].id:
             raise RuntimeError("cannot stop")
         return object()
 
-    async def fake_restart_node(_db: AsyncSession, device: Device, *, caller: str = "bulk") -> object:
+    async def fake_restart_node(_db: AsyncSession, device: Device, caller: str) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot restart")
         return object()
 
-    monkeypatch.setattr("app.services.bulk_service.start_node", fake_start_node)
-    monkeypatch.setattr("app.services.bulk_service.stop_node", fake_stop_node)
-    monkeypatch.setattr("app.services.bulk_service.restart_node", fake_restart_node)
+    monkeypatch.setattr("app.services.bulk_service._bulk_start_one", fake_start_node)
+    monkeypatch.setattr("app.services.bulk_service._bulk_stop_one", fake_stop_node)
+    monkeypatch.setattr("app.services.bulk_service._bulk_restart_one", fake_restart_node)
     monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
 
     started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])

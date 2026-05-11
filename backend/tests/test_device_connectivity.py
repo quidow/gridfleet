@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
 from app.services.device_connectivity import (
@@ -63,7 +63,15 @@ async def _setup_host_and_device(
 
     node = None
     if with_node:
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
         db_session.add(node)
 
     await db_session.commit()
@@ -184,7 +192,7 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
     assert device.operational_state == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running
 
 
 async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_session: AsyncSession) -> None:
@@ -216,7 +224,7 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
     assert device.operational_state == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.running
+    assert node.observed_running
 
 
 async def test_agent_device_aliases_include_running_avd_name(db_session: AsyncSession) -> None:
@@ -274,8 +282,8 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.running
-    assert node.desired_state == NodeState.stopped
+    assert node.observed_running
+    assert node.desired_state == AppiumDesiredState.stopped
 
 
 async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) -> None:
@@ -288,8 +296,8 @@ async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) 
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.running
-    assert node.desired_state == NodeState.stopped
+    assert node.observed_running
+    assert node.desired_state == AppiumDesiredState.stopped
 
 
 async def test_offline_disconnected_device_stops_leftover_node(db_session: AsyncSession) -> None:
@@ -306,8 +314,8 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == NodeState.running
-    assert node.desired_state == NodeState.stopped
+    assert node.observed_running
+    assert node.desired_state == AppiumDesiredState.stopped
 
 
 async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:

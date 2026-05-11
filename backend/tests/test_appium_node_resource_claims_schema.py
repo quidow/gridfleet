@@ -58,7 +58,7 @@ async def test_appium_node_resource_claims_table_exists(db_session: AsyncSession
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_managed_claim_cascades_when_node_deleted(db_session: AsyncSession, db_host: Host) -> None:
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
     from tests.helpers import create_device
 
@@ -67,7 +67,10 @@ async def test_managed_claim_cascades_when_node_deleted(db_session: AsyncSession
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.flush()

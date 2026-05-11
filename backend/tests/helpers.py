@@ -6,7 +6,7 @@ from typing import Any, cast
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus, OSType
@@ -267,7 +267,8 @@ async def seed_host_and_running_node(
         grid_url="http://hub.invalid:4444",
         pid=12345,
         active_connection_target=device.connection_target,
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=port,
     )
     db_session.add(node)
     await db_session.commit()

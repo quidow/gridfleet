@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
@@ -28,8 +28,8 @@ async def test_stop_disconnected_node_writes_desired_stopped_with_connectivity_c
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=77,
     )

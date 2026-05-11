@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services import device_health
@@ -162,7 +162,10 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
     )
     await db_session.commit()

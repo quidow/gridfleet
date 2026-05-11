@@ -31,7 +31,7 @@ from app.metrics_recorders import (
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
 )
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -95,7 +95,7 @@ def detect_orphans(
     """Return entries running on the agent that no DB row claims.
 
     `db_running_rows` is a list of dicts with keys
-    `host_id`, `device_connection_target`, `node_port`, `node_observed_running`,
+    `host_id`, `device_connection_target`, `node_port`,
     and optionally `node_desired_state`.
     Pass all AppiumNode rows for the host (any observed state) — classification
     needs the full picture to surface stopped-row desyncs as
@@ -122,11 +122,7 @@ def detect_orphans(
                 )
             )
             continue
-        running_rows = [
-            r
-            for r in matched_rows
-            if r.get("node_desired_state") == "running" or r.get("node_observed_running") is True
-        ]
+        running_rows = [r for r in matched_rows if r.get("node_desired_state") == "running"]
         if any(r.get("node_port") == entry.port for r in running_rows):
             continue
         if running_rows:
@@ -331,8 +327,6 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
         Device.host_id,
         target_expr.label("device_connection_target"),
         AppiumNode.port,
-        AppiumNode.pid,
-        AppiumNode.active_connection_target,
         AppiumNode.desired_state,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
     result = await db.execute(stmt)
@@ -341,7 +335,6 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
             "host_id": row.host_id,
             "device_connection_target": row.device_connection_target,
             "node_port": row.port,
-            "node_observed_running": row.pid is not None and row.active_connection_target is not None,
             "node_desired_state": row.desired_state.value,
         }
         for row in result.all()
@@ -484,7 +477,6 @@ def _make_start_agent() -> Callable[..., Awaitable[dict[str, Any]]]:
                     device,
                     owner_key=f"device:{row.device_id}",
                     port=port,
-                    reuse_existing=False,
                 )
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")
@@ -567,7 +559,7 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
                 if device is None or device.appium_node is None:
                     return
                 node = device.appium_node
-                target = node.desired_state if node.desired_state != NodeState.error else NodeState.stopped
+                target = node.desired_state
                 desired_port = None if clear_desired_port else node.desired_port
                 transition_token = None if clear_transition else node.transition_token
                 transition_deadline = None if clear_transition else node.transition_deadline
@@ -615,7 +607,7 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     await write_desired_state(
         db,
         node=node,
-        target=node.desired_state if node.desired_state != NodeState.error else NodeState.stopped,
+        target=node.desired_state,
         caller="appium_reconciler",
         desired_port=node.desired_port,
     )

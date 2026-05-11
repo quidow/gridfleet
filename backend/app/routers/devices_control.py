@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.errors import AgentCallError
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.routers.device_route_helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -42,12 +43,14 @@ from app.services.agent_operations import (
 from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
+from app.services.appium_reconciler_agent import require_management_host
+from app.services.appium_reconciler_allocation import candidate_ports
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_identity import appium_connection_target
-from app.services.node_service import require_management_host
-from app.services.node_service import restart_node as restart_managed_node
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.services.settings_service import settings_service
 
 router = APIRouter()
 
@@ -139,7 +142,9 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     node_health_running = getattr(node, "health_running", None) if node is not None else None
     node_health_state = getattr(node, "health_state", None) if node is not None else None
     node_running = node is not None and (
-        node_health_running if node_health_running is not None else node_lifecycle_state == NodeState.running.value
+        node_health_running
+        if node_health_running is not None
+        else node_lifecycle_state == AppiumDesiredState.running.value
     )
     node_state = node_health_state if node_health_state is not None else node_lifecycle_state
     if node is not None:
@@ -245,13 +250,47 @@ async def reconnect_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_
 
     if success and device.auto_manage and device.appium_node:
         # Intentionally NOT re-fetched with `get_device_for_update_or_404` here:
-        # `restart_managed_node` releases the device row lock between its stop
-        # and start steps so concurrent operator actions (maintenance enter,
-        # delete) can preempt — see
+        # Inline restart writes desired state directly so concurrent operator
+        # actions (maintenance enter, delete) can preempt — see
         # `tests/test_concurrency_reconnect_restart_lock.py`. Locking at the
         # router would serialise these and break preemption.
         try:
-            await restart_managed_node(db, device)
+            node = device.appium_node
+            if node is None or not node.observed_running:
+                if device.host_id is None:
+                    raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
+                desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+                if device.appium_node is None:
+                    new_node = AppiumNode(
+                        device_id=device.id,
+                        port=desired_port,
+                        grid_url=settings_service.get("grid.hub_url"),
+                    )
+                    db.add(new_node)
+                    await db.flush()
+                    device.appium_node = new_node
+                await write_desired_state(
+                    db,
+                    node=device.appium_node,
+                    target=AppiumDesiredState.running,
+                    caller="operator_route",
+                    desired_port=desired_port,
+                )
+                await db.commit()
+                await db.refresh(device.appium_node)
+            else:
+                window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+                await write_desired_state(
+                    db,
+                    node=node,
+                    target=AppiumDesiredState.running,
+                    caller="operator_restart",
+                    desired_port=node.port,
+                    transition_token=uuid.uuid4(),
+                    transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+                )
+                await db.commit()
+                await db.refresh(node)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 

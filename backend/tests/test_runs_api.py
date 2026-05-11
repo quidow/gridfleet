@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack
@@ -1048,8 +1048,10 @@ async def test_create_run_excludes_device_mid_appium_restart(
                 device_id=restarting.id,
                 port=4723,
                 grid_url="http://hub:4444",
-                state=NodeState.running,
-                desired_state=NodeState.running,
+                desired_port=4723,
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
                 transition_token=uuid.uuid4(),
                 transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
             ),
@@ -1057,8 +1059,10 @@ async def test_create_run_excludes_device_mid_appium_restart(
                 device_id=available.id,
                 port=4724,
                 grid_url="http://hub:4444",
-                state=NodeState.running,
-                desired_state=NodeState.running,
+                desired_port=4724,
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
             ),
         ]
     )

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.services import (
     agent_operations,
@@ -750,7 +750,7 @@ async def start_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=desired_port,
     )
@@ -772,7 +772,7 @@ async def stop_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.stopped,
+        target=AppiumDesiredState.stopped,
         caller=caller,
     )
     await db.commit()
@@ -786,24 +786,8 @@ async def start_temporary_node(
     *,
     owner_key: str | None = None,
     port: int | None = None,
-    reuse_existing: bool = True,
 ) -> TemporaryNodeHandle:
     resolved_owner_key = owner_key or _build_device_owner_key(device)
-    if (
-        reuse_existing
-        and device.id is not None
-        and device.appium_node is not None
-        and device.appium_node.observed_running
-    ):
-        return TemporaryNodeHandle(
-            port=device.appium_node.port,
-            pid=device.appium_node.pid,
-            active_connection_target=device.appium_node.active_connection_target,
-            reused_existing=True,
-            agent_base=await agent_url(device),
-            owner_key=resolved_owner_key,
-            allocated_caps=await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id),
-        )
     return await _start_with_owner(
         db,
         device,
@@ -869,7 +853,7 @@ async def restart_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=node.port,
         transition_token=uuid.uuid4(),

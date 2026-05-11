@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator
 
-from app.models.appium_node import NodeState
 from app.models.device import (
     ConnectionType,
     DeviceHold,
@@ -211,16 +210,6 @@ class AppiumNodeRead(BaseModel):
         if self.desired_state == DesiredNodeState.running and self.pid is not None:
             return "running"
         return "stopped"
-
-    @computed_field(deprecated=True)  # type: ignore[prop-decorator]
-    @property
-    def state(self) -> NodeState:
-        eff = self.effective_state
-        if eff in {"running", "restarting"}:
-            return NodeState.running
-        if eff == "error":
-            return NodeState.error
-        return NodeState.stopped
 
 
 class SessionRead(BaseModel):

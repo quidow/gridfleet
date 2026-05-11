@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import DeviceOperationalState
 from app.models.host import Host
 from app.services import node_health
@@ -31,7 +31,15 @@ async def test_node_health_failure_path_locks_appium_node(
         verified=True,
         auto_manage=False,
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -84,8 +92,8 @@ async def test_node_health_failure_path_locks_appium_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == NodeState.running, (
-        f"Expected running but got {verify_node.state.value} — "
+    assert verify_node.observed_running, (
+        f"Expected observed_running=True but got observed_running={verify_node.observed_running} — "
         "node_health overwrote the concurrent running write (missing AppiumNode lock)"
     )
     assert verify_node.pid == 12345

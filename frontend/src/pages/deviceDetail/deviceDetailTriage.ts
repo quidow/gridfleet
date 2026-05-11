@@ -127,7 +127,7 @@ export function deriveDeviceDetailTriage(
     };
   }
 
-  if (!node || node.state !== 'running') {
+  if (!node || node.effective_state !== 'running') {
     const inMaintenance = device.hold === 'maintenance';
     const nodeAction = reservation || inMaintenance
       ? { kind: 'open-control' as const, label: 'Review Control', to: `/devices/${device.id}?tab=control` }
@@ -154,7 +154,7 @@ export function deriveDeviceDetailTriage(
       action: nodeAction,
       evidence: [
         { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'neutral' },
-        { label: 'Node state', value: node?.state ?? 'none', tone: node ? 'warn' : 'neutral' },
+        { label: 'Node state', value: node?.effective_state ?? 'none', tone: node ? 'warn' : 'neutral' },
       ],
     };
   }

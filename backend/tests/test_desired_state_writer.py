@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from app import metrics_recorders
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.services.desired_state_writer import write_desired_state
 from tests.helpers import create_device
@@ -28,7 +28,15 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-1", verified=True)
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.stopped)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.flush()
 
@@ -39,14 +47,14 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     await write_desired_state(
         db_session,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller="operator_route",
         desired_port=4723,
     )
     await db_session.commit()
     await db_session.refresh(node)
 
-    assert node.desired_state == NodeState.running
+    assert node.desired_state == AppiumDesiredState.running
     assert node.desired_port == 4723
     assert node.transition_token is None
 
@@ -74,8 +82,9 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         transition_token=token,
         transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
@@ -86,13 +95,13 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
     await write_desired_state(
         db_session,
         node=node,
-        target=NodeState.stopped,
+        target=AppiumDesiredState.stopped,
         caller="connectivity",
     )
     await db_session.commit()
     await db_session.refresh(node)
 
-    assert node.desired_state == NodeState.stopped
+    assert node.desired_state == AppiumDesiredState.stopped
     assert node.desired_port is None
     assert node.transition_token is None
     assert node.transition_deadline is None
@@ -107,8 +116,9 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
     db_session.add(node)
@@ -120,7 +130,7 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
     await write_desired_state(
         db_session,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller="operator_restart",
         desired_port=4723,
         transition_token=token,
@@ -146,8 +156,9 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         transition_token=existing_token,
         transition_deadline=datetime.now(UTC) + timedelta(seconds=120),
@@ -170,7 +181,7 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
     await write_desired_state(
         db_session,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller="health_restart",
         desired_port=4723,
         transition_token=uuid.uuid4(),

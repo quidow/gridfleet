@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 import pytest_asyncio
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.services import device_health as svc
 
@@ -63,7 +63,8 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
         device_id=device.id,
         port=4723,
         grid_url="http://h",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
         pid=1,
         active_connection_target="target",
     )
@@ -152,7 +153,8 @@ async def test_last_checked_at_picks_max_of_signals_including_node(
         device_id=device.id,
         port=4723,
         grid_url="http://h",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
         pid=1,
         active_connection_target="target",
         last_health_checked_at=datetime.now(UTC),
@@ -225,7 +227,8 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
         device_id=device.id,
         port=4723,
         grid_url="http://h",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
         pid=1,
         active_connection_target="target",
     )
@@ -263,7 +266,8 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
         device_id=device.id,
         port=4723,
         grid_url="http://h",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
         pid=1,
         active_connection_target="target",
     )
@@ -287,7 +291,8 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
         device_id=device.id,
         port=4723,
         grid_url="http://h",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
         pid=1,
         active_connection_target="target",
     )
@@ -306,4 +311,4 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     summary = svc.build_public_summary(device)
     assert summary["healthy"] is False
     assert "relay_restart_exhausted" in summary["summary"]
-    assert device.appium_node.state == NodeState.running
+    assert device.appium_node.observed_running

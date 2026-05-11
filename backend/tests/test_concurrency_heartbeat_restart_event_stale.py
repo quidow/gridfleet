@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host
 from app.services import device_locking, heartbeat
@@ -21,7 +21,15 @@ async def test_ingest_appium_restart_events_skips_when_node_changes_before_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="hb-rs-stale", verified=True)
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.error))
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            health_running=False,
+            health_state="error",
+        )
+    )
     await db_session.commit()
     device_id = device.id
 
@@ -78,4 +86,4 @@ async def test_ingest_appium_restart_events_skips_when_node_changes_before_lock(
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     assert verify_node.port == 4724
-    assert verify_node.state == NodeState.stopped
+    assert not verify_node.observed_running

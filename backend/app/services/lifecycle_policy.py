@@ -5,6 +5,7 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
@@ -17,6 +18,8 @@ from app.services import (
     run_reservation_service,
     session_viability,
 )
+from app.services.appium_reconciler_allocation import candidate_ports
+from app.services.desired_state_writer import write_desired_state
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold
@@ -51,7 +54,6 @@ from app.services.lifecycle_policy_state import (
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
 from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.services.settings_service import settings_service
@@ -432,7 +434,27 @@ async def attempt_auto_recovery(
     node = loaded_node(device)
     if node is None or not node.observed_running:
         try:
-            await start_managed_node(db, device, caller="lifecycle_recovery")
+            if device.host_id is None:
+                raise NodeManagerError(f"Device {device.id} has no host assigned")
+            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+            if device.appium_node is None:
+                new_node = AppiumNode(
+                    device_id=device.id,
+                    port=desired_port,
+                    grid_url=settings_service.get("grid.hub_url"),
+                )
+                db.add(new_node)
+                await db.flush()
+                device.appium_node = new_node
+            await write_desired_state(
+                db,
+                node=device.appium_node,
+                target=AppiumDesiredState.running,
+                caller="lifecycle_recovery",
+                desired_port=desired_port,
+            )
+            await db.commit()
+            await db.refresh(device.appium_node)
         except NodeManagerError as exc:
             backoff_until_iso = _set_backoff(current_state)
             record_recovery_failed(

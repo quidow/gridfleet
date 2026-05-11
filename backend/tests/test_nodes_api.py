@@ -8,7 +8,7 @@ import pytest_asyncio
 from httpx import AsyncClient, HTTPStatusError, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.services import device_locking
 from app.services.agent_error_codes import AgentErrorCode
@@ -131,8 +131,7 @@ async def test_start_node(
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.stopped.value
-    assert data["desired_state"] == NodeState.running.value
+    assert data["desired_state"] == AppiumDesiredState.running.value
     assert data["pid"] is None
     assert data["port"] == 4723
     assert data["active_connection_target"] is None
@@ -155,8 +154,8 @@ async def test_start_node_already_running(
 
     await client.post(f"/api/devices/{device_id}/node/start")
     resp = await client.post(f"/api/devices/{device_id}/node/start")
-    assert resp.status_code == 200
-    assert resp.json()["desired_state"] == NodeState.running.value
+    assert resp.status_code == 400
+    assert "desired-running" in resp.json()["error"]["message"]
     assert remote_manager_client.post.await_count == 0
 
 
@@ -179,8 +178,7 @@ async def test_stop_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
             active_connection_target="emulator-5554",
         )
@@ -190,9 +188,8 @@ async def test_stop_node(
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.stopped.value
     assert data["effective_state"] == "stopping"
-    assert data["desired_state"] == NodeState.stopped.value
+    assert data["desired_state"] == AppiumDesiredState.stopped.value
     assert data["pid"] == 12345
     assert data["active_connection_target"] == "emulator-5554"
 
@@ -223,8 +220,8 @@ async def test_restart_node(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -232,8 +229,7 @@ async def test_restart_node(
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["state"] == NodeState.running.value
-    assert data["desired_state"] == NodeState.running.value
+    assert data["desired_state"] == AppiumDesiredState.running.value
     assert data["transition_token"] is not None
 
 
@@ -252,8 +248,7 @@ async def test_restart_node_cold_start(
 
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
-    assert resp.json()["state"] == NodeState.stopped.value
-    assert resp.json()["desired_state"] == NodeState.running.value
+    assert resp.json()["desired_state"] == AppiumDesiredState.running.value
 
 
 async def test_restart_node_clears_stale_recovery_suppression(
@@ -280,8 +275,8 @@ async def test_restart_node_clears_stale_recovery_suppression(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -307,7 +302,6 @@ async def test_restart_node_clears_stale_recovery_suppression(
 
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
-    assert resp.json()["state"] == NodeState.running.value
     assert resp.json()["transition_token"] is not None
 
     await db_session.refresh(locked)
@@ -369,7 +363,7 @@ async def test_start_node_agent_failure(
     device = await _create_device(db_session, default_host_id)
     resp = await client.post(f"/api/devices/{device['id']}/node/start")
     assert resp.status_code == 200
-    assert resp.json()["desired_state"] == NodeState.running.value
+    assert resp.json()["desired_state"] == AppiumDesiredState.running.value
 
 
 async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
@@ -391,7 +385,6 @@ async def test_start_node_fails_when_appium_is_not_reachable_after_agent_start(
     detail = await client.get(f"/api/devices/{device['id']}")
     assert detail.status_code == 200
     node = detail.json()["appium_node"]
-    assert node["state"] == "stopped"
     assert node["desired_state"] == "running"
     assert node["desired_port"] == 4723
 
@@ -437,8 +430,8 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -493,8 +486,8 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -505,14 +498,14 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     # maintenance state.
     stop_resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert stop_resp.status_code == 200
-    assert stop_resp.json()["state"] == NodeState.stopped.value
     assert stop_resp.json()["effective_state"] == "stopping"
-    assert stop_resp.json()["desired_state"] == NodeState.stopped.value
+    assert stop_resp.json()["desired_state"] == AppiumDesiredState.stopped.value
 
     # Simulate the reconciler observing the stop before entering maintenance.
     node = await db_session.get(AppiumNode, uuid.UUID(stop_resp.json()["id"]))
     assert node is not None
-    node.state = NodeState.stopped
+    node.pid = None
+    node.active_connection_target = None
     node.pid = None
     await db_session.commit()
 

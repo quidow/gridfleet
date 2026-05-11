@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
     appium_node_locking,
@@ -26,7 +26,6 @@ from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification_job_state import enum_value, set_stage
-from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.session_viability_types import SessionViabilityCheckedBy
@@ -153,6 +152,22 @@ async def run_cleanup(
     return None
 
 
+async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) -> AppiumNode:
+    """Write stopped desired state for verification update path."""
+    node: AppiumNode | None = device.appium_node
+    if node is None or not node.observed_running:
+        raise NodeManagerError(f"No running node for device {device.id}")
+    await write_desired_state(
+        db,
+        node=node,
+        target=AppiumDesiredState.stopped,
+        caller="verification",
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
 async def stop_existing_managed_node_for_update(
     job: dict[str, Any],
     db: AsyncSession,
@@ -173,7 +188,7 @@ async def stop_existing_managed_node_for_update(
         detail="Stopping existing managed node before starting updated verification node",
     )
     try:
-        await stop_node(db, existing_device, caller="verification")
+        await _stop_managed_node_for_verification(db, existing_device)
     except NodeManagerError as exc:
         detail = f"Failed to stop existing managed node before verification: {exc}"
         await set_stage(job, "node_start", "failed", detail=detail)
@@ -218,7 +233,7 @@ async def retain_verified_node(
         await write_desired_state(
             db,
             node=node,
-            target=NodeState.running,
+            target=AppiumDesiredState.running,
             caller="verification",
             desired_port=handle.port,
         )
@@ -263,7 +278,7 @@ async def retain_verified_node(
             await write_desired_state(
                 db,
                 node=node,
-                target=NodeState.running,
+                target=AppiumDesiredState.running,
                 caller="verification",
                 desired_port=handle.port,
                 transition_token=uuid.uuid4(),

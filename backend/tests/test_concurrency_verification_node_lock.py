@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_verification_execution
@@ -40,7 +40,17 @@ async def test_retain_verified_node_locks_appium_node(
     the assertion fails.
     """
     device = await create_device(db_session, host_id=db_host.id, name="dve-lock", verified=True)
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.stopped))
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
+        )
+    )
     await db_session.commit()
     device_id = device.id
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ async def test_appium_node_desired_state_defaults_to_stopped(
     await db_session.commit()
     await db_session.refresh(node)
 
-    assert node.desired_state == NodeState.stopped
+    assert node.desired_state == AppiumDesiredState.stopped
     assert node.desired_port is None
     assert node.transition_token is None
     assert node.transition_deadline is None

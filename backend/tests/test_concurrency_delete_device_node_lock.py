@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, device_service
@@ -33,7 +33,10 @@ async def test_delete_device_locks_row_before_reading_node_state(
         device_id=device.id,
         port=4724,
         grid_url="http://grid:4444",
-        state=NodeState.stopped,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
     )
     db_session.add(node)
     await db_session.commit()
@@ -67,7 +70,8 @@ async def test_delete_device_locks_row_before_reading_node_state(
     async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
-        dev.appium_node.state = NodeState.stopped
+        dev.appium_node.pid = None
+        dev.appium_node.active_connection_target = None
         await db.flush()
         return dev.appium_node
 
@@ -77,7 +81,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
                 patch.object(device_service, "get_device", new=gated_get_device),
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
-                    "app.services.node_service.stop_node",
+                    "app.services.device_service._stop_node",
                     new=observed_stop_node,
                 ),
             ):
@@ -98,7 +102,8 @@ async def test_delete_device_locks_row_before_reading_node_state(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.state = NodeState.running
+            locked_device.appium_node.pid = 0
+            locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"
@@ -153,7 +158,10 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
         device_id=device.id,
         port=4725,
         grid_url="http://grid:4444",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4725,
+        pid=0,
+        active_connection_target="",
     )
     db_session.add(node)
     await db_session.commit()
@@ -169,7 +177,8 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
 
         stop_calls += 1
         assert dev.appium_node is not None
-        dev.appium_node.state = NodeState.stopped
+        dev.appium_node.pid = None
+        dev.appium_node.active_connection_target = None
         await db.commit()
         if stop_calls == 1:
             first_stop_committed.set()
@@ -179,7 +188,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     async def deleter() -> bool:
         async with db_session_maker() as db:
             with patch(
-                "app.services.device_service.stop_node",
+                "app.services.device_service._stop_node",
                 new=observed_stop_node,
             ):
                 return await device_service.delete_device(db, device_id)
@@ -192,7 +201,8 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.state = NodeState.running
+            locked_device.appium_node.pid = 0
+            locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"

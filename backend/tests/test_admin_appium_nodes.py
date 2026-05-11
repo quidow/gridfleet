@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
@@ -33,8 +33,9 @@ async def test_admin_clear_transition_clears_token_and_records_event(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        pid=0,
+        active_connection_target="",
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         transition_token=token,
         transition_deadline=datetime.now(UTC) + timedelta(seconds=120),

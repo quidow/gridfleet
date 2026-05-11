@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import appium_node_resource_service, appium_reconciler_agent
-from app.services.node_service import build_agent_start_payload
+from app.services.appium_reconciler_agent import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.pack.factories import seed_test_packs
@@ -313,7 +313,10 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         device_id=device.id,
         port=4723,
         grid_url="http://localhost:4444",
-        state=NodeState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
     )
     db_session.add(appium_node)
     await db_session.commit()
