@@ -55,6 +55,11 @@ APPIUM_DESIRED_STATE_WRITES = Counter(
     "Total writes of AppiumNode.desired_state by Phase 3 writers.",
     labelnames=("caller", "target_state"),
 )
+APPIUM_DESIRED_GRID_RUN_ID_WRITES = Counter(
+    "gridfleet_appium_desired_grid_run_id_writes_total",
+    "Total writes of AppiumNode.desired_grid_run_id by the run-routing writer.",
+    labelnames=("caller",),
+)
 APPIUM_TRANSITION_TOKEN_WRITES = Counter(
     "appium_transition_token_writes_total",
     "Total transition_token allocations by Phase 3 writers.",

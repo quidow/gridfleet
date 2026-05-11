@@ -37,6 +37,17 @@ DesiredStateCaller = Literal[
     "appium_reconciler",
 ]
 
+DesiredGridRunIdCaller = Literal[
+    "run_create",
+    "run_complete",
+    "run_cancel",
+    "run_force_release",
+    "run_expire",
+    "run_preparation_failed",
+    "run_exclude_device",
+    "reservation_backfill",
+]
+
 
 async def write_desired_state(
     db: AsyncSession,
@@ -120,6 +131,46 @@ async def write_desired_state(
         new_desired_state=target.value,
         desired_port=event_desired_port,
         transition_token=str(transition_token) if transition_token else None,
+    )
+
+
+async def write_desired_grid_run_id(
+    db: AsyncSession,
+    *,
+    node: AppiumNode,
+    run_id: uuid.UUID | None,
+    caller: DesiredGridRunIdCaller,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Write desired Grid routing run id on an already locked node row. Caller commits."""
+    old = node.desired_grid_run_id
+    if old == run_id:
+        return
+
+    node.desired_grid_run_id = run_id
+
+    await record_event(
+        db,
+        node.device_id,
+        DeviceEventType.desired_state_changed,
+        {
+            "field": "desired_grid_run_id",
+            "old_value": str(old) if old else None,
+            "new_value": str(run_id) if run_id else None,
+            "caller": caller,
+            "actor": actor,
+            "reason": reason,
+        },
+    )
+
+    metrics_recorders.APPIUM_DESIRED_GRID_RUN_ID_WRITES.labels(caller=caller).inc()
+    logger.info(
+        "appium_desired_grid_run_id_written",
+        device_id=str(node.device_id),
+        caller=caller,
+        old_value=str(old) if old else None,
+        new_value=str(run_id) if run_id else None,
     )
 
 
