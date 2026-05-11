@@ -98,6 +98,7 @@ def build_appium_options(
     from appium.options.common import AppiumOptions  # noqa: PLC0415
 
     params = dict(capabilities or {})
+    params.setdefault("gridfleet:run_id", os.environ.get("GRIDFLEET_RUN_ID", "free"))
     explicit_platform_name = params.get("platformName")
     if explicit_platform_name is not None and (pack_id is not None or platform_id is not None):
         raise ValueError("Use either pack_id/platform_id or the raw platformName capability, not both.")

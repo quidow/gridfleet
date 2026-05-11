@@ -172,12 +172,13 @@ def test_create_appium_driver_uses_factory_options(monkeypatch: pytest.MonkeyPat
     assert created_drivers == [
         (
             "http://grid:4444",
-            {
-                "platformName": "Android",
-                "appium:platform": "firetv_real",
-                "appium:automationName": "UiAutomator2",
-                "gridfleet:testName": "manual-smoke",
-            },
+                {
+                    "platformName": "Android",
+                    "appium:platform": "firetv_real",
+                    "appium:automationName": "UiAutomator2",
+                    "gridfleet:run_id": "free",
+                    "gridfleet:testName": "manual-smoke",
+                },
         )
     ]
 
