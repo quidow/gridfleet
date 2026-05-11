@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import lifecycle_policy_actions
@@ -29,7 +29,7 @@ async def test_handle_node_crash_locks_appium_node(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -60,7 +60,7 @@ async def test_handle_node_crash_locks_appium_node(
                 update(AppiumNode)
                 .where(AppiumNode.device_id == device_id)
                 .values(
-                    desired_state=NodeState.running,
+                    desired_state=AppiumDesiredState.running,
                     desired_port=4723,
                     pid=12345,
                     active_connection_target="stomper-target",
@@ -73,7 +73,7 @@ async def test_handle_node_crash_locks_appium_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.desired_state == NodeState.running, (
+    assert verify_node.desired_state == AppiumDesiredState.running, (
         f"Expected desired running but got {verify_node.desired_state.value} — "
         "handle_node_crash overwrote the concurrent desired-state write "
         "(missing AppiumNode lock)"

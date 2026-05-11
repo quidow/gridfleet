@@ -6,7 +6,7 @@ import random as _random_module
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.appium_plugin import AppiumPlugin
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import (
@@ -1264,7 +1264,7 @@ def _build_appium_nodes(
                 grid_url="http://selenium-hub:4444",
                 pid=20_000 + port,
                 active_connection_target=device.connection_target,
-                desired_state=NodeState.running,
+                desired_state=AppiumDesiredState.running,
                 desired_port=port,
                 desired_grid_run_id=active_grid_run_id,
                 grid_run_id=active_grid_run_id,
@@ -1289,7 +1289,7 @@ def _build_appium_nodes(
                 grid_url="http://selenium-hub:4444",
                 pid=None,
                 active_connection_target=None,
-                desired_state=NodeState.stopped,
+                desired_state=AppiumDesiredState.stopped,
                 desired_port=None,
                 started_at=ctx.now - timedelta(hours=ctx.rng.randint(2, 12)),
             )

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
@@ -30,8 +30,8 @@ async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.stopped,
+        state=AppiumDesiredState.stopped,
+        desired_state=AppiumDesiredState.stopped,
     )
     db_session.add(node)
     await db_session.commit()
@@ -64,8 +64,8 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=99,
     )
@@ -110,8 +110,8 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.running,
+        state=AppiumDesiredState.stopped,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
     db_session.add(node)

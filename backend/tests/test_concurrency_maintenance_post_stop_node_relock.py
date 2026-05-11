@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, maintenance_service
@@ -28,7 +28,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
     )
     await db_session.commit()
@@ -44,5 +44,5 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
 
     assert final_status.operational_state == DeviceOperationalState.available
     assert final_status.hold == DeviceHold.maintenance
-    assert node_status.state == NodeState.running
-    assert node_status.desired_state == NodeState.stopped
+    assert node_status.state == AppiumDesiredState.running
+    assert node_status.desired_state == AppiumDesiredState.stopped

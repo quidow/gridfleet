@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.errors import AgentCallError
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState
 from app.routers.device_route_helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -139,7 +139,9 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     node_health_running = getattr(node, "health_running", None) if node is not None else None
     node_health_state = getattr(node, "health_state", None) if node is not None else None
     node_running = node is not None and (
-        node_health_running if node_health_running is not None else node_lifecycle_state == NodeState.running.value
+        node_health_running
+        if node_health_running is not None
+        else node_lifecycle_state == AppiumDesiredState.running.value
     )
     node_state = node_health_state if node_health_state is not None else node_lifecycle_state
     if node is not None:

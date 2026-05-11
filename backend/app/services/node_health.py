@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
 from app.observability import get_logger, observe_background_loop
@@ -352,7 +352,7 @@ async def _process_node_health(
         await write_desired_state(
             db,
             node=node,
-            target=NodeState.running,
+            target=AppiumDesiredState.running,
             caller="health_restart",
             desired_port=node.port,
             transition_token=uuid.uuid4(),

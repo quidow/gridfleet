@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
     appium_node_locking,
@@ -218,7 +218,7 @@ async def retain_verified_node(
         await write_desired_state(
             db,
             node=node,
-            target=NodeState.running,
+            target=AppiumDesiredState.running,
             caller="verification",
             desired_port=handle.port,
         )
@@ -263,7 +263,7 @@ async def retain_verified_node(
             await write_desired_state(
                 db,
                 node=node,
-                target=NodeState.running,
+                target=AppiumDesiredState.running,
                 caller="verification",
                 desired_port=handle.port,
                 transition_token=uuid.uuid4(),

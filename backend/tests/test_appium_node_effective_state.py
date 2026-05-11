@@ -133,7 +133,7 @@ async def test_effective_state_blocked_surfaces_through_router_serialization(
 ) -> None:
     """Phase 6: lifecycle_policy_state must be plumbed into AppiumNodeRead so
     the blocked cascade branch fires end-to-end through the router."""
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="blocked-end-to-end", verified=True)
@@ -146,7 +146,7 @@ async def test_effective_state_blocked_surfaces_through_router_serialization(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            desired_state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=None,
             active_connection_target=None,

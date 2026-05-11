@@ -260,7 +260,7 @@ async def test_sweep_expired_temporary_claims(db_session: AsyncSession) -> None:
 async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib.UUID:
     from sqlalchemy import select
 
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from app.models.device import (
         ConnectionType,
         Device,
@@ -304,7 +304,7 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
+        state=AppiumDesiredState.stopped,
     )
     db_session.add(node)
     await db_session.flush()

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.services import (
     agent_operations,
@@ -750,7 +750,7 @@ async def start_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=desired_port,
     )
@@ -772,7 +772,7 @@ async def stop_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.stopped,
+        target=AppiumDesiredState.stopped,
         caller=caller,
     )
     await db.commit()
@@ -869,7 +869,7 @@ async def restart_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=node.port,
         transition_token=uuid.uuid4(),

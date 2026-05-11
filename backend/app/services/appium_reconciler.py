@@ -31,7 +31,7 @@ from app.metrics_recorders import (
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
 )
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -567,7 +567,7 @@ def _write_observed_factory() -> Callable[..., Awaitable[None]]:
                 if device is None or device.appium_node is None:
                     return
                 node = device.appium_node
-                target = node.desired_state if node.desired_state != NodeState.error else NodeState.stopped
+                target = node.desired_state
                 desired_port = None if clear_desired_port else node.desired_port
                 transition_token = None if clear_transition else node.transition_token
                 transition_deadline = None if clear_transition else node.transition_deadline
@@ -615,7 +615,7 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     await write_desired_state(
         db,
         node=node,
-        target=node.desired_state if node.desired_state != NodeState.error else NodeState.stopped,
+        target=node.desired_state,
         caller="appium_reconciler",
         desired_port=node.desired_port,
     )

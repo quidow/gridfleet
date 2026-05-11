@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -244,7 +244,7 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
     await write_desired_state(
         db,
         node=locked_node,
-        target=NodeState.stopped,
+        target=AppiumDesiredState.stopped,
         caller="connectivity",
     )
     await device_health.apply_node_state_transition(db, locked_device, mark_offline=True)

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import DeviceHold
 from app.models.device_event import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
@@ -32,8 +32,8 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.stopped,
-        desired_state=NodeState.stopped,
+        state=AppiumDesiredState.stopped,
+        desired_state=AppiumDesiredState.stopped,
     )
     db_session.add(node)
     await db_session.commit()
@@ -72,8 +72,8 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
         port=4723,
         grid_url="http://hub:4444",
         pid=1,
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
     db_session.add(node)
@@ -85,5 +85,5 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     await maintenance_service.enter_maintenance(db_session, device)
 
     await db_session.refresh(node)
-    assert node.desired_state == NodeState.stopped
-    assert node.state == NodeState.running
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.state == AppiumDesiredState.running

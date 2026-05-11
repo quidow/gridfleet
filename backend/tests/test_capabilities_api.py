@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services import appium_node_resource_service
 from tests.helpers import create_device_record
 
@@ -62,7 +62,7 @@ async def test_capabilities_endpoint_returns_live_android_allocations_for_runnin
         },
         operational_state="available",
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.flush()
     expected_caps = {
@@ -119,7 +119,7 @@ async def test_capabilities_endpoint_uses_active_target_for_running_avd(
             port=4723,
             grid_url="http://hub:4444",
             active_connection_target="emulator-5554",
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
     )
     await db_session.commit()
@@ -155,7 +155,7 @@ async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_runni
             }
         },
     )
-    node = AppiumNode(device_id=device.id, port=4725, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4725, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.flush()
     expected_caps = {

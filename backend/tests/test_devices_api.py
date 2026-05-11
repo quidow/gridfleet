@@ -7,7 +7,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.models.host import Host
@@ -101,7 +101,7 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
         port=4723,
         grid_url="http://grid:4444",
         pid=12345,
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db.add(node)
     await db.commit()
@@ -884,7 +884,7 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            desired_state=NodeState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )

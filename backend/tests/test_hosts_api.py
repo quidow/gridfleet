@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus, OSType
 from app.models.host_resource_sample import HostResourceSample
@@ -181,7 +181,9 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
         os_version="14",
         operational_state="available",
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1111, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1111, state=AppiumDesiredState.running
+    )
     db_session.add(node)
 
     now = datetime.now(UTC)

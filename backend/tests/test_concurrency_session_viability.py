@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.services import device_locking, session_viability
 from tests.helpers import create_device
@@ -50,7 +50,7 @@ async def test_session_viability_restore_handles_external_reservation(
         device_id=device.id,
         port=9999,
         grid_url="http://hub:4444",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db_session.add(appium_node)
     await db_session.commit()

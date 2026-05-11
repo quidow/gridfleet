@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 from sqlalchemy import desc, select
 
 from app import metrics_recorders
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.observability import get_logger
 from app.services.device_event_service import record_event
@@ -54,7 +54,7 @@ async def write_desired_state(
     db: AsyncSession,
     *,
     node: AppiumNode,
-    target: NodeState,
+    target: AppiumDesiredState,
     caller: DesiredStateCaller,
     desired_port: int | None = None,
     transition_token: uuid.UUID | None = None,
@@ -63,9 +63,7 @@ async def write_desired_state(
     reason: str | None = None,
 ) -> None:
     """Write desired Appium state on an already locked node row. Caller commits."""
-    if target == NodeState.error:
-        raise ValueError("desired_state cannot be 'error'")
-    if target == NodeState.stopped and desired_port is not None:
+    if target == AppiumDesiredState.stopped and desired_port is not None:
         raise ValueError("desired_port must be None when target=stopped")
     if transition_token is not None and transition_deadline is None:
         raise ValueError("transition_deadline is required when transition_token is set")
@@ -74,7 +72,7 @@ async def write_desired_state(
     old_token = node.transition_token
     old_port = node.desired_port
 
-    new_port = None if target == NodeState.stopped else desired_port
+    new_port = None if target == AppiumDesiredState.stopped else desired_port
     if old_state == target and old_token == transition_token and old_port == new_port:
         return
 
@@ -94,7 +92,7 @@ async def write_desired_state(
         )
 
     node.desired_state = target
-    if target == NodeState.stopped:
+    if target == AppiumDesiredState.stopped:
         node.desired_port = None
         node.transition_token = None
         node.transition_deadline = None

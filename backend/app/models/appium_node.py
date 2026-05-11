@@ -12,10 +12,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
-class NodeState(enum.StrEnum):
+class AppiumDesiredState(enum.StrEnum):
     running = "running"
     stopped = "stopped"
-    error = "error"
 
 
 class AppiumNode(Base):
@@ -38,11 +37,11 @@ class AppiumNode(Base):
     container_id: Mapped[str | None] = mapped_column(String, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
     # DB constraints keep desired_state to running/stopped and require stopped intent to have no desired_port.
-    desired_state: Mapped[NodeState] = mapped_column(
-        Enum(NodeState, name="nodestate", create_type=False),
+    desired_state: Mapped[AppiumDesiredState] = mapped_column(
+        Enum(AppiumDesiredState, name="nodestate", create_type=False),
         nullable=False,
-        default=NodeState.stopped,
-        server_default=NodeState.stopped.value,
+        default=AppiumDesiredState.stopped,
+        server_default=AppiumDesiredState.stopped.value,
     )
     desired_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     desired_grid_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
@@ -67,30 +66,30 @@ class AppiumNode(Base):
         return self.pid is not None and self.active_connection_target is not None
 
     @property
-    def state(self) -> NodeState:
+    def state(self) -> AppiumDesiredState:
         """Deprecated object-level compatibility shim for legacy tests and callers.
 
         App code must use observed columns, health fields, or API effective_state
         instead; CI rejects new ``.state =`` assignments outside tests.
         """
-        if self.health_state == NodeState.error.value:
-            return NodeState.error
-        return NodeState.running if self.observed_running else NodeState.stopped
+        if self.health_state == "error":
+            return AppiumDesiredState.stopped
+        return AppiumDesiredState.running if self.observed_running else AppiumDesiredState.stopped
 
     @state.setter
-    def state(self, value: NodeState | str) -> None:
-        state = NodeState(value)
-        if state == NodeState.running:
+    def state(self, value: AppiumDesiredState | str) -> None:
+        if value == "error":
+            self.health_running = False
+            self.health_state = "error"
+            return
+        state = AppiumDesiredState(value)
+        if state == AppiumDesiredState.running:
             if self.pid is None:
                 self.pid = 0
             if self.active_connection_target is None:
                 self.active_connection_target = ""
             self.health_running = None
             self.health_state = None
-            return
-        if state == NodeState.error:
-            self.health_running = False
-            self.health_state = NodeState.error.value
             return
         self.pid = None
         self.active_connection_target = None

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.services.node_service_types import TemporaryNodeHandle
 from tests.helpers import create_device
@@ -52,7 +52,7 @@ async def test_retain_verified_node_writes_desired_running_with_verification_cal
     assert device.appium_node is not None
     assert device.appium_node.pid == 55
     assert device.appium_node.active_connection_target == device.identity_value
-    assert device.appium_node.desired_state == NodeState.running
+    assert device.appium_node.desired_state == AppiumDesiredState.running
 
     events = (
         (

@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import appium_node_locking, device_locking, lifecycle_policy_actions
@@ -32,7 +32,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
     )
     await db_session.commit()
@@ -81,5 +81,5 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         final_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     assert final_device.operational_state == DeviceOperationalState.offline
-    assert final_node.state == NodeState.running
-    assert final_node.desired_state == NodeState.stopped
+    assert final_node.state == AppiumDesiredState.running
+    assert final_node.desired_state == AppiumDesiredState.stopped

@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import bulk_service, device_locking
@@ -64,7 +64,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             device_id=dev.id,
             port=4720 + (1 if dev.id == device_a_id else 2),
             grid_url="http://grid.example.test:4444",
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
         db.add(node)
         await db.flush()

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - FastAPI dependency annotation.
 
 from app.database import get_db
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.schemas.device import AppiumNodeRead
 from app.services import appium_node_locking, device_locking
 from app.services.auth_dependencies import require_admin
@@ -44,7 +44,7 @@ async def clear_transition(
     await write_desired_state(
         db,
         node=locked_node,
-        target=locked_node.desired_state if locked_node.desired_state != NodeState.error else NodeState.stopped,
+        target=locked_node.desired_state,
         caller="admin_clear_transition",
         desired_port=locked_node.desired_port,
         actor=username,

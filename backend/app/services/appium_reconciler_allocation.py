@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device
 from app.services import appium_node_resource_service as resource_claims
 from app.services.node_service_types import NodeManagerError, NodePortConflictError
@@ -37,7 +37,7 @@ async def candidate_ports(
             Device.host_id == host_id,
             (
                 (AppiumNode.pid.is_not(None) & AppiumNode.active_connection_target.is_not(None))
-                | (AppiumNode.desired_state == NodeState.running)
+                | (AppiumNode.desired_state == AppiumDesiredState.running)
             ),
         )
     )

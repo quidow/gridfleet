@@ -705,7 +705,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     device is currently healthy (defense-in-depth branch), it returns False so
     `_on_session_end` falls through to `ready_operational_state`.
     The device must end up `available`, not stuck at `busy`."""
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from app.services import device_health
 
     device = Device(
@@ -726,7 +726,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4790, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4790, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     session = Session(session_id="sess-deferred-recovered", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)

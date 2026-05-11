@@ -3,7 +3,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import NodeState
+from app.models.appium_node import AppiumDesiredState
 from app.models.device import Device, DeviceHold
 from app.services import appium_node_locking
 from app.services.appium_reconciler_allocation import candidate_ports
@@ -41,7 +41,7 @@ async def enter_maintenance(
             await write_desired_state(
                 db,
                 node=node,
-                target=NodeState.stopped,
+                target=AppiumDesiredState.stopped,
                 caller="maintenance_enter",
             )
 
@@ -75,7 +75,7 @@ async def exit_maintenance(
         await write_desired_state(
             db,
             node=node,
-            target=NodeState.running,
+            target=AppiumDesiredState.running,
             caller="maintenance_exit",
             desired_port=desired_port,
         )

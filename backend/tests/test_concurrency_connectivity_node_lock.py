@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_connectivity
@@ -29,7 +29,9 @@ async def test_stop_disconnected_node_locks_device_and_node(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running))
+    db_session.add(
+        AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    )
     await db_session.commit()
     device_id = device.id
 
@@ -39,7 +41,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
         _db: AsyncSession,
         *,
         node: AppiumNode,
-        target: NodeState,
+        target: AppiumDesiredState,
         caller: str,
         **_kwargs: object,
     ) -> None:
@@ -64,7 +66,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
             await session.execute(
                 update(AppiumNode)
                 .where(AppiumNode.device_id == device_id)
-                .values(health_running=False, health_state=NodeState.error.value)
+                .values(health_running=False, health_state="error")
             )
             await session.commit()
 
@@ -73,9 +75,9 @@ async def test_stop_disconnected_node_locks_device_and_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == NodeState.error, (
-        f"Expected error but got {verify_node.state.value} — "
+    assert verify_node.health_state == "error", (
+        f"Expected error but got {verify_node.health_state} — "
         "_stop_disconnected_node overwrote the concurrent error write "
         "(missing AppiumNode lock)"
     )
-    assert verify_node.desired_state == NodeState.stopped
+    assert verify_node.desired_state == AppiumDesiredState.stopped

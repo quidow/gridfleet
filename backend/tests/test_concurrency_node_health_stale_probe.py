@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import node_health
@@ -38,7 +38,7 @@ async def _seed_running_node_at_failure_threshold(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
         pid=pid,
         active_connection_target=active_connection_target,
     )
@@ -111,7 +111,7 @@ async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(
     async with db_session_maker() as verify:
         verified = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verified.state == NodeState.stopped, (
+    assert verified.state == AppiumDesiredState.stopped, (
         f"Expected stopped but got {verified.state.value} - "
         "node_health processed a stale unhealthy probe for a stopped node"
     )
@@ -157,6 +157,6 @@ async def test_stale_unhealthy_probe_skips_when_node_restarted_before_lock(
     async with db_session_maker() as verify:
         verified = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verified.state == NodeState.running
+    assert verified.state == AppiumDesiredState.running
     assert verified.pid == 2222
     assert verified.active_connection_target == "new-target"

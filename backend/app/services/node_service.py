@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services.appium_reconciler_agent import (
     AVD_LAUNCH_HTTP_TIMEOUT_SECS,
     agent_url,
@@ -82,7 +82,7 @@ async def start_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=desired_port,
     )
@@ -104,7 +104,7 @@ async def stop_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.stopped,
+        target=AppiumDesiredState.stopped,
         caller=caller,
     )
     await db.commit()
@@ -126,7 +126,7 @@ async def restart_node(
     await write_desired_state(
         db,
         node=node,
-        target=NodeState.running,
+        target=AppiumDesiredState.running,
         caller=caller,
         desired_port=node.port,
         transition_token=uuid.uuid4(),

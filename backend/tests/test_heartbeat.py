@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus, OSType
@@ -335,7 +335,9 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1111, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1111, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -389,7 +391,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
 
     await db_session.refresh(node)
     assert node.pid == 2222
-    assert node.state == NodeState.running
+    assert node.state == AppiumDesiredState.running
     assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 2
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
@@ -456,7 +458,9 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4724, grid_url="http://hub:4444", pid=3333, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4724, grid_url="http://hub:4444", pid=3333, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -500,7 +504,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
 
     await db_session.refresh(node)
     await db_session.refresh(device)
-    assert node.state == NodeState.running
+    assert node.state == AppiumDesiredState.running
     assert device.operational_state == DeviceOperationalState.available
     process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
     assert isinstance(process_snapshot, dict)
@@ -527,7 +531,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     await db_session.refresh(node)
     assert node.observed_running is True
     assert node.health_state == "error"
-    assert node.desired_state == NodeState.running
+    assert node.desired_state == AppiumDesiredState.running
     assert node.transition_token is not None
 
 
@@ -555,7 +559,9 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4725, grid_url="http://hub:4444", pid=4444, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4725, grid_url="http://hub:4444", pid=4444, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -610,7 +616,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
 
     await db_session.refresh(node)
     assert node.pid == 4444
-    assert node.state == NodeState.running
+    assert node.state == AppiumDesiredState.running
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
     events = (
@@ -664,7 +670,9 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4726, grid_url="http://hub:4444", pid=5555, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4726, grid_url="http://hub:4444", pid=5555, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
 

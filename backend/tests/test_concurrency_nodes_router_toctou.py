@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import get_db
 from app.main import app
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
@@ -53,7 +53,7 @@ async def test_start_node_locks_device_before_reservation_check(
             device_id=dev.id,
             port=4723,
             grid_url="http://grid:4444",
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
         db.add(node)
         await db.flush()

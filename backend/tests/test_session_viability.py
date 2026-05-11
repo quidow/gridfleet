@@ -5,7 +5,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services.session_viability import (
@@ -44,7 +44,7 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4729, grid_url="http://hub:4444", state=NodeState.stopped)
+    node = AppiumNode(device_id=device.id, port=4729, grid_url="http://hub:4444", state=AppiumDesiredState.stopped)
     db_session.add(node)
     await db_session.commit()
 
@@ -80,7 +80,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.commit()
 
@@ -137,7 +137,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4733, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4733, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.commit()
 
@@ -193,7 +193,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
         port=4723,
         grid_url="http://hub:4444",
         active_connection_target="emulator-5554",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db_session.add(node)
     await db_session.commit()

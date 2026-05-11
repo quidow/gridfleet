@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import DeviceOperationalState
 from app.schemas.run import DeviceRequirement
 from tests.helpers import create_device
@@ -30,8 +30,8 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
             device_id=device.id,
             port=0,
             grid_url="http://hub:4444",
-            state=NodeState.stopped,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.stopped,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
     )
@@ -57,8 +57,8 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=12345,
             active_connection_target=device.identity_value,
@@ -86,8 +86,8 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=None,
             active_connection_target=None,

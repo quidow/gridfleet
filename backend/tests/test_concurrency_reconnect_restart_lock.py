@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.routers import devices_control
 from app.services import device_locking, maintenance_service
@@ -28,7 +28,9 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         ip_address="10.0.0.50",
         verified=True,
     )
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.running))
+    db_session.add(
+        AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    )
     await db_session.commit()
     device_id = device.id
 
@@ -42,7 +44,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         assert dev.appium_node is not None
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        dev.appium_node.desired_state = NodeState.running
+        dev.appium_node.desired_state = AppiumDesiredState.running
         await db.commit()
         return dev.appium_node
 

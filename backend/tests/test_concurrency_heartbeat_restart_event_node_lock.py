@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumNode
 from app.models.host import Host
 from app.services import heartbeat
 from tests.helpers import create_device
@@ -23,7 +23,7 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
     AppiumNode row must be locked.
     """
     device = await create_device(db_session, host_id=db_host.id, name="hb-rs-lock", verified=True)
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=NodeState.error))
+    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state="error"))
     await db_session.commit()
     device_id = device.id
 
@@ -66,7 +66,7 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
             await session.execute(
                 update(AppiumNode)
                 .where(AppiumNode.device_id == device_id)
-                .values(health_running=False, health_state=NodeState.error.value)
+                .values(health_running=False, health_state="error")
             )
             await session.commit()
 
@@ -75,7 +75,7 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.health_state == NodeState.error.value, (
+    assert verify_node.health_state == "error", (
         f"Expected error but got {verify_node.health_state} - "
         "_ingest_appium_restart_events overwrote the concurrent error write "
         "(missing AppiumNode lock)"

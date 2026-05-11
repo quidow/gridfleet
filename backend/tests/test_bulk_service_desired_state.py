@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -35,8 +35,8 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
             device_id=dev.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
 
@@ -65,8 +65,8 @@ async def test_bulk_start_nodes_accepts_group_caller(
             device_id=dev.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=NodeState.running,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
             desired_port=4723,
         )
 

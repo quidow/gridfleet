@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceType
 from app.services import capability_service, node_service_common
 
@@ -134,7 +134,9 @@ def test_build_capabilities_handles_roku_tvos_and_simulator() -> None:
 
 def test_appium_udid_prefers_active_target_for_running_android_emulator() -> None:
     device = _device(device_type=DeviceType.emulator, connection_target="Pixel_8")
-    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    device.appium_node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
 
     assert capability_service._appium_udid_for_capabilities(device, "emulator-5554") == "emulator-5554"
     assert capability_service._appium_udid_for_capabilities(device, None) == "Pixel_8"
@@ -143,7 +145,9 @@ def test_appium_udid_prefers_active_target_for_running_android_emulator() -> Non
 async def test_active_target_from_host_snapshot_matches_port() -> None:
     db = AsyncMock()
     device = _device(device_type=DeviceType.emulator)
-    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    device.appium_node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
 
     with patch(
         "app.services.capability_service.control_plane_state_store.get_value",
@@ -159,12 +163,16 @@ async def test_active_target_from_host_snapshot_matches_port() -> None:
 async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapshot() -> None:
     db = AsyncMock()
     device = _device()
-    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    device.appium_node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
 
     with patch("app.services.capability_service.control_plane_state_store.get_value", new=AsyncMock(return_value=[])):
         assert await capability_service._active_target_from_host_snapshot(db, device) is None
 
-    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    device.appium_node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
     with patch(
         "app.services.capability_service.control_plane_state_store.get_value",
         new=AsyncMock(return_value={"running_nodes": [{"port": 9999, "connection_target": "emulator-1"}]}),
@@ -179,7 +187,7 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
         device_id=device.id,
         port=4723,
         grid_url="http://hub",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
         active_connection_target="emulator-5554",
     )
 
@@ -192,7 +200,7 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
         device_id=device.id,
         port=4723,
         grid_url="http://hub",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
         active_connection_target=None,
     )
     device.appium_node.active_connection_target = None
@@ -218,7 +226,9 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
     assert await capability_service._get_live_active_connection_target(db, device) is None
 
     emulator = _device(device_type=DeviceType.emulator)
-    emulator.appium_node = AppiumNode(device_id=emulator.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    emulator.appium_node = AppiumNode(
+        device_id=emulator.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
     with (
         patch("app.services.capability_service._active_target_from_host_snapshot", new=AsyncMock(return_value=None)),
         patch("app.services.device_locking.lock_device", new=AsyncMock()),
@@ -230,7 +240,9 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
 async def test_get_device_capabilities_fetches_driver_and_session_overrides() -> None:
     db = AsyncMock()
     device = _device()
-    device.appium_node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
+    device.appium_node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub", state=AppiumDesiredState.running
+    )
 
     with (
         patch(

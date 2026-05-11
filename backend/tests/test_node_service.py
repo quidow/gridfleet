@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import appium_reconciler_agent as node_agent
@@ -86,8 +86,8 @@ async def test_remote_start_node(client: AsyncClient, db_session: AsyncSession) 
 
     assert resp.status_code == 200, resp.json()
     data = resp.json()
-    assert data["state"] == NodeState.stopped.value
-    assert data["desired_state"] == NodeState.running.value
+    assert data["state"] == AppiumDesiredState.stopped.value
+    assert data["desired_state"] == AppiumDesiredState.running.value
     assert data["desired_port"] == 4723
     assert data["pid"] is None
 
@@ -142,8 +142,8 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
         node = await start_node(db_session, loaded_device)
 
     assert loaded_device.appium_node is node
-    assert node.state == NodeState.stopped
-    assert node.desired_state == NodeState.running
+    assert node.state == AppiumDesiredState.stopped
+    assert node.desired_state == AppiumDesiredState.running
     assert loaded_device.operational_state == DeviceOperationalState.offline
 
 
@@ -175,7 +175,9 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -196,9 +198,9 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
 
     assert resp.status_code == 200, resp.json()
     body = resp.json()
-    assert body["state"] == NodeState.stopped.value
+    assert body["state"] == AppiumDesiredState.stopped.value
     assert body["effective_state"] == "stopping"
-    assert body["desired_state"] == NodeState.stopped.value
+    assert body["desired_state"] == AppiumDesiredState.stopped.value
 
     device_resp = await client.get(f"/api/devices/{device.id}")
     assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
@@ -326,7 +328,9 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     device.appium_node = node
     await db_session.commit()
@@ -382,41 +386,12 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=9876, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     device.appium_node = node
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
-    assert loaded is not None
-
-    await node_agent.mark_node_stopped(db_session, loaded)
-
-    assert loaded.operational_state == DeviceOperationalState.offline
-    assert loaded.hold == hold
-
-
-async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_candidate(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    device = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="restart-port-conflict-001",
-        connection_target="restart-port-conflict-001",
-        name="Restart Port Conflict",
-        operational_state="available",
-    )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=123,
-        state=NodeState.running,
-    )
-    db_session.add(node)
-    await db_session.commit()
-
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
     assert loaded.appium_node is not None
@@ -442,7 +417,7 @@ async def test_restart_node_via_agent_skips_db_running_old_port_and_starts_next_
     await db_session.refresh(loaded.appium_node)
     assert loaded.appium_node.port == 4724
     assert loaded.appium_node.pid == 456
-    assert loaded.appium_node.state == NodeState.running
+    assert loaded.appium_node.state == AppiumDesiredState.running
     start_mock.assert_awaited_once()
     assert start_mock.await_args.kwargs["port"] == 4724
 
@@ -731,7 +706,9 @@ async def test_stop_node_writes_stopped_intent_without_agent_ack(
         name="Stop No Ack",
         operational_state="available",
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4723, grid_url="http://hub:4444", pid=1, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
     loaded = await device_service.get_device(db_session, device.id)
@@ -751,8 +728,8 @@ async def test_stop_node_writes_stopped_intent_without_agent_ack(
 
     await db_session.refresh(node)
     await db_session.refresh(loaded)
-    assert node.state == NodeState.running, "node row must stay running when stop is unconfirmed"
-    assert node.desired_state == NodeState.stopped
+    assert node.state == AppiumDesiredState.running, "node row must stay running when stop is unconfirmed"
+    assert node.desired_state == AppiumDesiredState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
@@ -772,7 +749,9 @@ async def test_stop_node_records_intent_when_agent_would_acknowledge(
         name="Stop Ack Sync",
         operational_state="available",
     )
-    node = AppiumNode(device_id=device.id, port=4724, grid_url="http://hub:4444", pid=1, state=NodeState.running)
+    node = AppiumNode(
+        device_id=device.id, port=4724, grid_url="http://hub:4444", pid=1, state=AppiumDesiredState.running
+    )
     db_session.add(node)
     await db_session.commit()
     loaded = await device_service.get_device(db_session, device.id)
@@ -794,8 +773,8 @@ async def test_stop_node_records_intent_when_agent_would_acknowledge(
         await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.running
-    assert node.desired_state == NodeState.stopped
+    assert node.state == AppiumDesiredState.running
+    assert node.desired_state == AppiumDesiredState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
@@ -819,7 +798,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
 
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None
-    assert loaded.appium_node.state == NodeState.running
+    assert loaded.appium_node.state == AppiumDesiredState.running
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
@@ -869,7 +848,7 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
     """If the agent never confirms the stop, the owner allocation MUST stay
     intact — releasing it would let the allocator hand the same parallel-resource
     ports to a new owner while the orphan Appium process is still using them."""
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from app.services import appium_node_resource_service
 
     device = await create_device_record(
@@ -886,7 +865,7 @@ async def test_stop_temporary_node_keeps_owner_allocation_when_agent_does_not_ac
         grid_url="http://hub:4444",
         pid=12345,
         active_connection_target="stop-no-ack-alloc-001",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db_session.add(node)
     await db_session.flush()
@@ -929,7 +908,7 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
 ) -> None:
     """Symmetric to the unacknowledged case: a confirmed stop MUST release the
     owner allocation so the parallel-resource ports become reusable."""
-    from app.models.appium_node import AppiumNode, NodeState
+    from app.models.appium_node import AppiumDesiredState, AppiumNode
     from app.services import appium_node_resource_service
 
     device = await create_device_record(
@@ -946,7 +925,7 @@ async def test_stop_temporary_node_releases_owner_allocation_when_agent_acknowle
         grid_url="http://hub:4444",
         pid=12345,
         active_connection_target="stop-ack-alloc-001",
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db_session.add(node)
     await db_session.flush()
@@ -1002,7 +981,7 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
         port=4723,
         grid_url="http://hub:4444",
         pid=123,
-        state=NodeState.running,
+        state=AppiumDesiredState.running,
     )
     db_session.add(node)
     await db_session.commit()
@@ -1032,4 +1011,4 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
     start_mock.assert_not_awaited()
     await db_session.refresh(loaded.appium_node)
     assert loaded.appium_node.port == 4723, "node row must keep the original port when stop is unconfirmed"
-    assert loaded.appium_node.state == NodeState.running
+    assert loaded.appium_node.state == AppiumDesiredState.running

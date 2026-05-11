@@ -11,7 +11,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
@@ -279,8 +279,8 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
     assert node.port == 4723
     assert node.pid == 12345
     assert node.active_connection_target == DEVICE_PAYLOAD["identity_value"]
-    assert node.state == NodeState.running
-    assert node.desired_state == NodeState.running
+    assert node.state == AppiumDesiredState.running
+    assert node.desired_state == AppiumDesiredState.running
     assert node.transition_token is not None
 
 
@@ -1063,7 +1063,7 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
     )
     await db_session.commit()

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.services.node_service import restart_node, start_node, stop_node
 from tests.helpers import create_device
@@ -29,8 +29,8 @@ async def test_start_node_writes_desired_running_before_inline_rpc(
 
     result = await start_node(db_session, device, caller="operator_route")
 
-    assert result.desired_state == NodeState.running
-    assert result.state == NodeState.stopped
+    assert result.desired_state == AppiumDesiredState.running
+    assert result.state == AppiumDesiredState.stopped
     assert result.desired_port is not None
 
     events = (
@@ -60,8 +60,8 @@ async def test_stop_node_writes_desired_stopped_before_inline_rpc(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=999,
         active_connection_target=device.identity_value,
@@ -73,8 +73,8 @@ async def test_stop_node_writes_desired_stopped_before_inline_rpc(
     result = await stop_node(db_session, device, caller="operator_route")
 
     await db_session.refresh(node)
-    assert result.desired_state == NodeState.stopped
-    assert node.state == NodeState.running
+    assert result.desired_state == AppiumDesiredState.stopped
+    assert node.state == AppiumDesiredState.running
     events = (
         (
             await db_session.execute(
@@ -102,8 +102,8 @@ async def test_restart_node_writes_transition_token_and_desired_running(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=NodeState.running,
-        desired_state=NodeState.running,
+        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
         desired_port=4723,
         pid=42,
         active_connection_target=device.identity_value,
@@ -115,10 +115,10 @@ async def test_restart_node_writes_transition_token_and_desired_running(
     result = await restart_node(db_session, device, caller="operator_restart")
 
     await db_session.refresh(node)
-    assert result.state == NodeState.running
+    assert result.state == AppiumDesiredState.running
     assert node.transition_token is not None
     assert node.transition_deadline is not None
-    assert node.desired_state == NodeState.running
+    assert node.desired_state == AppiumDesiredState.running
 
     events = (
         (

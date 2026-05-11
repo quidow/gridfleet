@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host
@@ -464,7 +464,7 @@ async def test_recovery_reloads_device_before_starting_node(
                 grid_url="http://grid:4444",
                 pid=1234,
                 active_connection_target=device.connection_target,
-                state=NodeState.running,
+                state=AppiumDesiredState.running,
             )
         )
         await other_session.commit()
@@ -922,7 +922,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4781, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4781, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.commit()
 
@@ -1042,7 +1042,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     db_session.add(device)
     await db_session.flush()
     # Node already stopped - even if health checks read healthy, complete_auto_stop must still run.
-    node = AppiumNode(device_id=device.id, port=4783, grid_url="http://hub:4444", state=NodeState.stopped)
+    node = AppiumNode(device_id=device.id, port=4783, grid_url="http://hub:4444", state=AppiumDesiredState.stopped)
     db_session.add(node)
     await db_session.commit()
     await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
@@ -1180,7 +1180,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(device_id=device.id, port=4795, grid_url="http://hub:4444", state=NodeState.running)
+    node = AppiumNode(device_id=device.id, port=4795, grid_url="http://hub:4444", state=AppiumDesiredState.running)
     db_session.add(node)
     await db_session.commit()
 

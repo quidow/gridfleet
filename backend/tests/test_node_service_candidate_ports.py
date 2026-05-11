@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.device import Device
 from app.models.host import Host, HostStatus, OSType
@@ -58,7 +58,7 @@ async def _add_running_node(db_session: AsyncSession, *, host: Host, port: int) 
             device_id=device.id,
             port=port,
             grid_url=settings_service.get("grid.hub_url"),
-            state=NodeState.running,
+            state=AppiumDesiredState.running,
         )
     )
     await db_session.flush()
@@ -77,7 +77,7 @@ async def _add_stopped_node(db_session: AsyncSession, *, host: Host, port: int) 
             device_id=device.id,
             port=port,
             grid_url=settings_service.get("grid.hub_url"),
-            state=NodeState.stopped,
+            state=AppiumDesiredState.stopped,
         )
     )
     await db_session.flush()
@@ -132,8 +132,8 @@ async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSe
             device_id=device.id,
             port=start,
             grid_url=settings_service.get("grid.hub_url"),
-            state=NodeState.stopped,
-            desired_state=NodeState.running,
+            state=AppiumDesiredState.stopped,
+            desired_state=AppiumDesiredState.running,
             desired_port=start,
         )
     )
