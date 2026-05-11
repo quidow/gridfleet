@@ -2,10 +2,12 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.device import ConnectionType, DeviceType, HardwareHealthStatus
+from app.models.device import Device as DeviceModel
 from app.models.session import Session
 from app.routers.device_route_helpers import get_device_or_404
 from app.schemas.device import (
@@ -118,6 +120,23 @@ async def list_devices(
             "offset": effective_offset,
         }
     return serialized
+
+
+@router.get("/by-connection-target/{target}", response_model=DeviceRead)
+async def get_device_by_connection_target(target: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    result = (
+        await db.execute(
+            select(DeviceModel).where(DeviceModel.connection_target == target).limit(1)
+        )
+    ).scalar_one_or_none()
+    if result is None:
+        raise HTTPException(status_code=404, detail="Device not found for connection_target")
+    platform_label = await platform_label_service.load_platform_label(
+        db,
+        pack_id=result.pack_id,
+        platform_id=result.platform_id,
+    )
+    return await device_presenter.serialize_device(db, result, platform_label=platform_label)
 
 
 @router.get("/{device_id}", response_model=DeviceDetail)
