@@ -38,6 +38,8 @@ from app.seeding.factories.webhook import make_webhook, make_webhook_delivery
 from app.seeding.time_patterns import log_normal_duration_seconds, sample_run_timestamps
 
 if TYPE_CHECKING:
+    import uuid
+
     from app.models.device import Device
     from app.models.host import Host
     from app.models.system_event import SystemEvent
@@ -676,7 +678,7 @@ def _build_reservations_and_sessions(
     active_run_devices: list[Device],
     reserved_device: Device,
     excluded_device: Device,
-) -> None:
+) -> dict[object, uuid.UUID]:
     """Add reservations and sessions for every run directly to ctx.session."""
     rng = ctx.rng
     session = ctx.session
@@ -690,8 +692,10 @@ def _build_reservations_and_sessions(
 
     # Active runs: open reservations + running sessions. Seed one busy device,
     # one still-reserved device, and one excluded reservation in the live fleet.
+    active_grid_run_ids: dict[object, uuid.UUID] = {}
     for i, (run, device) in enumerate(zip(active_runs, active_run_devices, strict=True)):
         session.add(make_reservation(ctx, run=run, device=device, released=False))
+        active_grid_run_ids[device.id] = run.id
         run_started = run.started_at
         assert run_started is not None  # make_run always sets started_at
         device.operational_state = DeviceOperationalState.busy
@@ -707,6 +711,7 @@ def _build_reservations_and_sessions(
         )
         if i == 0:
             session.add(make_reservation(ctx, run=run, device=reserved_device, released=False))
+            active_grid_run_ids[reserved_device.id] = run.id
             session.add(
                 make_reservation(
                     ctx,
@@ -772,6 +777,8 @@ def _build_reservations_and_sessions(
                             duration_seconds=duration,
                         )
                     )
+
+    return active_grid_run_ids
 
 
 def _random_session_status(rng: object) -> SessionStatus:
@@ -1232,7 +1239,9 @@ def _pack_install(
     )
 
 
-def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Host]) -> None:
+def _build_appium_nodes(
+    ctx: SeedContext, devices: list[Device], hosts: list[Host], active_grid_run_ids: dict[object, uuid.UUID]
+) -> None:
     """Seed Appium node rows only where the real start-node flow could do so."""
     host_by_id = {host.id: host for host in hosts}
     port = 4723
@@ -1247,6 +1256,7 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
             continue
         if device.operational_state is DeviceOperationalState.offline or device.hold is DeviceHold.maintenance:
             continue
+        active_grid_run_id = active_grid_run_ids.get(device.id)
         nodes.append(
             AppiumNode(
                 device_id=device.id,
@@ -1256,6 +1266,8 @@ def _build_appium_nodes(ctx: SeedContext, devices: list[Device], hosts: list[Hos
                 active_connection_target=device.connection_target,
                 desired_state=NodeState.running,
                 desired_port=port,
+                desired_grid_run_id=active_grid_run_id,
+                grid_run_id=active_grid_run_id,
                 started_at=ctx.now - timedelta(minutes=ctx.rng.randint(10, 240)),
             )
         )
@@ -1580,8 +1592,10 @@ async def apply_full_demo(ctx: SeedContext, *, skip_telemetry: bool = False) -> 
     session.add_all(runs)
     await session.flush()
 
-    _build_reservations_and_sessions(ctx, runs, all_devices, active_run_devices, reserved_device, excluded_device)
-    _build_appium_nodes(ctx, all_devices, hosts)
+    active_grid_run_ids = _build_reservations_and_sessions(
+        ctx, runs, all_devices, active_run_devices, reserved_device, excluded_device
+    )
+    _build_appium_nodes(ctx, all_devices, hosts, active_grid_run_ids)
 
     # ── 8. DeviceEvents ───────────────────────────────────────────────────────
     _build_device_events(ctx, all_devices, flapping_device)
