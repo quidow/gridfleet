@@ -39,7 +39,7 @@ Current auth behavior:
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, `tags.<key>` | `DeviceRead[]` |
-| `GET` | `/api/devices/by-connection-target/{target}` | Resolve the manager device row for a runtime connection target reported by Appium/Grid | path `target` | `DeviceDetail` |
+| `GET` | `/api/devices/by-connection-target/{target}` | Resolve the manager device row for a runtime connection target reported by Appium/Grid | path `target` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
