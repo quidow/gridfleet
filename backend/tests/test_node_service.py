@@ -149,6 +149,28 @@ async def test_remote_start_node_attaches_node_to_device_instance(
     assert loaded_device.operational_state == DeviceOperationalState.offline
 
 
+async def test_start_node_with_verification_caller_skips_readiness(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verification-start-unready",
+        connection_target="verification-start-unready",
+        name="Verification Start Unready",
+        operational_state="offline",
+        mark_verified=False,
+    )
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return False
+
+    monkeypatch.setattr("app.services.appium_reconciler_agent.is_ready_for_use_async", fake_ready)
+    node = await node_agent.start_node(db_session, device, caller="verification")
+    assert node.desired_state is AppiumDesiredState.running
+
+
 async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -> None:
     host = Host(
         hostname="remote-host",

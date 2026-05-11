@@ -682,7 +682,7 @@ async def start_node(
 ) -> AppiumNode:
     if device.appium_node and device.appium_node.observed_running:
         raise NodeManagerError(f"Node already running for device {device.id}")
-    if not await is_ready_for_use_async(db, device):
+    if caller != "verification" and not await is_ready_for_use_async(db, device):
         raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
     if device.host_id is None:
