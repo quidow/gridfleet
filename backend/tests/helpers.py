@@ -267,7 +267,8 @@ async def seed_host_and_running_node(
         grid_url="http://hub.invalid:4444",
         pid=12345,
         active_connection_target=device.connection_target,
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=0,
     )
     db_session.add(node)
     await db_session.commit()

@@ -304,7 +304,10 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.stopped,
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
     )
     db_session.add(node)
     await db_session.flush()

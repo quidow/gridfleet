@@ -162,7 +162,10 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
     )
     await db_session.commit()

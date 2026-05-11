@@ -313,7 +313,10 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         device_id=device.id,
         port=4723,
         grid_url="http://localhost:4444",
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
     )
     db_session.add(appium_node)
     await db_session.commit()
