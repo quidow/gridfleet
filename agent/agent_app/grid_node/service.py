@@ -251,11 +251,12 @@ class GridNodeService:
 
     def _node_payload(self) -> dict[str, object]:
         snapshot = self.state.snapshot()
+        stereotypes_by_slot_id = {slot.id: slot.stereotype.to_dict() for slot in self.state.snapshot_slots()}
         availability = "DRAINING" if snapshot.drain else "UP"
         slot_payloads: list[dict[str, object]] = []
         epoch_iso = "1970-01-01T00:00:00Z"
-        for runtime_slot, source_slot in zip(snapshot.slots, self.config.slots, strict=True):
-            stereotype = source_slot.stereotype.to_dict()
+        for runtime_slot, _source_slot in zip(snapshot.slots, self.config.slots, strict=True):
+            stereotype = stereotypes_by_slot_id[runtime_slot.slot_id]
             session: dict[str, object] | None = None
             last_started = epoch_iso
             if runtime_slot.session_id is not None:

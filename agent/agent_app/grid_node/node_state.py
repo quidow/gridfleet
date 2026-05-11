@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from agent_app.grid_node.protocol import Slot, Stereotype
+
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from agent_app.grid_node.protocol import Slot
 
 RuntimeSlotState = Literal["FREE", "RESERVED", "BUSY"]
 
@@ -68,6 +69,7 @@ class NodeState:
         self._slots = [_SlotRuntime(slot=slot) for slot in slots]
         self._now = now
         self._drain = False
+        self._stereotype_lock = threading.Lock()
 
     def reserve(self, caps: dict[str, Any]) -> Reservation:
         matching = [runtime for runtime in self._slots if self._caps_match(runtime.slot.stereotype.caps, caps)]
@@ -167,6 +169,26 @@ class NodeState:
             ],
             drain=self._drain,
         )
+
+    def replace_slot_stereotype(self, new_caps: dict[str, object]) -> None:
+        with self._stereotype_lock:
+            for runtime in self._slots:
+                runtime.slot = Slot(
+                    id=runtime.slot.id,
+                    state=runtime.slot.state,
+                    stereotype=Stereotype(caps=dict(new_caps)),
+                )
+
+    def snapshot_slots(self) -> list[Slot]:
+        with self._stereotype_lock:
+            return [
+                Slot(
+                    id=runtime.slot.id,
+                    state=runtime.slot.state,
+                    stereotype=Stereotype(caps=dict(runtime.slot.stereotype.caps)),
+                )
+                for runtime in self._slots
+            ]
 
     @classmethod
     def _caps_match(cls, stereotype: dict[str, Any], required: dict[str, Any]) -> bool:
