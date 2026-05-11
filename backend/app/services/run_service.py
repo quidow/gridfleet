@@ -732,18 +732,29 @@ async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.preparing or reservation_entry_is_excluded(entry):
+    run = await signal_active_for_device_session_no_commit(db, device_id)
+    if run is None:
         return None
-    return await signal_ready(db, run.id)
+    await db.commit()
+    refreshed_run = await get_run(db, run.id)
+    assert refreshed_run is not None
+    return refreshed_run
 
 
 async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
     run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.preparing or reservation_entry_is_excluded(entry):
+    if run is None or reservation_entry_is_excluded(entry):
         return None
     locked_run = await _get_run_for_update(db, run.id)
     if locked_run is None:
+        return None
+    if locked_run.state == RunState.active:
+        if locked_run.started_at is None:
+            now = datetime.now(UTC)
+            locked_run.started_at = now
+            locked_run.last_heartbeat = locked_run.last_heartbeat or now
+        return locked_run
+    if locked_run.state != RunState.preparing:
         return None
     now = datetime.now(UTC)
     locked_run.state = RunState.active

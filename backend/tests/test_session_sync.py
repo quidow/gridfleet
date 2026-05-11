@@ -531,7 +531,7 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
     assert sessions[0].status == SessionStatus.passed
 
 
-async def test_sync_promotes_ready_run_to_active(db_session: AsyncSession, db_host: Host) -> None:
+async def test_sync_backfills_started_at_for_active_run(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
