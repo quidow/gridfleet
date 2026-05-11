@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 import httpx
@@ -133,6 +134,63 @@ async def test_agent_health_raises_response_error_on_http_500() -> None:
             {"params": None, "headers": {}, "timeout": 5},
         )
     ]
+
+
+async def test_grid_node_reregister_posts_target_run_id() -> None:
+    node_id = uuid.uuid4()
+    target_run_id = uuid.uuid4()
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST",
+            f"http://10.0.0.5:5100/grid/node/{node_id}/reregister",
+            payload={"grid_run_id": str(target_run_id)},
+        )
+    )
+
+    observed = await agent_operations.grid_node_reregister(
+        "10.0.0.5",
+        5100,
+        node_id,
+        target_run_id=target_run_id,
+        http_client_factory=_strict_client_factory(client),
+        timeout=20,
+    )
+
+    assert observed == target_run_id
+    assert client.post_calls == [
+        (
+            f"http://10.0.0.5:5100/grid/node/{node_id}/reregister",
+            {
+                "params": None,
+                "headers": {},
+                "json": {"target_run_id": str(target_run_id)},
+                "timeout": 20,
+            },
+        )
+    ]
+
+
+async def test_grid_node_reregister_returns_none_for_free_pool() -> None:
+    node_id = uuid.uuid4()
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST",
+            f"http://10.0.0.5:5100/grid/node/{node_id}/reregister",
+            payload={"grid_run_id": None},
+        )
+    )
+
+    observed = await agent_operations.grid_node_reregister(
+        "10.0.0.5",
+        5100,
+        node_id,
+        target_run_id=None,
+        http_client_factory=_strict_client_factory(client),
+        timeout=20,
+    )
+
+    assert observed is None
+    assert client.post_calls[0][1]["json"] == {"target_run_id": None}
 
 
 async def test_pack_device_health_get_request() -> None:
