@@ -2,26 +2,17 @@ import uuid
 from datetime import UTC, date, datetime, time
 from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
-from app.metrics import RUN_CLAIMS_TOTAL
 from app.models.device import Device
 from app.models.test_run import RunState
 from app.schemas.run import (
-    ClaimRequest,
-    ClaimResponse,
     HeartbeatResponse,
-    NoClaimableDevicesDetail,
-    ReleaseEscalatedToMaintenanceResponse,
-    ReleaseRequest,
-    ReleaseWithCooldownRequest,
-    ReleaseWithCooldownResponse,
-    ReleaseWithCooldownResult,
     ReservedDeviceInfo,
     RunCreate,
     RunCreateResponse,
@@ -265,163 +256,3 @@ async def force_release(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=404, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
-
-
-@router.post("/{run_id}/claim", response_model=ClaimResponse)
-async def claim_device(
-    run_id: uuid.UUID,
-    data: ClaimRequest | None = Body(default=None),
-    include: str | None = Query(None, description="Comma-separated: config,capabilities,test_data"),
-    db: AsyncSession = Depends(get_db),
-) -> ClaimResponse:
-    payload = data or ClaimRequest()
-    includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
-
-    try:
-        info = await run_service.claim_device(db, run_id, worker_id=payload.worker_id)
-    except run_service.NoClaimableDevicesError as e:
-        details = NoClaimableDevicesDetail(
-            retry_after_sec=e.retry_after_sec,
-            next_available_at=e.next_available_at,
-        )
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": str(e),
-                "error": details.error,
-                "retry_after_sec": details.retry_after_sec,
-                "next_available_at": details.next_available_at,
-            },
-            headers={"Retry-After": str(e.retry_after_sec)},
-        ) from e
-    except ValueError as e:
-        msg = str(e)
-        if "not found" in msg.lower():
-            raise HTTPException(status_code=404, detail=msg) from e
-        raise HTTPException(status_code=409, detail=msg) from e
-
-    if includes:
-        device = (
-            await db.execute(
-                select(Device).options(selectinload(Device.appium_node)).where(Device.id == uuid.UUID(info.device_id))
-            )
-        ).scalar_one_or_none()
-        if device is None:
-            run_service.mark_reserved_device_info_includes_unavailable(
-                info,
-                includes=includes,
-                reason="device_not_found",
-            )
-        else:
-            await run_service.hydrate_reserved_device_info(db, info, device, includes=includes)
-
-    assert info.claimed_by is not None
-    assert info.claimed_at is not None
-    RUN_CLAIMS_TOTAL.labels(
-        include_config="true" if "config" in includes else "false",
-        include_capabilities="true" if "capabilities" in includes else "false",
-    ).inc()
-    return ClaimResponse(
-        device_id=info.device_id,
-        identity_value=info.identity_value,
-        name=info.name,
-        connection_target=info.connection_target,
-        pack_id=info.pack_id,
-        platform_id=info.platform_id,
-        platform_label=info.platform_label,
-        os_version=info.os_version,
-        host_ip=info.host_ip,
-        device_type=info.device_type,
-        connection_type=info.connection_type,
-        manufacturer=info.manufacturer,
-        model=info.model,
-        claimed_by=info.claimed_by,
-        claimed_at=info.claimed_at,
-        config=info.config,
-        live_capabilities=info.live_capabilities,
-        test_data=info.test_data,
-        unavailable_includes=info.unavailable_includes,
-    )
-
-
-@router.post("/{run_id}/release", status_code=200)
-async def release_device(
-    run_id: uuid.UUID,
-    data: ReleaseRequest,
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
-    try:
-        device_id = uuid.UUID(data.device_id)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail="Invalid device_id") from e
-
-    try:
-        await run_service.release_claimed_device(
-            db,
-            run_id,
-            device_id=device_id,
-            worker_id=data.worker_id,
-        )
-    except ValueError as e:
-        msg = str(e)
-        if "not found" in msg.lower():
-            raise HTTPException(status_code=404, detail=msg) from e
-        raise HTTPException(status_code=409, detail=msg) from e
-    return {"status": "released"}
-
-
-@router.post(
-    "/{run_id}/devices/{device_id}/release-with-cooldown",
-    response_model=ReleaseWithCooldownResult,
-)
-async def release_device_with_cooldown(
-    run_id: uuid.UUID,
-    device_id: uuid.UUID,
-    data: ReleaseWithCooldownRequest,
-    db: AsyncSession = Depends(get_db),
-) -> ReleaseWithCooldownResponse | ReleaseEscalatedToMaintenanceResponse:
-    try:
-        (
-            reservation,
-            next_operational_state,
-            next_hold,
-            excluded_until,
-            cooldown_count,
-            escalated,
-            threshold,
-        ) = await run_service.release_claimed_device_with_cooldown(
-            db,
-            run_id,
-            device_id=device_id,
-            worker_id=data.worker_id,
-            reason=data.reason,
-            ttl_seconds=data.ttl_seconds,
-        )
-    except ValueError as e:
-        msg = str(e)
-        if "not found" in msg.lower():
-            raise HTTPException(status_code=404, detail=msg) from e
-        if "ttl_seconds must be <=" in msg:
-            raise HTTPException(status_code=422, detail=msg) from e
-        raise HTTPException(status_code=409, detail=msg) from e
-
-    if escalated:
-        return ReleaseEscalatedToMaintenanceResponse(
-            status="maintenance_escalated",
-            reservation=reservation,
-            device_operational_state=next_operational_state.value,
-            device_hold=next_hold.value if next_hold else None,
-            cooldown_count=cooldown_count,
-            threshold=threshold,
-        )
-    if excluded_until is None:
-        # Defensive: non-escalated path always sets excluded_until.
-        raise HTTPException(status_code=500, detail="Cooldown returned no expiry")
-    return ReleaseWithCooldownResponse(
-        status="cooldown_set",
-        reservation=reservation,
-        device_operational_state=next_operational_state.value,
-        device_hold=next_hold.value if next_hold else None,
-        retry_after_sec=data.ttl_seconds,
-        excluded_until=excluded_until,
-    )

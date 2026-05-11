@@ -11,14 +11,12 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.metrics import RUN_CLAIMS_TOTAL
-from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device
 from app.models.test_run import TestRun
-from app.schemas.run import ClaimResponse, ReservedDeviceInfo, RunCreate, UnavailableInclude
-from app.services import appium_node_resource_service, run_service
+from app.schemas.run import ReservedDeviceInfo, RunCreate, UnavailableInclude
+from app.services import run_service
 from app.services.run_service import _build_device_info
-from tests.helpers import create_device, create_device_record, create_reserved_run
+from tests.helpers import create_device, create_reserved_run
 
 
 @contextlib.contextmanager
@@ -42,11 +40,6 @@ def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
         yield statements
     finally:
         event.remove(sync_engine, "before_cursor_execute", listener)
-
-
-def _counter_value(metric: object) -> float:
-    raw: Any = metric
-    return float(raw._value.get())
 
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -78,21 +71,6 @@ def test_reserved_device_info_has_tier1_and_tier2_fields() -> None:
         "unavailable_includes",
     ):
         assert field in hints, f"{field} missing from ReservedDeviceInfo"
-
-
-def test_claim_response_has_tier1_and_tier2_fields() -> None:
-    hints = get_type_hints(ClaimResponse)
-    for field in (
-        "name",
-        "device_type",
-        "connection_type",
-        "manufacturer",
-        "model",
-        "config",
-        "live_capabilities",
-        "unavailable_includes",
-    ):
-        assert field in hints, f"{field} missing from ClaimResponse"
 
 
 def test_reserved_device_info_construction_without_tier1_still_valid() -> None:
@@ -128,34 +106,6 @@ async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession
     assert info.connection_type == "virtual"
     assert info.manufacturer == "Google"
     assert info.model == "Pixel 7"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_response_includes_tier1_fields(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="real-iphone-15",
-        device_type="real_device",
-        connection_type="usb",
-        manufacturer="Apple",
-        model="iPhone 15",
-        operational_state="available",
-    )
-    run = await create_reserved_run(db_session, name="tier1-claim", devices=[device])
-
-    response = await client.post(f"/api/runs/{run.id}/claim", json={"worker_id": "w1"})
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["name"] == "real-iphone-15"
-    assert body["device_type"] == "real_device"
-    assert body["connection_type"] == "usb"
-    assert body["manufacturer"] == "Apple"
-    assert body["model"] == "iPhone 15"
 
 
 @pytest.mark.db
@@ -198,38 +148,6 @@ async def test_run_list_reserved_devices_expose_tier1_fields(
     assert any(
         item["reserved_devices"] and item["reserved_devices"][0]["name"] == "run-list-device" for item in body["items"]
     )
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_release_with_cooldown_response_exposes_tier1_fields(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="cooldown-device",
-        device_type="real_device",
-        connection_type="usb",
-        manufacturer="OnePlus",
-        model="9 Pro",
-        operational_state="available",
-    )
-    run = await create_reserved_run(db_session, name="cd-run", devices=[device])
-    claim = await client.post(f"/api/runs/{run.id}/claim", json={"worker_id": "w1"})
-    assert claim.status_code == 200, claim.text
-
-    response = await client.post(
-        f"/api/runs/{run.id}/devices/{device.id}/release-with-cooldown",
-        json={"worker_id": "w1", "reason": "flaky", "ttl_seconds": 60},
-    )
-    assert response.status_code == 200, response.text
-    reservation = response.json()["reservation"]
-    assert reservation["name"] == "cooldown-device"
-    assert reservation["device_type"] == "real_device"
-    assert reservation["connection_type"] == "usb"
-    assert reservation["manufacturer"] == "OnePlus"
-    assert reservation["model"] == "9 Pro"
 
 
 def test_parse_includes_none_returns_empty_set() -> None:
@@ -402,107 +320,6 @@ async def test_reserve_include_config_marks_missing_device_unavailable_after_com
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_claim_with_include_config_returns_config(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="claim-cfg",
-        operational_state="available",
-    )
-    device.device_config = {"app_username": "alice", "credentials_secret": "shh"}
-    await db_session.commit()
-    run = await create_reserved_run(db_session, name="cfg-run", devices=[device])
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["config"]["app_username"] == "alice"
-    assert body["config"]["credentials_secret"] == "shh"
-    assert body["live_capabilities"] is None
-    assert body["unavailable_includes"] is None
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_with_include_capabilities_returns_capabilities(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="claim-caps",
-        operational_state="available",
-    )
-    run = await create_reserved_run(db_session, name="caps-run", devices=[device])
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=capabilities", json={"worker_id": "w1"})
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["live_capabilities"] is not None
-    assert body["unavailable_includes"] is None
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_include_config_marks_missing_device_unavailable_after_commit(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    device = await create_device(
-        db_session,
-        host_id=default_host_id,
-        name="deleted-before-claim-hydration",
-        operational_state="available",
-    )
-    device.device_config = {"credentials_secret": "shh"}
-    await db_session.commit()
-    run = await create_reserved_run(db_session, name="missing-device-claim", devices=[device])
-    original_claim_device = run_service.claim_device
-
-    async def claim_then_delete_device(
-        db: AsyncSession,
-        run_id: uuid.UUID,
-        *,
-        worker_id: str | None = None,
-    ) -> ReservedDeviceInfo:
-        info = await original_claim_device(db, run_id, worker_id=worker_id)
-        await db.execute(sa_delete(Device).where(Device.id == uuid.UUID(info.device_id)))
-        await db.commit()
-        return info
-
-    monkeypatch.setattr(run_service, "claim_device", claim_then_delete_device)
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["config"] is None
-    assert body["unavailable_includes"] == [{"include": "config", "reason": "device_not_found"}]
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_with_unknown_include_returns_wrapped_422(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(db_session, host_id=default_host_id, name="bad-inc", operational_state="available")
-    run = await create_reserved_run(db_session, name="bad-run", devices=[device])
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=garbage", json={"worker_id": "w1"})
-
-    assert response.status_code == 422
-    body = response.json()
-    assert body["error"]["details"] == {"code": "unknown_include", "values": ["garbage"]}
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_reserve_with_include_config_attaches_config_per_device(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
@@ -552,24 +369,6 @@ async def test_reserve_with_include_capabilities_returns_wrapped_422(
     assert response.status_code == 422
     body = response.json()
     assert body["error"]["details"]["code"] == "reserve_capabilities_unsupported"
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_increments_run_claims_counter_with_boolean_include_labels(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device(db_session, host_id=default_host_id, name="metrics-d", operational_state="available")
-    run = await create_reserved_run(db_session, name="metrics-run", devices=[device])
-
-    labels = RUN_CLAIMS_TOTAL.labels(include_config="true", include_capabilities="false")
-    before = _counter_value(labels)
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=config", json={"worker_id": "w1"})
-    assert response.status_code == 200, response.text
-
-    after = _counter_value(labels)
-    assert after == before + 1
 
 
 @pytest.mark.db
@@ -638,66 +437,3 @@ async def test_reserve_with_include_config_adds_o1_queries(
         f"({baseline_driver_pack_count} → {include_driver_pack_count}); "
         f"expected ≤{len(distinct_pairs)} (one per distinct pack/platform pair)"
     )
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_claim_with_include_capabilities_returns_live_caps_for_running_node(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="claim-caps-running",
-        connection_target="claim-caps-running",
-        name="Claim Caps Running",
-        device_config={
-            "appium_caps": {
-                "appium:noReset": True,
-                "appium:systemPort": 9999,
-            }
-        },
-        operational_state="available",
-    )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        state=NodeState.running,
-    )
-    db_session.add(node)
-    await db_session.flush()
-    expected_system_port = await appium_node_resource_service.reserve(
-        db_session,
-        host_id=device.host_id,
-        capability_key="appium:systemPort",
-        start_port=8200,
-        node_id=node.id,
-    )
-    expected_chromedriver_port = await appium_node_resource_service.reserve(
-        db_session,
-        host_id=device.host_id,
-        capability_key="appium:chromedriverPort",
-        start_port=9515,
-        node_id=node.id,
-    )
-    expected_mjpeg_port = await appium_node_resource_service.reserve(
-        db_session,
-        host_id=device.host_id,
-        capability_key="appium:mjpegServerPort",
-        start_port=9200,
-        node_id=node.id,
-    )
-    await db_session.commit()
-
-    run = await create_reserved_run(db_session, name="caps-live-run", devices=[device])
-
-    response = await client.post(f"/api/runs/{run.id}/claim?include=capabilities", json={"worker_id": "w1"})
-
-    assert response.status_code == 200, response.text
-    caps = response.json()["live_capabilities"]
-    assert caps is not None
-    assert caps["appium:noReset"] is True
-    assert caps["appium:systemPort"] == expected_system_port
-    assert caps["appium:chromedriverPort"] == expected_chromedriver_port
-    assert caps["appium:mjpegServerPort"] == expected_mjpeg_port

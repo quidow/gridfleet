@@ -79,7 +79,7 @@ def test_build_error_session_payload_ignores_unknown_enum_values() -> None:
 
 
 def test_only_payload_builder_is_public() -> None:
-    assert sessions.__all__ == ["build_error_session_payload"]
+    assert sessions.__all__ == ["build_error_session_payload", "resolve_device_handle_from_driver"]
     assert not hasattr(sessions, "raw_attempted_capabilities")
     assert not hasattr(sessions, "infer_requested_platform_id")
     assert not hasattr(sessions, "read_enum_capability")

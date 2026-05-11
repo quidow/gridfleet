@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-__all__ = ["build_error_session_payload"]
+if TYPE_CHECKING:
+    from .client import GridFleetClient
+
+__all__ = ["build_error_session_payload", "resolve_device_handle_from_driver"]
 
 _KNOWN_DEVICE_TYPES = {"real_device", "emulator", "simulator"}
 _KNOWN_CONNECTION_TYPES = {"usb", "network", "virtual"}
@@ -74,3 +77,14 @@ def build_error_session_payload(
         "error_type": type(exc).__name__,
         "error_message": str(exc),
     }
+
+
+def resolve_device_handle_from_driver(driver: Any, *, client: GridFleetClient) -> dict[str, Any]:
+    """Resolve a canonical device handle from a running WebDriver session."""
+    caps = getattr(driver, "capabilities", None) or {}
+    if not isinstance(caps, dict):
+        raise RuntimeError("driver capabilities missing appium:udid; cannot resolve device handle")
+    target = caps.get("appium:udid") or caps.get("appium:deviceName")
+    if not target:
+        raise RuntimeError("driver capabilities missing appium:udid; cannot resolve device handle")
+    return client.get_device_by_connection_target(str(target))

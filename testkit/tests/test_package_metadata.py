@@ -33,10 +33,8 @@ def test_bucket_a_public_exports_are_available() -> None:
 def test_documented_public_exports_are_available() -> None:
     expected = {
         "AllocatedDevice",
-        "CooldownResult",
         "GridFleetClient",
         "HeartbeatThread",
-        "NoClaimableDevicesError",
         "ReserveCapabilitiesUnsupportedError",
         "UnavailableInclude",
         "UnknownIncludeError",

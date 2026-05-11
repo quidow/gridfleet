@@ -32,14 +32,13 @@ describe('deriveRunsSummary', () => {
     expect(deriveRunsSummary(runs, now).running).toBe(2);
   });
 
-  it('counts queued runs from pending+preparing+ready states', () => {
+  it('counts queued runs from pending+preparing states', () => {
     const runs = [
       baseRun({ id: 'a', state: 'pending' }),
       baseRun({ id: 'b', state: 'preparing' }),
-      baseRun({ id: 'c', state: 'ready' }),
       baseRun({ id: 'd', state: 'active' }),
     ];
-    expect(deriveRunsSummary(runs, now).queued).toBe(3);
+    expect(deriveRunsSummary(runs, now).queued).toBe(2);
   });
 
   it('sums passed sessions only for runs completed in last 24h', () => {

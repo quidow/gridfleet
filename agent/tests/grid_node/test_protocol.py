@@ -36,6 +36,24 @@ def test_build_slots_emits_android_native_and_chrome_slots() -> None:
     assert all(slot.stereotype.caps["platformName"] == "Android" for slot in slots)
 
 
+def test_build_slots_defaults_grid_run_id_to_free() -> None:
+    slots = build_slots(
+        base_caps={"platformName": "Android", "appium:platform": "android_mobile"},
+        grid_slots=["native", "chrome"],
+    )
+
+    assert all(slot.stereotype.caps["gridfleet:run_id"] == "free" for slot in slots)
+
+
+def test_build_slots_preserves_explicit_grid_run_id() -> None:
+    slots = build_slots(
+        base_caps={"platformName": "Android", "gridfleet:run_id": "run-1"},
+        grid_slots=["native"],
+    )
+
+    assert slots[0].stereotype.caps["gridfleet:run_id"] == "run-1"
+
+
 def test_slot_round_trip_dict() -> None:
     slot = Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "iOS"}), state="AVAILABLE")
     assert Slot.from_dict(slot.to_dict()) == slot

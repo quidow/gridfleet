@@ -15,7 +15,6 @@ from app.database import Base
 class RunState(enum.StrEnum):
     pending = "pending"
     preparing = "preparing"
-    ready = "ready"
     active = "active"
     completing = "completing"
     completed = "completed"

@@ -5,11 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from app.models.test_run import RunState, TestRun
-from app.services.lifecycle_policy_actions import exclude_run_if_needed
+from app.services.lifecycle_policy_actions import exclude_run_if_needed, restore_run_if_needed
 
 
 def _make_device(
@@ -51,6 +52,18 @@ async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tup
     )
     db_session.add(run)
     await db_session.flush()
+
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_grid_run_id=run.id,
+            grid_run_id=run.id,
+        )
+    )
 
     reservation = DeviceReservation(
         run=run,
@@ -128,3 +141,48 @@ async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
 
     await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
     assert device.hold == DeviceHold.reserved
+
+
+async def test_exclude_run_if_needed_clears_desired_grid_run_id(
+    db_session: AsyncSession,
+    device_with_active_run: tuple[Device, TestRun],
+) -> None:
+    device, _run = device_with_active_run
+
+    await exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
+    await db_session.commit()
+
+    await db_session.refresh(device, ["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.desired_grid_run_id is None
+
+
+async def test_restore_run_if_needed_restores_desired_grid_run_id(
+    db_session: AsyncSession,
+    device_with_active_run: tuple[Device, TestRun],
+) -> None:
+    device, run = device_with_active_run
+    returned_run, entry = await exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
+    assert returned_run is not None
+    assert entry is not None
+    await db_session.refresh(device, ["appium_node"])
+    assert device.appium_node is not None
+    device.appium_node.desired_grid_run_id = None
+    await db_session.commit()
+
+    restored_run, restored_entry = await restore_run_if_needed(
+        db_session,
+        device,
+        returned_run,
+        entry,
+        reason="Node recovered",
+        source="test",
+    )
+    await db_session.commit()
+
+    assert restored_run is not None
+    assert restored_entry is not None
+    assert restored_entry.excluded is False
+    await db_session.refresh(device, ["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.desired_grid_run_id == run.id

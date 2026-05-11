@@ -13,7 +13,7 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import GridFleetClient, _default_grid_url
-from .sessions import build_error_session_payload
+from .sessions import build_error_session_payload, resolve_device_handle_from_driver
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -144,6 +144,16 @@ def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> d
         return get_device_test_data_for_driver(appium_driver, gridfleet_client=gridfleet_client)
     except ValueError as exc:
         pytest.skip("Could not determine device connection target from session capabilities")
+        raise RuntimeError("unreachable: pytest.skip did not raise") from exc
+
+
+@pytest.fixture
+def device_handle(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict[str, Any]:
+    """Fetch the canonical manager device row after Grid assigns a runtime target."""
+    try:
+        return resolve_device_handle_from_driver(appium_driver, client=gridfleet_client)
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
         raise RuntimeError("unreachable: pytest.skip did not raise") from exc
 
 

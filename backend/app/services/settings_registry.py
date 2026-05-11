@@ -157,16 +157,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=100,
     ),
     SettingDefinition(
-        key="general.claim_default_retry_after_sec",
-        category="general",
-        setting_type="int",
-        default=5,
-        description="Retry-After value returned when no run devices are claimable",
-        env_var="GRIDFLEET_CLAIM_DEFAULT_RETRY_AFTER_SEC",
-        min_value=1,
-        max_value=300,
-    ),
-    SettingDefinition(
         key="general.property_refresh_interval_sec",
         category="general",
         setting_type="int",
@@ -622,16 +612,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Default heartbeat timeout",
         min_value=30,
         max_value=600,
-    ),
-    SettingDefinition(
-        key="reservations.claim_ttl_seconds",
-        category="reservations",
-        setting_type="int",
-        default=120,
-        description="How long a worker device claim stays valid without release",
-        env_var="GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS",
-        min_value=10,
-        max_value=3600,
     ),
     SettingDefinition(
         key="reservations.reaper_interval_sec",

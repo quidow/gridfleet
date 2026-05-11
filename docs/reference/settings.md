@@ -26,7 +26,6 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for Grid session queueing |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated to maintenance and excluded from the run; `0` disables escalation |
-| `general.claim_default_retry_after_sec` | `general` | `int` | `5` | `GRIDFLEET_CLAIM_DEFAULT_RETRY_AFTER_SEC` | `1..300` | Retry-After value returned when no run devices are claimable |
 | `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Interval for background property refresh |
 | `general.session_viability_interval_sec` | `general` | `int` | `86400` | none | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | none | `10..600` | Timeout for a session-viability probe |
@@ -56,7 +55,6 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |
 | `reservations.max_ttl_minutes` | `reservations` | `int` | `180` | none | `1..1440` | Hard cap for reservation TTL |
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |
-| `reservations.claim_ttl_seconds` | `reservations` | `int` | `120` | `GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS` | `10..3600` | Claim lease duration before a stale worker claim can be reclaimed |
 | `reservations.reaper_interval_sec` | `reservations` | `int` | `15` | `GRIDFLEET_RUN_REAPER_INTERVAL_SEC` | `5..300` | Interval for the stale-run reaper loop |
 | `retention.sessions_days` | `retention` | `int` | `90` | none | `1..3650` | Delete completed sessions older than N days |
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |

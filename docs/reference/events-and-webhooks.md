@@ -104,7 +104,6 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `session.started` | `session_id`, `device_id`, `device_name`, optional `test_name`, optional `run_id`, optional requested-lane fields | Grid session sync and direct terminal setup-failure registration |
 | `session.ended` | `session_id`, `device_id`, `device_name`, `status`, optional requested-lane fields, optional `error_type`, optional `error_message` | Grid session sync and external terminal status reporting |
 | `run.created` | `run_id`, `name`, `device_count`, `created_by` | run creation |
-| `run.ready` | `run_id`, `name` | run state transition |
 | `run.active` | `run_id`, `name` | run state transition |
 | `run.completed` | `run_id`, `name` | run completion |
 | `run.cancelled` | `run_id`, `name` | cancel and force-release flows |
@@ -151,7 +150,6 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 - `lifecycle_recovered`
 - `lifecycle_run_excluded`
 - `lifecycle_run_restored`
-- `lifecycle_run_cooldown_escalated` — recorded when a device's release-with-cooldown count for a single run reaches the configured threshold and the device is moved to maintenance. The `details` JSON column carries: `cooldown_count`, `threshold`, `reason`, `worker_id`, `run_id`, `run_name`.
 
 ## Notes
 

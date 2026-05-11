@@ -47,8 +47,6 @@ class DeviceReservation(Base):
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     excluded_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cooldown_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -84,6 +82,4 @@ class DeviceReservation(Base):
             "cooldown_escalated": bool(
                 self.exclusion_reason and self.exclusion_reason.startswith("Exceeded cooldown threshold ")
             ),
-            "claimed_by": self.claimed_by,
-            "claimed_at": self.claimed_at.isoformat() if self.claimed_at is not None else None,
         }

@@ -423,6 +423,7 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         "appium:udid": "device-002",
         "platformName": "android_mobile",
         "appium:platform": "android_mobile",
+        "gridfleet:run_id": "free",
     }
     await manager.shutdown()
 

@@ -281,6 +281,7 @@ def test_appium_driver_setup_failure_registers_device_less_error_session(monkeyp
         "appium:connection_type": "network",
         "appium:appPackage": "io.appium.android.apis",
         "platformName": "Android",
+        "gridfleet:run_id": "free",
         "gridfleet:testName": "test_broken",
         "appium:platform": "android_mobile",
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Final, cast
 from urllib.parse import quote
 
@@ -311,6 +312,37 @@ async def appium_stop(
         json_body={"port": port},
         timeout=timeout,
     )
+
+
+async def grid_node_reregister(
+    host: str,
+    agent_port: int,
+    node_id: uuid.UUID,
+    *,
+    target_run_id: uuid.UUID | None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 20,
+) -> uuid.UUID | None:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/grid/node/{node_id}/reregister",
+        endpoint="grid_node_reregister",
+        host=host,
+        agent_port=agent_port,
+        http_client_factory=http_client_factory,
+        json_body={"target_run_id": str(target_run_id) if target_run_id is not None else None},
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="re-register grid node")
+    payload = _as_dict(response.json())
+    if payload is None or "grid_run_id" not in payload:
+        raise AgentUnreachableError(host, f"Agent grid node re-register failed on host {host} (invalid payload)")
+    observed = payload["grid_run_id"]
+    if observed is None:
+        return None
+    if not isinstance(observed, str):
+        raise AgentUnreachableError(host, f"Agent grid node re-register failed on host {host} (invalid grid_run_id)")
+    return uuid.UUID(observed)
 
 
 def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:

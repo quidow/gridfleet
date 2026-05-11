@@ -16,7 +16,7 @@ import type { DeviceChipStatus } from '../../types';
 
 type GridHealthTone = 'ready' | 'warning' | 'error';
 
-const ACTIVE_RUN_STATES: readonly RunState[] =['pending', 'preparing', 'ready', 'active', 'completing'];
+const ACTIVE_RUN_STATES: readonly RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 interface DashboardFleetSummary {
   total: number;

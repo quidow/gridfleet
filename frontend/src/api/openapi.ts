@@ -569,6 +569,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/devices/by-connection-target/{target}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Device By Connection Target */
+        get: operations["get_device_by_connection_target_api_devices_by_connection_target__target__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices/verification-jobs": {
         parameters: {
             query?: never;
@@ -1782,23 +1799,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/runs/{run_id}/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claim Device */
-        post: operations["claim_device_api_runs__run_id__claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/runs/{run_id}/complete": {
         parameters: {
             query?: never;
@@ -1827,23 +1827,6 @@ export interface paths {
         put?: never;
         /** Report Preparation Failed */
         post: operations["report_preparation_failed_api_runs__run_id__devices__device_id__preparation_failed_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/runs/{run_id}/devices/{device_id}/release-with-cooldown": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Device With Cooldown */
-        post: operations["release_device_with_cooldown_api_runs__run_id__devices__device_id__release_with_cooldown_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1895,23 +1878,6 @@ export interface paths {
         put?: never;
         /** Signal Ready */
         post: operations["signal_ready_api_runs__run_id__ready_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/runs/{run_id}/release": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Device */
-        post: operations["release_device_api_runs__run_id__release_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2351,58 +2317,6 @@ export interface components {
             tags: {
                 [key: string]: string;
             };
-        };
-        /** ClaimRequest */
-        ClaimRequest: {
-            /** Worker Id */
-            worker_id?: string | null;
-        };
-        /** ClaimResponse */
-        ClaimResponse: {
-            /** Claimed At */
-            claimed_at: string;
-            /** Claimed By */
-            claimed_by: string;
-            /** Config */
-            config?: {
-                [key: string]: unknown;
-            } | null;
-            /** Connection Target */
-            connection_target?: string | null;
-            /** Connection Type */
-            connection_type?: string | null;
-            /** Device Id */
-            device_id: string;
-            /** Device Type */
-            device_type?: string | null;
-            /** Host Ip */
-            host_ip?: string | null;
-            /** Identity Value */
-            identity_value: string;
-            /** Live Capabilities */
-            live_capabilities?: {
-                [key: string]: unknown;
-            } | null;
-            /** Manufacturer */
-            manufacturer?: string | null;
-            /** Model */
-            model?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Os Version */
-            os_version: string;
-            /** Pack Id */
-            pack_id: string;
-            /** Platform Id */
-            platform_id: string;
-            /** Platform Label */
-            platform_label?: string | null;
-            /** Test Data */
-            test_data?: {
-                [key: string]: unknown;
-            } | null;
-            /** Unavailable Includes */
-            unavailable_includes?: components["schemas"]["UnavailableInclude"][] | null;
         };
         /** ClearTransitionBody */
         ClearTransitionBody: {
@@ -4363,65 +4277,8 @@ export interface components {
             /** Version */
             version?: string | null;
         };
-        /** ReleaseEscalatedToMaintenanceResponse */
-        ReleaseEscalatedToMaintenanceResponse: {
-            /** Cooldown Count */
-            cooldown_count: number;
-            /** Device Hold */
-            device_hold: string | null;
-            /** Device Operational State */
-            device_operational_state: string;
-            reservation: components["schemas"]["ReservedDeviceInfo"];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            status: "maintenance_escalated";
-            /** Threshold */
-            threshold: number;
-        };
-        /** ReleaseRequest */
-        ReleaseRequest: {
-            /** Device Id */
-            device_id: string;
-            /** Worker Id */
-            worker_id: string;
-        };
-        /** ReleaseWithCooldownRequest */
-        ReleaseWithCooldownRequest: {
-            /** Reason */
-            reason: string;
-            /** Ttl Seconds */
-            ttl_seconds: number;
-            /** Worker Id */
-            worker_id: string;
-        };
-        /** ReleaseWithCooldownResponse */
-        ReleaseWithCooldownResponse: {
-            /** Device Hold */
-            device_hold: string | null;
-            /** Device Operational State */
-            device_operational_state: string;
-            /**
-             * Excluded Until
-             * Format: date-time
-             */
-            excluded_until: string;
-            reservation: components["schemas"]["ReservedDeviceInfo"];
-            /** Retry After Sec */
-            retry_after_sec: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            status: "cooldown_set";
-        };
         /** ReservedDeviceInfo */
         ReservedDeviceInfo: {
-            /** Claimed At */
-            claimed_at?: string | null;
-            /** Claimed By */
-            claimed_by?: string | null;
             /** Config */
             config?: {
                 [key: string]: unknown;
@@ -4649,7 +4506,7 @@ export interface components {
          * RunState
          * @enum {string}
          */
-        RunState: "pending" | "preparing" | "ready" | "active" | "completing" | "completed" | "failed" | "expired" | "cancelled";
+        RunState: "pending" | "preparing" | "active" | "completing" | "completed" | "failed" | "expired" | "cancelled";
         /** RuntimePolicy */
         RuntimePolicy: {
             /** Appium Driver Version */
@@ -4854,10 +4711,14 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * SessionViabilityCheckedBy
+         * @enum {string}
+         */
+        SessionViabilityCheckedBy: "scheduled" | "manual" | "recovery" | "verification";
         /** SessionViabilityRead */
         SessionViabilityRead: {
-            /** Checked By */
-            checked_by?: ("scheduled" | "manual" | "recovery") | null;
+            checked_by?: components["schemas"]["SessionViabilityCheckedBy"] | null;
             /** Error */
             error?: string | null;
             /** Last Attempted At */
@@ -6303,6 +6164,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BulkOperationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_device_by_connection_target_api_devices_by_connection_target__target__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                target: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceRead"];
                 };
             };
             /** @description Validation Error */
@@ -8875,44 +8767,6 @@ export interface operations {
             };
         };
     };
-    claim_device_api_runs__run_id__claim_post: {
-        parameters: {
-            query?: {
-                /** @description Comma-separated: config,capabilities,test_data */
-                include?: string | null;
-            };
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ClaimRequest"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaimResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     complete_run_api_runs__run_id__complete_post: {
         parameters: {
             query?: never;
@@ -8967,42 +8821,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_device_with_cooldown_api_runs__run_id__devices__device_id__release_with_cooldown_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-                device_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReleaseWithCooldownRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReleaseWithCooldownResponse"] | components["schemas"]["ReleaseEscalatedToMaintenanceResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9096,43 +8914,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_device_api_runs__run_id__release_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReleaseRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
                 };
             };
             /** @description Validation Error */

@@ -1,7 +1,7 @@
 import type { RunRead, RunState } from '../../types';
 
 const RUNNING_STATES: ReadonlySet<RunState> = new Set(['active', 'completing']);
-const QUEUED_STATES: ReadonlySet<RunState> = new Set(['pending', 'preparing', 'ready']);
+const QUEUED_STATES: ReadonlySet<RunState> = new Set(['pending', 'preparing']);
 
 export type RunsSummary = {
   running: number;

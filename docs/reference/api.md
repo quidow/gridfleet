@@ -39,6 +39,7 @@ Current auth behavior:
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/devices` | List devices with readiness, reservation, lifecycle, and hardware telemetry summary data | filters: `platform_id`, `status`, `host_id`, `identity_value`, `connection_target`, `device_type`, `connection_type`, `os_version`, `search`, `hardware_health_status`, `hardware_telemetry_state`, `needs_attention`, `tags.<key>` | `DeviceRead[]` |
+| `GET` | `/api/devices/by-connection-target/{target}` | Resolve the manager device row for a runtime connection target reported by Appium/Grid | path `target` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
@@ -146,11 +147,8 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `POST` | `/api/runs` | Create a reservation run; add `?include=config` to inline config per device | `RunCreate` | `RunCreateResponse` (`201`) |
 | `GET` | `/api/runs` | List runs | filters: `state`, `created_from`, `created_to`, `limit`, `offset`, `sort_by`, `sort_dir` | `{ items: RunRead[], total, limit, offset }` |
 | `GET` | `/api/runs/{run_id}` | Read full run detail | path `run_id` | `RunDetail` |
-| `POST` | `/api/runs/{run_id}/ready` | Transition run to `ready` | path `run_id` | `RunRead` |
+| `POST` | `/api/runs/{run_id}/ready` | Compatibility alias that transitions a preparing run to `active` | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/active` | Transition run to `active` | path `run_id` | `RunRead` |
-| `POST` | `/api/runs/{run_id}/claim` | Atomically claim one unclaimed active reservation for a CI worker; add `?include=config,capabilities` to inline config and live Appium capabilities | optional `ClaimRequest` | `ClaimResponse` |
-| `POST` | `/api/runs/{run_id}/release` | Release one claimed reservation back to the run's unclaimed pool | `ReleaseRequest` | `{ status: "released" }` |
-| `POST` | `/api/runs/{run_id}/devices/{device_id}/release-with-cooldown` | Release one worker claim and cool that reservation down inside the same run | `ReleaseWithCooldownRequest` | `ReleaseWithCooldownResponse` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/heartbeat` | Refresh heartbeat and read current state | path `run_id` | `HeartbeatResponse` |
 | `POST` | `/api/runs/{run_id}/complete` | Complete a run and release devices | path `run_id` | `RunRead` |
@@ -170,74 +168,11 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 - healthy reserved siblings remain attached to the run
 - invalid run/device state currently returns `409`
 
-`POST /api/runs/{run_id}/claim` accepts an optional request body:
-
-```json
-{ "worker_id": "gw0" }
-```
-
-If `worker_id` is omitted, the manager generates an anonymous claim owner. The response is the claimed device info plus:
-
-- `claimed_by`: the supplied or generated claim owner
-- `claimed_at`: ISO timestamp for the claim lease
-
-The claim operation is database-atomic for concurrent workers. It returns `404` when the run is missing and `409` when the run is terminal or no unclaimed, non-excluded reserved device is available. Stale claims are expired lazily according to `reservations.claim_ttl_seconds`.
-
-When no device is claimable, `409` responses include a `Retry-After` header and structured details for testkit clients:
-
-```json
-{
-  "error": {
-    "code": "CONFLICT",
-    "message": "No unclaimed devices available in this run",
-    "details": {
-      "error": "no_claimable_devices",
-      "retry_after_sec": 5,
-      "next_available_at": "2026-05-03T20:00:00Z"
-    }
-  }
-}
-```
-
-`next_available_at` is `null` when the server cannot compute a cooldown expiry.
-
 `POST /api/runs` supports an optional `?include=` query parameter:
 
 - `include=config` — inlines the Appium configuration for each reserved device in the response. Useful when the CI orchestrator wants device-level config without a follow-up request.
-- `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a device is claimed and a session is established.
-
-`POST /api/runs/{run_id}/claim` supports `?include=` to embed extra data in the `ClaimResponse`:
-
-- `include=config` — inlines the Appium configuration for the claimed device.
-- `include=capabilities` — inlines the live Appium capabilities reported by the agent for the claimed device.
-- Both can be combined: `?include=config,capabilities`.
+- `include=capabilities` is rejected with `422` (`details.code = "reserve_capabilities_unsupported"`) because live Appium capabilities are only available after a Grid session is established. Resolve the assigned device from the session's connection target with `GET /api/devices/by-connection-target/{target}`.
 - Unknown include values return `422` with `details.code = "unknown_include"`.
-
-`POST /api/runs/{run_id}/release` accepts:
-
-```json
-{
-  "device_id": "reserved-device-uuid",
-  "worker_id": "gw0"
-}
-```
-
-Release is owner-checked: `worker_id` must match the active claim owner. Wrong owner, unclaimed device, and device-not-in-run conditions return `409`; malformed `device_id` returns `422`.
-
-`POST /api/runs/{run_id}/devices/{device_id}/release-with-cooldown` accepts:
-
-```json
-{
-  "worker_id": "gw0",
-  "reason": "appium launch timeout",
-  "ttl_seconds": 60
-}
-```
-
-Release with cooldown is also owner-checked. It clears `claimed_by` / `claimed_at` and increments `cooldown_count` on the reservation row. The response is a discriminated union on `status`:
-
-- `"cooldown_set"` (default) — sets `excluded_until = now + ttl_seconds`. The same run can reclaim the reservation after the TTL expires. Cooldowns are run-scoped in v1: completing or cancelling the run releases the physical device normally and does not quarantine it across future runs.
-- `"maintenance_escalated"` — fired when `cooldown_count` reaches `general.device_cooldown_escalation_threshold` (default `3`, set to `0` to disable). The reservation is permanently excluded (`excluded_until = null`), the device is moved to maintenance, and the response includes `cooldown_count` and `threshold` instead of `excluded_until`.
 
 ## Sessions
 

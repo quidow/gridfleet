@@ -54,30 +54,6 @@ async def test_reserve_with_include_test_data_returns_inline(
     assert devices[0]["test_data"] == {"feature_flag": "x"}
 
 
-async def test_claim_with_include_test_data_returns_inline(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="udid-include-2",
-        name="dev-include-2",
-        operational_state=DeviceOperationalState.available,
-        test_data={"k": "v"},
-    )
-    await db_session.commit()
-
-    run = await _create_run_with_include(client)
-    run_id = run["id"]
-    resp = await client.post(
-        f"/api/runs/{run_id}/claim",
-        params={"include": "test_data"},
-        json={"worker_id": "gw0"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["test_data"] == {"k": "v"}
-
-
 async def test_reserve_without_include_omits_test_data(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:

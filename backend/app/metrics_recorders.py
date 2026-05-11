@@ -55,6 +55,19 @@ APPIUM_DESIRED_STATE_WRITES = Counter(
     "Total writes of AppiumNode.desired_state by Phase 3 writers.",
     labelnames=("caller", "target_state"),
 )
+APPIUM_DESIRED_GRID_RUN_ID_WRITES = Counter(
+    "gridfleet_appium_desired_grid_run_id_writes_total",
+    "Total writes of AppiumNode.desired_grid_run_id by the run-routing writer.",
+    labelnames=("caller",),
+)
+GRID_NODE_RUN_ID_CONVERGED = Counter(
+    "gridfleet_grid_node_run_id_converged_total",
+    "Successful Grid node re-registrations that converged observed grid_run_id.",
+)
+GRID_NODE_RUN_ID_RECONCILE_FAILURES = Counter(
+    "gridfleet_grid_node_run_id_reconcile_failures_total",
+    "Grid node run-id reconciler dispatch failures.",
+)
 APPIUM_TRANSITION_TOKEN_WRITES = Counter(
     "appium_transition_token_writes_total",
     "Total transition_token allocations by Phase 3 writers.",
@@ -102,11 +115,6 @@ EVENTS_PUBLISHED_TOTAL = Counter(
     "events_published_total",
     "System events published by the backend.",
     labelnames=("event_type",),
-)
-RUN_CLAIMS_TOTAL = Counter(
-    "gridfleet_run_claims_total",
-    "Total successful claim_device responses, labeled by which include flags were requested.",
-    labelnames=("include_config", "include_capabilities"),
 )
 ACTIVE_SSE_CONNECTIONS = Gauge(
     "active_sse_connections",

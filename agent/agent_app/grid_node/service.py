@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import platform
 import time
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from agent_app.grid_node.config import GridNodeConfig
 
 _GRID_NODE_VERSION = "4.41.0"
+logger = logging.getLogger(__name__)
 
 
 def _build_os_info() -> dict[str, str]:
@@ -170,6 +172,16 @@ class GridNodeService:
         self._requested_stop = False
         self._heartbeat_task: asyncio.Task[None] | None = None
 
+    @property
+    def node_id(self) -> str:
+        return self.config.node_id
+
+    def slot_stereotype_caps(self) -> dict[str, object]:
+        slots = self.state.snapshot_slots()
+        if not slots:
+            return {}
+        return dict(slots[0].stereotype.caps)
+
     async def start(self) -> None:
         if self._started:
             return
@@ -239,6 +251,36 @@ class GridNodeService:
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
+    async def reregister_with_stereotype(
+        self,
+        *,
+        new_caps: dict[str, object],
+        drain_grace_sec: float | None = None,
+    ) -> None:
+        if not self._started:
+            raise RuntimeError("GridNodeService.reregister_with_stereotype called before start()")
+
+        grace = self.config.session_timeout_sec if drain_grace_sec is None else drain_grace_sec
+        await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
+
+        deadline = asyncio.get_running_loop().time() + grace
+        while True:
+            if not any(slot.state == "BUSY" for slot in self.state.snapshot().slots):
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning("grid_node_drain_timeout", extra={"node_id": self.config.node_id, "waited_sec": grace})
+                break
+            await asyncio.sleep(0.05)
+
+        await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
+        await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
+
+        self.state.replace_slot_stereotype(new_caps)
+
+        await asyncio.sleep(0.25)
+        await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
+        await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+
     def snapshot(self) -> dict[str, object]:
         return {"requested_stop": self._requested_stop, "started": self._started}
 
@@ -251,11 +293,12 @@ class GridNodeService:
 
     def _node_payload(self) -> dict[str, object]:
         snapshot = self.state.snapshot()
+        stereotypes_by_slot_id = {slot.id: slot.stereotype.to_dict() for slot in self.state.snapshot_slots()}
         availability = "DRAINING" if snapshot.drain else "UP"
         slot_payloads: list[dict[str, object]] = []
         epoch_iso = "1970-01-01T00:00:00Z"
-        for runtime_slot, source_slot in zip(snapshot.slots, self.config.slots, strict=True):
-            stereotype = source_slot.stereotype.to_dict()
+        for runtime_slot, _source_slot in zip(snapshot.slots, self.config.slots, strict=True):
+            stereotype = stereotypes_by_slot_id[runtime_slot.slot_id]
             session: dict[str, object] | None = None
             last_started = epoch_iso
             if runtime_slot.session_id is not None:

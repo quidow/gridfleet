@@ -24,7 +24,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
             name="Run Transition Race 001",
             hold=DeviceHold.reserved,
         )
-        run = await create_reserved_run(setup, name="run-transition-race", devices=[device], state=RunState.ready)
+        run = await create_reserved_run(setup, name="run-transition-race", devices=[device], state=RunState.preparing)
         run_id = run.id
 
     async def activate() -> str:
@@ -38,7 +38,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
     async with db_session_maker() as cancel_db:
         locked_run_result = await cancel_db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
         locked_run = locked_run_result.scalar_one()
-        assert locked_run.state == RunState.ready
+        assert locked_run.state == RunState.preparing
 
         active_task = asyncio.create_task(activate())
         await asyncio.sleep(0.15)

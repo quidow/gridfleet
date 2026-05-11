@@ -1,10 +1,10 @@
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import HTTPException
-from sqlalchemy import Select, and_, asc, desc, exists, false, func, or_, select, update
+from sqlalchemy import Select, and_, asc, desc, exists, func, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,7 +32,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.device_event_service import record_event
+from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -40,11 +40,6 @@ from app.services.pack_platform_resolver import assert_runnable
 from app.services.settings_service import settings_service
 
 logger = logging.getLogger(__name__)
-
-# Prefix written into exclusion_reason by the escalation path.
-# Must match exactly what release_claimed_device_with_cooldown writes so that
-# cooldown_escalated can be derived by a simple startswith() check.
-_COOLDOWN_ESCALATION_REASON_PREFIX = "Exceeded cooldown threshold "
 
 
 class _UnmetRequirementError(Exception):
@@ -54,28 +49,8 @@ class _UnmetRequirementError(Exception):
         super().__init__(f"{requirement.pack_id}/{requirement.platform_id}")
 
 
-class NoClaimableDevicesError(ValueError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        retry_after_sec: int,
-        next_available_at: datetime | None,
-    ) -> None:
-        self.retry_after_sec = retry_after_sec
-        self.next_available_at = next_available_at
-        super().__init__(message)
-
-
 def now_utc() -> datetime:
     return datetime.now(UTC)
-
-
-def _cooldown_remaining_sec(excluded_until: datetime | None, *, now: datetime | None = None) -> int | None:
-    if excluded_until is None:
-        return None
-    reference = now or now_utc()
-    return max(0, int((excluded_until - reference).total_seconds()))
 
 
 def _reserved_entry_is_excluded(entry: DeviceReservation) -> bool:
@@ -84,25 +59,6 @@ def _reserved_entry_is_excluded(entry: DeviceReservation) -> bool:
     if entry.excluded_until is None:
         return True
     return entry.excluded_until > now_utc()
-
-
-def _reservation_claimable_expr(now: datetime) -> ColumnElement[bool]:
-    return or_(
-        DeviceReservation.excluded == false(),
-        and_(
-            DeviceReservation.excluded.is_(True),
-            DeviceReservation.excluded_until.is_not(None),
-            DeviceReservation.excluded_until <= now,
-        ),
-    )
-
-
-def _clear_expired_cooldown(entry: DeviceReservation, now: datetime) -> None:
-    if entry.excluded and entry.excluded_until is not None and entry.excluded_until <= now:
-        entry.excluded = False
-        entry.exclusion_reason = None
-        entry.excluded_at = None
-        entry.excluded_until = None
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
@@ -147,10 +103,6 @@ def _reserved_entry_for_device(
     if not matching:
         return None
     return cast("DeviceReservation", matching[-1])
-
-
-def _generated_worker_id() -> str:
-    return f"anonymous-{uuid.uuid4().hex[:8]}"
 
 
 def parse_includes(value: str | None, *, allowed: set[str]) -> set[str]:
@@ -238,38 +190,6 @@ def mark_reserved_device_info_includes_unavailable(
         if include in includes and include not in existing:
             unavailable.append(UnavailableInclude(include=include, reason=reason))
     info.unavailable_includes = unavailable or None
-
-
-def _reservation_to_claim_response(entry: DeviceReservation) -> ReservedDeviceInfo:
-    device = entry.device
-    return ReservedDeviceInfo(
-        device_id=str(entry.device_id),
-        identity_value=entry.identity_value,
-        name=device.name if device is not None else None,
-        connection_target=entry.connection_target,
-        pack_id=entry.pack_id,
-        platform_id=entry.platform_id,
-        platform_label=entry.platform_label,
-        os_version=entry.os_version,
-        host_ip=entry.host_ip,
-        device_type=(device.device_type.value if device is not None and device.device_type is not None else None),
-        connection_type=(
-            device.connection_type.value if device is not None and device.connection_type is not None else None
-        ),
-        manufacturer=device.manufacturer if device is not None else None,
-        model=device.model if device is not None else None,
-        excluded=entry.excluded,
-        exclusion_reason=entry.exclusion_reason,
-        excluded_at=entry.excluded_at.isoformat() if entry.excluded_at is not None else None,
-        excluded_until=entry.excluded_until.isoformat() if entry.excluded_until is not None else None,
-        cooldown_remaining_sec=_cooldown_remaining_sec(entry.excluded_until),
-        cooldown_count=entry.cooldown_count,
-        cooldown_escalated=bool(
-            entry.exclusion_reason and entry.exclusion_reason.startswith(_COOLDOWN_ESCALATION_REASON_PREFIX)
-        ),
-        claimed_by=entry.claimed_by,
-        claimed_at=entry.claimed_at.isoformat() if entry.claimed_at is not None else None,
-    )
 
 
 async def _readiness_for_match(db: AsyncSession, device: Device) -> bool:
@@ -489,6 +409,19 @@ async def _attempt_create_run(
     db.add_all(reservations)
     await db.flush()
 
+    for device in all_matched:
+        node = device.appium_node
+        if node is None:
+            continue
+        await write_desired_grid_run_id(
+            db,
+            node=node,
+            run_id=run.id,
+            caller="run_create",
+            actor=data.created_by,
+            reason=f"reserved for run {run.id}",
+        )
+
     return run, device_infos
 
 
@@ -616,6 +549,18 @@ async def exclude_device_from_run(
     entry.exclusion_reason = reason
     entry.excluded_at = datetime.now(UTC)
     entry.excluded_until = None
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=False)
+    except NoResultFound:
+        device = None
+    if device is not None and device.appium_node is not None:
+        await write_desired_grid_run_id(
+            db,
+            node=device.appium_node,
+            run_id=None,
+            caller="run_exclude_device",
+            reason=reason,
+        )
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -754,9 +699,11 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run.state != RunState.preparing:
         raise ValueError(f"Cannot signal ready from state '{run.state.value}', expected 'preparing'")
 
-    run.state = RunState.ready
-    run.last_heartbeat = datetime.now(UTC)
-    queue_event_for_session(db, "run.ready", {"run_id": str(run.id), "name": run.name})
+    now = datetime.now(UTC)
+    run.state = RunState.active
+    run.started_at = now
+    run.last_heartbeat = now
+    queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -764,40 +711,57 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
-    await _signal_active_no_commit(db, run_id)
-    await db.commit()
-    run = await get_run(db, run_id)
-    assert run is not None
-    return run
-
-
-async def _signal_active_no_commit(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
-    if run.state != RunState.ready:
-        raise ValueError(f"Cannot signal active from state '{run.state.value}', expected 'ready'")
+    if run.state == RunState.active:
+        await db.commit()
+        return run
+    if run.state != RunState.preparing:
+        raise ValueError(f"Cannot signal active from state '{run.state.value}', expected 'preparing' or 'active'")
 
     now = datetime.now(UTC)
     run.state = RunState.active
     run.started_at = now
     run.last_heartbeat = now
     queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
+    await db.commit()
+    run = await get_run(db, run_id)
+    assert run is not None
     return run
 
 
 async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
+    run = await signal_active_for_device_session_no_commit(db, device_id)
+    if run is None:
         return None
-    return await signal_active(db, run.id)
+    await db.commit()
+    refreshed_run = await get_run(db, run.id)
+    assert refreshed_run is not None
+    return refreshed_run
 
 
 async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
     run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or run.state != RunState.ready or reservation_entry_is_excluded(entry):
+    if run is None or reservation_entry_is_excluded(entry):
         return None
-    return await _signal_active_no_commit(db, run.id)
+    locked_run = await _get_run_for_update(db, run.id)
+    if locked_run is None:
+        return None
+    if locked_run.state == RunState.active:
+        if locked_run.started_at is None:
+            now = datetime.now(UTC)
+            locked_run.started_at = now
+            locked_run.last_heartbeat = locked_run.last_heartbeat or now
+        return locked_run
+    if locked_run.state != RunState.preparing:
+        return None
+    now = datetime.now(UTC)
+    locked_run.state = RunState.active
+    locked_run.started_at = now
+    locked_run.last_heartbeat = now
+    queue_event_for_session(db, "run.active", {"run_id": str(locked_run.id), "name": locked_run.name})
+    return locked_run
 
 
 async def report_preparation_failure(
@@ -873,491 +837,6 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def claim_device(
-    db: AsyncSession,
-    run_id: uuid.UUID,
-    *,
-    worker_id: str | None = None,
-) -> ReservedDeviceInfo:
-    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
-    run = run_result.scalar_one_or_none()
-    if run is None:
-        await db.rollback()
-        raise ValueError("Run not found")
-    if run.state in TERMINAL_STATES:
-        state_value = run.state.value
-        await db.rollback()
-        raise ValueError(f"Cannot claim device from run in terminal state '{state_value}'")
-
-    now = now_utc()
-    ttl_seconds = int(settings_service.get("reservations.claim_ttl_seconds"))
-    stale_before = now - timedelta(seconds=ttl_seconds)
-
-    stale_cleanup = await db.execute(
-        update(DeviceReservation)
-        .where(DeviceReservation.run_id == run_id)
-        .where(DeviceReservation.released_at.is_(None))
-        .where(DeviceReservation.claimed_by.is_not(None))
-        .where(
-            or_(
-                DeviceReservation.claimed_at.is_(None),
-                DeviceReservation.claimed_at <= stale_before,
-            )
-        )
-        .values(claimed_by=None, claimed_at=None)
-        .returning(DeviceReservation.device_id)
-    )
-    # ``claim_device`` flips ``operational_state`` -> busy on claim; the TTL
-    # cleanup above must mirror the ``release_claimed_device`` restore so a
-    # device whose worker died does not stay stuck busy when no follow-up
-    # claim picks it up. Skip the restore when the device is held in
-    # maintenance or still has a live Grid session — those cases are owned
-    # by lifecycle / session_sync.
-    stale_device_ids = sorted({device_id for (device_id,) in stale_cleanup.all()})
-    for stale_device_id in stale_device_ids:
-        try:
-            locked_stale = await device_locking.lock_device(db, stale_device_id)
-        except NoResultFound:
-            continue
-        if (
-            locked_stale.operational_state == DeviceOperationalState.busy
-            and locked_stale.hold != DeviceHold.maintenance
-            and not await _device_has_running_session(db, stale_device_id)
-        ):
-            await set_operational_state(
-                locked_stale,
-                await ready_operational_state(db, locked_stale),
-                reason="Stale claim expired",
-            )
-
-    # Probe for claimable candidates without locking the reservation row.
-    # We then lock the device first (matching the Device → Reservation order
-    # used by ``_release_devices`` to avoid AB-BA deadlocks) and claim the
-    # reservation atomically via UPDATE...WHERE. If a peer worker beats us to
-    # the row, the UPDATE matches 0 rows and we loop to the next candidate.
-    skip_reservation_ids: set[uuid.UUID] = set()
-    while True:
-        probe_stmt = (
-            select(DeviceReservation.id, DeviceReservation.device_id)
-            .where(DeviceReservation.run_id == run_id)
-            .where(DeviceReservation.released_at.is_(None))
-            .where(_reservation_claimable_expr(now))
-            .where(DeviceReservation.claimed_by.is_(None))
-            .order_by(DeviceReservation.created_at, DeviceReservation.id)
-            .limit(1)
-        )
-        if skip_reservation_ids:
-            probe_stmt = probe_stmt.where(DeviceReservation.id.not_in(skip_reservation_ids))
-        probe = (await db.execute(probe_stmt)).first()
-        if probe is None:
-            retry_after_sec = int(settings_service.get("general.claim_default_retry_after_sec"))
-            next_available_at = await _next_claimable_cooldown_at(db, run_id, now)
-            await db.rollback()
-            raise NoClaimableDevicesError(
-                "No unclaimed devices available in this run",
-                retry_after_sec=retry_after_sec,
-                next_available_at=next_available_at,
-            )
-
-        reservation_id, device_id = probe.id, probe.device_id
-
-        try:
-            locked_device = await device_locking.lock_device(db, device_id)
-        except NoResultFound:
-            # Device row vanished (manual cleanup, race with delete). Treat
-            # this reservation as unclaimable for this attempt and try the
-            # next candidate so we surface NoClaimableDevicesError instead of
-            # a 500 from an uncaught NoResultFound.
-            skip_reservation_ids.add(reservation_id)
-            continue
-
-        claimed_by = worker_id or _generated_worker_id()
-        claim_stmt = (
-            update(DeviceReservation)
-            .where(DeviceReservation.id == reservation_id)
-            .where(DeviceReservation.released_at.is_(None))
-            .where(DeviceReservation.claimed_by.is_(None))
-            .where(_reservation_claimable_expr(now))
-            .values(claimed_by=claimed_by, claimed_at=now)
-            .returning(DeviceReservation.id)
-        )
-        if (await db.execute(claim_stmt)).scalar_one_or_none() is None:
-            # Lost the race to a concurrent worker; try the next candidate.
-            skip_reservation_ids.add(reservation_id)
-            continue
-
-        candidate = (
-            await db.execute(
-                select(DeviceReservation)
-                .options(selectinload(DeviceReservation.device))
-                .where(DeviceReservation.id == reservation_id)
-            )
-        ).scalar_one()
-        _clear_expired_cooldown(candidate, now)
-        info = _reservation_to_claim_response(candidate)
-
-        # Flip operational_state -> busy under the device row lock so the
-        # device chip reflects in-use immediately. Without this, devices stay
-        # operational_state=available (chip="reserved") until
-        # session_sync_loop detects the Grid session (~5s default) or the
-        # testkit's POST /sessions registers, leaving an intermittent
-        # reserved/busy mismatch in the UI.
-        #
-        # Skip the flip when the device is held in maintenance — overwriting
-        # operational_state would leave the device "stuck busy" because
-        # ``_release_devices`` short-circuits for maintenance-held devices
-        # (see line ``if device.hold == DeviceHold.maintenance``) and never
-        # restores operational_state. Maintenance hold is rare for an active
-        # reservation but possible if an operator forces it after reserve.
-        if locked_device.hold != DeviceHold.maintenance:
-            await set_operational_state(
-                locked_device,
-                DeviceOperationalState.busy,
-                reason=f"Claimed by worker '{claimed_by}' for run '{run.name}'",
-            )
-        await db.commit()
-        return info
-
-
-async def _next_claimable_cooldown_at(db: AsyncSession, run_id: uuid.UUID, now: datetime) -> datetime | None:
-    result = await db.execute(
-        select(func.min(DeviceReservation.excluded_until))
-        .where(DeviceReservation.run_id == run_id)
-        .where(DeviceReservation.released_at.is_(None))
-        .where(DeviceReservation.excluded_until.is_not(None))
-        .where(DeviceReservation.excluded_until > now)
-    )
-    return result.scalar_one_or_none()
-
-
-async def release_claimed_device(
-    db: AsyncSession,
-    run_id: uuid.UUID,
-    *,
-    device_id: uuid.UUID,
-    worker_id: str,
-) -> None:
-    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
-    run = run_result.scalar_one_or_none()
-    if run is None:
-        await db.rollback()
-        raise ValueError("Run not found")
-
-    # Lock device first to match the Device → Reservation order used by
-    # ``_release_devices`` (avoids AB-BA deadlock with concurrent run-release
-    # paths). Missing device row → treat as "not reserved by this run".
-    try:
-        locked_device = await device_locking.lock_device(db, device_id)
-    except NoResultFound:
-        await db.rollback()
-        raise ValueError(f"Device {device_id} is not reserved by this run") from None
-
-    result = await db.execute(
-        select(DeviceReservation)
-        .where(DeviceReservation.run_id == run_id)
-        .where(DeviceReservation.device_id == device_id)
-        .with_for_update()
-        .limit(1)
-    )
-    entry = result.scalar_one_or_none()
-    if entry is None:
-        await db.rollback()
-        raise ValueError(f"Device {device_id} is not reserved by this run")
-
-    if entry.released_at is not None:
-        await db.rollback()
-        return
-
-    if entry.claimed_by is None:
-        await db.rollback()
-        raise ValueError(f"Device {device_id} is not claimed")
-    if entry.claimed_by != worker_id:
-        await db.rollback()
-        raise ValueError(f"Device {device_id} is claimed by another worker")
-
-    entry.claimed_by = None
-    entry.claimed_at = None
-
-    # Restore operational_state when no live Grid session remains. claim_device
-    # flips operational_state -> busy; without a matching restore here the
-    # device would stay busy after a release-without-session and the
-    # reservation would simultaneously be claimable again, contradicting the
-    # /release contract. Mirrors the non-escalating cooldown release path.
-    # Skip the restore when a Grid session is still running (session_sync /
-    # session_service own that transition) and when the device is held in
-    # maintenance (handled by the lifecycle cleanup path).
-    if (
-        locked_device.operational_state == DeviceOperationalState.busy
-        and locked_device.hold != DeviceHold.maintenance
-        and not await _device_has_running_session(db, device_id)
-    ):
-        await set_operational_state(
-            locked_device,
-            await ready_operational_state(db, locked_device),
-            reason=f"Released by worker '{worker_id}' from run '{run.name}'",
-        )
-
-    await db.commit()
-
-
-async def release_claimed_device_with_cooldown(
-    db: AsyncSession,
-    run_id: uuid.UUID,
-    *,
-    device_id: uuid.UUID,
-    worker_id: str,
-    reason: str,
-    ttl_seconds: int,
-) -> tuple[
-    ReservedDeviceInfo,
-    DeviceOperationalState,
-    DeviceHold | None,
-    datetime | None,
-    int,  # cooldown_count after this call
-    bool,  # escalated to maintenance?
-    int,  # threshold (for response payload)
-]:
-    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
-    if ttl_seconds > max_ttl:
-        raise ValueError(f"ttl_seconds must be <= {max_ttl}")
-    clean_reason = reason.strip()
-    if not clean_reason:
-        raise ValueError("Cooldown reason is required")
-
-    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
-
-    excluded_until: datetime | None = None
-    escalate = False
-    cooldown_count_after = 0
-    # These are assigned in exactly one of the two branches below; the
-    # initializer placeholders prevent mypy possibly-unbound warnings.
-    reservation_payload: ReservedDeviceInfo
-    next_operational_state: DeviceOperationalState
-    device_hold: DeviceHold | None
-
-    # Tx 1: locked-write phase — validates, increments cooldown_count, clears the
-    # claim, and fully completes the cooldown branch when not escalating.
-    async with db.begin():
-        run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
-        run = run_result.scalar_one_or_none()
-        if run is None:
-            raise ValueError("Run not found")
-        if run.state in TERMINAL_STATES:
-            raise ValueError(f"Cannot release device from terminal run '{run.state.value}'")
-
-        try:
-            device = await device_locking.lock_device(db, device_id, load_sessions=True)
-        except NoResultFound:
-            raise ValueError("Device not found") from None
-
-        result = await db.execute(
-            select(DeviceReservation)
-            .options(selectinload(DeviceReservation.device))
-            .where(DeviceReservation.run_id == run_id)
-            .where(DeviceReservation.device_id == device_id)
-            .where(DeviceReservation.released_at.is_(None))
-            .with_for_update()
-            .limit(1)
-        )
-        entry = result.scalar_one_or_none()
-        if entry is None:
-            raise ValueError(f"Device {device_id} is not actively reserved by this run")
-        if entry.claimed_by is None:
-            raise ValueError(f"Device {device_id} is not claimed")
-        if entry.claimed_by != worker_id:
-            raise ValueError(f"Device {device_id} is claimed by another worker")
-
-        entry.cooldown_count += 1
-        entry.claimed_by = None
-        entry.claimed_at = None
-
-        cooldown_count_after = entry.cooldown_count
-        escalate = threshold > 0 and entry.cooldown_count >= threshold
-
-        if escalate:
-            # Mark the row unclaimable atomically inside Tx1 so that concurrent
-            # claim_device calls (which filter excluded==False) cannot re-pick
-            # this device during the gap between Tx1 commit and the escalation
-            # phase that runs outside the transaction.
-            entry.excluded = True
-            entry.excluded_at = now_utc()
-            entry.excluded_until = None
-            entry.exclusion_reason = (
-                f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
-            )
-
-        if not escalate:
-            excluded_at = now_utc()
-            excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
-            entry.excluded = True
-            entry.exclusion_reason = clean_reason
-            entry.excluded_at = excluded_at
-            entry.excluded_until = excluded_until
-
-            next_operational_state = await ready_operational_state(db, device)
-            await set_operational_state(device, next_operational_state, reason=f"cooldown:{clean_reason}")
-
-            await lifecycle_incident_service.record_lifecycle_incident(
-                db,
-                device,
-                event_type=DeviceEventType.lifecycle_run_cooldown_set,
-                summary_state=DeviceLifecyclePolicySummaryState.excluded,
-                reason=clean_reason,
-                detail=f"Worker {worker_id} released the device with a {ttl_seconds}s cooldown",
-                source="testkit",
-                run_id=run.id,
-                run_name=run.name,
-                ttl_seconds=ttl_seconds,
-                worker_id=worker_id,
-                expires_at=excluded_until,
-            )
-            reservation_payload = _reservation_to_claim_response(entry)
-            device_hold = device.hold
-
-    # Tx 1 has committed (or raised). Cooldown branch is fully done at this point.
-
-    if escalate:
-        # Tx 2+: escalation path — mirrors complete_auto_stop which also calls
-        # exclude_run_if_needed followed by db.commit() without an enclosing
-        # db.begin() block. exclude_run_if_needed internally calls
-        # enter_maintenance which calls stop_node; stop_node commits
-        # unconditionally when the node is running, so we must not nest this
-        # inside an outer async with db.begin(): block.
-        #
-        # escalation_reason was already written into entry.exclusion_reason in Tx1
-        # (Fix 2 — atomic exclusion), so we derive it from there rather than
-        # rebuilding the string, ensuring both are identical.
-        escalation_reason = entry.exclusion_reason or (
-            f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
-        )
-
-        # Before re-locking the device for escalation work, verify the device's
-        # CURRENT active reservation still belongs to this run.  A concurrent
-        # complete_run / cancel_run / force_release may have released the old
-        # reservation (setting released_at) between Tx1 committing and here, and
-        # a new run could have reserved the same device — in that case we MUST NOT
-        # put the new run's device into maintenance.
-        async with db.begin():
-            _current_run, current_entry = await run_reservation_service.get_device_reservation_with_entry(db, device_id)
-            if current_entry is None or str(current_entry.run_id) != str(run_id):
-                logger.warning(
-                    "device.cooldown.escalation.skipped_after_reassignment",
-                    extra={
-                        "device_id": str(device_id),
-                        "original_run_id": str(run_id),
-                        "current_run_id": str(current_entry.run_id) if current_entry else None,
-                    },
-                )
-                # Tx1 already incremented cooldown_count and excluded the old
-                # reservation; the device just won't enter maintenance because it
-                # is no longer ours.  Return the escalation response for the OLD
-                # reservation — its exclusion IS permanent, the device simply
-                # wasn't put into maintenance on this path.
-                return (
-                    _reservation_to_claim_response(entry),
-                    entry.device.operational_state if entry.device is not None else DeviceOperationalState.offline,
-                    None,  # no maintenance hold was applied
-                    None,  # excluded_until (permanent exclusion has no TTL)
-                    cooldown_count_after,
-                    True,  # escalated — the OLD reservation IS excluded permanently
-                    threshold,
-                )
-        # Reassignment check passed: active reservation still belongs to this run.
-
-        # Re-lock device for a fresh row after Tx 1 committed.
-        device = await device_locking.lock_device(db, device_id, load_sessions=True)
-        run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run_obj = run_for_event.scalar_one()
-
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.lifecycle_run_cooldown_escalated,
-            {
-                "cooldown_count": cooldown_count_after,
-                "threshold": threshold,
-                "reason": clean_reason,
-                "worker_id": worker_id,
-                "run_id": str(run_obj.id),
-                "run_name": run_obj.name,
-            },
-        )
-
-        # Because we pre-set excluded=True in Tx1 (Fix 2), exclude_run_if_needed
-        # sees was_excluded=True and skips the lifecycle_run_excluded incident
-        # that it would otherwise emit. We therefore re-emit the incident
-        # explicitly below. ``exclude_run_if_needed`` deliberately does NOT
-        # escalate to maintenance — only the cooldown threshold path is allowed
-        # to do that — so the explicit ``enter_maintenance`` call further down
-        # carries that responsibility.
-        await lifecycle_policy_actions.exclude_run_if_needed(
-            db,
-            device,
-            reason=escalation_reason,
-            source="testkit",
-        )
-        # Re-emit the lifecycle_run_excluded incident skipped above and put the
-        # device in maintenance — cooldown escalation is one of the three
-        # sanctioned auto-maintenance entry points (operator UI / preparation
-        # failure / cooldown threshold).
-        # Reuse run_obj fetched above (same transaction / session).
-        await lifecycle_incident_service.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_run_excluded,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=escalation_reason,
-            detail=f"Excluded from {run_obj.name}",
-            source="testkit",
-            run_id=run_obj.id,
-            run_name=run_obj.name,
-        )
-        if "appium_node" not in device.__dict__:
-            await db.refresh(device, ["appium_node"])
-        await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
-        # exclude_run_if_needed + enter_maintenance leave mutations in the session; commit them.
-        await db.commit()
-        # Refresh device so the response reflects post-maintenance state.
-        # enter_maintenance may have committed mid-flight via stop_node and
-        # re-set the hold, so we need fresh values here.
-        await db.refresh(device, ["operational_state", "hold"])
-        # Re-fetch entry because exclude_device_from_run may have mutated
-        # excluded_at and exclusion_reason further. Use scalar_one_or_none so
-        # that a concurrent complete_run/cancel_run/force_release that sets
-        # released_at between our db.commit() and this re-fetch does not raise
-        # NoResultFound (Fix 3). Fall back to the in-memory entry from Tx1.
-        result = await db.execute(
-            select(DeviceReservation)
-            .options(selectinload(DeviceReservation.device))
-            .where(DeviceReservation.run_id == run_id)
-            .where(DeviceReservation.device_id == device_id)
-            .where(DeviceReservation.released_at.is_(None))
-            .limit(1)
-        )
-        fresh_entry = result.scalar_one_or_none()
-        if fresh_entry is not None:
-            entry = fresh_entry  # reflects exclude_device_from_run's mutations
-        # else: entry retains the in-memory state from Tx1 (excluded=True,
-        # exclusion_reason set, cooldown_count incremented) which is correct.
-        reservation_payload = _reservation_to_claim_response(entry)
-        next_operational_state = device.operational_state
-        device_hold = device.hold
-
-    if escalate:
-        logger.info("device.cooldown.escalated")
-    else:
-        logger.info("device.cooldown.set")
-    return (
-        reservation_payload,
-        next_operational_state,
-        device_hold,
-        excluded_until,
-        cooldown_count_after,
-        escalate,
-        threshold,
-    )
-
-
 async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -1366,6 +845,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
         raise ValueError(f"Run is already in terminal state '{run.state.value}'")
 
     now = datetime.now(UTC)
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_complete")
     run.state = RunState.completed
     run.completed_at = now
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
@@ -1396,6 +876,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run.state in TERMINAL_STATES:
         raise ValueError(f"Run is already in terminal state '{run.state.value}'")
 
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_cancel")
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
@@ -1420,6 +901,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     if run is None:
         raise ValueError("Run not found")
 
+    await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_force_release")
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
@@ -1450,6 +932,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         await db.commit()
         return
 
+    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=reason)
     locked_run.state = RunState.expired
     locked_run.error = reason
     locked_run.completed_at = datetime.now(UTC)
@@ -1521,6 +1004,34 @@ async def _device_has_running_session(db: AsyncSession, device_id: uuid.UUID) ->
     return result.scalar_one_or_none() is not None
 
 
+async def _clear_desired_grid_run_id_for_run(
+    db: AsyncSession,
+    *,
+    run: TestRun,
+    caller: DesiredGridRunIdCaller,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> None:
+    for reservation in run.device_reservations:
+        if reservation.released_at is not None:
+            continue
+        try:
+            device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
+        except NoResultFound:
+            continue
+        node = device.appium_node
+        if node is None:
+            continue
+        await write_desired_grid_run_id(
+            db,
+            node=node,
+            run_id=None,
+            caller=caller,
+            actor=actor,
+            reason=reason,
+        )
+
+
 async def _release_devices(
     db: AsyncSession,
     run: TestRun,
@@ -1559,8 +1070,6 @@ async def _release_devices(
 
     for reservation in active_reservations:
         reservation.released_at = released_at
-        reservation.claimed_by = None
-        reservation.claimed_at = None
         device = locked_devices.get(reservation.device_id)
         if device is None:
             logger.warning(

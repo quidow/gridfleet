@@ -45,9 +45,11 @@ class AppiumNode(Base):
         server_default=NodeState.stopped.value,
     )
     desired_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    desired_grid_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     transition_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     transition_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    grid_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     live_capabilities: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
