@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from app.models.device import ConnectionType, DeviceType, HardwareHealthStatus
 from app.schemas.device import HardwareTelemetryState
 
-ChipStatus = Literal["available", "busy", "offline", "maintenance", "reserved"]
+ChipStatus = Literal["available", "busy", "offline", "maintenance", "reserved", "verifying"]
 DeviceSortBy = Literal[
     "name",
     "platform",
