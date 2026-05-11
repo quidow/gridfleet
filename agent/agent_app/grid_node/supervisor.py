@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 
 class GridNodeServiceProtocol(Protocol):
+    @property
+    def node_id(self) -> str:
+        raise NotImplementedError
+
     async def start(self) -> None:
         raise NotImplementedError
 
@@ -21,6 +25,14 @@ class GridNodeServiceProtocol(Protocol):
         raise NotImplementedError
 
     def snapshot(self) -> dict[str, object]:
+        raise NotImplementedError
+
+    def slot_stereotype_caps(self) -> dict[str, object]:
+        raise NotImplementedError
+
+    async def reregister_with_stereotype(
+        self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
+    ) -> None:
         raise NotImplementedError
 
 
@@ -57,6 +69,10 @@ class GridNodeSupervisorHandle:
     @property
     def errored(self) -> bool:
         return self._errored.is_set()
+
+    @property
+    def service(self) -> GridNodeServiceProtocol | None:
+        return self._service
 
     async def start(self) -> None:
         if self._task is not None:

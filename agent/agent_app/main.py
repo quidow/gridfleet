@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
@@ -32,7 +33,7 @@ from agent_app.capabilities import (
 )
 from agent_app.config import agent_settings
 from agent_app.error_codes import AgentErrorCode, http_exc
-from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
+from agent_app.grid_node.supervisor import GridNodeServiceProtocol, GridNodeSupervisorHandle
 from agent_app.host_telemetry import get_host_telemetry
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
@@ -310,6 +311,14 @@ class ToolsEnsureRequest(BaseModel):
     appium_version: str | None = None
 
 
+class GridNodeReregisterRequest(BaseModel):
+    target_run_id: UUID | None = None
+
+
+class GridNodeReregisterResponse(BaseModel):
+    grid_run_id: UUID | None
+
+
 class FeatureActionRequest(BaseModel):
     pack_id: str
     args: dict[str, Any] = {}
@@ -386,6 +395,18 @@ def _probe_failure_detail(response: httpx.Response, *, fallback: str) -> str:
     return fallback
 
 
+def _grid_node_service_for(node_id: str) -> GridNodeServiceProtocol:
+    for supervisor in appium_mgr._grid_supervisors.values():
+        service = supervisor.service
+        if service is not None and service.node_id == node_id:
+            return service
+    raise http_exc(
+        status_code=404,
+        code=AgentErrorCode.DEVICE_NOT_FOUND,
+        message=f"No running grid node is registered for node_id={node_id}",
+    )
+
+
 @app.get("/agent/health")
 async def health() -> dict[str, Any]:
     capabilities = get_capabilities_snapshot()
@@ -399,6 +420,15 @@ async def health() -> dict[str, Any]:
     payload["appium_processes"] = appium_mgr.process_snapshot()
     payload["version_guidance"] = get_version_guidance().to_payload()
     return payload
+
+
+@app.post("/grid/node/{node_id}/reregister", response_model=GridNodeReregisterResponse)
+async def reregister_grid_node(node_id: str, payload: GridNodeReregisterRequest) -> GridNodeReregisterResponse:
+    service = _grid_node_service_for(node_id)
+    caps = service.slot_stereotype_caps()
+    caps["gridfleet:run_id"] = str(payload.target_run_id) if payload.target_run_id is not None else "free"
+    await service.reregister_with_stereotype(new_caps=caps)
+    return GridNodeReregisterResponse(grid_run_id=payload.target_run_id)
 
 
 @app.get("/agent/host/telemetry")

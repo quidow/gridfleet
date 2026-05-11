@@ -172,6 +172,16 @@ class GridNodeService:
         self._requested_stop = False
         self._heartbeat_task: asyncio.Task[None] | None = None
 
+    @property
+    def node_id(self) -> str:
+        return self.config.node_id
+
+    def slot_stereotype_caps(self) -> dict[str, object]:
+        slots = self.state.snapshot_slots()
+        if not slots:
+            return {}
+        return dict(slots[0].stereotype.caps)
+
     async def start(self) -> None:
         if self._started:
             return
