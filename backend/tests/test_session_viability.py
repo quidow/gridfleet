@@ -44,7 +44,15 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4729, grid_url="http://hub:4444", state=AppiumDesiredState.stopped)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4729,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -80,7 +88,15 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -137,7 +153,15 @@ async def test_recovery_session_viability_probe_allows_offline_device(
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(device_id=device.id, port=4733, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4733,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4733,
+        pid=0,
+        active_connection_target="",
+    )
     db_session.add(node)
     await db_session.commit()
 
@@ -193,7 +217,9 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
         port=4723,
         grid_url="http://hub:4444",
         active_connection_target="emulator-5554",
-        state=AppiumDesiredState.running,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=0,
     )
     db_session.add(node)
     await db_session.commit()

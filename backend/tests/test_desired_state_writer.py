@@ -28,7 +28,15 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="ds-1", verified=True)
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.stopped)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        desired_port=None,
+        pid=None,
+        active_connection_target=None,
+    )
     db_session.add(node)
     await db_session.flush()
 
@@ -74,7 +82,8 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.running,
+        pid=0,
+        active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
         transition_token=token,
@@ -107,7 +116,8 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.running,
+        pid=0,
+        active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
     )
@@ -146,7 +156,8 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state=AppiumDesiredState.running,
+        pid=0,
+        active_connection_target="",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
         transition_token=existing_token,
