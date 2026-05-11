@@ -64,9 +64,7 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
         db_session,
         RunCreate(
             name="grid-run-id-test",
-            requirements=[
-                DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", count=count)
-            ],
+            requirements=[DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", count=count)],
             ttl_minutes=10,
             heartbeat_timeout_sec=120,
             created_by="tester",
@@ -90,9 +88,7 @@ async def test_create_run_writes_desired_grid_run_id(
 
     run_id = await _create_run(db_session)
 
-    node = (
-        await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
-    ).scalar_one()
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id == run_id
 
 
@@ -113,9 +109,7 @@ async def test_complete_run_clears_desired_grid_run_id(
     await run_service.signal_ready(db_session, run_id)
     await run_service.complete_run(db_session, run_id)
 
-    node = (
-        await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
-    ).scalar_one()
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None
 
 

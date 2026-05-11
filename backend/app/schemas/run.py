@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -75,8 +75,6 @@ class ReservedDeviceInfo(BaseModel):
     cooldown_remaining_sec: int | None = None
     cooldown_count: int = 0
     cooldown_escalated: bool = False
-    claimed_by: str | None = None
-    claimed_at: str | None = None
     config: dict[str, Any] | None = None
     live_capabilities: dict[str, Any] | None = None
     test_data: dict[str, Any] | None = None
@@ -144,79 +142,6 @@ class RunCreateResponse(BaseModel):
     ttl_minutes: int
     heartbeat_timeout_sec: int
     created_at: datetime
-
-
-class ClaimRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    worker_id: str | None = Field(default=None, min_length=1)
-
-
-class ClaimResponse(BaseModel):
-    device_id: str
-    identity_value: str
-    name: str | None = None
-    connection_target: str | None = None
-    pack_id: str
-    platform_id: str
-    platform_label: str | None = None
-    os_version: str
-    host_ip: str | None = None
-    device_type: str | None = None
-    connection_type: str | None = None
-    manufacturer: str | None = None
-    model: str | None = None
-    claimed_by: str
-    claimed_at: str
-    config: dict[str, Any] | None = None
-    live_capabilities: dict[str, Any] | None = None
-    test_data: dict[str, Any] | None = None
-    unavailable_includes: list[UnavailableInclude] | None = None
-
-
-class ReleaseRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    device_id: str
-    worker_id: str = Field(min_length=1)
-
-
-class ReleaseWithCooldownRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    worker_id: str = Field(min_length=1)
-    reason: str = Field(min_length=1, max_length=200)
-    ttl_seconds: int = Field(ge=1)
-
-
-class ReleaseWithCooldownResponse(BaseModel):
-    status: Literal["cooldown_set"]
-    reservation: ReservedDeviceInfo
-    device_operational_state: str
-    device_hold: str | None
-    retry_after_sec: int
-    excluded_until: datetime
-
-
-class ReleaseEscalatedToMaintenanceResponse(BaseModel):
-    status: Literal["maintenance_escalated"]
-    reservation: ReservedDeviceInfo
-    device_operational_state: str
-    device_hold: str | None
-    cooldown_count: int
-    threshold: int
-
-
-ReleaseWithCooldownResult = Annotated[
-    ReleaseWithCooldownResponse | ReleaseEscalatedToMaintenanceResponse,
-    Field(discriminator="status"),
-]
-
-
-class NoClaimableDevicesDetail(BaseModel):
-    error: Literal["no_claimable_devices"] = "no_claimable_devices"
-    retry_after_sec: int
-    next_available_at: datetime | None = None
 
 
 class HeartbeatResponse(BaseModel):

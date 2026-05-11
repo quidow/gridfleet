@@ -557,8 +557,6 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
         )
     ).scalar_one()
     assert reservation.released_at is not None
-    assert reservation.claimed_by is None
-    assert reservation.claimed_at is None
 
 
 async def test_run_heartbeat(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
@@ -1184,8 +1182,6 @@ async def test_release_with_cooldown_clears_worker_claim_and_keeps_active_reserv
             )
         )
     ).scalar_one()
-    assert reservation.claimed_by is None
-    assert reservation.claimed_at is None
     assert reservation.released_at is None
     assert reservation.excluded is True
     assert reservation.excluded_until is not None

@@ -125,9 +125,7 @@ async def list_devices(
 @router.get("/by-connection-target/{target}", response_model=DeviceRead)
 async def get_device_by_connection_target(target: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     result = (
-        await db.execute(
-            select(DeviceModel).where(DeviceModel.connection_target == target).limit(1)
-        )
+        await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
     ).scalar_one_or_none()
     if result is None:
         raise HTTPException(status_code=404, detail="Device not found for connection_target")

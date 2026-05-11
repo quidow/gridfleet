@@ -162,7 +162,6 @@ async def create_reserved_run(
     excluded_device_ids: set[str] | None = None,
     exclusion_reason: str | None = None,
     mark_released: bool = False,
-    claimed_device_ids: dict[str, str] | None = None,
 ) -> TestRun:
     run = TestRun(
         name=name,
@@ -177,7 +176,6 @@ async def create_reserved_run(
 
     reservations: list[DeviceReservation] = []
     excluded_device_ids = excluded_device_ids or set()
-    claimed_device_ids = claimed_device_ids or {}
     released_at = datetime.now(UTC) if mark_released else None
     for device in devices:
         if released_at is None:
@@ -197,9 +195,6 @@ async def create_reserved_run(
             excluded_at=datetime.now(UTC) if str(device.id) in excluded_device_ids else None,
             released_at=released_at,
         )
-        if str(device.id) in claimed_device_ids:
-            reservation.claimed_by = claimed_device_ids[str(device.id)]
-            reservation.claimed_at = datetime.now(UTC)
         reservations.append(reservation)
     db_session.add_all(reservations)
     await db_session.commit()

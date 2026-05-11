@@ -116,17 +116,16 @@ async def exclude_run_if_needed(
     ``lifecycle_run_excluded`` incident.
 
     Called only from genuine exclusion-worthy paths: ``complete_auto_stop``
-    (health failure) and the CI / cooldown escalation flows in
+    (health failure) and the CI preparation-failure flow in
     ``run_service``. Connectivity loss is intentionally NOT a caller — a
     transient blip leaves the reservation entry intact (see D1).
 
     Does NOT escalate the device into maintenance. Auto-escalation to
     maintenance from health failures is intentionally absent — only three
     paths flip ``hold`` to ``maintenance``: operator-driven UI actions,
-    ``report_preparation_failure`` (testkit pre-run signal), and
-    ``release_claimed_device_with_cooldown`` after the cooldown threshold
-    is exceeded. Callers that need the device parked in maintenance must
-    call ``maintenance_service.enter_maintenance`` themselves.
+    ``report_preparation_failure`` (testkit pre-run signal). Callers that
+    need the device parked in maintenance must call
+    ``maintenance_service.enter_maintenance`` themselves.
     """
     run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
     if run is None:
