@@ -1,9 +1,6 @@
-import asyncio
-import uuid
-
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
@@ -14,11 +11,9 @@ from tests.helpers import create_device
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_enter_maintenance_relocks_after_stop_node_commit(
-    db_session_maker: async_sessionmaker[AsyncSession],
+async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(
         db_session,
@@ -39,54 +34,19 @@ async def test_enter_maintenance_relocks_after_stop_node_commit(
     await db_session.commit()
     device_id = device.id
 
-    original_lock_device = device_locking.lock_device
-    stop_committed = asyncio.Event()
-    relock_seen = asyncio.Event()
+    target = await device_locking.lock_device(db_session, device_id)
+    await maintenance_service.enter_maintenance(db_session, target)
 
-    async def observed_lock_device(
-        db: AsyncSession,
-        target_id: uuid.UUID,
-        *,
-        load_sessions: bool = False,
-    ) -> Device:
-        locked = await original_lock_device(db, target_id, load_sessions=load_sessions)
-        if target_id == device_id and stop_committed.is_set():
-            relock_seen.set()
-        return locked
+    final_status = (
+        await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
+    ).one()
+    node_status = (
+        await db_session.execute(
+            select(AppiumNode.state, AppiumNode.desired_state).where(AppiumNode.device_id == device_id)
+        )
+    ).one()
 
-    monkeypatch.setattr(device_locking, "lock_device", observed_lock_device)
-
-    async def stop_node_commits(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
-        assert device.appium_node is not None
-        node = device.appium_node
-        node.state = NodeState.stopped
-        node.pid = None
-        device.operational_state = DeviceOperationalState.offline
-        await db.commit()
-        stop_committed.set()
-        return node
-
-    monkeypatch.setattr(maintenance_service, "stop_node", stop_node_commits)
-
-    async def runner() -> None:
-        async with db_session_maker() as session:
-            target = await original_lock_device(session, device_id)
-            await maintenance_service.enter_maintenance(session, target)
-
-    runner_task = asyncio.create_task(runner())
-    try:
-        await asyncio.wait_for(stop_committed.wait(), timeout=1)
-        await asyncio.wait_for(relock_seen.wait(), timeout=1)
-    except TimeoutError as exc:
-        raise AssertionError("enter_maintenance did not re-lock Device after stop_node committed") from exc
-    finally:
-        runner_results = await asyncio.gather(runner_task)
-        del runner_results
-
-    async with db_session_maker() as verify:
-        final_status = (
-            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-        ).one()
-
-    assert final_status.operational_state == DeviceOperationalState.offline
+    assert final_status.operational_state == DeviceOperationalState.available
     assert final_status.hold == DeviceHold.maintenance
+    assert node_status.state == NodeState.running
+    assert node_status.desired_state == NodeState.stopped

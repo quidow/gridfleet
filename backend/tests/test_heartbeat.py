@@ -521,14 +521,13 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     ]
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch("app.services.node_health._restart_node_via_agent", return_value=True),
-    ):
+    with patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")):
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
     assert node.state == NodeState.running
+    assert node.desired_state == NodeState.running
+    assert node.transition_token is not None
 
 
 async def test_grid_relay_restart_events_degrade_and_restore_health_summary(

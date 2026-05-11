@@ -71,14 +71,10 @@ def _patched_remote_start(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             }
         )
 
-    async def _noop_ready(*args: Any, **kwargs: Any) -> None:
-        return None
-
     async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
         return None
 
     monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
     monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
     return captured
 
@@ -251,12 +247,8 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
             }
         )
 
-    async def _noop_ready(*args: Any, **kwargs: Any) -> None:
-        return None
-
     monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
     monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
 
     await node_service.start_remote_temporary_node(
         db_session,
@@ -343,13 +335,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     async def _fake_appium_stop(agent_base: str, *, host: str, port: int, **kwargs: Any) -> _FakeHttpxResponse:
         return _FakeHttpxResponse({"stopped": True})
 
-    async def _noop_ready(*args: Any, **kwargs: Any) -> None:
-        return None
-
     async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
-        return None
-
-    async def _noop_sleep(*args: Any, **kwargs: Any) -> None:
         return None
 
     async def _noop_get_owner_capabilities(*args: Any, **kwargs: Any) -> None:
@@ -364,9 +350,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     monkeypatch.setattr(node_service, "require_management_host", lambda device, action: _FakeHost())
     monkeypatch.setattr(node_service, "appium_start", _fake_appium_start)
     monkeypatch.setattr(node_service, "appium_stop", _fake_appium_stop)
-    monkeypatch.setattr(node_service, "_wait_for_remote_appium_ready", _noop_ready)
     monkeypatch.setattr(node_service, "_build_session_aligned_start_caps", _noop_session_aligned)
-    monkeypatch.setattr(node_service.asyncio, "sleep", _noop_sleep)
     monkeypatch.setattr(appium_node_resource_service, "get_capabilities", _noop_get_owner_capabilities)
     monkeypatch.setattr(
         node_service,

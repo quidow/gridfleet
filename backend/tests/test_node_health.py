@@ -252,7 +252,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
 
 
 async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) -> None:
-    """Node with a host triggers agent restart on max failures."""
+    """Node with a host writes restart intent on max failures."""
     host = Host(hostname="test-host", ip="10.0.0.1", os_type="linux", agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
@@ -282,23 +282,19 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
 
     with (
         patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch(
-            "app.services.node_health._restart_node_via_agent",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_restart,
         patch("app.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
-    mock_restart.assert_called_once()
     await db_session.refresh(node)
-    # Restart succeeded, so node stays running (agent mock sets it)
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.running
+    assert node.transition_token is not None
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
 
-async def test_node_restart_failure_marks_offline(db_session: AsyncSession) -> None:
-    """If agent restart fails, node goes to error and device goes offline."""
+async def test_node_restart_intent_marks_device_offline_until_reconciler_recovers(db_session: AsyncSession) -> None:
+    """Repeated health failures mark the device offline and queue restart intent."""
     host = Host(hostname="fail-host", ip="10.0.0.2", os_type="linux", agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
@@ -328,13 +324,14 @@ async def test_node_restart_failure_marks_offline(db_session: AsyncSession) -> N
 
     with (
         patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch("app.services.node_health._restart_node_via_agent", new_callable=AsyncMock, return_value=False),
         patch("app.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.error
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.running
+    assert node.transition_token is not None
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
 
@@ -369,13 +366,14 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
             "app.services.node_health.require_management_host",
             side_effect=NodeManagerError("Device management host invariant is broken"),
         ),
-        patch("app.services.node_health._restart_node_via_agent", new_callable=AsyncMock, return_value=False),
         patch("app.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.error
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.running
+    assert node.transition_token is not None
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
     assert node_key not in await get_node_health_control_plane_state(db_session)

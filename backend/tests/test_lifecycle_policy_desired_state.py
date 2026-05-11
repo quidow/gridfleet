@@ -74,21 +74,31 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
 
     from app.services import lifecycle_policy_actions
 
-    captured: dict[str, object] = {}
+    await lifecycle_policy_actions.handle_node_crash(
+        db_session,
+        device,
+        source="connectivity_lost",
+        reason="agent disconnected",
+    )
 
-    async def fake_stop(_db: AsyncSession, _device: Device, *, caller: str = "operator_route") -> AppiumNode:
-        captured["caller"] = caller
-        return node
-
-    with patch.object(lifecycle_policy_actions, "stop_managed_node", new=fake_stop):
-        await lifecycle_policy_actions.handle_node_crash(
-            db_session,
-            device,
-            source="connectivity_lost",
-            reason="agent disconnected",
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.desired_state_changed,
+                )
+            )
         )
-
-    assert captured.get("caller") == "lifecycle_crash"
+        .scalars()
+        .all()
+    )
+    assert any(
+        event.details is not None
+        and event.details.get("caller") == "lifecycle_crash"
+        and event.details.get("new_desired_state") == "stopped"
+        for event in events
+    )
 
 
 async def test_handle_node_crash_writes_desired_stopped_when_node_already_stopped(

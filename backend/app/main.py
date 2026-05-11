@@ -18,6 +18,7 @@ from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metri
 from app.middleware import RequestContextMiddleware
 from app.observability import configure_logging, get_logger
 from app.routers import (
+    admin_appium_nodes,
     agent_driver_packs,
     analytics,
     auth,
@@ -231,6 +232,7 @@ app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth.router)
+app.include_router(admin_appium_nodes.router)
 app.include_router(bulk.router)  # Must be before devices.router for /api/devices/bulk/* route precedence
 app.include_router(devices.router)
 app.include_router(nodes.router)

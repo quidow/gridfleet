@@ -83,11 +83,13 @@ async def test_remote_start_node(client: AsyncClient, db_session: AsyncSession) 
 
     assert resp.status_code == 200, resp.json()
     data = resp.json()
-    assert data["state"] == NodeState.running.value
-    assert data["pid"] == 9876
+    assert data["state"] == NodeState.stopped.value
+    assert data["desired_state"] == NodeState.running.value
+    assert data["desired_port"] == 4723
+    assert data["pid"] is None
 
     device_resp = await client.get(f"/api/devices/{device.id}")
-    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.offline.value
 
 
 async def test_remote_start_node_attaches_node_to_device_instance(db_session: AsyncSession) -> None:
@@ -137,8 +139,9 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
         node = await start_node(db_session, loaded_device)
 
     assert loaded_device.appium_node is node
-    assert node.state == NodeState.running
-    assert loaded_device.operational_state == DeviceOperationalState.available
+    assert node.state == NodeState.stopped
+    assert node.desired_state == NodeState.running
+    assert loaded_device.operational_state == DeviceOperationalState.offline
 
 
 async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -> None:
@@ -189,10 +192,12 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
         resp = await client.post(f"/api/devices/{device.id}/node/stop")
 
     assert resp.status_code == 200, resp.json()
-    assert resp.json()["state"] == NodeState.stopped.value
+    body = resp.json()
+    assert body["state"] == NodeState.running.value
+    assert body["desired_state"] == NodeState.stopped.value
 
     device_resp = await client.get(f"/api/devices/{device.id}")
-    assert device_resp.json()["operational_state"] == DeviceOperationalState.offline.value
+    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
 
 
 async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:
@@ -706,15 +711,11 @@ async def test_start_remote_temporary_node_renders_stereotype_once(
     assert calls == 1
 
 
-async def test_stop_node_raises_when_agent_does_not_acknowledge(
+async def test_stop_node_writes_stopped_intent_without_agent_ack(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Operator stop must NOT mark the node stopped in DB if the agent did
-    not acknowledge — otherwise the orphaned Appium process keeps serving
-    Selenium Grid traffic while the manager believes it is gone, producing
-    the offline+healthy split-brain UI state and blocking subsequent starts
-    via port collision."""
+    """Operator stop records intent; the reconciler owns agent acknowledgement."""
     from app.services import device_health
 
     device = await create_device_record(
@@ -741,28 +742,22 @@ async def test_stop_node_raises_when_agent_does_not_acknowledge(
     )
     await db_session.commit()
 
-    with (
-        patch(
-            "app.services.node_service.stop_remote_temporary_node",
-            AsyncMock(return_value=False),  # agent silent / unreachable
-        ),
-        pytest.raises(NodeManagerError, match="did not acknowledge"),
-    ):
+    with patch("app.services.node_service.stop_remote_temporary_node", AsyncMock(return_value=False)):
         await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
     await db_session.refresh(loaded)
     assert node.state == NodeState.running, "node row must stay running when stop is unconfirmed"
+    assert node.desired_state == NodeState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
-async def test_stop_node_marks_stopped_when_agent_acknowledges(
+async def test_stop_node_records_intent_when_agent_would_acknowledge(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """When agent confirms the stop, the appium_node row reflects the new
-    state in the same transaction."""
+    """Observed node state changes after reconciler convergence, not in stop_node."""
     from app.services import device_health
 
     device = await create_device_record(
@@ -796,9 +791,10 @@ async def test_stop_node_marks_stopped_when_agent_acknowledges(
         await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
-    assert node.state == NodeState.stopped
+    assert node.state == NodeState.running
+    assert node.desired_state == NodeState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
-    assert device_health.build_public_summary(loaded)["healthy"] is False
+    assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
 async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_host: Host) -> None:

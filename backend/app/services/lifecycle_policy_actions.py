@@ -29,7 +29,6 @@ from app.services.lifecycle_policy_state import state as policy_state
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import stop_node as stop_managed_node
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
@@ -69,6 +68,29 @@ def offline_summary_state(device: Device) -> DeviceLifecyclePolicySummaryState:
     if device.auto_manage:
         return DeviceLifecyclePolicySummaryState.recoverable
     return DeviceLifecyclePolicySummaryState.manual
+
+
+def record_reconciler_start_failure_state(
+    device: Device,
+    *,
+    reason: str,
+    attempts: int,
+    backoff_until: str | None,
+) -> None:
+    fresh = policy_state(device)
+    fresh["recovery_backoff_attempts"] = attempts
+    fresh["last_failure_source"] = "appium_reconciler"
+    fresh["last_failure_reason"] = reason
+    if backoff_until is not None:
+        fresh["backoff_until"] = backoff_until
+    write_state(device, fresh)
+
+
+def reset_reconciler_start_failure_state(device: Device) -> None:
+    fresh = policy_state(device)
+    fresh["recovery_backoff_attempts"] = 0
+    fresh["backoff_until"] = None
+    write_state(device, fresh)
 
 
 def auto_stopped_summary_state(
@@ -170,12 +192,9 @@ async def handle_node_crash(
     ``health_check_fail`` in addition to genuine Appium crashes — every
     invocation persists a ``node_crash`` event unconditionally.
 
-    Operational-state semantics (three distinct paths):
-    - Node running + ``stop_managed_node`` succeeds: operational state delegates
-      to ``mark_node_stopped`` and hold is preserved independently.
-    - Node running + ``stop_managed_node`` raises: re-acquires both row locks
-      (Device → AppiumNode, documented order) before forcing ``offline`` and
-      setting ``node.state = NodeState.error``.
+    Operational-state semantics:
+    - Node running: writes desired_state='stopped' and lets the reconciler stop
+      the agent process.
     - Node not running or absent (``else`` branch): forces ``offline`` directly
       using the already-held row lock; no re-acquisition needed.
 
@@ -207,29 +226,18 @@ async def handle_node_crash(
     )
 
     if node is not None and node.state == NodeState.running:
-        try:
-            await stop_managed_node(db, device, caller="lifecycle_crash")
-        except Exception:
-            # stop_managed_node may commit before raising, releasing both row locks.
-            # Re-acquire in the documented Device -> AppiumNode order before
-            # writing offline/error state.
-            device = await device_locking.lock_device(db, device.id, load_sessions=True)
-            locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-            await _MACHINE.transition(
-                device,
-                TransitionEvent.AUTO_STOP_EXECUTED,
-                reason=f"Node crash recorded ({source}): {reason}",
-            )
-            if locked_node is not None:
-                await write_desired_state(
-                    db,
-                    node=locked_node,
-                    target=NodeState.stopped,
-                    caller="lifecycle_crash",
-                )
-                locked_node.state = NodeState.error
-                locked_node.pid = None
-            await db.commit()
+        await _MACHINE.transition(
+            device,
+            TransitionEvent.AUTO_STOP_EXECUTED,
+            reason=f"Node crash recorded ({source}): {reason}",
+        )
+        await write_desired_state(
+            db,
+            node=node,
+            target=NodeState.stopped,
+            caller="lifecycle_crash",
+        )
+        await db.commit()
     else:
         await _MACHINE.transition(
             device,
@@ -243,9 +251,6 @@ async def handle_node_crash(
                 target=NodeState.stopped,
                 caller="lifecycle_crash",
             )
-            if node.state == NodeState.running:
-                node.state = NodeState.stopped
-                node.pid = None
         await db.commit()
 
 

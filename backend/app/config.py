@@ -64,3 +64,11 @@ def freeze_background_loops_enabled() -> bool:
     """Return whether leader-owned background loops should be skipped."""
     value = os.getenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def reconciler_convergence_enabled() -> bool:
+    """Return whether the Appium reconciler should drive desired-state convergence."""
+    value = os.getenv("GRIDFLEET_RECONCILER_CONVERGENCE_ENABLED", "").strip().lower()
+    if value == "":
+        return True
+    return value in {"1", "true", "yes", "on"}

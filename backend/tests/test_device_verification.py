@@ -219,11 +219,13 @@ async def test_verification_job_success_keeps_verified_node_when_auto_manage_ena
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
     assert devices[0]["identity_value"] == DEVICE_PAYLOAD["identity_value"]
-    assert devices[0]["operational_state"] == "available"
+    assert devices[0]["operational_state"] == "offline"
 
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
     assert detail["appium_node"] is not None
-    assert detail["appium_node"]["active_connection_target"] == "emulator-5554"
+    assert detail["appium_node"]["state"] == "stopped"
+    assert detail["appium_node"]["desired_state"] == "running"
+    assert detail["appium_node"]["active_connection_target"] is None
 
     async with session_factory() as verify_db:
         persisted_device = await verify_db.get(Device, uuid.UUID(devices[0]["id"]))
@@ -250,30 +252,8 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
     )
     healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
 
-    restart_observed: dict[str, Any] = {}
-
-    async def restart_after_save(
-        restart_db: AsyncSession, saved_device: Device, *, caller: str = "verification"
-    ) -> AppiumNode:
-        assert saved_device.id is not None
-        assert saved_device.appium_node is not None
-        # Node row + ownership transfer must be committed before restart_node runs.
-        restart_observed["pre_restart_port"] = saved_device.appium_node.port
-        restart_observed["pre_restart_state"] = saved_device.appium_node.state
-        async with session_factory() as verify_db:
-            persisted = await verify_db.get(AppiumNode, saved_device.appium_node.id)
-            assert persisted is not None
-            restart_observed["persisted_port"] = persisted.port
-        saved_device.appium_node.port = 5723
-        saved_device.appium_node.pid = 67890
-        await restart_db.commit()
-        return saved_device.appium_node
-
-    restart_mock = AsyncMock(side_effect=restart_after_save)
-
     with (
         patch("app.services.device_verification_execution.start_temporary_node", start_mock),
-        patch("app.services.device_verification_execution.restart_node", restart_mock),
         patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
             "app.services.device_verification_runner.session_viability.probe_session_via_grid",
@@ -286,17 +266,19 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
         job = await _wait_for_job(client, job_id, session_factory=session_factory)
 
     assert job["status"] == "completed"
-    restart_mock.assert_awaited_once()
-    assert restart_observed["pre_restart_port"] == 4723
-    assert restart_observed["pre_restart_state"] == NodeState.running
-    assert restart_observed["persisted_port"] == 4723
 
     async with session_factory() as verify_db:
         job_row = await verify_db.get(Job, uuid.UUID(job_id))
         assert job_row is not None
         cleanup_stage = next(s for s in job_row.snapshot["stages"] if s["name"] == "cleanup")
+        node = (await verify_db.execute(select(AppiumNode))).scalar_one()
     assert cleanup_stage["status"] == "passed"
-    assert cleanup_stage["data"] == {"port": 5723, "pid": 67890}
+    assert cleanup_stage["data"] == {"port": 4723, "pid": 12345}
+    assert node.port == 4723
+    assert node.pid is None
+    assert node.state == NodeState.stopped
+    assert node.desired_state == NodeState.running
+    assert node.transition_token is not None
 
 
 async def test_retain_verified_node_acquires_row_lock(
@@ -333,7 +315,7 @@ async def test_retain_verified_node_acquires_row_lock(
     spy.assert_awaited()
 
 
-async def test_create_verification_marks_cleanup_failed_when_restart_node_raises(
+async def test_create_verification_marks_cleanup_failed_when_restart_intent_raises(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -348,11 +330,11 @@ async def test_create_verification_marks_cleanup_failed_when_restart_node_raises
         )
     )
     healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
-    restart_mock = AsyncMock(side_effect=NodeManagerError("grid registration refresh exploded"))
+    desired_state_mock = AsyncMock(side_effect=[None, NodeManagerError("grid registration refresh exploded")])
 
     with (
         patch("app.services.device_verification_execution.start_temporary_node", start_mock),
-        patch("app.services.device_verification_execution.restart_node", restart_mock),
+        patch("app.services.device_verification_execution.write_desired_state", desired_state_mock),
         patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
             "app.services.device_verification_runner.session_viability.probe_session_via_grid",
@@ -365,7 +347,7 @@ async def test_create_verification_marks_cleanup_failed_when_restart_node_raises
 
     assert job["status"] == "failed"
     _assert_job_stage(job, stage="cleanup", status="failed", detail_contains="grid registration refresh exploded")
-    restart_mock.assert_awaited_once()
+    assert desired_state_mock.await_count == 2
 
     devices = (await client.get("/api/devices")).json()
     assert len(devices) == 1
@@ -430,7 +412,8 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
     assert devices[0]["connection_target"] == "Pixel_8_API_35"
     assert devices[0]["connection_type"] == "virtual"
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
-    assert detail["appium_node"]["active_connection_target"] == "emulator-5554"
+    assert detail["appium_node"]["desired_state"] == "running"
+    assert detail["appium_node"]["active_connection_target"] is None
 
 
 async def test_avd_verification_probe_uses_node_resolved_serial_when_already_running(
@@ -817,10 +800,12 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
     default_host_id: str,
 ) -> None:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    node_http_client = _mock_node_manager_http_client(status_payload={"running": False, "port": 4723})
 
     with (
-        patch("app.services.node_service.httpx.AsyncClient", return_value=node_http_client),
+        patch(
+            "app.services.device_verification_execution.start_temporary_node",
+            new=AsyncMock(side_effect=NodeManagerError("Appium is not reachable")),
+        ),
         patch(
             "app.services.device_verification_execution.run_device_health",
             new_callable=AsyncMock,

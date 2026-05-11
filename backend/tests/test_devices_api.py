@@ -109,14 +109,6 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
     return node
 
 
-async def _fake_stop_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
-    assert device.appium_node is not None
-    device.appium_node.state = NodeState.stopped
-    await db.commit()
-    await db.refresh(device.appium_node)
-    return device.appium_node
-
-
 @pytest.mark.asyncio
 async def test_health(client: AsyncClient, db_session: AsyncSession) -> None:
     for loop_name in BACKGROUND_LOOP_NAMES:
@@ -1010,10 +1002,7 @@ async def test_enter_device_maintenance_stops_running_node(
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
 
-    with (
-        patch("app.routers.nodes.start_managed_node", new=_fake_start_node),
-        patch("app.services.maintenance_service.stop_node", new=_fake_stop_node),
-    ):
+    with patch("app.routers.nodes.start_managed_node", new=_fake_start_node):
         start_resp = await client.post(f"/api/devices/{device_id}/node/start")
         assert start_resp.status_code == 200
 
@@ -1025,7 +1014,8 @@ async def test_enter_device_maintenance_stops_running_node(
     device_resp = await client.get(f"/api/devices/{device_id}")
     assert device_resp.status_code == 200
     assert device_resp.json()["hold"] == "maintenance"
-    assert device_resp.json()["appium_node"]["state"] == "stopped"
+    assert device_resp.json()["appium_node"]["state"] == "running"
+    assert device_resp.json()["appium_node"]["desired_state"] == "stopped"
 
 
 @pytest.mark.asyncio

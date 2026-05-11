@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +25,7 @@ from app.services.device_identity import appium_connection_target
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.device_verification_job_state import enum_value, set_stage
-from app.services.node_service import restart_node, start_temporary_node, stop_node, stop_temporary_node
+from app.services.node_service import start_temporary_node, stop_node, stop_temporary_node
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.settings_service import settings_service
@@ -201,9 +202,9 @@ async def retain_verified_node(
                 device_id=device.id,
                 port=handle.port,
                 grid_url=settings_service.get("grid.hub_url"),
-                pid=handle.pid,
-                active_connection_target=handle.active_connection_target,
-                state=NodeState.running,
+                pid=None,
+                active_connection_target=None,
+                state=NodeState.stopped,
             )
             db.add(node)
             await db.flush()
@@ -211,9 +212,9 @@ async def retain_verified_node(
         else:
             node.port = handle.port
             node.grid_url = settings_service.get("grid.hub_url")
-            node.pid = handle.pid
-            node.active_connection_target = handle.active_connection_target
-            node.state = NodeState.running
+            node.pid = None
+            node.active_connection_target = None
+            node.state = NodeState.stopped
         await write_desired_state(
             db,
             node=node,
@@ -258,12 +259,17 @@ async def retain_verified_node(
                 "running",
                 detail="Refreshing retained node Grid registration",
             )
-            refreshed_node = await restart_node(db, device, caller="verification")
-            handle.port = refreshed_node.port
-            handle.pid = refreshed_node.pid
-            handle.active_connection_target = refreshed_node.active_connection_target
-            # mark_node_started inside restart_node already applied
-            # ready_operational_state; nothing left to do here.
+            window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+            await write_desired_state(
+                db,
+                node=node,
+                target=NodeState.running,
+                caller="verification",
+                desired_port=handle.port,
+                transition_token=uuid.uuid4(),
+                transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+            )
+            await db.commit()
         else:
             next_state = await ready_operational_state(db, device)
             await set_operational_state(device, next_state)

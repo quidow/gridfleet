@@ -444,10 +444,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         default=5,
         description=(
             "Consecutive desired-state convergence failures before lifecycle policy treats the device as "
-            "backoff-suppressed. Read by Phase 4 reconciler; registered here so Phase 3 callers can record failures."
+            "backoff-suppressed. Suppression lasts appium.startup_timeout_sec * 4 seconds."
         ),
         min_value=1,
         max_value=100,
+    ),
+    SettingDefinition(
+        key="appium_reconciler.host_parallelism",
+        category="grid",
+        setting_type="int",
+        default=8,
+        description="Max number of hosts the Appium reconciler converges in parallel per cycle",
+        min_value=1,
+        max_value=32,
     ),
     SettingDefinition(
         key="appium.session_override",

@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
+from app.models.appium_node import NodeState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
@@ -29,7 +29,6 @@ from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import stop_node_via_agent as stop_node_via_agent_helper
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.settings_service import settings_service
@@ -236,11 +235,6 @@ async def _apply_ip_ping_hysteresis(
     return counter < threshold
 
 
-async def _stop_node_via_agent(device: Device, node: AppiumNode) -> bool:
-    """Stop an Appium node through the host agent."""
-    return await stop_node_via_agent_helper(device, node, http_client_factory=httpx.AsyncClient)
-
-
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:
     locked_device = await device_locking.lock_device(db, device.id)
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -253,13 +247,8 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
         target=NodeState.stopped,
         caller="connectivity",
     )
-
-    stopped = await _stop_node_via_agent(locked_device, locked_node)
-    new_state = NodeState.stopped if stopped else NodeState.error
-    if stopped:
-        locked_node.pid = None
-    await device_health.apply_node_state_transition(db, locked_device, new_state=new_state, mark_offline=True)
-    return stopped
+    await device_health.apply_node_state_transition(db, locked_device, new_state=locked_node.state, mark_offline=True)
+    return None
 
 
 async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:

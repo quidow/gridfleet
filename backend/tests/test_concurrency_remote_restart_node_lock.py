@@ -48,9 +48,6 @@ async def test_restart_node_via_agent_locks_device_and_node(
             request=httpx.Request("POST", "http://example/start"),
         )
 
-    async def stub_wait_ready(*_args: object, **_kwargs: object) -> None:
-        return None
-
     async def runner() -> None:
         async with db_session_maker() as session:
             # Eagerly load appium_node to avoid lazy-load outside greenlet.
@@ -67,10 +64,6 @@ async def test_restart_node_via_agent_locks_device_and_node(
             with (
                 patch("app.services.node_service.appium_stop", stub_stop),
                 patch("app.services.node_service.appium_start", stub_appium_start),
-                patch(
-                    "app.services.node_service._wait_for_remote_appium_ready",
-                    stub_wait_ready,
-                ),
                 patch("app.services.node_service.assert_runnable", return_value=None),
                 patch("app.services.node_service.build_agent_start_payload", return_value={}),
                 patch(

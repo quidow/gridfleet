@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
@@ -80,13 +79,12 @@ async def test_handle_node_crash_queues_device_crashed(
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    with patch("app.services.lifecycle_policy_actions.stop_managed_node", AsyncMock(return_value=None)):
-        await handle_node_crash(
-            db_session,
-            locked,
-            source="connectivity_lost",
-            reason="ADB disconnect",
-        )
+    await handle_node_crash(
+        db_session,
+        locked,
+        source="connectivity_lost",
+        reason="ADB disconnect",
+    )
     await db_session.commit()
     await settle_after_commit_tasks()
 

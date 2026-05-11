@@ -5,15 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import NodeState
 from app.models.device import Device, DeviceHold
-from app.services import appium_node_locking, device_locking
+from app.services import appium_node_locking
+from app.services.appium_reconciler_allocation import candidate_ports
 from app.services.desired_state_writer import write_desired_state
 from app.services.device_state import legacy_label_for_audit
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.node_service import stop_node
-from app.services.node_service_types import NodeManagerError
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +36,14 @@ async def enter_maintenance(
     )
 
     if device.appium_node and device.appium_node.state == NodeState.running:
-        try:
-            await stop_node(db, device, caller="maintenance_enter")
-            # stop_node commits via mark_node_stopped, releasing our row lock.
-            # Re-acquire and re-assert maintenance — the second transition is a
-            # no-op when the row is already (offline, maintenance), and re-applies
-            # if stop_node raced a concurrent writer.
-            device = await device_locking.lock_device(db, device.id)
-            await _MACHINE.transition(
-                device,
-                TransitionEvent.MAINTENANCE_ENTERED,
-                reason="Operator entered maintenance (re-asserted after node stop)",
+        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+        if node is not None:
+            await write_desired_state(
+                db,
+                node=node,
+                target=NodeState.stopped,
+                caller="maintenance_enter",
             )
-        except NodeManagerError as exc:
-            logger.warning("Failed to stop node for %s during maintenance: %s", device.id, exc)
 
     if commit:
         await db.commit()
@@ -76,12 +69,15 @@ async def exit_maintenance(
 
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if node is not None:
+        desired_port = None
+        if device.host_id is not None:
+            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
         await write_desired_state(
             db,
             node=node,
             target=NodeState.running,
             caller="maintenance_exit",
-            desired_port=node.port if node.port else None,
+            desired_port=desired_port,
         )
 
     if commit:

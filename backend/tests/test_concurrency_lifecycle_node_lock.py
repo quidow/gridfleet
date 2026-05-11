@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select, update
@@ -45,13 +45,7 @@ async def test_handle_node_crash_locks_appium_node(
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
-            with (
-                patch("app.services.lifecycle_policy_actions.record_event", racing_record_event),
-                patch(
-                    "app.services.lifecycle_policy_actions.stop_managed_node",
-                    AsyncMock(side_effect=RuntimeError("stop failed")),
-                ),
-            ):
+            with patch("app.services.lifecycle_policy_actions.record_event", racing_record_event):
                 await lifecycle_policy_actions.handle_node_crash(
                     session,
                     target,

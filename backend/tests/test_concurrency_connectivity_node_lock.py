@@ -19,7 +19,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """``_stop_disconnected_node`` writes ``node.state``. Both the Device row
+    """``_stop_disconnected_node`` writes node desired state. Both the Device row
     and the AppiumNode row must be locked across that write.
     """
     device = await create_device(
@@ -35,17 +35,25 @@ async def test_stop_disconnected_node_locks_device_and_node(
 
     stomper_can_go = asyncio.Event()
 
-    async def fake_stop_via_agent(_device: object, _node: object) -> bool:
+    async def fake_write_desired_state(
+        _db: AsyncSession,
+        *,
+        node: AppiumNode,
+        target: NodeState,
+        caller: str,
+        **_kwargs: object,
+    ) -> None:
+        assert caller == "connectivity"
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        return True
+        node.desired_state = target
 
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
             with patch(
-                "app.services.device_connectivity._stop_node_via_agent",
-                fake_stop_via_agent,
+                "app.services.device_connectivity.write_desired_state",
+                fake_write_desired_state,
             ):
                 await device_connectivity._stop_disconnected_node(session, target)
             await session.commit()
@@ -68,3 +76,4 @@ async def test_stop_disconnected_node_locks_device_and_node(
         "_stop_disconnected_node overwrote the concurrent error write "
         "(missing AppiumNode lock)"
     )
+    assert verify_node.desired_state == NodeState.stopped

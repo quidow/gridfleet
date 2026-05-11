@@ -65,6 +65,34 @@ APPIUM_TRANSITION_TOKEN_OVERRIDDEN = Counter(
     "Counts every time one writer overrode another writer's pending transition_token.",
     labelnames=("losing_source", "winning_source"),
 )
+APPIUM_RECONCILER_CONVERGENCE_ACTIONS = Counter(
+    "appium_reconciler_convergence_actions_total",
+    "Convergence actions executed by the Appium reconciler.",
+    labelnames=("action",),
+)
+APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
+    "appium_reconciler_host_cycle_seconds",
+    "Wall-clock duration of one host's Appium convergence cycle.",
+    labelnames=("host_id",),
+)
+APPIUM_RECONCILER_ALLOCATION_COLLISIONS = Counter(
+    "appium_reconciler_allocation_collisions_total",
+    "Port allocation collisions encountered by the Appium reconciler.",
+)
+APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED = Counter(
+    "appium_reconciler_transition_token_expired_total",
+    "Restart transition tokens cleared by the Appium reconciler after their deadline elapsed.",
+)
+APPIUM_RECONCILER_START_FAILURES = Counter(
+    "appium_reconciler_start_failures_total",
+    "Agent-start failures observed by the Appium reconciler, labeled by reason.",
+    labelnames=("reason",),
+)
+APPIUM_RECONCILER_STOP_FAILURES = Counter(
+    "appium_reconciler_stop_failures_total",
+    "Agent-stop failures observed by the Appium reconciler, labeled by reason.",
+    labelnames=("reason",),
+)
 WEBHOOK_DELIVERIES_TOTAL = Counter(
     "webhook_deliveries_total",
     "Webhook delivery state transitions.",

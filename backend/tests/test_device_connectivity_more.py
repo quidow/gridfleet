@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import device_connectivity
@@ -229,19 +228,6 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
         await device_connectivity._check_connectivity(db_session)
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
-
-
-async def test_stop_node_via_agent_delegates_to_helper() -> None:
-    device = _device()
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub", state=NodeState.running)
-
-    with patch(
-        "app.services.device_connectivity.stop_node_via_agent_helper", new=AsyncMock(return_value=True)
-    ) as helper:
-        result = await device_connectivity._stop_node_via_agent(device, node)
-
-    helper.assert_awaited_once()
-    assert result is True
 
 
 async def test_device_connectivity_loop_logs_and_retries() -> None:

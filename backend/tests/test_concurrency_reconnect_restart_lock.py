@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumNode, NodeState
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.routers import devices_control
-from app.services import device_locking, maintenance_service, node_service
-from app.services.node_service_types import NodeManagerError
+from app.services import device_locking, maintenance_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -40,20 +39,15 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     allow_restart = asyncio.Event()
 
     async def fake_restart_node(db: AsyncSession, dev: Device, *, caller: str = "operator_restart") -> AppiumNode:
+        assert dev.appium_node is not None
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        return await node_service.mark_node_started(db, dev, port=4723, pid=123)
-
-    async def fake_stop_node(db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
-        # Simulate the node stop being refused by the agent (no real agent
-        # running in tests). enter_maintenance catches NodeManagerError and
-        # proceeds with the maintenance hold — the test still verifies that
-        # the concurrent reconnect + restart does not overwrite the hold.
-        raise NodeManagerError("Agent did not acknowledge stop (test stub)")
+        dev.appium_node.desired_state = NodeState.running
+        await db.commit()
+        return dev.appium_node
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
     monkeypatch.setattr(devices_control, "restart_managed_node", fake_restart_node)
-    monkeypatch.setattr(maintenance_service, "stop_node", fake_stop_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:
@@ -73,5 +67,5 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
             await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
         ).one()
 
-    assert final.operational_state == DeviceOperationalState.available
+    assert final.operational_state == DeviceOperationalState.offline
     assert final.hold == DeviceHold.maintenance

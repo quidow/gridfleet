@@ -78,6 +78,22 @@ def test_detect_orphans_flags_running_node_when_db_row_state_is_stopped() -> Non
     ]
 
 
+def test_detect_orphans_treats_desired_running_as_claim() -> None:
+    host_id = uuid.uuid4()
+    agent_nodes = [_running_node(target="test-target-a", port=5001)]
+    db_rows = [
+        {
+            "host_id": host_id,
+            "device_connection_target": "test-target-a",
+            "node_port": 5001,
+            "node_state": "stopped",
+            "node_desired_state": "running",
+        }
+    ]
+
+    assert detect_orphans(host_id=host_id, agent_running=agent_nodes, db_running_rows=db_rows) == []
+
+
 def test_detect_orphans_flags_port_mismatch() -> None:
     host_id = uuid.uuid4()
     agent_nodes = [_running_node(target="test-target-a", port=5001)]

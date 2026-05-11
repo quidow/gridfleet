@@ -780,6 +780,21 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     assert summary["detail"] == "Excluded from Summary Run"
 
 
+def test_lifecycle_summary_surfaces_reconciler_start_failure() -> None:
+    summary = build_lifecycle_policy_summary(
+        {
+            "recovery_state": "idle",
+            "last_failure_source": "appium_reconciler",
+            "last_failure_reason": "port_occupied",
+            "backoff_until": None,
+        }
+    )
+
+    assert summary["state"] == "recoverable"
+    assert summary["label"] == "Node Start Failed"
+    assert summary["detail"] == "port_occupied"
+
+
 async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_incident(
     db_session: AsyncSession,
     db_host: Host,

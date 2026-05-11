@@ -18,6 +18,7 @@ import {
 import type { DeviceDetail } from '../../types';
 import Button from '../ui/Button';
 import DefinitionList from '../ui/DefinitionList';
+import ForceClearRestartButton from './ForceClearRestartButton';
 import { formatDate } from './utils';
 
 type Props = {
@@ -110,6 +111,7 @@ export default function DeviceNodePanel({ device }: Props) {
                   {node.desired_state === 'running' ? 'Starting...' : 'Stopping...'}
                 </span>
               )}
+              <ForceClearRestartButton nodeId={node.id} transitionToken={node.transition_token} />
               <StatusBadge status={node.state} />
             </div>
           </div>
