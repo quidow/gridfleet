@@ -37,6 +37,10 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@eslint/js"
         update-types: ["version-update:semver-major"]
+    groups:
+      frontend-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -44,6 +48,10 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    groups:
+      actions-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: "/backend"
     schedule:
@@ -51,6 +59,10 @@ updates:
     commit-message:
       prefix: "docker"
       include: "scope"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: "/frontend"
     schedule:
@@ -58,6 +70,10 @@ updates:
     commit-message:
       prefix: "docker"
       include: "scope"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: "/docker"
     schedule:
@@ -65,3 +81,7 @@ updates:
     commit-message:
       prefix: "docker"
       include: "scope"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
