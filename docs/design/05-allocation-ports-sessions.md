@@ -172,16 +172,11 @@ Key facts:
 - `operational_state: available → busy` is the per-session flip done by `session_sync_loop`. The reverse sets operational state back to `available` or `offline` and leaves any reservation hold untouched.
 - `node_health_loop` skips reserved and busy devices: it only probes devices whose chip status is allocatable and whose operational state is `available` (`_should_probe_node_health` in `node_health.py`). So a device under a run is invisible to auto-restart while it is being driven.
 
-### Reservation cooldown and escalation
+### Run-routed Grid sessions
 
-`POST /api/runs/{run_id}/devices/{device_id}/release-with-cooldown` lets a worker signal that a device behaved badly during a session without permanently excluding it. The handler calls `run_service.release_claimed_device_with_cooldown`, which — inside a `SELECT … FOR UPDATE` on the `DeviceReservation` row — sets `excluded=True`, records `excluded_at`, and writes `excluded_until = excluded_at + ttl_seconds`. It also increments `DeviceReservation.cooldown_count` and records a `lifecycle_run_cooldown_set` event. While the cooldown is active, `claim_device` skips the row; on the next call after the TTL elapses, `_clear_expired_cooldown` clears the `excluded` flag and makes the device claimable again.
+Run membership is routed at the Grid node stereotype rather than through per-worker reservation claims. Each managed `AppiumNode` stores the currently desired and observed run id. The backend reconciler asks the agent to re-register a Grid node when `desired_grid_run_id` and `grid_run_id` diverge.
 
-**Escalation to maintenance.** The settings registry knob `general.device_cooldown_escalation_threshold` (default 3; 0 disables) gates automatic promotion. After the increment, if `cooldown_count >= threshold`, a second phase runs — deliberately outside the first `async with db.begin()` block (mirroring the `complete_auto_stop` pattern) so that nested commits are safe:
-
-1. A `lifecycle_run_cooldown_escalated` event is written to `device_events` with `{cooldown_count, threshold, reason, worker_id, run_id, run_name}`.
-2. `lifecycle_policy_actions.exclude_run_if_needed(...)` sets `excluded=True, excluded_until=None` on the reservation row, records `lifecycle_run_excluded`, and calls `maintenance_service.enter_maintenance(...)`. The device hold flips to `maintenance`; from the run's perspective the device is permanently excluded.
-
-**Response surface.** The endpoint returns a discriminated union on the `status` literal: `"cooldown_set"` for a normal TTL-bounded cooldown, `"maintenance_escalated"` when the threshold was crossed and `enter_maintenance` was called.
+The agent publishes a slot stereotype with `gridfleet:run_id` set to the active run id for reserved nodes, and `free` for the normal shared pool. Testkit clients inject the same capability into Appium session requests, so Selenium Grid performs the worker-to-device assignment without a manager-side claim/release API.
 
 ## Failure-mode glossary (resource leaks)
 

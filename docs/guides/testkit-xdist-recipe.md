@@ -108,73 +108,37 @@ Tune this:
 - `register_run_cleanup` returns the cleanup callable. Store it in the stash so `pytest_sessionfinish` can call it after the explicit complete/cancel.
 - Explicit `complete_run`/`cancel_run` in `pytest_sessionfinish` is preferred over `on_exit=` because `exitstatus` gives a known outcome. The atexit registered by `register_run_cleanup` uses `on_exit="noop"` by default and only stops the heartbeat thread.
 
-## Per-Test Claim And Release
+## Per-Test Device Handle
 
 ```python
-import contextlib
-
-import httpx
 import pytest
 
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device
-
-
-@contextlib.contextmanager
-def claim_for_test(client: GridFleetClient, run_id: str, worker_id: str, *, cooldown_on_error: int = 120):
-    claim = client.claim_device_with_retry(run_id, worker_id=worker_id, max_wait_sec=300)
-    allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
-    error: Exception | None = None
-
-    try:
-        yield allocated
-    except Exception as exc:
-        error = exc
-        raise
-    finally:
-        if error is not None and _is_device_level(error):
-            try:
-                client.release_device_with_cooldown(
-                    run_id,
-                    device_id=allocated.device_id,
-                    worker_id=worker_id,
-                    reason=type(error).__name__,
-                    ttl_seconds=cooldown_on_error,
-                )
-            except httpx.HTTPError:
-                pass
-        else:
-            client.release_device_safe(run_id, device_id=allocated.device_id, worker_id=worker_id)
-
-
-def _is_device_level(exc: Exception) -> bool:
-    name = type(exc).__name__
-    return name in {"WebDriverException", "InvalidSessionIdException", "NoSuchDriverException"}
+from gridfleet_testkit import hydrate_allocated_device, resolve_device_handle_from_driver
 
 
 @pytest.fixture
-def appium_session(request: pytest.FixtureRequest):
+def allocated_device(request: pytest.FixtureRequest):
     config = request.config
     run = config.stash[GRIDFLEET_RUN]
     client = config.stash[GRIDFLEET_CLIENT]
-    worker_id = getattr(config, "workerinput", {}).get("workerid", "controller")
+    driver = request.getfixturevalue("appium_driver")
 
-    with claim_for_test(client, run["id"], worker_id) as allocated:
-        yield allocated
+    device_handle = resolve_device_handle_from_driver(driver, client=client)
+    return hydrate_allocated_device(device_handle, run_id=run["id"], client=client)
 ```
 
 Tune this:
 
-- `_is_device_level` is project policy. Keep assertion failures as normal releases; use cooldown for Appium/WebDriver/device connectivity failures.
-- Prefer `isinstance` checks in `_is_device_level` when your suite can import the Selenium/Appium exception classes directly.
-- `cooldown_on_error` is scoped to the active run. Completing or cancelling the run releases physical devices normally.
-- `worker_id` may be any string. pytest-xdist workers usually provide `gw0`, `gw1`, and so on.
+- The testkit's `appium_driver` fixture injects `gridfleet:run_id`, so Selenium Grid routes the session to a node reserved for the run.
+- Resolve device metadata after the session starts, when the driver exposes the runtime connection target.
+- Device-level failures should be reported with `report_preparation_failure(...)` before the session starts, or by normal session outcome reporting after the session exists.
 
 ## Failure Modes
 
 - Controller crash: heartbeat stops and the manager expires the run according to the run heartbeat timeout.
-- Worker crash: the claim remains associated with that worker until run cleanup, manual release, cooldown expiry, or run expiry.
-- Network partition: claims may fail with retryable no-claim metadata or normal HTTP errors. Keep retry budgets finite.
-- Release race: use `release_device_safe(...)` in normal cleanup so run-finalized and already-released states do not hide the original test result.
+- Worker crash: any running Grid session ends according to the Grid/Appium failure path; the run remains protected until heartbeat timeout or explicit cleanup.
+- Network partition: Appium session creation and manager metadata lookups can fail with normal HTTP/WebDriver errors. Keep retry budgets finite.
+- Cleanup race: explicit `complete_run`/`cancel_run` in `pytest_sessionfinish` should tolerate the run already being terminal.
 
 ## xdist Distribution Modes
 
@@ -182,47 +146,3 @@ Tune this:
 - `--dist loadgroup`: useful when tests are grouped by driver pack or platform markers.
 - `--dist loadfile` / `loadscope`: useful when fixture setup cost dominates and tests in one file or class should share process locality.
 - `--dist each`: usually wrong for scarce devices because it replicates the full test suite per worker.
-
-## Smoke Test For The Context Manager
-
-This test validates the claim/release control flow without starting Appium:
-
-```python
-from dataclasses import dataclass
-
-from conftest import claim_for_test
-
-
-@dataclass
-class FakeAllocated:
-    device_id: str
-
-
-class FakeClient:
-    def __init__(self):
-        self.calls = []
-
-    def claim_device_with_retry(self, run_id, *, worker_id, max_wait_sec):
-        self.calls.append(("claim", run_id, worker_id, max_wait_sec))
-        return {"device_id": "dev-1", "connection_target": "127.0.0.1:4723"}
-
-    def release_device_safe(self, run_id, *, device_id, worker_id):
-        self.calls.append(("release_safe", run_id, device_id, worker_id))
-        return True
-
-
-def test_claim_for_test_releases_on_success(monkeypatch):
-    fake = FakeClient()
-    monkeypatch.setattr(
-        "conftest.hydrate_allocated_device",
-        lambda claim, *, run_id, client: FakeAllocated(device_id=claim["device_id"]),
-    )
-
-    with claim_for_test(fake, "run-123", "gw0") as allocated:
-        assert allocated.device_id == "dev-1"
-
-    assert fake.calls == [
-        ("claim", "run-123", "gw0", 300),
-        ("release_safe", "run-123", "dev-1", "gw0"),
-    ]
-```

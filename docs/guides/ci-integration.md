@@ -30,9 +30,7 @@ When auth is disabled (`GRIDFLEET_AUTH_ENABLED=false`), leave the two env vars u
 | `/api/runs` | POST | Create a reservation |
 | `/api/runs` | GET | List runs (filterable by state) |
 | `/api/runs/{id}` | GET | Run detail with reserved devices |
-| `/api/runs/{id}/claim` | POST | Atomically claim one reserved device for a worker |
-| `/api/runs/{id}/release` | POST | Release one worker claim back to the run |
-| `/api/runs/{id}/ready` | POST | Signal preparation complete |
+| `/api/runs/{id}/ready` | POST | Compatibility alias that marks the run active |
 | `/api/runs/{id}/active` | POST | Signal tests are running |
 | `/api/runs/{id}/devices/{device_id}/preparation-failed` | POST | Exclude one reserved device after CI preparation fails |
 | `/api/runs/{id}/heartbeat` | POST | Keep-alive ping |
@@ -98,40 +96,17 @@ Roku is not installed by default; import the curated Roku driver or upload a Rok
 }
 ```
 
-## Worker Claim/Release For pytest-xdist
+## pytest-xdist Routing
 
-When a run reserves multiple devices, pytest-xdist workers can atomically claim devices instead of sharing the `devices` array through client-side locking.
-
-Claim one device for a worker:
-
-```bash
-curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
-  -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
-  -H "Content-Type: application/json" \
-  -d "{\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
-```
-
-The response has the same routing fields as a reserved device plus:
-
-- `claimed_by`: the worker id, or an anonymous generated id when omitted
-- `claimed_at`: when the claim lease started
-
-Release the claim when that worker is done with the device:
-
-```bash
-curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
-  -X POST "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$DEVICE_ID\",\"worker_id\":\"$PYTEST_XDIST_WORKER\"}"
-```
+When a run reserves multiple devices, pytest-xdist workers create normal Appium sessions through Selenium Grid. The testkit injects `gridfleet:run_id` into the requested capabilities, and Grid routes each worker to a node reserved for that run.
 
 Practical notes:
 
-- a successful claim always returns one currently unclaimed, non-excluded device from the run
-- concurrent workers are safe; claims are selected with database row locking
-- release requires the same `worker_id` that owns the claim
-- stale claims become reclaimable after `reservations.claim_ttl_seconds` seconds; default `120`
-- the run still needs the normal heartbeat and final `complete` or `cancel` call
+- size the worker pool from the `devices` array returned by `POST /api/runs`
+- keep the run heartbeat active while workers are running
+- call `/api/runs/{id}/active` after preparation, or let session sync activate the run after the first reserved session starts
+- resolve the assigned manager device row from the session connection target with `/api/devices/by-connection-target/{target}` when a test needs device config or metadata
+- finish with the normal `complete` or `cancel` call; there is no per-worker release call
 
 ## Safety Nets
 

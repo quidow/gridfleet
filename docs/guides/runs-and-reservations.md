@@ -16,50 +16,18 @@ The manager uses it to:
 
 The manager does not run your test suite itself. It protects and tracks the reserved fleet slice while CI or operators do the preparation and execution work.
 
-## Claiming Devices Inside A Run
+## Grid-Routed Device Assignment
 
-Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Those workers can claim reserved devices one at a time instead of coordinating device assignment in client code.
+Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit injects `gridfleet:run_id` into Appium capabilities, and Selenium Grid routes each new session to a node currently reserved for that run.
 
-Use:
-
-```bash
-curl -sf -X POST \
-  "$GRIDFLEET_URL/api/runs/$RUN_ID/claim" \
-  -H "Content-Type: application/json" \
-  -d '{"worker_id":"gw0"}'
-```
-
-The response is one reserved device plus claim metadata:
-
-```json
-{
-  "device_id": "device-uuid",
-  "identity_value": "R58M...",
-  "connection_target": "R58M...",
-  "pack_id": "appium-uiautomator2",
-  "platform_id": "android_mobile",
-  "platform_label": "Android",
-  "os_version": "14",
-  "host_ip": "10.0.0.20",
-  "claimed_by": "gw0",
-  "claimed_at": "2026-04-30T12:00:00+00:00"
-}
-```
-
-Claiming is atomic at the database layer. Concurrent workers either receive different devices or a `409` when no unclaimed, non-excluded reserved devices remain. A claim is a lease on an existing reservation; it does not release the device from the run.
-
-When a worker finishes with its device but the run should remain alive, release only that claim:
+The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can resolve the assigned manager device row from the runtime connection target:
 
 ```bash
-curl -sf -X POST \
-  "$GRIDFLEET_URL/api/runs/$RUN_ID/release" \
-  -H "Content-Type: application/json" \
-  -d '{"device_id":"device-uuid","worker_id":"gw0"}'
+curl -sf \
+  "$GRIDFLEET_URL/api/devices/by-connection-target/$CONNECTION_TARGET"
 ```
 
-Release is owner-checked. The `worker_id` must match the active claim owner, which prevents one worker from accidentally releasing another worker's device. Completing, cancelling, expiring, or force-releasing the run clears all claim state while releasing the underlying reservations.
-
-Stale claims are reclaimed lazily by the next claim request after `reservations.claim_ttl_seconds` elapses. The default is `120` seconds and can be overridden with `GRIDFLEET_RESERVATION_CLAIM_TTL_SECONDS`.
+Completing, cancelling, expiring, or force-releasing the run clears the reservation and returns the underlying devices to normal availability.
 
 ## Where Operators See Runs
 
@@ -87,8 +55,8 @@ The normal reservation path today is:
 3. the run starts in `preparing`
 4. CI prepares the reserved devices
 5. if one reserved device fails preparation, CI can call `/api/runs/{id}/devices/{device_id}/preparation-failed` to exclude only that device and preserve the exact failure reason
-6. CI or an operator signals `ready` after the remaining devices finish preparation
-7. the run becomes `active` when either:
+6. CI or an operator signals `active` after the remaining devices finish preparation
+7. the run is also considered `active` when:
    - `/api/runs/{id}/active` is called explicitly, or
    - session sync observes a reserved device start work
 8. the run ends as `completed`, `cancelled`, or `expired`
@@ -103,7 +71,6 @@ Run creation supports two allocation modes per requirement:
 | State | What It Means Today | Typical Cause |
 | --- | --- | --- |
 | `preparing` | devices are reserved and preparation can happen | run was just created |
-| `ready` | preparation finished and the run is waiting for actual test use | CI called `ready` |
 | `active` | reserved devices are in use or explicitly activated | explicit `active` or observed session use |
 | `completed` | normal finish and release | CI called `complete` |
 | `cancelled` | operator-initiated stop and release | `cancel` or `force-release` |

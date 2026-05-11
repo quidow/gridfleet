@@ -41,11 +41,11 @@ Environment variables control the base credentials and routing strings. These sh
 
 ### Inline allocation includes
 
-`POST /api/runs?include=config` and `POST /api/runs/{run_id}/claim?include=config`
-embed the device config verbatim in the response. The manager does not mask or
-filter any fields on the inline path — the full `device_config` object is returned
-as stored. The auth gate (`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary:
-callers without valid credentials cannot reach these endpoints at all.
+`POST /api/runs?include=config` embeds the device config verbatim in the
+response. The manager does not mask or filter any fields on the inline path --
+the full `device_config` object is returned as stored. The auth gate
+(`GRIDFLEET_AUTH_ENABLED`) is the only trust boundary: callers without valid
+credentials cannot reach this endpoint at all.
 
 `include=capabilities` is rejected on `POST /api/runs` (HTTP 422,
 `details.code = "reserve_capabilities_unsupported"`). On claim,
