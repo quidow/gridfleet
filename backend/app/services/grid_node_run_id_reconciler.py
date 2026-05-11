@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import select
 
 from app import metrics_recorders
+from app.database import async_session
 from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host, HostStatus
-from app.observability import get_logger
+from app.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.services import device_locking
 from app.services.agent_operations import grid_node_reregister
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
     import uuid
@@ -21,6 +27,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
+LOOP_NAME = "grid_node_run_id_reconciler"
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,29 @@ class AgentOperationsGridNodeReregisterRpc:
 
 def default_grid_node_reregister_rpc(*, timeout: float | int = 20) -> AgentOperationsGridNodeReregisterRpc:
     return AgentOperationsGridNodeReregisterRpc(timeout=timeout)
+
+
+async def grid_node_run_id_reconciler_loop() -> None:
+    interval = float(settings_service.get("appium_reconciler.interval_sec"))
+    await schedule_background_loop(LOOP_NAME, interval)
+    while True:
+        cycle_start = time.monotonic()
+        try:
+            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
+                await assert_current_leader(db)
+                await converge_grid_run_id_once(db, rpc_client=default_grid_node_reregister_rpc())
+        except LeadershipLost as exc:
+            logger.error(
+                "grid_node_run_id_reconciler_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
+        except Exception:
+            logger.exception("grid_node_run_id_reconciler_cycle_failed")
+        logger.debug("grid_node_run_id_reconciler_cycle_finished duration_sec=%s", time.monotonic() - cycle_start)
+        interval = float(settings_service.get("appium_reconciler.interval_sec"))
+        await asyncio.sleep(interval)
 
 
 async def converge_grid_run_id_once(

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 
 from app.models.appium_node import AppiumNode, NodeState
-from app.services.grid_node_run_id_reconciler import converge_grid_run_id_once
+from app.services.grid_node_run_id_reconciler import converge_grid_run_id_once, grid_node_run_id_reconciler_loop
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -89,3 +91,33 @@ async def test_dispatches_free_pool_target(db_session: AsyncSession, db_host: Ho
     rpc_client.reregister_grid_node.assert_awaited_once()
     await db_session.refresh(node)
     assert node.grid_run_id is None
+
+
+@pytest.mark.asyncio
+async def test_grid_node_run_id_reconciler_loop_runs_cycle() -> None:
+    class _Observation:
+        @asynccontextmanager
+        async def cycle(self) -> AsyncMock:
+            yield AsyncMock()
+
+    @asynccontextmanager
+    async def fake_session() -> AsyncMock:
+        yield AsyncMock()
+
+    with (
+        patch("app.services.grid_node_run_id_reconciler.observe_background_loop", return_value=_Observation()),
+        patch("app.services.grid_node_run_id_reconciler.async_session", fake_session),
+        patch("app.services.grid_node_run_id_reconciler.assert_current_leader", new=AsyncMock()),
+        patch("app.services.grid_node_run_id_reconciler.converge_grid_run_id_once", new=AsyncMock()) as converge,
+        patch("app.services.grid_node_run_id_reconciler.settings_service.get", return_value=1),
+        patch("app.services.grid_node_run_id_reconciler.schedule_background_loop", new=AsyncMock()) as schedule,
+        patch(
+            "app.services.grid_node_run_id_reconciler.asyncio.sleep",
+            new=AsyncMock(side_effect=asyncio.CancelledError),
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await grid_node_run_id_reconciler_loop()
+
+    schedule.assert_awaited_once_with("grid_node_run_id_reconciler", 1.0)
+    converge.assert_awaited_once()
