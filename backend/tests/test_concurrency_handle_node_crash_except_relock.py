@@ -32,7 +32,9 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
             port=4723,
             grid_url="http://hub:4444",
             pid=12345,
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
         )
     )
     await db_session.commit()

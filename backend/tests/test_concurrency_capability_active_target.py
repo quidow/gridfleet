@@ -36,7 +36,9 @@ async def test_get_live_active_connection_target_locks_device_and_node(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
             active_connection_target=None,
         )
     )

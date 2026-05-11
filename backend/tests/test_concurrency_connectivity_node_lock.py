@@ -30,7 +30,15 @@ async def test_stop_disconnected_node_locks_device_and_node(
         verified=True,
     )
     db_session.add(
-        AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state=AppiumDesiredState.running)
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
     )
     await db_session.commit()
     device_id = device.id
@@ -49,6 +57,8 @@ async def test_stop_disconnected_node_locks_device_and_node(
         stomper_can_go.set()
         await asyncio.sleep(0.15)
         node.desired_state = target
+        if target == AppiumDesiredState.stopped:
+            node.desired_port = None
 
     async def runner() -> None:
         async with db_session_maker() as session:

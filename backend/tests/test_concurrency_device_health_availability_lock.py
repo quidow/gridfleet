@@ -81,7 +81,10 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
             device_id=device.id,
             port=4723,
             grid_url="http://hub:4444",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
         )
     )
     device.device_checks_healthy = True

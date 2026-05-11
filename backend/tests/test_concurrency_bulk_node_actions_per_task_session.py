@@ -64,7 +64,10 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             device_id=dev.id,
             port=4720 + (1 if dev.id == device_a_id else 2),
             grid_url="http://grid.example.test:4444",
-            state=AppiumDesiredState.running,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4720,
+            pid=0,
+            active_connection_target="",
         )
         db.add(node)
         await db.flush()
