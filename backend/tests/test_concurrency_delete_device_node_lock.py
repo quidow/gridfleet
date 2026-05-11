@@ -81,7 +81,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
                 patch.object(device_service, "get_device", new=gated_get_device),
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
-                    "app.services.node_service.stop_node",
+                    "app.services.device_service._stop_node",
                     new=observed_stop_node,
                 ),
             ):
@@ -188,7 +188,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     async def deleter() -> bool:
         async with db_session_maker() as db:
             with patch(
-                "app.services.device_service.stop_node",
+                "app.services.device_service._stop_node",
                 new=observed_stop_node,
             ):
                 return await device_service.delete_device(db, device_id)

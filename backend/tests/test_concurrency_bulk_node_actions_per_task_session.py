@@ -47,7 +47,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     release_b = asyncio.Event()
     racer_acquired_b = asyncio.Event()
 
-    async def fake_start_node(db: AsyncSession, dev: Device, *, caller: str = "bulk") -> AppiumNode:
+    async def fake_start_node(db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         if dev.id == device_b_id:
             # The bulk helper calls the service only after acquiring B's
             # row lock. Holding here makes the lock window observable.
@@ -71,9 +71,10 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
         )
         db.add(node)
         await db.flush()
+        dev.appium_node = node
         return node
 
-    monkeypatch.setattr(bulk_service, "start_node", fake_start_node)
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start_node)
 
     async def racer() -> None:
         await a_committed.wait()

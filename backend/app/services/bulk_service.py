@@ -3,6 +3,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -11,16 +12,19 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.errors import AgentCallError
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
-from app.services.desired_state_writer import DesiredStateCaller
+from app.services.appium_reconciler_allocation import candidate_ports
+from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.services.device_service import delete_device
 from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.maintenance_service import enter_maintenance, exit_maintenance, schedule_device_recovery
-from app.services.node_service import restart_node, start_node, stop_node
+from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
+from app.services.settings_service import settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,64 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-ManagerCall = Callable[..., Awaitable[object]]
+async def _bulk_start_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned")
+    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+    node: AppiumNode | None = device.appium_node
+    if node is None:
+        node = AppiumNode(
+            device_id=device.id,
+            port=desired_port,
+            grid_url=settings_service.get("grid.hub_url"),
+        )
+        db.add(node)
+        await db.flush()
+        device.appium_node = node
+    await write_desired_state(
+        db,
+        node=node,
+        target=AppiumDesiredState.running,
+        caller=caller,
+        desired_port=desired_port,
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+async def _bulk_stop_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+    node: AppiumNode | None = device.appium_node
+    if node is None or not node.observed_running:
+        raise NodeManagerError(f"No running node for device {device.id}")
+    await write_desired_state(
+        db,
+        node=node,
+        target=AppiumDesiredState.stopped,
+        caller=caller,
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
+
+
+async def _bulk_restart_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+    node: AppiumNode | None = device.appium_node
+    if node is None or not node.observed_running:
+        return await _bulk_start_one(db, device, caller)
+    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+    await write_desired_state(
+        db,
+        node=node,
+        target=AppiumDesiredState.running,
+        caller=caller,
+        desired_port=node.port,
+        transition_token=uuid.uuid4(),
+        transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+    )
+    await db.commit()
+    await db.refresh(node)
+    return node
 
 
 async def _run_per_device_node_action(
@@ -57,7 +118,7 @@ async def _run_per_device_node_action(
     device_ids: list[uuid.UUID],
     *,
     operation: str,
-    manager_call: ManagerCall,
+    action_fn: Callable[..., Awaitable[object]],
     caller: DesiredStateCaller,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
@@ -69,7 +130,7 @@ async def _run_per_device_node_action(
         async with sem, session_factory() as session:
             try:
                 device = await device_locking.lock_device(session, device_id)
-                await manager_call(session, device, caller=caller)
+                await action_fn(session, device, caller)
                 await session.commit()
             except NoResultFound:
                 errors[str(device_id)] = "Device not found"
@@ -102,7 +163,7 @@ async def bulk_start_nodes(
         db,
         device_ids,
         operation="start_nodes",
-        manager_call=start_node,
+        action_fn=_bulk_start_one,
         caller=caller,
     )
 
@@ -117,7 +178,7 @@ async def bulk_stop_nodes(
         db,
         device_ids,
         operation="stop_nodes",
-        manager_call=stop_node,
+        action_fn=_bulk_stop_one,
         caller=caller,
     )
 
@@ -132,7 +193,7 @@ async def bulk_restart_nodes(
         db,
         device_ids,
         operation="restart_nodes",
-        manager_call=restart_node,
+        action_fn=_bulk_restart_one,
         caller=caller,
     )
 

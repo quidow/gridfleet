@@ -15,8 +15,8 @@ from tests.helpers import create_device
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.device import Device
     from app.models.host import Host
+    from app.services.desired_state_writer import DesiredStateCaller
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -40,13 +40,19 @@ async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
 
     captured: dict[str, object] = {}
 
-    async def fake_start(_db: AsyncSession, _device: Device, *, caller: str = "operator_route") -> AppiumNode:
+    async def fake_start(
+        _db: AsyncSession,
+        *,
+        node: AppiumNode,
+        target: AppiumDesiredState,
+        caller: DesiredStateCaller,
+        **kwargs: object,
+    ) -> None:
         captured["caller"] = caller
-        return node
 
     from app.services import lifecycle_policy
 
-    with patch.object(lifecycle_policy, "start_managed_node", new=fake_start):
+    with patch.object(lifecycle_policy, "write_desired_state", new=fake_start):
         await lifecycle_policy.attempt_auto_recovery(
             db_session,
             device,

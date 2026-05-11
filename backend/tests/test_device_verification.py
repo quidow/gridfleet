@@ -223,9 +223,8 @@ async def test_verification_job_success_keeps_verified_node_when_auto_manage_ena
 
     detail = (await client.get(f"/api/devices/{devices[0]['id']}")).json()
     assert detail["appium_node"] is not None
-    assert detail["appium_node"]["state"] == "running"
-    assert detail["appium_node"]["effective_state"] == "running"
     assert detail["appium_node"]["desired_state"] == "running"
+    assert detail["appium_node"]["effective_state"] == "running"
     assert detail["appium_node"]["pid"] == 12345
     assert detail["appium_node"]["active_connection_target"] == "emulator-5554"
 
@@ -1087,7 +1086,10 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         return TemporaryNodeHandle(port=4724, pid=67890)
 
     with (
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock(side_effect=stop_running_node)),
+        patch(
+            "app.services.device_verification_execution._stop_managed_node_for_verification",
+            new=AsyncMock(side_effect=stop_running_node),
+        ),
         patch(
             "app.services.device_verification_execution.start_temporary_node",
             new=AsyncMock(side_effect=start_updated_node),

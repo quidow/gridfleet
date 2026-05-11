@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1042,11 +1043,19 @@ async def test_enter_device_maintenance_stops_running_node(
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
 
-    with patch("app.routers.nodes.start_managed_node", new=_fake_start_node):
-        start_resp = await client.post(f"/api/devices/{device_id}/node/start")
-        assert start_resp.status_code == 200
+    start_resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert start_resp.status_code == 200
 
-        maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
+    # Simulate agent having started the node so maintenance sees it as running
+    from app.models.appium_node import AppiumNode as _AppiumNode
+
+    node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
+    assert node is not None
+    node.pid = 12345
+    node.active_connection_target = "emulator-5554"
+    await db_session.commit()
+
+    maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
 
     assert maintenance_resp.status_code == 200
     assert maintenance_resp.json()["hold"] == "maintenance"

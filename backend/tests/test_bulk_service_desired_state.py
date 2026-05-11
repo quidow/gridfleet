@@ -29,7 +29,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
         return AppiumNode(
             device_id=dev.id,
@@ -43,7 +43,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     from app.services import bulk_service
 
-    monkeypatch.setattr(bulk_service, "start_node", fake_start)
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id])
 
@@ -60,7 +60,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, *, caller: str = "operator_route") -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
         return AppiumNode(
             device_id=dev.id,
@@ -74,7 +74,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     from app.services import bulk_service
 
-    monkeypatch.setattr(bulk_service, "start_node", fake_start)
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group")
 

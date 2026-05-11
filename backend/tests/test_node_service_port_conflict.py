@@ -10,7 +10,7 @@ import pytest_asyncio
 
 from app.services.agent_error_codes import AgentErrorCode
 from app.services.appium_reconciler_agent import start_remote_temporary_node
-from app.services.node_service import NodePortConflictError
+from app.services.node_service_types import NodePortConflictError
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:

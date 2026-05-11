@@ -9,7 +9,7 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceType
 from app.models.host import Host, HostStatus, OSType
 from app.services import appium_node_resource_service, appium_reconciler_agent
-from app.services.node_service import build_agent_start_payload
+from app.services.appium_reconciler_agent import build_agent_start_payload
 from app.services.pack_capability_service import render_stereotype
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.pack.factories import seed_test_packs

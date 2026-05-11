@@ -14,6 +14,7 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from app.services import device_health
 from app.services import lifecycle_policy as lifecycle_policy_module
+from app.services.desired_state_writer import DesiredStateCaller
 from app.services.lifecycle_policy import (
     DeferredStopOutcome,
     attempt_auto_recovery,
@@ -32,8 +33,15 @@ def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
 
 
-async def _mark_device_available(_db: AsyncSession, device: Device, *, caller: str = "operator_route") -> None:
-    device.operational_state = DeviceOperationalState.available
+async def _mark_device_available(
+    _db: AsyncSession,
+    *,
+    node: AppiumNode,
+    target: AppiumDesiredState,
+    caller: DesiredStateCaller,
+    **kwargs: object,
+) -> None:
+    node.device.operational_state = DeviceOperationalState.available
 
 
 async def _event_types_for_device(db_session: AsyncSession, device_id: object) -> list[DeviceEventType]:
@@ -322,7 +330,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
+        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -407,7 +415,7 @@ async def test_recovery_rejoin_publishes_availability_event(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
+        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -471,7 +479,7 @@ async def test_recovery_reloads_device_before_starting_node(
         await other_session.commit()
 
     manager = SimpleNamespace(start_node=AsyncMock())
-    with patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node):
+    with patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node):
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is False
@@ -525,7 +533,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
+        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -579,7 +587,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
+        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -679,13 +687,16 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
 
     manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
     with (
-        patch("app.services.lifecycle_policy.start_managed_node", new=manager.start_node),
+        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
         patch(
             "app.services.lifecycle_policy.settings_service.get",
             side_effect=lambda key: {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 20,
-            }[key],
+                "appium.port_range_start": 4720,
+                "appium.port_range_end": 4800,
+                "grid.hub_url": "http://hub:4444",
+            }.get(key),
         ),
         patch(
             "app.services.session_viability.run_session_viability_probe",
