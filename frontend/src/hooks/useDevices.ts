@@ -368,6 +368,9 @@ export function useClearAppiumNodeTransition() {
       qc.invalidateQueries({ queryKey: ['devices'] });
       qc.invalidateQueries({ queryKey: ['device'] });
     },
+    onError: (error, { nodeId }) => {
+      toast.error(getErrorMessage(error, `Failed to clear Appium transition for node ${nodeId}`));
+    },
   });
 }
 

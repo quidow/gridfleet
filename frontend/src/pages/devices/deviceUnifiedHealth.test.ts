@@ -169,7 +169,21 @@ describe('deriveUnifiedHealth', () => {
     });
     const result = deriveUnifiedHealth(device);
     expect(result.tone).toBe('error');
-    expect(result.reasons).toContain('Recovery paused — admin review needed');
+    expect(result.reasons).toContain('Node restart failed');
+  });
+
+  it('surfaces lifecycle backoff detail as operator-visible warning', () => {
+    const device = makeDevice({
+      lifecycle_policy_summary: {
+        state: 'backoff',
+        label: 'Backing Off',
+        detail: 'Agent failed to start node: port occupied',
+        backoff_until: '2026-04-16T12:01:00Z',
+      },
+    });
+    const result = deriveUnifiedHealth(device);
+    expect(result.tone).toBe('warn');
+    expect(result.reasons).toContain('Agent failed to start node: port occupied');
   });
 
   it('returns error when lifecycle is manual', () => {
@@ -213,6 +227,6 @@ describe('deriveUnifiedHealth', () => {
     });
     const result = deriveUnifiedHealth(device);
     expect(result.tone).toBe('error');
-    expect(result.reasons).toEqual(['Disconnected', 'Recovery paused — admin review needed']);
+    expect(result.reasons).toEqual(['Disconnected', 'Node restart failed']);
   });
 });

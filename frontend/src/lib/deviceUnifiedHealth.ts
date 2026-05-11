@@ -33,11 +33,17 @@ export function deriveUnifiedHealth(device: DeviceRead): UnifiedHealth {
   }
 
   if (lifecycle === 'suppressed') {
-    reasons.push('Recovery paused — admin review needed');
+    reasons.push(device.lifecycle_policy_summary?.detail || 'Recovery paused — admin review needed');
     tone = 'error';
   } else if (lifecycle === 'manual') {
-    reasons.push('Manual recovery requested');
+    reasons.push(device.lifecycle_policy_summary?.detail || 'Manual recovery requested');
     tone = 'error';
+  } else if (lifecycle === 'backoff') {
+    reasons.push(device.lifecycle_policy_summary?.detail || 'Recovery backoff active');
+    if (tone === 'ok') tone = 'warn';
+  } else if (lifecycle === 'recoverable') {
+    reasons.push(device.lifecycle_policy_summary?.detail || 'Recovery eligible');
+    if (tone === 'ok') tone = 'warn';
   }
 
   if (hardware === 'critical') {
