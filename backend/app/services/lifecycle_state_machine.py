@@ -28,6 +28,7 @@ _OPERATIONAL_TRANSITIONS: dict[
         TransitionEvent.AUTO_STOP_EXECUTED: DeviceOperationalState.offline,
         TransitionEvent.PREPARATION_FAILED: DeviceOperationalState.offline,
         TransitionEvent.CLOUD_ESCROW: DeviceOperationalState.offline,
+        TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
     },
     DeviceOperationalState.busy: {
         TransitionEvent.SESSION_ENDED: DeviceOperationalState.available,
@@ -39,6 +40,12 @@ _OPERATIONAL_TRANSITIONS: dict[
     DeviceOperationalState.offline: {
         TransitionEvent.CONNECTIVITY_RESTORED: DeviceOperationalState.available,
         TransitionEvent.SESSION_STARTED: DeviceOperationalState.busy,
+        TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
+    },
+    DeviceOperationalState.verifying: {
+        TransitionEvent.VERIFICATION_PASSED: DeviceOperationalState.offline,
+        TransitionEvent.VERIFICATION_FAILED: DeviceOperationalState.offline,
+        TransitionEvent.CONNECTIVITY_LOST: DeviceOperationalState.offline,
     },
 }
 
