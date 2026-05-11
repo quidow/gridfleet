@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+
+import pytest
 
 from app.schemas.device import AppiumNodeRead
+
+if TYPE_CHECKING:
+    from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.host import Host
 
 
 def _build_read(**overrides: object) -> AppiumNodeRead:
@@ -115,3 +124,37 @@ def test_effective_state_expired_transition_token_falls_through_to_running() -> 
         transition_deadline=datetime.now(UTC) - timedelta(seconds=10),
     )
     assert read.effective_state == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_effective_state_blocked_surfaces_through_router_serialization(
+    client: AsyncClient, db_session: AsyncSession, db_host: Host
+) -> None:
+    """Phase 6: lifecycle_policy_state must be plumbed into AppiumNodeRead so
+    the blocked cascade branch fires end-to-end through the router."""
+    from app.models.appium_node import AppiumNode, NodeState
+    from tests.helpers import create_device
+
+    device = await create_device(db_session, host_id=db_host.id, name="blocked-end-to-end", verified=True)
+    device.lifecycle_policy_state = {
+        "recovery_suppressed_reason": "Auto-manage is disabled",
+        "backoff_until": None,
+    }
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=NodeState.running,
+            desired_port=4723,
+            pid=None,
+            active_connection_target=None,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get(f"/api/devices/{device.id}")
+    assert resp.status_code == 200
+    appium_node = resp.json()["appium_node"]
+    assert appium_node["effective_state"] == "blocked"
