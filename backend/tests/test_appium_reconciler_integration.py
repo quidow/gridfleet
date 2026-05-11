@@ -86,7 +86,7 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.port == 4723
     assert node.pid == 12345
     start_mock.assert_awaited_once()
@@ -133,7 +133,7 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
     start_mock.assert_awaited_once()
     assert start_mock.await_args.kwargs["reuse_existing"] is False
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.pid == 222
 
 
@@ -178,7 +178,7 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.stopped
+    assert not node.observed_running
     assert node.pid is None
     stop_mock.assert_awaited_once()
 
@@ -224,7 +224,7 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.stopped
+    assert not node.observed_running
     assert node.transition_token is None
     assert node.transition_deadline is None
 
@@ -283,7 +283,7 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.port == 4724
     assert node.pid == 222
     assert node.transition_token is None
@@ -405,7 +405,7 @@ async def test_reconciler_stop_failure_preserves_restart_token(
     await db_session.refresh(node)
     assert node.transition_token == token
     assert node.transition_deadline is not None
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
 
 
 async def test_reconciler_touches_backed_off_rows_when_host_responds(
@@ -478,7 +478,7 @@ async def test_reconciler_rejects_zero_port_start_result(
         await appium_reconciler.run_one_cycle_for_test()
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.stopped
+    assert not node.observed_running
     assert node.pid is None
 
 
@@ -550,8 +550,8 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
 
     await db_session.refresh(first_node)
     await db_session.refresh(second_node)
-    assert first_node.state == AppiumDesiredState.running
-    assert second_node.state == AppiumDesiredState.running
+    assert first_node.observed_running
+    assert second_node.observed_running
     assert first_node.port != second_node.port
     assert first_node.port >= start_port
     assert second_node.port >= start_port

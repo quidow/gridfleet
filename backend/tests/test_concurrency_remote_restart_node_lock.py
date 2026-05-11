@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.models.host import Host
 from app.services import appium_reconciler_agent as node_service
@@ -25,7 +25,13 @@ async def test_restart_node_via_agent_locks_device_and_node(
     writes must hold the AppiumNode lock.
     """
     device = await create_device(db_session, host_id=db_host.id, name="nmr-lock", verified=True)
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444", state="error")
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        health_running=False,
+        health_state="error",
+    )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -118,8 +124,8 @@ async def test_restart_node_via_agent_locks_device_and_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == AppiumDesiredState.stopped, (
-        f"Expected stopped but got {verify_node.state.value} — "
+    assert not verify_node.observed_running, (
+        f"Expected observed_running=False but got observed_running={verify_node.observed_running} — "
         "restart_node_via_agent overwrote the concurrent stopped write "
         "(missing AppiumNode lock)"
     )

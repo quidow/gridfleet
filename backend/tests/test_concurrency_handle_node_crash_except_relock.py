@@ -83,5 +83,5 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         final_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     assert final_device.operational_state == DeviceOperationalState.offline
-    assert final_node.state == AppiumDesiredState.running
+    assert final_node.observed_running
     assert final_node.desired_state == AppiumDesiredState.stopped

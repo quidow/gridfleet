@@ -511,7 +511,8 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     # Simulate the reconciler observing the stop before entering maintenance.
     node = await db_session.get(AppiumNode, uuid.UUID(stop_resp.json()["id"]))
     assert node is not None
-    node.state = AppiumDesiredState.stopped
+    node.pid = None
+    node.active_connection_target = None
     node.pid = None
     await db_session.commit()
 

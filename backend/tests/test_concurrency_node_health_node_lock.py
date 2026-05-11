@@ -92,8 +92,8 @@ async def test_node_health_failure_path_locks_appium_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.state == AppiumDesiredState.running, (
-        f"Expected running but got {verify_node.state.value} — "
+    assert verify_node.observed_running, (
+        f"Expected observed_running=True but got observed_running={verify_node.observed_running} — "
         "node_health overwrote the concurrent running write (missing AppiumNode lock)"
     )
     assert verify_node.pid == 12345

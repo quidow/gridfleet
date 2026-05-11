@@ -88,4 +88,4 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running

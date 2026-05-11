@@ -397,7 +397,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
 
     await db_session.refresh(node)
     assert node.pid == 2222
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 2
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
@@ -516,7 +516,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
 
     await db_session.refresh(node)
     await db_session.refresh(device)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert device.operational_state == DeviceOperationalState.available
     process_snapshot = await control_plane_state_store.get_value(db_session, APPIUM_PROCESSES_NAMESPACE, str(host.id))
     assert isinstance(process_snapshot, dict)
@@ -634,7 +634,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
 
     await db_session.refresh(node)
     assert node.pid == 4444
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
     events = (

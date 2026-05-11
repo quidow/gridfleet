@@ -30,7 +30,7 @@ async def test_start_node_writes_desired_running_before_inline_rpc(
     result = await start_node(db_session, device, caller="operator_route")
 
     assert result.desired_state == AppiumDesiredState.running
-    assert result.state == AppiumDesiredState.stopped
+    assert not result.observed_running
     assert result.desired_port is not None
 
     events = (
@@ -73,7 +73,7 @@ async def test_stop_node_writes_desired_stopped_before_inline_rpc(
 
     await db_session.refresh(node)
     assert result.desired_state == AppiumDesiredState.stopped
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     events = (
         (
             await db_session.execute(
@@ -113,7 +113,7 @@ async def test_restart_node_writes_transition_token_and_desired_running(
     result = await restart_node(db_session, device, caller="operator_restart")
 
     await db_session.refresh(node)
-    assert result.state == AppiumDesiredState.running
+    assert result.observed_running
     assert node.transition_token is not None
     assert node.transition_deadline is not None
     assert node.desired_state == AppiumDesiredState.running

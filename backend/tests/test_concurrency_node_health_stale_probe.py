@@ -112,8 +112,8 @@ async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(
     async with db_session_maker() as verify:
         verified = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verified.state == AppiumDesiredState.stopped, (
-        f"Expected stopped but got {verified.state.value} - "
+    assert not verified.observed_running, (
+        f"Expected observed_running=False but got observed_running={verified.observed_running} - "
         "node_health processed a stale unhealthy probe for a stopped node"
     )
 
@@ -158,6 +158,6 @@ async def test_stale_unhealthy_probe_skips_when_node_restarted_before_lock(
     async with db_session_maker() as verify:
         verified = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verified.state == AppiumDesiredState.running
+    assert verified.observed_running
     assert verified.pid == 2222
     assert verified.active_connection_target == "new-target"

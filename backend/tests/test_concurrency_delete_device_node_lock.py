@@ -70,7 +70,8 @@ async def test_delete_device_locks_row_before_reading_node_state(
     async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
-        dev.appium_node.state = AppiumDesiredState.stopped
+        dev.appium_node.pid = None
+        dev.appium_node.active_connection_target = None
         await db.flush()
         return dev.appium_node
 
@@ -101,7 +102,8 @@ async def test_delete_device_locks_row_before_reading_node_state(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.state = AppiumDesiredState.running
+            locked_device.appium_node.pid = 0
+            locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"
@@ -175,7 +177,8 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
 
         stop_calls += 1
         assert dev.appium_node is not None
-        dev.appium_node.state = AppiumDesiredState.stopped
+        dev.appium_node.pid = None
+        dev.appium_node.active_connection_target = None
         await db.commit()
         if stop_calls == 1:
             first_stop_committed.set()
@@ -198,7 +201,8 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.state = AppiumDesiredState.running
+            locked_device.appium_node.pid = 0
+            locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"

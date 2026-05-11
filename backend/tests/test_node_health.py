@@ -77,7 +77,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
 
 
 async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession, db_host: Host) -> None:
@@ -219,7 +219,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
 
 
 async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSession, db_host: Host) -> None:
@@ -1011,7 +1011,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     # Column projection still healthy.
     await db_session.refresh(device, attribute_names=["appium_node"])
     assert device.appium_node is not None
-    assert device.appium_node.state == AppiumDesiredState.running
+    assert device.appium_node.observed_running
     assert device.appium_node.health_running is None
     assert device_health.build_public_summary(device)["healthy"] is True
 
@@ -1114,7 +1114,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
     await db_session.refresh(node)
 
     initial_failures = node.consecutive_health_failures
-    initial_state = node.state
+    initial_state = node.observed_running
 
     with (
         patch(
@@ -1138,7 +1138,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
     await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert node.consecutive_health_failures == initial_failures
-    assert node.state == initial_state
+    assert node.observed_running == initial_state
     assert device.operational_state == DeviceOperationalState.available
 
 

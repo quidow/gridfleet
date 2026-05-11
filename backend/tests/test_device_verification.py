@@ -279,7 +279,7 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
     assert node.port == 4723
     assert node.pid == 12345
     assert node.active_connection_target == DEVICE_PAYLOAD["identity_value"]
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.desired_state == AppiumDesiredState.running
     assert node.transition_token is not None
 

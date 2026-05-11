@@ -192,7 +192,7 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
     assert device.operational_state == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
 
 
 async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_session: AsyncSession) -> None:
@@ -224,7 +224,7 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
     assert device.operational_state == DeviceOperationalState.available
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
 
 
 async def test_agent_device_aliases_include_running_avd_name(db_session: AsyncSession) -> None:
@@ -282,7 +282,7 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.desired_state == AppiumDesiredState.stopped
 
 
@@ -296,7 +296,7 @@ async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) 
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.desired_state == AppiumDesiredState.stopped
 
 
@@ -314,7 +314,7 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
     assert device.operational_state == DeviceOperationalState.offline
     assert node is not None
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.desired_state == AppiumDesiredState.stopped
 
 

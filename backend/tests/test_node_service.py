@@ -142,7 +142,7 @@ async def test_remote_start_node_attaches_node_to_device_instance(db_session: As
         node = await start_node(db_session, loaded_device)
 
     assert loaded_device.appium_node is node
-    assert node.state == AppiumDesiredState.stopped
+    assert not node.observed_running
     assert node.desired_state == AppiumDesiredState.running
     assert loaded_device.operational_state == DeviceOperationalState.offline
 
@@ -435,7 +435,7 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     await db_session.refresh(loaded.appium_node)
     assert loaded.appium_node.port == 4724
     assert loaded.appium_node.pid == 456
-    assert loaded.appium_node.state == AppiumDesiredState.running
+    assert loaded.appium_node.observed_running
     start_mock.assert_awaited_once()
     assert start_mock.await_args.kwargs["port"] == 4724
 
@@ -752,7 +752,7 @@ async def test_stop_node_writes_stopped_intent_without_agent_ack(
 
     await db_session.refresh(node)
     await db_session.refresh(loaded)
-    assert node.state == AppiumDesiredState.running, "node row must stay running when stop is unconfirmed"
+    assert node.observed_running, "node row must stay running when stop is unconfirmed"
     assert node.desired_state == AppiumDesiredState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert device_health.build_public_summary(loaded)["healthy"] is True
@@ -803,7 +803,7 @@ async def test_stop_node_records_intent_when_agent_would_acknowledge(
         await stop_node(db_session, loaded)
 
     await db_session.refresh(node)
-    assert node.state == AppiumDesiredState.running
+    assert node.observed_running
     assert node.desired_state == AppiumDesiredState.stopped
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert device_health.build_public_summary(loaded)["healthy"] is True
@@ -828,7 +828,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
 
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None
-    assert loaded.appium_node.state == AppiumDesiredState.running
+    assert loaded.appium_node.observed_running
     assert device_health.build_public_summary(loaded)["healthy"] is True
 
 
@@ -1045,4 +1045,4 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
     start_mock.assert_not_awaited()
     await db_session.refresh(loaded.appium_node)
     assert loaded.appium_node.port == 4723, "node row must keep the original port when stop is unconfirmed"
-    assert loaded.appium_node.state == AppiumDesiredState.running
+    assert loaded.appium_node.observed_running

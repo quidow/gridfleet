@@ -46,5 +46,5 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
 
     assert final_status.operational_state == DeviceOperationalState.available
     assert final_status.hold == DeviceHold.maintenance
-    assert node_status.state == AppiumDesiredState.running
+    assert node_status.observed_running
     assert node_status.desired_state == AppiumDesiredState.stopped

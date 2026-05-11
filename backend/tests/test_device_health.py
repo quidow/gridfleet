@@ -311,4 +311,4 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     summary = svc.build_public_summary(device)
     assert summary["healthy"] is False
     assert "relay_restart_exhausted" in summary["summary"]
-    assert device.appium_node.state == AppiumDesiredState.running
+    assert device.appium_node.observed_running

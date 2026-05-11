@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import appium_reconciler_agent as node_service
@@ -33,7 +33,8 @@ async def test_restart_mutations_visible_after_caller_commit(
         device_id=device.id,
         port=4723,
         grid_url="http://hub:4444",
-        state="error",
+        health_running=False,
+        health_state="error",
         pid=None,
         active_connection_target=None,
     )
@@ -94,7 +95,7 @@ async def test_restart_mutations_visible_after_caller_commit(
             )
         assert result is True
 
-        assert target_node.state == AppiumDesiredState.running
+        assert target_node.observed_running
         assert target_node.pid == 9999
 
         await session.commit()
@@ -102,6 +103,6 @@ async def test_restart_mutations_visible_after_caller_commit(
     async with db_session_maker() as verify:
         row = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert row.state == AppiumDesiredState.running, f"Expected running, got {row.state.value}"
+    assert row.observed_running, f"Expected observed_running=True, got observed_running={row.observed_running}"
     assert row.pid == 9999, f"Expected pid 9999, got {row.pid}"
     assert row.active_connection_target == "udid-commit-test"

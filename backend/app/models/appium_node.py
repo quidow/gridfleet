@@ -65,37 +65,6 @@ class AppiumNode(Base):
     def observed_running(self) -> bool:
         return self.pid is not None and self.active_connection_target is not None
 
-    @property
-    def state(self) -> AppiumDesiredState:
-        """Deprecated object-level compatibility shim for legacy tests and callers.
-
-        App code must use observed columns, health fields, or API effective_state
-        instead; CI rejects new ``.state =`` assignments outside tests.
-        """
-        if self.health_state == "error":
-            return AppiumDesiredState.stopped
-        return AppiumDesiredState.running if self.observed_running else AppiumDesiredState.stopped
-
-    @state.setter
-    def state(self, value: AppiumDesiredState | str) -> None:
-        if value == "error":
-            self.health_running = False
-            self.health_state = "error"
-            return
-        state = AppiumDesiredState(value)
-        if state == AppiumDesiredState.running:
-            if self.pid is None:
-                self.pid = 0
-            if self.active_connection_target is None:
-                self.active_connection_target = ""
-            self.health_running = None
-            self.health_state = None
-            return
-        self.pid = None
-        self.active_connection_target = None
-        self.health_running = None
-        self.health_state = None
-
     device: Mapped[Any] = relationship("Device", back_populates="appium_node")
     resource_claims: Mapped[list[Any]] = relationship(
         "AppiumNodeResourceClaim",
