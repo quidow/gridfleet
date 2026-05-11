@@ -135,6 +135,3 @@ async def restart_node(
     await db.commit()
     await db.refresh(node)
     return node
-
-
-__all__.append("_build_device_owner_key")

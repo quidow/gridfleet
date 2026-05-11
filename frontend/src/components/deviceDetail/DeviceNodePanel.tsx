@@ -161,7 +161,7 @@ export default function DeviceNodePanel({ device }: Props) {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {node.state === 'running' ? (
+            {node.effective_state === 'running' ? (
               <>
                 <Button
                   size="sm"

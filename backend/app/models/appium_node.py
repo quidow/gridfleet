@@ -66,6 +66,11 @@ class AppiumNode(Base):
 
     @property
     def state(self) -> NodeState:
+        """Deprecated object-level compatibility shim for legacy tests and callers.
+
+        App code must use observed columns, health fields, or API effective_state
+        instead; CI rejects new ``.state =`` assignments outside tests.
+        """
         if self.health_state == NodeState.error.value:
             return NodeState.error
         return NodeState.running if self.observed_running else NodeState.stopped

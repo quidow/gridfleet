@@ -92,6 +92,15 @@ jobs:
             exit 1
           fi
 
+          forbidden=$(git grep -nE '\.state\s*=' backend \
+            | grep -vE '^backend/tests/|^backend/alembic/versions/' \
+            || true)
+          if [ -n "$forbidden" ]; then
+            echo "Forbidden .state assignment remains outside tests:"
+            echo "$forbidden"
+            exit 1
+          fi
+
           forbidden=$(git grep -nE 'mark_node_(started|stopped)\(' backend/app \
             | grep -vE 'backend/app/services/appium_reconciler' \
             || true)

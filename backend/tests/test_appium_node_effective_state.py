@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from app.schemas.device import AppiumNodeRead
+from app.schemas.device import AppiumNodeRead
 
 
 def _build_read(**overrides: object) -> AppiumNodeRead:
-    from app.schemas.device import AppiumNodeRead
-
     base: dict[str, object] = {
         "id": uuid.uuid4(),
         "port": 4723,
