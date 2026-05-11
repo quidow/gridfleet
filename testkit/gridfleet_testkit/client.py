@@ -7,10 +7,8 @@ import logging
 import os
 import signal
 import threading
-import time
 from collections.abc import Callable
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -41,31 +39,6 @@ def __getattr__(name: str) -> str:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class CooldownSetResult(TypedDict):
-    """Response shape when a cooldown is applied without reaching the escalation threshold."""
-
-    status: Literal["cooldown_set"]
-    reservation: dict[str, Any]
-    device_operational_state: str
-    device_hold: str | None
-    retry_after_sec: int
-    excluded_until: str
-
-
-class CooldownEscalatedResult(TypedDict):
-    """Response shape when the cooldown count reaches the threshold and the device is escalated to maintenance."""
-
-    status: Literal["maintenance_escalated"]
-    reservation: dict[str, Any]
-    device_operational_state: str
-    device_hold: str | None
-    cooldown_count: int
-    threshold: int
-
-
-CooldownResult = CooldownSetResult | CooldownEscalatedResult
-
-
 def _default_auth() -> httpx.BasicAuth | None:
     """Build httpx Basic auth from env vars, or return None when unset."""
     username = os.getenv("GRIDFLEET_TESTKIT_USERNAME")
@@ -73,23 +46,6 @@ def _default_auth() -> httpx.BasicAuth | None:
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
-
-
-class NoClaimableDevicesError(RuntimeError):
-    """Raised when the manager reports that no run devices are claimable yet."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        retry_after_sec: int,
-        run_id: str = "",
-        next_available_at: str | None = None,
-    ) -> None:
-        self.run_id = run_id
-        self.retry_after_sec = retry_after_sec
-        self.next_available_at = next_available_at
-        super().__init__(message)
 
 
 class UnknownIncludeError(ValueError):
@@ -104,29 +60,11 @@ class ReserveCapabilitiesUnsupportedError(ValueError):
     """`?include=capabilities` is not supported on reserve."""
 
     def __init__(self, message: str | None = None) -> None:
-        super().__init__(message or "include=capabilities is not supported on reserve; use include on claim_device")
+        super().__init__(message or "include=capabilities is not supported on reserve")
 
 
 def _raise_for_status(resp: Any, *, run_id: str) -> None:
-    if resp.status_code == 409:
-        try:
-            payload = resp.json()
-        except Exception:
-            payload = None
-        error = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(error, dict):
-            details = error.get("details")
-            if isinstance(details, dict) and details.get("error") == "no_claimable_devices":
-                retry_after = details.get("retry_after_sec")
-                if not isinstance(retry_after, int):
-                    retry_after = 5
-                next_available_at = details.get("next_available_at")
-                raise NoClaimableDevicesError(
-                    str(error.get("message") or "No unclaimed devices available in this run"),
-                    run_id=run_id,
-                    retry_after_sec=retry_after,
-                    next_available_at=next_available_at if isinstance(next_available_at, str) else None,
-                )
+    del run_id
     if resp.status_code == 422:
         try:
             payload = resp.json()
@@ -143,15 +81,6 @@ def _raise_for_status(resp: Any, *, run_id: str) -> None:
                 if code == "reserve_capabilities_unsupported":
                     raise ReserveCapabilitiesUnsupportedError(str(error.get("message") or ""))
     resp.raise_for_status()
-
-
-def _is_safe_release_conflict(resp: Any) -> bool:
-    try:
-        payload = resp.json()
-    except Exception:
-        return False
-    detail = payload.get("detail") if isinstance(payload, dict) else None
-    return isinstance(detail, str) and "is not claimed" in detail.lower()
 
 
 def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
@@ -190,20 +119,6 @@ def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> Non
     if not suppress_errors:
         raise exc
     logger.warning("Failed to %s with GridFleet: %s", operation, exc)
-
-
-def _parse_next_available_delay(next_available_at: str | None) -> int | None:
-    if not next_available_at:
-        return None
-    value = next_available_at.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    delay = int(parsed.timestamp() - time.time())
-    return max(1, delay) if delay > 0 else 1
 
 
 class HeartbeatThread(threading.Thread):
@@ -405,9 +320,7 @@ class GridFleetClient:
         """Reserve devices for a test run and return the manager response."""
         include_tuple = _normalize_include(include)
         if include_tuple is not None and "capabilities" in include_tuple:
-            raise ReserveCapabilitiesUnsupportedError(
-                "include='capabilities' is not supported on reserve; use include on claim_device instead"
-            )
+            raise ReserveCapabilitiesUnsupportedError("include='capabilities' is not supported on reserve")
         resp = httpx.post(
             f"{self.base_url}/runs",
             json={
@@ -450,89 +363,6 @@ class GridFleetClient:
         )
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
-
-    def claim_device(
-        self,
-        run_id: str,
-        *,
-        worker_id: str,
-        include: Sequence[str] | None = None,
-    ) -> dict[str, Any]:
-        include_tuple = _normalize_include(include)
-        resp = httpx.post(
-            f"{self.base_url}/runs/{run_id}/claim",
-            json={"worker_id": worker_id},
-            params=_include_param(include_tuple),
-            timeout=10,
-            auth=self._auth,
-        )
-        _raise_for_status(resp, run_id=run_id)
-        return cast("dict[str, Any]", resp.json())
-
-    def release_device(self, run_id: str, *, device_id: str, worker_id: str) -> None:
-        resp = httpx.post(
-            f"{self.base_url}/runs/{run_id}/release",
-            json={"device_id": device_id, "worker_id": worker_id},
-            timeout=10,
-            auth=self._auth,
-        )
-        resp.raise_for_status()
-
-    def release_device_safe(self, run_id: str, *, device_id: str, worker_id: str) -> bool:
-        """Release a claim while tolerating already-terminal run/device states.
-
-        Returns True when the manager accepts the release, False when the run is
-        gone or the claim is explicitly already unclaimed. Other HTTP errors,
-        including wrong-worker conflicts, still raise.
-        """
-        resp = httpx.post(
-            f"{self.base_url}/runs/{run_id}/release",
-            json={"device_id": device_id, "worker_id": worker_id},
-            timeout=10,
-            auth=self._auth,
-        )
-        if resp.status_code == 404 or (resp.status_code == 409 and _is_safe_release_conflict(resp)):
-            return False
-        resp.raise_for_status()
-        return True
-
-    def release_device_with_cooldown(
-        self,
-        run_id: str,
-        *,
-        device_id: str,
-        worker_id: str,
-        reason: str,
-        ttl_seconds: int,
-    ) -> CooldownResult:
-        resp = httpx.post(
-            f"{self.base_url}/runs/{run_id}/devices/{device_id}/release-with-cooldown",
-            json={"worker_id": worker_id, "reason": reason, "ttl_seconds": ttl_seconds},
-            timeout=10,
-            auth=self._auth,
-        )
-        resp.raise_for_status()
-        return cast("CooldownResult", resp.json())
-
-    def claim_device_with_retry(
-        self,
-        run_id: str,
-        *,
-        worker_id: str,
-        max_wait_sec: int = 300,
-        include: Sequence[str] | None = None,
-    ) -> dict[str, Any]:
-        deadline = time.monotonic() + max_wait_sec
-        include_tuple = _normalize_include(include)
-        while True:
-            try:
-                return self.claim_device(run_id, worker_id=worker_id, include=include_tuple)
-            except NoClaimableDevicesError as exc:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise
-                sleep_for = _parse_next_available_delay(exc.next_available_at) or exc.retry_after_sec
-                time.sleep(min(sleep_for, max(1, int(remaining))))
 
     def report_preparation_failure(
         self,

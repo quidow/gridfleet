@@ -2,8 +2,7 @@
 
 `device_config` values returned by the manager are verbatim; the testkit no
 longer distinguishes between masked and revealed payloads. Code that wants
-the live Appium-side config can use either inline `config` from
-`claim_device(include=("config",))` or `client.get_device_config(connection_target)`.
+the live Appium-side config can use `client.get_device_config(connection_target)`.
 
 Environment variables read by the client:
 
@@ -32,10 +31,8 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import (
-    CooldownResult,
     GridFleetClient,
     HeartbeatThread,
-    NoClaimableDevicesError,
     ReserveCapabilitiesUnsupportedError,
     UnknownIncludeError,
     _default_api_url,
@@ -53,10 +50,8 @@ __all__ = [
     "GRIDFLEET_API_URL",
     "GRID_URL",
     "AllocatedDevice",
-    "CooldownResult",
     "GridFleetClient",
     "HeartbeatThread",
-    "NoClaimableDevicesError",
     "ReserveCapabilitiesUnsupportedError",
     "UnavailableInclude",
     "UnknownIncludeError",
