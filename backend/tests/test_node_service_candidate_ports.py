@@ -59,7 +59,7 @@ async def _add_running_node(db_session: AsyncSession, *, host: Host, port: int) 
             port=port,
             grid_url=settings_service.get("grid.hub_url"),
             desired_state=AppiumDesiredState.running,
-            desired_port=0,
+            desired_port=port,
             pid=0,
             active_connection_target="",
         )

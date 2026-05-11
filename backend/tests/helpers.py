@@ -268,7 +268,7 @@ async def seed_host_and_running_node(
         pid=12345,
         active_connection_target=device.connection_target,
         desired_state=AppiumDesiredState.running,
-        desired_port=0,
+        desired_port=port,
     )
     db_session.add(node)
     await db_session.commit()
