@@ -7,11 +7,11 @@
 - Supported public package: `gridfleet-testkit`
 - Supported import root: `gridfleet_testkit`
 - Supported pytest plugin: `gridfleet_testkit.pytest_plugin`
-- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `device_config`, `device_test_data`, `gridfleet_worker_id`
+- Supported pytest fixtures: `appium_driver`, `gridfleet_client`, `device_config`, `device_test_data`, `device_handle`, `gridfleet_worker_id`
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_connection_target_from_driver`, `get_device_config_for_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
-- Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `CooldownResult`, `build_error_session_payload`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`
-- Supported public exceptions: `NoClaimableDevicesError`, `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
+- Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `build_error_session_payload`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
+- Supported public exceptions: `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
 - Manual hardware examples live under `testkit/examples/`
 
@@ -138,14 +138,10 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
 | `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |
 | `GridFleetClient.resolve_device_id_by_connection_target(connection_target)` | Resolve the backend device id for a runtime connection target |
+| `GridFleetClient.get_device_by_connection_target(connection_target)` | Fetch one device detail row by runtime connection target |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
-| `GridFleetClient.claim_device(run_id, worker_id=...)` | Claim one reserved device for a worker |
-| `GridFleetClient.claim_device_with_retry(run_id, worker_id=..., max_wait_sec=300)` | Claim one reserved device, sleeping according to server `Retry-After` responses |
-| `GridFleetClient.release_device(run_id, device_id=..., worker_id=...)` | Release a worker claim without cooldown |
-| `GridFleetClient.release_device_safe(run_id, device_id=..., worker_id=...)` | Return `True` when release is accepted, `False` when the run is gone or the claim is already unclaimed, and raise on wrong-worker conflicts or unsafe errors |
-| `GridFleetClient.release_device_with_cooldown(run_id, device_id=..., worker_id=..., reason=..., ttl_seconds=...)` | Release a worker claim and keep that run from reclaiming the device until cooldown expires |
-| `GridFleetClient.signal_ready(run_id)` | Move a run to `ready` |
+| `GridFleetClient.signal_ready(run_id)` | Compatibility alias that moves a preparing run to `active` |
 | `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
@@ -156,8 +152,9 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
-| `hydrate_allocated_device(claim_response, run_id, client)` | Combine a claim response with optional device config and live capabilities |
+| `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional device config and live capabilities |
 | `hydrate_allocated_device_from_driver(allocated, driver, client)` | Return a new allocated-device object with capabilities from a running driver |
+| `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
 
 Public Appium helpers:
@@ -197,14 +194,12 @@ from gridfleet_testkit import get_device_test_data_for_driver
 test_data = get_device_test_data_for_driver(driver)
 ```
 
-Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` inline. The `test_data` field is also present directly on the claim response when the manager inlines it.
+Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allocated.test_data` inline when it is not already present on the supplied device handle.
 
 ## Errors and Result Types
 
-- `NoClaimableDevicesError(RuntimeError)`: raised when the manager reports no run devices are claimable yet. Exposes `run_id`, `retry_after_sec`, and `next_available_at`. The `RuntimeError` base is part of the contract — consumers can rely on it.
 - `UnknownIncludeError(ValueError)`: raised when the backend rejects one or more `?include=` keys. Exposes `values` with the rejected key names. The `ValueError` base is part of the contract.
 - `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
-- `CooldownResult`: union response type from `release_device_with_cooldown`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
 
 ## Example Reservation Flow
 
@@ -242,32 +237,30 @@ client.report_preparation_failure(
     source="local-dev",
 )
 
-client.signal_ready(run_id)
 client.signal_active(run_id)
 ```
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
 
-## Reduced HTTP round-trips on claim
+## Device Handles
 
-The manager can inline device config and live capabilities into the claim/reserve response, eliminating per-worker follow-up GETs.
+Grid-routed runs no longer use per-worker claim/release calls. The pytest plugin injects `gridfleet:run_id` into Appium capabilities, so Selenium Grid routes new sessions to nodes reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
 
 ```python
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device
+from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver
 
 client = GridFleetClient()
-claim = client.claim_device(run_id, worker_id="w0", include=("config", "capabilities"))
-allocated = hydrate_allocated_device(claim, run_id=run_id, client=client)
-# zero follow-up GETs; allocated.config / allocated.live_capabilities populated inline
+device_handle = resolve_device_handle_from_driver(driver, client=client)
+allocated = hydrate_allocated_device(device_handle, run_id=run_id, client=client)
 ```
 
 `device_config` and inline `config` payloads are returned verbatim from the manager. The testkit does not perform client-side secret masking or reveal toggles. Protect device config with manager authentication, operator access control, and your lab's secret-handling policy.
 
-`reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound. Pass `include=` on the per-worker `claim_device` call instead.
+`reserve_devices` accepts `include=("config",)` only — `include=("capabilities",)` raises `ReserveCapabilitiesUnsupportedError` client-side because reserve-time capabilities are not yet device-bound.
 
 `include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 
-`hydrate_allocated_device` accepts claim responses only. For multi-device reservations, iterate `reserve_response["devices"]`, call `claim_device` per worker, and hydrate each claim response.
+`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries or rows returned by `get_device_by_connection_target`.
 
 ## Examples
 
