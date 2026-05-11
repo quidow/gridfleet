@@ -30,7 +30,7 @@ def test_detect_orphans_returns_empty_when_every_running_node_has_matching_db_ro
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_observed_running": True,
+            "node_desired_state": "running",
         }
     ]
 
@@ -102,7 +102,7 @@ def test_detect_orphans_flags_port_mismatch() -> None:
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5003,
-            "node_observed_running": True,
+            "node_desired_state": "running",
         }
     ]
 
@@ -129,13 +129,13 @@ def test_detect_orphans_disambiguates_multiple_rows_with_same_target() -> None:
             "host_id": host_id,
             "device_connection_target": "shared-target",
             "node_port": 5001,
-            "node_observed_running": True,
+            "node_desired_state": "running",
         },
         {
             "host_id": host_id,
             "device_connection_target": "shared-target",
             "node_port": 5002,
-            "node_observed_running": True,
+            "node_desired_state": "running",
         },
     ]
 
@@ -168,14 +168,14 @@ async def test_reconcile_host_orphans_stops_each_orphan() -> None:
             "host_id": host_id,
             "device_connection_target": "test-target-b",
             "node_port": 5002,
-            "node_observed_running": True,
+            "node_desired_state": "running",
         },
-        # test-target-a row has state=stopped, port=5001 — orphan.
+        # test-target-a row has desired_state=stopped, port=5001 — orphan.
         {
             "host_id": host_id,
             "device_connection_target": "test-target-a",
             "node_port": 5001,
-            "node_observed_running": False,
+            "node_desired_state": "stopped",
         },
     ]
 
@@ -224,6 +224,25 @@ async def test_reconcile_host_orphans_continues_after_stop_failure() -> None:
 
     assert [o.port for o in stopped] == [5002]
     assert appium_stop.await_count == 2
+
+
+def test_detect_orphans_treats_desired_running_alone_as_claim() -> None:
+    """Phase 6: the reaper's OR clause is gone. A row with desired_running but
+    no observed pid still claims its connection_target -- convergence will
+    converge it on the next cycle."""
+    host_id = uuid.uuid4()
+    agent_running = [RunningAppiumNode(port=4723, pid=1, connection_target="emulator-5554", platform_id="android")]
+    db_rows = [
+        {
+            "host_id": host_id,
+            "device_connection_target": "emulator-5554",
+            "node_port": 4723,
+            "node_desired_state": "running",
+            # No node_observed_running field anymore -- removed in Phase 6
+        },
+    ]
+    orphans = detect_orphans(host_id=host_id, agent_running=agent_running, db_running_rows=db_rows)
+    assert orphans == []
 
 
 @pytest.mark.asyncio
