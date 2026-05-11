@@ -977,6 +977,7 @@ async def test_update_verification_probe_failure_stops_persisted_node(
         identity_scheme="android_serial",
         identity_scope="host",
         os_version="14",
+        device_config={"stable": True},
     )
 
     with (
@@ -990,7 +991,15 @@ async def test_update_verification_probe_failure_stops_persisted_node(
             new=AsyncMock(return_value=(False, "Session startup failed")),
         ),
     ):
-        resp = await client.post(f"/api/devices/{device.id}/verification-jobs", json={"host_id": default_host_id})
+        resp = await client.post(
+            f"/api/devices/{device.id}/verification-jobs",
+            json={
+                "host_id": default_host_id,
+                "name": "Should Not Persist",
+                "device_config": {"stable": False},
+                "replace_device_config": True,
+            },
+        )
         assert resp.status_code == 202
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
@@ -998,6 +1007,9 @@ async def test_update_verification_probe_failure_stops_persisted_node(
     node = await db_session.scalar(select(AppiumNode).where(AppiumNode.device_id == device.id))
     assert node is not None
     assert node.desired_state == AppiumDesiredState.stopped
+    await db_session.refresh(device)
+    assert device.name == "Probe Update Device"
+    assert device.device_config == {"stable": True}
 
 
 async def test_existing_device_verification_requires_missing_setup_fields(

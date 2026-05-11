@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -332,6 +333,13 @@ def _restore_create_payload_fields(device: Device, payload: dict[str, Any]) -> N
             setattr(device, key, payload[key])
 
 
+def _restore_update_original_fields(device: Device, original_fields: dict[str, Any] | None) -> None:
+    if original_fields is None:
+        return
+    for key, value in original_fields.items():
+        setattr(device, key, deepcopy(value))
+
+
 async def _finalize_success(
     db: AsyncSession,
     context: PreparedVerificationContext,
@@ -400,6 +408,7 @@ async def _finalize_failure(
     error: str,
     job: dict[str, Any],
     node: AppiumNode | None = None,
+    original_fields: dict[str, Any] | None = None,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
@@ -410,7 +419,9 @@ async def _finalize_failure(
             return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
         return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
 
-    locked = await device_locking.lock_device(db, context.save_device_id)
+    with db.no_autoflush:
+        locked = await device_locking.lock_device(db, context.save_device_id)
+    _restore_update_original_fields(locked, original_fields)
     await _stop_verification_node_if_running(job, db, locked, node)
     await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
     await db.commit()
@@ -427,6 +438,7 @@ async def execute_verification_context(
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     node: AppiumNode | None = None
+    original_fields: dict[str, Any] | None = None
     if context.save_device_id is None:
         raise NodeManagerError(f"Verification device {device.identity_value} has no persisted device id")
 
@@ -439,13 +451,16 @@ async def execute_verification_context(
             await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_STARTED, reason="verification")
             await db.commit()
             device = locked
+            original_fields = {
+                key: deepcopy(getattr(device, key)) for key in context.save_payload if key != "replace_device_config"
+            }
             for key, value in context.save_payload.items():
                 if key != "replace_device_config":
                     setattr(device, key, value)
 
         health_error = await run_device_health(job, device, http_client_factory=http_client_factory)
         if health_error is not None:
-            return await _finalize_failure(db, context, error=health_error, job=job)
+            return await _finalize_failure(db, context, error=health_error, job=job, original_fields=original_fields)
 
         node, probe_error = await run_probe(
             job,
@@ -454,9 +469,18 @@ async def execute_verification_context(
             probe_session_fn=probe_session_fn,
         )
         if probe_error is not None:
-            return await _finalize_failure(db, context, error=probe_error, job=job, node=node)
+            return await _finalize_failure(
+                db, context, error=probe_error, job=job, node=node, original_fields=original_fields
+            )
 
         return await _finalize_success(db, context, job=job, node=node)
     except Exception:
-        await _finalize_failure(db, context, error="Verification crashed unexpectedly", job=job, node=node)
+        await _finalize_failure(
+            db,
+            context,
+            error="Verification crashed unexpectedly",
+            job=job,
+            node=node,
+            original_fields=original_fields,
+        )
         raise
