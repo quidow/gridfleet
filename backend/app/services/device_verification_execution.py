@@ -29,6 +29,7 @@ from app.services.device_verification_job_state import enum_value, set_stage
 from app.services.node_service import stop_node
 from app.services.node_service_types import NodeManagerError, TemporaryNodeHandle
 from app.services.pack_platform_catalog import device_is_virtual
+from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -456,7 +457,7 @@ async def execute_verification_context(
             db,
             saved_device,
             status="passed",
-            checked_by="verification",
+            checked_by=SessionViabilityCheckedBy.verification,
         )
         await db.commit()
 

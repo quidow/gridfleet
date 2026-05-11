@@ -53,6 +53,7 @@ from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHoo
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service import start_node as start_managed_node
 from app.services.node_service_types import NodeManagerError
+from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.services.settings_service import settings_service
 
 if TYPE_CHECKING:
@@ -471,7 +472,9 @@ async def attempt_auto_recovery(
     result: dict[str, Any] = {}
     for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):
         device = await _reload_device(db, device)
-        result = await session_viability.run_session_viability_probe(db, device, checked_by="recovery")
+        result = await session_viability.run_session_viability_probe(
+            db, device, checked_by=SessionViabilityCheckedBy.recovery
+        )
         if result.get("status") == "passed":
             break
         if attempt + 1 < RECOVERY_PROBE_ATTEMPTS:

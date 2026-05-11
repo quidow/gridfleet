@@ -21,6 +21,7 @@ from app.services.agent_operations import appium_probe_session
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_probe_constants import PROBE_TEST_NAME
+from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.services.settings_service import settings_service
 
 __all__ = ["PROBE_TEST_NAME"]
@@ -104,7 +105,7 @@ async def _write_session_viability(
     status: str,
     attempted_at: str,
     error: str | None,
-    checked_by: str,
+    checked_by: SessionViabilityCheckedBy,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}
     state = {
@@ -125,7 +126,7 @@ async def record_session_viability_result(
     *,
     status: str,
     error: str | None = None,
-    checked_by: str,
+    checked_by: SessionViabilityCheckedBy,
 ) -> dict[str, Any]:
     config_changed = _clear_session_viability_from_config(device)
     state = await _write_session_viability(
@@ -288,7 +289,7 @@ async def run_session_viability_probe(
     db: AsyncSession,
     device: Device,
     *,
-    checked_by: str,
+    checked_by: SessionViabilityCheckedBy,
 ) -> dict[str, Any]:
     device_key = str(device.id)
     previous_state: DeviceOperationalState | None = None
@@ -302,7 +303,7 @@ async def run_session_viability_probe(
         raise ValueError("Session viability check already in progress for this device")
     await db.commit()
     can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
-        checked_by == "recovery" and device.operational_state == DeviceOperationalState.offline
+        checked_by == SessionViabilityCheckedBy.recovery and device.operational_state == DeviceOperationalState.offline
     )
     if not can_probe:
         await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -369,7 +370,7 @@ async def run_session_viability_probe(
             )
             if config_changed:
                 await db.commit()
-        if not ok and checked_by != "recovery" and _health_failure_handler is not None:
+        if not ok and checked_by != SessionViabilityCheckedBy.recovery and _health_failure_handler is not None:
             await _health_failure_handler(
                 db,
                 device,
@@ -428,7 +429,7 @@ async def _check_due_devices(db: AsyncSession) -> None:
 
     for device in devices:
         if await _should_run_scheduled_probe(db, device, interval_sec):
-            await run_session_viability_probe(db, device, checked_by="scheduled")
+            await run_session_viability_probe(db, device, checked_by=SessionViabilityCheckedBy.scheduled)
 
 
 async def session_viability_loop() -> None:

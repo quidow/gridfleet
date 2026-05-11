@@ -16,6 +16,7 @@ from app.models.device import (
     HardwareHealthStatus,
 )
 from app.models.session import Session, SessionStatus
+from app.services.session_viability_types import SessionViabilityCheckedBy
 
 DeviceTags = dict[str, str]
 
@@ -294,7 +295,7 @@ class SessionViabilityRead(BaseModel):
     last_attempted_at: str | None = None
     last_succeeded_at: str | None = None
     error: str | None = None
-    checked_by: Literal["scheduled", "manual", "recovery"] | None = None
+    checked_by: SessionViabilityCheckedBy | None = None
 
 
 class DeviceHealthRead(BaseModel):

@@ -47,6 +47,7 @@ from app.services.node_service import require_management_host
 from app.services.node_service import restart_node as restart_managed_node
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
+from app.services.session_viability_types import SessionViabilityCheckedBy
 
 router = APIRouter()
 
@@ -197,7 +198,9 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 async def device_session_test(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        return await session_viability.run_session_viability_probe(db, device, checked_by="manual")
+        return await session_viability.run_session_viability_probe(
+            db, device, checked_by=SessionViabilityCheckedBy.manual
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
