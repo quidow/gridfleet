@@ -2,6 +2,21 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.2...gridfleet-agent-v0.7.0) (2026-05-11)
+
+
+### Features
+
+* **agent:** add grid node reregister endpoint ([be50f4c](https://github.com/quidow/gridfleet/commit/be50f4c84eeed7faf61921b82362471ca7044b2b))
+* **agent:** default grid node run id to free ([fd88321](https://github.com/quidow/gridfleet/commit/fd883213c8ac6808de93f4e2b9779bdd1e5be257))
+* **agent:** reregister grid node with updated stereotype ([8572e08](https://github.com/quidow/gridfleet/commit/8572e084412fad10acac891f1032fcafece0cb14))
+* **agent:** support mutable grid node stereotypes ([9715cd6](https://github.com/quidow/gridfleet/commit/9715cd6474e3606e2a8ce0eb3f63b9a7fa0cc172))
+
+
+### Dependencies
+
+* **deps:** bump pydantic-settings in /agent ([#182](https://github.com/quidow/gridfleet/issues/182)) ([a6abb83](https://github.com/quidow/gridfleet/commit/a6abb83c6367703ca8acc8c0008a2762d0dcc958))
+
 ## [0.6.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.1...gridfleet-agent-v0.6.2) (2026-05-10)
 
 
