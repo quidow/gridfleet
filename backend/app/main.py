@@ -108,6 +108,7 @@ def _validate_leader_keepalive_settings() -> None:
 async def _validate_online_agent_contracts(db: AsyncSession) -> None:
     result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
     hosts = result.scalars().all()
+    downgraded = False
     for host in hosts:
         try:
             host_service.validate_orchestration_contract(
@@ -115,7 +116,16 @@ async def _validate_online_agent_contracts(db: AsyncSession) -> None:
                 host_label=f"{host.hostname} ({host.id})",
             )
         except ValueError as exc:
-            raise RuntimeError(str(exc)) from exc
+            logger.warning(
+                "host_orchestration_contract_unsupported_marking_offline",
+                host_id=str(host.id),
+                hostname=host.hostname,
+                reason=str(exc),
+            )
+            host.status = HostStatus.offline
+            downgraded = True
+    if downgraded:
+        await db.commit()
 
 
 async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: str) -> None:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import select
 
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
@@ -10,13 +12,18 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_intent import DeviceIntent
 from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.device_reservation import DeviceReservation
-from app.services.intent_reconciler import _reconcile_device, _reconcile_dirty_devices, _reconcile_expired_intents
+from app.services.control_plane_leader import LeadershipLost
+from app.services.intent_reconciler import (
+    _reconcile_device,
+    _reconcile_dirty_devices,
+    _reconcile_expired_intents,
+    run_device_intent_reconciler_once,
+)
 from app.services.intent_service import IntentService
 from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
-    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.host import Host
@@ -141,6 +148,82 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     assert node.accepting_new_sessions is True
 
 
+async def test_expired_running_metadata_change_is_delivered(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="expired-delivery")
+    node = await _seed_node(db_session, device.id, generation=4)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    node.accepting_new_sessions = False
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source="expired:grid:block",
+        axis=GRID_ROUTING,
+        payload={"accepting_new_sessions": False, "priority": 90},
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        reason="expired block",
+    )
+    await db_session.commit()
+    reconfigure = AsyncMock()
+    monkeypatch.setattr("app.services.agent_operations.agent_appium_reconfigure", reconfigure)
+
+    await _reconcile_expired_intents(db_session)
+
+    reconfigure.assert_awaited_once_with(
+        db_host.ip,
+        db_host.agent_port,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=None,
+    )
+    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert outbox.delivered_at is not None
+
+
+async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="graceful")
+    node = await _seed_node(db_session, device.id, generation=2)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source="maintenance:node",
+        axis=NODE_PROCESS,
+        payload={"action": "stop", "stop_mode": "graceful", "priority": 80},
+        reason="maintenance",
+    )
+    await db_session.commit()
+
+    await _reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+    assert outbox.port == 4723
+    assert outbox.stop_pending is True
+    assert outbox.accepting_new_sessions is False
+
+
 async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="metadata")
     node = await _seed_node(db_session, device.id, generation=7)
@@ -188,3 +271,20 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
     await db_session.commit()
 
     assert await db_session.get(DeviceIntentDirty, device.id) is not None
+
+
+async def test_reconciler_cycle_checks_leadership_before_writes(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reconcile_expired = AsyncMock()
+    monkeypatch.setattr("app.services.intent_reconciler._reconcile_expired_intents", reconcile_expired)
+    monkeypatch.setattr(
+        "app.services.intent_reconciler.assert_current_leader",
+        AsyncMock(side_effect=LeadershipLost("lost")),
+    )
+
+    with pytest.raises(LeadershipLost):
+        await run_device_intent_reconciler_once(db_session, cycle=1)
+
+    reconcile_expired.assert_not_awaited()

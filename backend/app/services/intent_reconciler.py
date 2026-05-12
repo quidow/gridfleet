@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -15,8 +16,10 @@ from app.models.device_event import DeviceEventType
 from app.models.device_intent import DeviceIntent
 from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.device_reservation import DeviceReservation
+from app.observability import get_logger, observe_background_loop
 from app.services import device_locking
 from app.services.agent_reconfigure_delivery import deliver_agent_reconfigures
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.services.device_event_service import record_event
 from app.services.intent_evaluator import (
@@ -37,20 +40,38 @@ if TYPE_CHECKING:
 
     from app.models.appium_node import AppiumNode
 
+logger = get_logger(__name__)
+LOOP_NAME = "device_intent_reconciler"
+
 
 async def device_intent_reconciler_loop() -> None:
     cycle = 0
     while True:
         interval = int(settings_service.get("general.intent_reconcile_interval_sec"))
-        full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
-        async with async_session() as db:
-            await _reconcile_expired_intents(db)
-            if cycle % full_scan_every == 0:
-                await _reconcile_all_devices_once(db)
-            else:
-                await _reconcile_dirty_devices(db)
+        try:
+            async with observe_background_loop(LOOP_NAME, float(interval)).cycle(), async_session() as db:
+                await run_device_intent_reconciler_once(db, cycle=cycle)
+        except LeadershipLost as exc:
+            logger.error(
+                "device_intent_reconciler_leadership_lost",
+                reason=str(exc),
+                action="exiting_process_to_prevent_split_brain",
+            )
+            os._exit(70)
+        except Exception:
+            logger.exception("device_intent_reconciler_cycle_failed")
         cycle += 1
         await asyncio.sleep(interval)
+
+
+async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> None:
+    await assert_current_leader(db)
+    full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
+    await _reconcile_expired_intents(db)
+    if cycle % full_scan_every == 0:
+        await _reconcile_all_devices_once(db)
+    else:
+        await _reconcile_dirty_devices(db)
 
 
 async def _reconcile_all_devices_once(db: AsyncSession) -> None:
@@ -96,7 +117,8 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
     for device_id in sorted(set(device_ids)):
         await _reconcile_device(db, device_id)
-    await db.flush()
+        await db.commit()
+        await deliver_agent_reconfigures(db, device_id)
 
 
 async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
@@ -225,7 +247,12 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     )
     if changed:
         node.generation += 1
-    if metadata_changed and node.desired_state == AppiumDesiredState.running:
+    should_stage_reconfigure = (
+        metadata_changed
+        and node.port is not None
+        and (node.desired_state == AppiumDesiredState.running or node.stop_pending)
+    )
+    if should_stage_reconfigure:
         _stage_agent_reconfigure(db, node)
     await db.flush()
 

@@ -6,14 +6,16 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
-import pytest
+from sqlalchemy import select
 
 from app import main
+from app.models.host import Host, HostStatus
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from pytest import MonkeyPatch
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class FakeLoop:
@@ -333,41 +335,14 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     )
 
 
-async def test_startup_rejects_unsupported_agent_contract(monkeypatch: MonkeyPatch) -> None:
-    db = AsyncMock()
-    session_factory = FakeSessionFactory(db)
-    engine = SimpleNamespace(dispose=AsyncMock())
+async def test_startup_marks_unsupported_online_agent_contracts_offline(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    db_host.capabilities = {"orchestration_contract_version": 1}
+    await db_session.commit()
 
-    import app.database as database_module
-    import app.services.event_bus as event_bus_module
-    import app.services.settings_service as settings_service_module
+    await main._validate_online_agent_contracts(db_session)
 
-    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
-    monkeypatch.setattr(database_module, "async_session", session_factory)
-    monkeypatch.setattr(main, "session_factory", session_factory)
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
-    monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
-    monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
-    monkeypatch.setattr(main, "engine", engine)
-    monkeypatch.setattr(
-        main,
-        "_validate_online_agent_contracts",
-        AsyncMock(side_effect=RuntimeError("unsupported orchestration contract for host old-agent")),
-    )
-
-    with pytest.raises(RuntimeError, match="unsupported orchestration contract"):
-        async with main.lifespan(main.app):
-            pass
-
-    assert pool_reopen.await_count == 0
-    assert pool_close.await_count == 0
+    host = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalar_one()
+    assert host.status == HostStatus.offline

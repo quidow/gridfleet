@@ -361,6 +361,7 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
             AppiumNode.port,
             AppiumNode.pid,
             AppiumNode.active_connection_target,
+            AppiumNode.stop_pending,
         )
         .join(AppiumNode, AppiumNode.device_id == Device.id)
         .join(Host, Host.id == Device.host_id)
@@ -380,6 +381,7 @@ async def _fetch_desired_rows(db: AsyncSession) -> list[DesiredRow]:
             port=row.port,
             pid=row.pid,
             active_connection_target=row.active_connection_target,
+            stop_pending=row.stop_pending,
         )
         for row in rows
     ]
@@ -400,6 +402,7 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
             AppiumNode.port,
             AppiumNode.pid,
             AppiumNode.active_connection_target,
+            AppiumNode.stop_pending,
         )
         .join(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id == device_id)
@@ -419,6 +422,7 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
         port=row.port,
         pid=row.pid,
         active_connection_target=row.active_connection_target,
+        stop_pending=row.stop_pending,
     )
 
 
