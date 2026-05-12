@@ -45,7 +45,7 @@ _OPERATIONAL_TRANSITIONS: dict[
         TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
     },
     DeviceOperationalState.verifying: {
-        TransitionEvent.VERIFICATION_PASSED: DeviceOperationalState.offline,
+        TransitionEvent.VERIFICATION_PASSED: DeviceOperationalState.available,
         TransitionEvent.VERIFICATION_FAILED: DeviceOperationalState.offline,
         TransitionEvent.CONNECTIVITY_LOST: DeviceOperationalState.offline,
     },
