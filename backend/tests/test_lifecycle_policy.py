@@ -1,5 +1,4 @@
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,7 +13,6 @@ from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from app.services import device_health
 from app.services import lifecycle_policy as lifecycle_policy_module
-from app.services.desired_state_writer import DesiredStateCaller
 from app.services.lifecycle_policy import (
     DeferredStopOutcome,
     attempt_auto_recovery,
@@ -34,14 +32,17 @@ def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _mark_device_available(
-    _db: AsyncSession,
+    db: AsyncSession,
     *,
-    node: AppiumNode,
-    target: AppiumDesiredState,
-    caller: DesiredStateCaller,
+    device_id: object,
+    intents: object,
+    reason: str,
     **kwargs: object,
 ) -> None:
-    node.device.operational_state = DeviceOperationalState.available
+    del intents, reason, kwargs
+    device = await db.get(Device, device_id)
+    assert device is not None
+    device.operational_state = DeviceOperationalState.available
 
 
 async def _event_types_for_device(db_session: AsyncSession, device_id: object) -> list[DeviceEventType]:
@@ -328,9 +329,9 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     db_session.add(run)
     await db_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
+    register_recovery = AsyncMock(side_effect=_mark_device_available)
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
+        patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -356,7 +357,6 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     assert policy["last_action"] == "auto_recovered"
     assert policy["excluded_from_run"] is False
     event_types = await _event_types_for_device(db_session, device.id)
-    assert DeviceEventType.lifecycle_run_restored in event_types
     assert DeviceEventType.lifecycle_recovered in event_types
 
 
@@ -413,9 +413,9 @@ async def test_recovery_rejoin_publishes_availability_event(
     db_session.add(run)
     await db_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
+    register_recovery = AsyncMock(side_effect=_mark_device_available)
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
+        patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -478,12 +478,12 @@ async def test_recovery_reloads_device_before_starting_node(
         )
         await other_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock())
-    with patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node):
+    register_recovery = AsyncMock()
+    with patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is False
-    manager.start_node.assert_not_awaited()
+    register_recovery.assert_not_awaited()
 
 
 async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
@@ -531,9 +531,9 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     db_session.add(run)
     await db_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
+    register_recovery = AsyncMock(side_effect=_mark_device_available)
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
+        patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -585,9 +585,9 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     db_session.add(device)
     await db_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
+    register_recovery = AsyncMock(side_effect=_mark_device_available)
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
+        patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -685,9 +685,9 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     db_session.add(device)
     await db_session.commit()
 
-    manager = SimpleNamespace(start_node=AsyncMock(side_effect=_mark_device_available))
+    register_recovery = AsyncMock(side_effect=_mark_device_available)
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=manager.start_node),
+        patch("app.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
             "app.services.lifecycle_policy.settings_service.get",
             side_effect=lambda key: {

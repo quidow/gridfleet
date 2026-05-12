@@ -3,6 +3,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -75,6 +76,22 @@ def _operator_start_intent(device: Device, desired_port: int) -> IntentRegistrat
     )
 
 
+def _operator_restart_intent(device: Device, desired_port: int) -> IntentRegistration:
+    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+    deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
+    return IntentRegistration(
+        source=_operator_start_source(device.id),
+        axis=NODE_PROCESS,
+        payload={
+            "action": "start",
+            "priority": PRIORITY_AUTO_RECOVERY,
+            "desired_port": desired_port,
+            "transition_token": str(uuid.uuid4()),
+            "transition_deadline": deadline.isoformat(),
+        },
+    )
+
+
 def _operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
     return [
         IntentRegistration(
@@ -143,7 +160,7 @@ async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> Ap
     await register_intents_and_reconcile(
         db,
         device_id=device.id,
-        intents=[_operator_start_intent(device, node.port)],
+        intents=[_operator_restart_intent(device, node.port)],
         reason=f"{caller} restart requested",
     )
     await db.commit()

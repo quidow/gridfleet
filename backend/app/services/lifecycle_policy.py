@@ -5,7 +5,7 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.test_run import TERMINAL_STATES
@@ -19,10 +19,18 @@ from app.services import (
     session_viability,
 )
 from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.desired_state_writer import write_desired_state
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_AUTO_RECOVERY,
+    PRIORITY_HEALTH_FAILURE,
+    RECOVERY,
+    RESERVATION,
+    IntentRegistration,
+)
 from app.services.lifecycle_policy_actions import (
     complete_auto_stop,
     has_running_client_session,
@@ -337,6 +345,17 @@ async def attempt_auto_recovery(
     device = await _reload_device(db, device)
     current_state = policy_state(device)
 
+    if not device.recovery_allowed:
+        return await record_recovery_suppressed(
+            db,
+            device,
+            current_state,
+            source=source,
+            reason=reason,
+            suppression_reason=device.recovery_blocked_reason or "Recovery is blocked by orchestration intent",
+            run=None,
+        )
+
     # D4: a stale ``stop_pending`` traps the device permanently when nothing
     # else clears it (no session row to fire ``handle_session_finished``).
     if current_state.get("stop_pending") and (
@@ -456,12 +475,50 @@ async def attempt_auto_recovery(
                 db.add(new_node)
                 await db.flush()
                 device.appium_node = new_node
-            await write_desired_state(
+            await revoke_intents_and_reconcile(
                 db,
-                node=device.appium_node,
-                target=AppiumDesiredState.running,
-                caller="lifecycle_recovery",
-                desired_port=desired_port,
+                device_id=device.id,
+                sources=[f"connectivity:{device.id}"],
+                reason=reason,
+            )
+            await register_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                intents=[
+                    *(
+                        [
+                            IntentRegistration(
+                                source=f"health_failure:reservation:{device.id}",
+                                axis=RESERVATION,
+                                run_id=run.id,
+                                payload={
+                                    "excluded": True,
+                                    "priority": PRIORITY_HEALTH_FAILURE,
+                                    "exclusion_reason": entry.exclusion_reason,
+                                },
+                            )
+                        ]
+                        if run is not None
+                        and entry is not None
+                        and run_reservation_service.reservation_entry_is_excluded(entry)
+                        else []
+                    ),
+                    IntentRegistration(
+                        source=f"auto_recovery:node:{device.id}",
+                        axis=NODE_PROCESS,
+                        payload={
+                            "action": "start",
+                            "priority": PRIORITY_AUTO_RECOVERY,
+                            "desired_port": desired_port,
+                        },
+                    ),
+                    IntentRegistration(
+                        source=f"auto_recovery:recovery:{device.id}",
+                        axis=RECOVERY,
+                        payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
+                    ),
+                ],
+                reason=reason,
             )
             await db.commit()
             await db.refresh(device.appium_node)

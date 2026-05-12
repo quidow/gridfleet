@@ -1,27 +1,26 @@
-"""Phase 3 lifecycle-policy desired-state caller tests."""
+"""Lifecycle policy orchestration intent tests."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.host import Host
-    from app.services.desired_state_writer import DesiredStateCaller
-
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
+async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -38,21 +37,13 @@ async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
     db_session.add(node)
     await db_session.commit()
 
-    captured: dict[str, object] = {}
-
-    async def fake_start(
-        _db: AsyncSession,
-        *,
-        node: AppiumNode,
-        target: AppiumDesiredState,
-        caller: DesiredStateCaller,
-        **kwargs: object,
-    ) -> None:
-        captured["caller"] = caller
-
     from app.services import lifecycle_policy
 
-    with patch.object(lifecycle_policy, "write_desired_state", new=fake_start):
+    with patch.object(
+        lifecycle_policy.session_viability,
+        "run_session_viability_probe",
+        new=AsyncMock(return_value={"status": "passed"}),
+    ):
         await lifecycle_policy.attempt_auto_recovery(
             db_session,
             device,
@@ -60,7 +51,16 @@ async def test_attempt_auto_recovery_tags_desired_state_with_lifecycle_recovery(
             reason="test",
         )
 
-    assert captured.get("caller") == "lifecycle_recovery"
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.payload["action"] == "start"
+    assert intent.payload["desired_port"] == 4723
 
 
 async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
@@ -103,7 +103,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     )
     assert any(
         event.details is not None
-        and event.details.get("caller") == "lifecycle_crash"
+        and event.details.get("caller") == "intent_reconciler"
         and event.details.get("new_desired_state") == "stopped"
         for event in events
     )
@@ -147,7 +147,9 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
         .scalars()
         .all()
     )
-    assert len(events) == 1
-    assert events[0].details is not None
-    assert events[0].details["caller"] == "lifecycle_crash"
-    assert events[0].details["new_desired_state"] == "stopped"
+    desired_events = [
+        event for event in events if event.details is not None and event.details.get("new_desired_state") == "stopped"
+    ]
+    assert len(desired_events) == 1
+    assert desired_events[0].details is not None
+    assert desired_events[0].details["caller"] == "intent_reconciler"

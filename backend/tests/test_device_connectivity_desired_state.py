@@ -1,4 +1,4 @@
-"""Phase 3: device_connectivity loss path writes desired_state='stopped'."""
+"""Connectivity loss registers a routing-blocking stop intent."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_stop_disconnected_node_writes_desired_stopped_with_connectivity_caller(
+async def test_stop_disconnected_node_registers_connectivity_intent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -54,7 +55,21 @@ async def test_stop_disconnected_node_writes_desired_stopped_with_connectivity_c
         .scalars()
         .all()
     )
-    assert len(events) == 1
-    assert events[0].details is not None
-    assert events[0].details["caller"] == "connectivity"
-    assert events[0].details["new_desired_state"] == "stopped"
+    assert {event.details.get("field") for event in events if event.details is not None} == {
+        "accepting_new_sessions",
+        "stop_pending",
+    }
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"connectivity:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.axis == "node_process"
+    assert intent.payload["stop_mode"] == "defer"

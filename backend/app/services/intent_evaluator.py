@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from app.models.appium_node import AppiumDesiredState
 from app.observability import get_logger
 
 if TYPE_CHECKING:
-    import uuid
-    from datetime import datetime
-
     from app.models.device_intent import DeviceIntent
 
 logger = get_logger(__name__)
@@ -24,6 +23,8 @@ class NodeProcessDecision:
     desired_port: int | None
     stop_mode: StopMode | None
     reason: str
+    transition_token: uuid.UUID | None = None
+    transition_deadline: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -79,11 +80,17 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
 
     winner = sorted(winners, key=lambda intent: intent.source)[0]
     if _action(winner) == "start":
+        transition_token = _optional_uuid(winner.payload.get("transition_token"))
+        transition_deadline = _optional_datetime(winner.payload.get("transition_deadline"))
+        if transition_token is not None and transition_deadline is None:
+            transition_token = None
         return NodeProcessDecision(
             desired_state="running",
             desired_port=_optional_int(winner.payload.get("desired_port")),
             stop_mode=None,
             reason=_intent_reason(winner),
+            transition_token=transition_token,
+            transition_deadline=transition_deadline,
         )
 
     stop_mode = _stop_mode(winner.payload.get("stop_mode"))
@@ -209,6 +216,25 @@ def _optional_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
+
+
+def _optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed
 
 
 def _intent_reason(intent: DeviceIntent) -> str:

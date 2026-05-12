@@ -1,6 +1,5 @@
 import asyncio
 import os
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -11,14 +10,10 @@ from sqlalchemy.orm import selectinload
 from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumDesiredState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus
-from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import (
-    appium_node_locking,
     control_plane_state_store,
     device_health,
     device_locking,
@@ -32,9 +27,11 @@ from app.services.agent_operations import (
     pack_device_health as fetch_pack_device_health,
 )
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.desired_state_writer import write_desired_state
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import legacy_label_for_audit
+from app.services.intent_reconciler import _reconcile_expired_intents
+from app.services.intent_service import register_intents_and_reconcile
+from app.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
@@ -246,15 +243,20 @@ async def _apply_ip_ping_hysteresis(
 
 async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | None:
     locked_device = await device_locking.lock_device(db, device.id)
-    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    if locked_node is None or not locked_node.observed_running:
+    if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
         return None
 
-    await write_desired_state(
+    await register_intents_and_reconcile(
         db,
-        node=locked_node,
-        target=AppiumDesiredState.stopped,
-        caller="connectivity",
+        device_id=locked_device.id,
+        intents=[
+            IntentRegistration(
+                source=f"connectivity:{locked_device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
+            )
+        ],
+        reason="Device disconnected",
     )
     await device_health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
@@ -581,71 +583,9 @@ async def _check_connectivity(db: AsyncSession) -> None:
 
 
 async def _check_expired_cooldowns(db: AsyncSession) -> None:
-    """Restore devices whose cooldown TTL has expired and restart their nodes."""
-    now = datetime.now(UTC)
-    stmt = (
-        select(DeviceReservation)
-        .where(DeviceReservation.excluded.is_(True))
-        .where(DeviceReservation.excluded_until.isnot(None))
-        .where(DeviceReservation.excluded_until < now)
-        .where(DeviceReservation.released_at.is_(None))
-        .options(selectinload(DeviceReservation.device).selectinload(Device.appium_node))
-        .options(selectinload(DeviceReservation.run))
-    )
-    result = await db.execute(stmt)
-    entries = result.scalars().all()
-
-    for entry in entries:
-        device = entry.device
-        run = entry.run
-        if device is None:
-            continue
-        if run is not None and run.state in (RunState.completed, RunState.cancelled, RunState.failed):
-            continue
-
-        locked_device = await device_locking.lock_device(db, device.id, load_sessions=True)
-        # Re-read the reservation under lock to avoid races.
-        fresh_result = await db.execute(
-            select(DeviceReservation)
-            .where(DeviceReservation.run_id == entry.run_id)
-            .where(DeviceReservation.device_id == device.id)
-            .where(DeviceReservation.released_at.is_(None))
-            .with_for_update()
-            .limit(1)
-        )
-        fresh_entry = fresh_result.scalar_one_or_none()
-        if fresh_entry is None or not fresh_entry.excluded or fresh_entry.excluded_until is None:
-            continue
-        if fresh_entry.excluded_until > now:
-            continue
-
-        fresh_entry.excluded = False
-        fresh_entry.exclusion_reason = None
-        fresh_entry.excluded_at = None
-        fresh_entry.excluded_until = None
-
-        if (
-            locked_device.auto_manage
-            and locked_device.hold != DeviceHold.maintenance
-            and locked_device.appium_node is not None
-            and locked_device.appium_node.desired_state == AppiumDesiredState.stopped
-        ):
-            await write_desired_state(
-                db,
-                node=locked_device.appium_node,
-                target=AppiumDesiredState.running,
-                caller="cooldown_expired",
-                reason="Cooldown TTL expired — restoring device",
-                desired_port=locked_device.appium_node.port,
-            )
-
-        await db.commit()
-        logger.info(
-            "cooldown_expired_restored",
-            device_id=str(device.id),
-            device_name=device.name,
-            run_id=str(run.id) if run is not None else None,
-        )
+    """Delegate expired cooldown cleanup to the intent reconciler."""
+    await _reconcile_expired_intents(db)
+    await db.commit()
 
 
 async def device_connectivity_loop() -> None:

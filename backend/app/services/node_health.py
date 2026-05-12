@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
 from app.observability import get_logger, observe_background_loop
@@ -32,10 +32,11 @@ from app.services.agent_operations import appium_status as fetch_appium_status
 from app.services.agent_probe_result import ProbeResult, from_probe_session_response, from_status_response
 from app.services.appium_reconciler_agent import require_management_host
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.desired_state_writer import write_desired_state
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
+from app.services.intent_service import register_intents_and_reconcile
+from app.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.services.lifecycle_incident_service import record_lifecycle_incident
 from app.services.node_service_types import NodeManagerError
 from app.services.session_viability import build_probe_capabilities
@@ -349,14 +350,29 @@ async def _process_node_health(
         logger.error("Node for device %s reached max failures, attempting restart", device.name)
 
         window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-        await write_desired_state(
+        deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
+        await register_intents_and_reconcile(
             db,
-            node=node,
-            target=AppiumDesiredState.running,
-            caller="health_restart",
-            desired_port=node.port,
-            transition_token=uuid.uuid4(),
-            transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+            device_id=device.id,
+            intents=[
+                IntentRegistration(
+                    source=f"auto_recovery:node:{device.id}",
+                    axis=NODE_PROCESS,
+                    payload={
+                        "action": "start",
+                        "priority": PRIORITY_AUTO_RECOVERY,
+                        "desired_port": node.port,
+                        "transition_token": str(uuid.uuid4()),
+                        "transition_deadline": deadline.isoformat(),
+                    },
+                ),
+                IntentRegistration(
+                    source=f"auto_recovery:recovery:{device.id}",
+                    axis=RECOVERY,
+                    payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": "Node health restart"},
+                ),
+            ],
+            reason="Max node health failures reached",
         )
         await db.commit()
         return

@@ -152,6 +152,8 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         node=node,
         target=target_state,
         desired_port=desired_port,
+        transition_token=node_decision.transition_token,
+        transition_deadline=node_decision.transition_deadline,
         caller="intent_reconciler",
         reason=node_decision.reason,
     )

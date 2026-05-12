@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
-from app.models.appium_node import AppiumDesiredState
 from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
@@ -15,9 +14,19 @@ from app.services import (
     lifecycle_incident_service,
     run_reservation_service,
 )
-from app.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.services.device_event_service import record_event
 from app.services.event_bus import queue_device_crashed_event
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_CONNECTIVITY_LOST,
+    PRIORITY_HEALTH_FAILURE,
+    PRIORITY_RUN_ROUTING,
+    RECOVERY,
+    RESERVATION,
+    IntentRegistration,
+)
 from app.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
@@ -134,14 +143,25 @@ async def exclude_run_if_needed(
     was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
     run = await run_reservation_service.exclude_device_from_run(db, device.id, reason=reason, commit=False)
     entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
-    if run is not None and device.appium_node is not None:
-        await write_desired_grid_run_id(
+    if run is not None:
+        await register_intents_and_reconcile(
             db,
-            node=device.appium_node,
-            run_id=None,
-            caller="run_exclude_device",
+            device_id=device.id,
+            intents=[
+                IntentRegistration(
+                    source=f"health_failure:reservation:{device.id}",
+                    axis=RESERVATION,
+                    run_id=run.id,
+                    payload={
+                        "excluded": True,
+                        "priority": PRIORITY_HEALTH_FAILURE,
+                        "exclusion_reason": reason,
+                    },
+                )
+            ],
             reason=reason,
         )
+        await revoke_intents_and_reconcile(db, device_id=device.id, sources=[f"run:{run.id}"], reason=reason)
     if run is not None and not was_excluded:
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
@@ -172,14 +192,25 @@ async def restore_run_if_needed(
     run = await run_reservation_service.restore_device_to_run(db, device.id, commit=False)
     entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
     if run is not None:
-        if device.appium_node is not None:
-            await write_desired_grid_run_id(
-                db,
-                node=device.appium_node,
-                run_id=run.id,
-                caller="run_restore_device",
-                reason=reason,
-            )
+        await revoke_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            sources=[f"health_failure:reservation:{device.id}"],
+            reason=reason,
+        )
+        await register_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            intents=[
+                IntentRegistration(
+                    source=f"run:{run.id}",
+                    axis=GRID_ROUTING,
+                    run_id=run.id,
+                    payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
+                )
+            ],
+            reason=reason,
+        )
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,
@@ -192,6 +223,29 @@ async def restore_run_if_needed(
             run_name=run.name,
         )
     return run, entry
+
+
+def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRegistration]:
+    if source == "connectivity":
+        return [
+            IntentRegistration(
+                source=f"connectivity:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
+            )
+        ]
+    return [
+        IntentRegistration(
+            source=f"health_failure:node:{device.id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+        ),
+        IntentRegistration(
+            source=f"health_failure:recovery:{device.id}",
+            axis=RECOVERY,
+            payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": reason},
+        ),
+    ]
 
 
 async def handle_node_crash(
@@ -246,11 +300,11 @@ async def handle_node_crash(
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
         )
-        await write_desired_state(
+        await register_intents_and_reconcile(
             db,
-            node=node,
-            target=AppiumDesiredState.stopped,
-            caller="lifecycle_crash",
+            device_id=device.id,
+            intents=_crash_intents(device, source=source, reason=reason),
+            reason=reason,
         )
         await db.commit()
     else:
@@ -260,11 +314,11 @@ async def handle_node_crash(
             reason=f"Node crash recorded ({source}): {reason}",
         )
         if node is not None:
-            await write_desired_state(
+            await register_intents_and_reconcile(
                 db,
-                node=node,
-                target=AppiumDesiredState.stopped,
-                caller="lifecycle_crash",
+                device_id=device.id,
+                intents=_crash_intents(device, source=source, reason=reason),
+                reason=reason,
             )
         await db.commit()
 

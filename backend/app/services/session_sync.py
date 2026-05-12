@@ -17,6 +17,8 @@ from app.observability import get_logger, observe_background_loop
 from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_state import ready_operational_state
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import NODE_PROCESS, PRIORITY_ACTIVE_SESSION, IntentRegistration
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
@@ -204,6 +206,18 @@ async def _sync_sessions(db: AsyncSession) -> None:
             TransitionEvent.SESSION_STARTED,
             suppress_events=True,
         )
+        await register_intents_and_reconcile(
+            db,
+            device_id=locked_device.id,
+            intents=[
+                IntentRegistration(
+                    source=f"active_session:{sid}",
+                    axis=NODE_PROCESS,
+                    payload={"action": "start", "priority": PRIORITY_ACTIVE_SESSION},
+                )
+            ],
+            reason=f"Session {sid} started",
+        )
         activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         session_service.queue_session_started_event(
             db,
@@ -246,6 +260,13 @@ async def _sync_sessions(db: AsyncSession) -> None:
             else:
                 ended_session.status = SessionStatus.passed  # default; pytest helper can override
             session_service.queue_session_ended_event(db, ended_session, device=ended_device)
+            if ended_session.device_id is not None:
+                await revoke_intents_and_reconcile(
+                    db,
+                    device_id=ended_session.device_id,
+                    sources=[f"active_session:{sid}"],
+                    reason=f"Session {sid} ended",
+                )
             logger.info("Session %s ended", sid)
             if ended_session.device_id is not None:
                 device_ids_to_restore.add(ended_session.device_id)
