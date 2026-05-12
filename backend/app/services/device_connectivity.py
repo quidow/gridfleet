@@ -634,6 +634,7 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
                 target=AppiumDesiredState.running,
                 caller="cooldown_expired",
                 reason="Cooldown TTL expired — restoring device",
+                desired_port=locked_device.appium_node.port,
             )
 
         await db.commit()

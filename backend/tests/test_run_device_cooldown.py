@@ -384,6 +384,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
+    assert node.desired_port == 4723
 
 
 async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
