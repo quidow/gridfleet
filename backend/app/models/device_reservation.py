@@ -53,6 +53,13 @@ class DeviceReservation(Base):
     run: Mapped[Any] = relationship("TestRun", back_populates="device_reservations")
     device: Mapped[Any] = relationship("Device", back_populates="reservations")
 
+    def _is_excluded(self) -> bool:
+        if not self.excluded:
+            return False
+        if self.excluded_until is None:
+            return True
+        return self.excluded_until > datetime.now(UTC)
+
     def to_reserved_device_info(self) -> dict[str, Any]:
         device = self.device
         return {
@@ -73,7 +80,7 @@ class DeviceReservation(Base):
             ),
             "manufacturer": device.manufacturer if device is not None else None,
             "model": device.model if device is not None else None,
-            "excluded": self.excluded,
+            "excluded": self._is_excluded(),
             "exclusion_reason": self.exclusion_reason,
             "excluded_at": self.excluded_at.isoformat() if self.excluded_at is not None else None,
             "excluded_until": self.excluded_until.isoformat() if self.excluded_until is not None else None,

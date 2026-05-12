@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -10,7 +11,8 @@ from httpx import AsyncClient  # noqa: TC002
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.models.device import Device, DeviceHold
+from app.models.appium_node import AppiumNode
+from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState
 from app.services.settings_service import settings_service
@@ -195,3 +197,98 @@ async def test_cooldown_device_increments_count(
         )
     ).scalar_one()
     assert entry.cooldown_count == 3
+
+
+async def test_cooldown_clears_desired_grid_run_id(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-grid")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    # Set up an AppiumNode with the run's grid_run_id
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_grid_run_id=run_id,
+        grid_run_id=run_id,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(node)
+    assert node.desired_grid_run_id is None
+
+
+async def test_cooldown_does_not_mutate_operational_state(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    device = await _create_available_device(db_session, default_host_id, "cooldown-state")
+    run = await _create_run(client)
+    run_id = run["id"]
+
+    # Simulate an active session by flipping to busy after reservation.
+    device.operational_state = DeviceOperationalState.busy
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy
+
+
+async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncSession, default_host_id: str) -> None:
+    """to_reserved_device_info should report excluded=false once excluded_until passes."""
+    from app.models.test_run import TestRun
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="expired-cooldown",
+        name="Expired Cooldown",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="expired-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=60),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    info = reservation.to_reserved_device_info()
+    assert info["excluded"] is False
+    assert info["cooldown_remaining_sec"] == 0
+    assert info["cooldown_count"] == 1
