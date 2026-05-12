@@ -2,6 +2,25 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.7.0...gridfleet-testkit-v0.8.0) (2026-05-12)
+
+
+### Features
+
+* **backend,testkit:** recreate run device cooldown api ([fccfbc7](https://github.com/quidow/gridfleet/commit/fccfbc7bcf694f8c59cbaa394bb075d20e1b34f0))
+* **testkit:** add cooldown_device client helper and result types ([584f411](https://github.com/quidow/gridfleet/commit/584f411f3b72f815e6f4055667c0eaccb1926bc5))
+
+
+### Dependencies
+
+* **deps:** bump mypy in /agent ([#195](https://github.com/quidow/gridfleet/issues/195)) ([1317e59](https://github.com/quidow/gridfleet/commit/1317e59bbd4ae6969ed3c717c24b43dbfefec722))
+
+
+### Documentation
+
+* **testkit:** correct cooldown_device ttl error in readme ([f768b6b](https://github.com/quidow/gridfleet/commit/f768b6b11b87ad3c4aa369ee2bcdebfeed5c1f86))
+* **testkit:** document cooldown_device api and result types ([0e2418b](https://github.com/quidow/gridfleet/commit/0e2418b0ea3b952d6151a08e3f75116de7edcdd8))
+
 ## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.6.0...gridfleet-testkit-v0.7.0) (2026-05-11)
 
 
