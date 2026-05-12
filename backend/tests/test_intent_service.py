@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select
 
 from app.models.appium_node import AppiumNode
@@ -128,6 +129,35 @@ async def test_register_intents_batches_dirty_mark(db_session: AsyncSession, db_
     assert dirty is not None
     assert dirty.generation == 1
     assert dirty.reason == "batch"
+
+
+async def test_register_intents_rejects_duplicate_sources_before_upsert(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="intent-duplicate-source")
+    service = IntentService(db_session)
+
+    with pytest.raises(ValueError, match="Duplicate intent source"):
+        await service.register_intents(
+            device_id=device.id,
+            reason="batch",
+            intents=[
+                IntentRegistration(
+                    source="batch:node",
+                    axis=NODE_PROCESS,
+                    payload={"action": "stop", "priority": 70},
+                ),
+                IntentRegistration(
+                    source="batch:node",
+                    axis=NODE_PROCESS,
+                    payload={"action": "start", "priority": 70},
+                ),
+            ],
+        )
+
+    dirty = await db_session.get(DeviceIntentDirty, device.id)
+    assert dirty is None
 
 
 async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, db_host: Host) -> None:

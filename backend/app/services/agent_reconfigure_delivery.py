@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 DELIVERY_BATCH_SIZE = 5
 MAX_DELIVERY_ATTEMPTS = 10
 ABANDONED_REASON_MAX_ATTEMPTS = "max delivery attempts exceeded"
+ABANDONED_REASON_HOST_MISSING = "host missing"
 
 
 async def deliver_agent_reconfigures(db: AsyncSession, device_id: object, *, limit: int = DELIVERY_BATCH_SIZE) -> None:
@@ -67,7 +68,7 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object, *, lim
             await db.execute(select(Device).where(Device.id == row.device_id).options(selectinload(Device.host)))
         ).scalar_one()
         if device.host is None:
-            _record_delivery_failure(row)
+            _record_delivery_failure(row, abandoned_reason=ABANDONED_REASON_HOST_MISSING)
             await db.commit()
             continue
         try:
@@ -136,9 +137,13 @@ async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id:
         await db.commit()
 
 
-def _record_delivery_failure(row: AgentReconfigureOutbox) -> None:
+def _record_delivery_failure(
+    row: AgentReconfigureOutbox,
+    *,
+    abandoned_reason: str = ABANDONED_REASON_MAX_ATTEMPTS,
+) -> None:
     row.delivery_attempts += 1
     if row.delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
         row.abandoned_at = datetime.now(UTC)
-        row.abandoned_reason = ABANDONED_REASON_MAX_ATTEMPTS
+        row.abandoned_reason = abandoned_reason
         metrics_recorders.AGENT_RECONFIGURE_OUTBOX_ABANDONED.inc()

@@ -74,6 +74,16 @@ class IntentService:
     ) -> list[DeviceIntent]:
         if not intents:
             return []
+        seen_sources: set[str] = set()
+        duplicate_sources: set[str] = set()
+        for intent in intents:
+            if intent.source in seen_sources:
+                duplicate_sources.add(intent.source)
+            seen_sources.add(intent.source)
+        if duplicate_sources:
+            sources = ", ".join(sorted(duplicate_sources))
+            raise ValueError(f"Duplicate intent source values are not allowed in one batch: {sources}")
+
         now = datetime.now(UTC)
         stmt = insert(DeviceIntent).values(
             [

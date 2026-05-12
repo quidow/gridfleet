@@ -8,7 +8,11 @@ from sqlalchemy import select
 
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.services.agent_reconfigure_delivery import MAX_DELIVERY_ATTEMPTS, deliver_agent_reconfigures
+from app.services.agent_reconfigure_delivery import (
+    MAX_DELIVERY_ATTEMPTS,
+    _record_delivery_failure,
+    deliver_agent_reconfigures,
+)
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -279,3 +283,19 @@ async def test_delivery_abandons_row_after_max_attempts(
     assert row.abandoned_at is not None
     assert row.delivery_attempts == MAX_DELIVERY_ATTEMPTS
     assert reconfigure.await_count == 1
+
+
+def test_delivery_failure_uses_specific_abandonment_reason() -> None:
+    row = AgentReconfigureOutbox(
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        reconciled_generation=1,
+        delivery_attempts=MAX_DELIVERY_ATTEMPTS - 1,
+    )
+
+    _record_delivery_failure(row, abandoned_reason="host missing")
+
+    assert row.abandoned_at is not None
+    assert row.abandoned_reason == "host missing"
+    assert row.delivery_attempts == MAX_DELIVERY_ATTEMPTS
