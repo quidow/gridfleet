@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -203,8 +204,7 @@ async def mark_node_started(
 
 async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
-    await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    node = cast("AppiumNode | None", device.appium_node)
+    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     assert node is not None
     node.pid = None
     node.active_connection_target = None
@@ -250,7 +250,9 @@ def build_agent_start_payload(
 ) -> dict[str, Any]:
     headless = (device.tags or {}).get("emulator_headless", "true") != "false"
     manager_owned_keys = appium_capability_keys.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
-    node = cast("AppiumNode | None", device.appium_node)
+    node = (
+        None if "appium_node" in sqlalchemy_inspect(device).unloaded else cast("AppiumNode | None", device.appium_node)
+    )
     accepting_new_sessions = node.accepting_new_sessions if node is not None else True
     stop_pending = node.stop_pending if node is not None else False
     grid_run_id = node.desired_grid_run_id if node is not None else None

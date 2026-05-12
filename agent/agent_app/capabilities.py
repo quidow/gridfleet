@@ -112,6 +112,7 @@ async def refresh_capabilities_snapshot() -> dict[str, Any]:
     global _capabilities_snapshot, _capabilities_snapshot_at
     async with _capabilities_lock:
         snapshot = await detect_capabilities()
+        snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
         _capabilities_snapshot = deepcopy(snapshot)
         _capabilities_snapshot_at = time.monotonic()
         return deepcopy(snapshot)

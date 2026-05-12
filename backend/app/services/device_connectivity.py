@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -11,7 +12,9 @@ from app import metrics
 from app.database import async_session
 from app.errors import AgentCallError
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus
+from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
 from app.services import (
     control_plane_state_store,
@@ -29,7 +32,7 @@ from app.services.agent_operations import (
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import legacy_label_for_audit
-from app.services.intent_reconciler import _reconcile_expired_intents
+from app.services.intent_reconciler import _reconcile_device, _reconcile_expired_intents
 from app.services.intent_service import register_intents_and_reconcile
 from app.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.services.lifecycle_state_machine import DeviceStateMachine
@@ -585,6 +588,30 @@ async def _check_connectivity(db: AsyncSession) -> None:
 async def _check_expired_cooldowns(db: AsyncSession) -> None:
     """Delegate expired cooldown cleanup to the intent reconciler."""
     await _reconcile_expired_intents(db)
+    now = datetime.now(UTC)
+    legacy_entries = (
+        (
+            await db.execute(
+                select(DeviceReservation)
+                .where(DeviceReservation.excluded.is_(True))
+                .where(DeviceReservation.excluded_until.isnot(None))
+                .where(DeviceReservation.excluded_until < now)
+                .where(DeviceReservation.released_at.is_(None))
+                .options(selectinload(DeviceReservation.device), selectinload(DeviceReservation.run))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for entry in legacy_entries:
+        if entry.run is not None and entry.run.state in (RunState.completed, RunState.cancelled, RunState.failed):
+            continue
+        entry.excluded = False
+        entry.exclusion_reason = None
+        entry.excluded_at = None
+        entry.excluded_until = None
+        entry.cooldown_count = 0
+        await _reconcile_device(db, entry.device_id)
     await db.commit()
 
 

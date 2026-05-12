@@ -283,7 +283,9 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
-    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
 
 
 async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) -> None:
@@ -297,7 +299,9 @@ async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) 
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
-    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
 
 
 async def test_offline_disconnected_device_stops_leftover_node(db_session: AsyncSession) -> None:
@@ -315,7 +319,9 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
     assert node is not None
     await db_session.refresh(node)
     assert node.observed_running
-    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
 
 
 async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:

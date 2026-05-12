@@ -10,6 +10,7 @@ from app import metrics_recorders
 from app.database import async_session
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumDesiredState
+from app.models.device import DeviceHold
 from app.models.device_event import DeviceEventType
 from app.models.device_intent import DeviceIntent
 from app.models.device_intent_dirty import DeviceIntentDirty
@@ -122,7 +123,12 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         for intent in intents
         if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
     ]
-    if not active_node_intents and device.auto_manage and device.verified_at is not None:
+    if (
+        not active_node_intents
+        and device.auto_manage
+        and device.verified_at is not None
+        and device.hold != DeviceHold.maintenance
+    ):
         intents = [
             *intents,
             DeviceIntent(

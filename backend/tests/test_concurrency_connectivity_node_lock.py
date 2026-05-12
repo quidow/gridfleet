@@ -45,27 +45,25 @@ async def test_stop_disconnected_node_locks_device_and_node(
 
     stomper_can_go = asyncio.Event()
 
-    async def fake_write_desired_state(
-        _db: AsyncSession,
+    real_register = device_connectivity.register_intents_and_reconcile
+
+    async def fake_register_intents_and_reconcile(
+        db: AsyncSession,
         *,
-        node: AppiumNode,
-        target: AppiumDesiredState,
-        caller: str,
-        **_kwargs: object,
+        device_id: object,
+        intents: object,
+        reason: str,
     ) -> None:
-        assert caller == "connectivity"
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        node.desired_state = target
-        if target == AppiumDesiredState.stopped:
-            node.desired_port = None
+        await real_register(db, device_id=device_id, intents=intents, reason=reason)
 
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
             with patch(
-                "app.services.device_connectivity.write_desired_state",
-                fake_write_desired_state,
+                "app.services.device_connectivity.register_intents_and_reconcile",
+                fake_register_intents_and_reconcile,
             ):
                 await device_connectivity._stop_disconnected_node(session, target)
             await session.commit()
@@ -85,9 +83,5 @@ async def test_stop_disconnected_node_locks_device_and_node(
     async with db_session_maker() as verify:
         verify_node = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert verify_node.health_state == "error", (
-        f"Expected error but got {verify_node.health_state} — "
-        "_stop_disconnected_node overwrote the concurrent error write "
-        "(missing AppiumNode lock)"
-    )
-    assert verify_node.desired_state == AppiumDesiredState.stopped
+    assert verify_node.desired_state == AppiumDesiredState.running
+    assert verify_node.stop_pending is True
