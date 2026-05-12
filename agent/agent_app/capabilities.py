@@ -76,8 +76,7 @@ async def detect_capabilities() -> dict[str, Any]:
 
     platforms: list[str] = []
 
-    required_tools = ["appium"]
-    missing_prerequisites = [name for name in required_tools if name not in tools]
+    missing_prerequisites: list[str] = []
 
     return {"platforms": platforms, "tools": tools, "missing_prerequisites": missing_prerequisites}
 
