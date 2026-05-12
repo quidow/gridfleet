@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
-from app.models.test_run import RunState
+from app.models.test_run import RunState, TestRun
 from app.services.settings_service import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
@@ -384,3 +384,56 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
+
+
+async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
+    """attempt_auto_recovery must not restart a node while cooldown is active."""
+    from app.models.host import Host
+    from app.services.lifecycle_policy import attempt_auto_recovery
+
+    host = await db_session.get(Host, default_host_id)
+    assert host is not None
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-recovery-block",
+        name="Cooldown Recovery Block",
+        operational_state="offline",
+    )
+    run = TestRun(
+        name="recovery-block-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC),
+        excluded_until=datetime.now(UTC) + timedelta(seconds=300),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+    assert recovered is False
+
+    policy_result = await db_session.execute(select(Device).where(Device.id == device.id))
+    refreshed_device = policy_result.scalar_one()
+    assert refreshed_device.lifecycle_policy_state is not None
+    state = refreshed_device.lifecycle_policy_state
+    assert state.get("last_action") == "recovery_suppressed"
+    assert state.get("recovery_suppressed_reason") == "Device is in active cooldown"
