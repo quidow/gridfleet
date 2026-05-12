@@ -35,6 +35,8 @@ DesiredStateCaller = Literal[
     "device_delete",
     "admin_clear_transition",
     "appium_reconciler",
+    "cooldown",
+    "cooldown_expired",
 ]
 
 DesiredGridRunIdCaller = Literal[

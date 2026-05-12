@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.appium_node import AppiumNode
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -32,7 +32,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id
+from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id, write_desired_state
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -906,38 +906,50 @@ async def cooldown_device(
 
     await db.commit()
 
-    if escalate:
-        # Re-lock device for escalation work.
+    if not escalate:
+        # Stop the Appium node so Selenium Grid cannot route new sessions
+        # to this device while the cooldown TTL is active.
         device = await device_locking.lock_device(db, device_id, load_sessions=True)
-        run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run_obj = run_for_event.scalar_one()
+        if device.appium_node is not None:
+            await write_desired_state(
+                db,
+                node=device.appium_node,
+                target=AppiumDesiredState.stopped,
+                caller="cooldown",
+                reason=f"Cooldown: {clean_reason}",
+            )
+            await db.commit()
+        return excluded_until, cooldown_count_after, False, threshold
 
-        await lifecycle_policy_actions.exclude_run_if_needed(
-            db,
-            device,
-            reason=(
-                entry.exclusion_reason
-                or f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
-            ),
-            source="testkit",
-        )
+    # Escalation path
+    device = await device_locking.lock_device(db, device_id, load_sessions=True)
+    run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    run_obj = run_for_event.scalar_one()
 
-        await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
-        await lifecycle_incident_service.record_lifecycle_incident(
-            db,
-            device,
-            event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=clean_reason,
-            detail=f"Cooldown threshold reached ({cooldown_count_after}/{threshold})",
-            source="testkit",
-            run_id=run_obj.id,
-            run_name=run_obj.name,
-        )
-        await db.commit()
-        return None, cooldown_count_after, True, threshold
+    await lifecycle_policy_actions.exclude_run_if_needed(
+        db,
+        device,
+        reason=(
+            entry.exclusion_reason
+            or f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
+        ),
+        source="testkit",
+    )
 
-    return excluded_until, cooldown_count_after, False, threshold
+    await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
+    await lifecycle_incident_service.record_lifecycle_incident(
+        db,
+        device,
+        event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
+        summary_state=DeviceLifecyclePolicySummaryState.excluded,
+        reason=clean_reason,
+        detail=f"Cooldown threshold reached ({cooldown_count_after}/{threshold})",
+        source="testkit",
+        run_id=run_obj.id,
+        run_name=run_obj.name,
+    )
+    await db.commit()
+    return None, cooldown_count_after, True, threshold
 
 
 async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
