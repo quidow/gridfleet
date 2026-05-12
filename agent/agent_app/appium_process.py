@@ -23,6 +23,7 @@ from agent_app.grid_node.protocol import build_slots
 from agent_app.grid_node.service import GridNodeService
 from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
 from agent_app.grid_url import get_local_ip
+from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
@@ -1047,8 +1048,12 @@ class AppiumProcessManager:
         self._cancel_task(self._appium_watch_tasks, port)
         try:
             await self._stop_grid_node_service(port)
-        except Exception:
-            logger.warning("grid node stop failed during managed-port cleanup on port %d", port, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "grid node stop failed during managed-port cleanup on port %s: %s",
+                sanitize_log_value(port),
+                sanitize_log_value(exc),
+            )
         self._appium_procs.pop(port, None)
         self._info.pop(port, None)
         self._launch_specs.pop(port, None)
@@ -1070,8 +1075,12 @@ class AppiumProcessManager:
             # teardown below.
             try:
                 await self._stop_grid_node_service(port)
-            except Exception:
-                logger.warning("grid node stop failed for port %d", port, exc_info=True)
+            except Exception as exc:
+                logger.warning(
+                    "grid node stop failed for port %s: %s",
+                    sanitize_log_value(port),
+                    sanitize_log_value(exc),
+                )
 
             # Stop Appium
             appium_proc = self._appium_procs.pop(port, None)

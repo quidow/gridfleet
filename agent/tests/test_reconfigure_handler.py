@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -9,9 +9,6 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium_process import DeviceNotFoundError
 from agent_app.main import AppiumStartRequest, app
-
-if TYPE_CHECKING:
-    from agent_app.main import AppiumReconfigureRequest
 
 
 def test_appium_start_request_accepts_orchestration_metadata() -> None:
