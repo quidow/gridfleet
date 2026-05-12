@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
+from app import metrics_recorders
 from app.models.appium_node import AppiumDesiredState
 from app.observability import get_logger
 
@@ -71,6 +72,7 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
             priority=highest_priority,
             sources=sources,
         )
+        metrics_recorders.INTENT_RECONCILER_CONFLICTS.inc()
         return NodeProcessDecision(
             desired_state="stopped",
             desired_port=None,

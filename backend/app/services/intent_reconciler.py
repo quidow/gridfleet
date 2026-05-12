@@ -4,8 +4,9 @@ import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
+from app import metrics_recorders
 from app.database import async_session
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumDesiredState
@@ -60,6 +61,8 @@ async def _reconcile_all_devices_once(db: AsyncSession) -> None:
 
 
 async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> None:
+    queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
+    metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
     rows = (
         (await db.execute(select(DeviceIntentDirty).order_by(DeviceIntentDirty.dirty_at).limit(limit))).scalars().all()
     )
@@ -96,6 +99,7 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
 
 
 async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
+    metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     device = await device_locking.lock_device(db, device_id)
     node = device.appium_node
     if node is None:
@@ -111,6 +115,8 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         .scalars()
         .all()
     )
+    intent_count = await db.scalar(select(func.count()).select_from(DeviceIntent))
+    metrics_recorders.INTENT_REGISTRY_INTENTS.set(int(intent_count or 0))
     active_node_intents = [
         intent
         for intent in intents

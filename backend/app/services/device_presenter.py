@@ -4,9 +4,10 @@ import copy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.models.device_intent import DeviceIntent
 from app.schemas.device import DeviceReservationRead
 from app.services import (
     device_attention,
@@ -16,6 +17,13 @@ from app.services import (
     lifecycle_policy,
     run_service,
 )
+from app.services.intent_evaluator import (
+    evaluate_grid_routing,
+    evaluate_node_process,
+    evaluate_recovery,
+    evaluate_reservation,
+)
+from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
 from app.services.pack_platform_resolver import assert_runnable
 
 if TYPE_CHECKING:
@@ -81,6 +89,47 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
         "health_running": node.health_running,
         "health_state": node.health_state,
         "lifecycle_policy_state": copy.deepcopy(device.lifecycle_policy_state or {}),
+    }
+
+
+def _dataclass_to_dict(value: object) -> dict[str, Any]:
+    return copy.deepcopy(getattr(value, "__dict__", {}))
+
+
+async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    intents = (
+        (
+            await db.execute(
+                select(DeviceIntent)
+                .where(DeviceIntent.device_id == device.id)
+                .order_by(DeviceIntent.axis, DeviceIntent.source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    node_intents = [intent for intent in intents if intent.axis == NODE_PROCESS]
+    grid_intents = [intent for intent in intents if intent.axis == GRID_ROUTING]
+    reservation_intents = [intent for intent in intents if intent.axis == RESERVATION]
+    recovery_intents = [intent for intent in intents if intent.axis == RECOVERY]
+    return {
+        "intents": [
+            {
+                "source": intent.source,
+                "axis": intent.axis,
+                "run_id": intent.run_id,
+                "payload": copy.deepcopy(intent.payload),
+                "expires_at": intent.expires_at,
+            }
+            for intent in intents
+        ],
+        "derived": {
+            "node_process": _dataclass_to_dict(evaluate_node_process(node_intents, now)),
+            "grid_routing": _dataclass_to_dict(evaluate_grid_routing(grid_intents, now)),
+            "reservation": _dataclass_to_dict(evaluate_reservation(reservation_intents, now)),
+            "recovery": _dataclass_to_dict(evaluate_recovery(recovery_intents, now)),
+        },
     }
 
 
@@ -179,4 +228,5 @@ async def serialize_device_detail(
     )
     payload["appium_node"] = _serialize_appium_node_for_detail(device)
     payload["sessions"] = device.sessions
+    payload["orchestration"] = await _serialize_orchestration(db, device)
     return payload

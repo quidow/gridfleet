@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from app import metrics_recorders
 from app.errors import AgentResponseError, AgentUnreachableError
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumNode
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
 
 
 async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> None:
+    metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
+        int(
+            await db.scalar(
+                select(func.count())
+                .select_from(AgentReconfigureOutbox)
+                .where(AgentReconfigureOutbox.delivered_at.is_(None))
+            )
+            or 0
+        )
+    )
     rows = (
         (
             await db.execute(
@@ -35,6 +46,7 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> Non
     for row in rows:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == row.device_id))).scalar_one_or_none()
         if node is None or row.reconciled_generation < node.generation:
+            metrics_recorders.AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED.inc()
             row.delivered_at = datetime.now(UTC)
             await db.commit()
             continue

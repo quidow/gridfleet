@@ -132,6 +132,30 @@ DEVICES_IN_COOLDOWN = Gauge(
     "gridfleet_devices_in_cooldown",
     "Number of devices with an active run-scoped reservation cooldown.",
 )
+INTENT_REGISTRY_INTENTS = Gauge(
+    "intent_registry_intents_total",
+    "Current number of registered device orchestration intents.",
+)
+INTENT_RECONCILER_EVALUATIONS = Counter(
+    "intent_reconciler_evaluations_total",
+    "Total device intent reconciliation evaluations.",
+)
+INTENT_RECONCILER_DIRTY_QUEUE_SIZE = Gauge(
+    "intent_reconciler_dirty_queue_size",
+    "Current number of devices pending intent reconciliation.",
+)
+INTENT_RECONCILER_CONFLICTS = Counter(
+    "intent_reconciler_conflicts_total",
+    "Total same-priority device intent conflicts.",
+)
+AGENT_RECONFIGURE_OUTBOX_PENDING = Gauge(
+    "agent_reconfigure_outbox_pending_total",
+    "Current number of undelivered agent reconfigure outbox rows.",
+)
+AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED = Counter(
+    "agent_reconfigure_outbox_stale_skipped_total",
+    "Stale agent reconfigure outbox rows skipped by delivery.",
+)
 
 
 def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:
