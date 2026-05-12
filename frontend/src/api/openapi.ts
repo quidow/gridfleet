@@ -4273,6 +4273,10 @@ export interface components {
             platform_id: string;
             /** Platform Label */
             platform_label?: string | null;
+            /** Tags */
+            tags?: {
+                [key: string]: string;
+            } | null;
             /** Test Data */
             test_data?: {
                 [key: string]: unknown;
