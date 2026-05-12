@@ -30,6 +30,9 @@ class GridNodeServiceProtocol(Protocol):
     def slot_stereotype_caps(self) -> dict[str, object]:
         raise NotImplementedError
 
+    def has_active_session(self) -> bool:
+        raise NotImplementedError
+
     async def reregister_with_stereotype(
         self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
     ) -> None:

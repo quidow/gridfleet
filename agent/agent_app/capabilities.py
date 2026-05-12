@@ -17,7 +17,13 @@ _TOOL_CHECKS: list[tuple[str, str | None, list[str], str]] = [
     ("xcodebuild", "xcodebuild", ["-version"], r"Xcode\s+(\d+\.\d+(?:\.\d+)?)"),
     ("go_ios", "ios", ["--version"], r"v?(\d+\.\d+\.\d+)"),
 ]
-_DEFAULT_CAPABILITIES: dict[str, Any] = {"platforms": [], "tools": {}, "missing_prerequisites": []}
+ORCHESTRATION_CONTRACT_VERSION = 2
+_DEFAULT_CAPABILITIES: dict[str, Any] = {
+    "platforms": [],
+    "tools": {},
+    "missing_prerequisites": [],
+    "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
+}
 _capabilities_snapshot: dict[str, Any] | None = None
 _capabilities_snapshot_at: float | None = None
 _capabilities_lock = asyncio.Lock()
@@ -73,12 +79,19 @@ async def detect_capabilities() -> dict[str, Any]:
 
     missing_prerequisites: list[str] = []
 
-    return {"platforms": platforms, "tools": tools, "missing_prerequisites": missing_prerequisites}
+    return {
+        "platforms": platforms,
+        "tools": tools,
+        "missing_prerequisites": missing_prerequisites,
+        "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
+    }
 
 
 def get_capabilities_snapshot() -> dict[str, Any]:
     """Return the last detected capabilities without running probes."""
-    return deepcopy(_capabilities_snapshot or _DEFAULT_CAPABILITIES)
+    snapshot = deepcopy(_capabilities_snapshot or _DEFAULT_CAPABILITIES)
+    snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
+    return snapshot
 
 
 def clear_capabilities_snapshot() -> None:

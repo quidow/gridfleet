@@ -60,6 +60,7 @@ def build_slots(*, base_caps: dict[str, Any], grid_slots: list[str]) -> list[Slo
     for slot_name in grid_slots:
         caps = dict(base_caps)
         caps.setdefault("gridfleet:run_id", "free")
+        caps.setdefault("gridfleet:available", True)
         if slot_name == "chrome":
             # W3C and Selenium clients send `browserName` lowercase; capitalising
             # this would make capability matching fail for any standards-compliant

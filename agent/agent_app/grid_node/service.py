@@ -182,6 +182,9 @@ class GridNodeService:
             return {}
         return dict(slots[0].stereotype.caps)
 
+    def has_active_session(self) -> bool:
+        return any(slot.state == "BUSY" for slot in self.state.snapshot().slots)
+
     async def start(self) -> None:
         if self._started:
             return

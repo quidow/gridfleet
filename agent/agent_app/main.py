@@ -57,6 +57,7 @@ from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugin_manager import get_installed_plugins, sync_plugins
+from agent_app.reconfigure_handler import AppiumReconfigureRequest
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import get_tool_status
@@ -271,6 +272,9 @@ class AppiumStartRequest(BaseModel):
     plugins: list[str] | None = None
     extra_caps: dict[str, Any] | None = None
     stereotype_caps: dict[str, Any] | None = None
+    accepting_new_sessions: bool = True
+    stop_pending: bool = False
+    grid_run_id: UUID | None = None
     allocated_caps: dict[str, Any] | None = None
     device_type: str | None = None
     ip_address: str | None = None
@@ -411,6 +415,7 @@ async def health() -> dict[str, Any]:
         "os_type": platform.system().lower(),
         "version": __version__,
         "missing_prerequisites": capabilities.get("missing_prerequisites", []),
+        "capabilities": capabilities,
     }
     payload["appium_processes"] = appium_mgr.process_snapshot()
     payload["version_guidance"] = get_version_guidance().to_payload()
@@ -646,6 +651,9 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
             plugins=req.plugins,
             extra_caps=req.extra_caps,
             stereotype_caps=req.stereotype_caps,
+            accepting_new_sessions=req.accepting_new_sessions,
+            stop_pending=req.stop_pending,
+            grid_run_id=req.grid_run_id,
             session_override=req.session_override,
             device_type=req.device_type,
             ip_address=req.ip_address,
@@ -675,6 +683,25 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
     except Exception as e:
         raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
+
+
+@app.post("/agent/appium/{port}/reconfigure")
+async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[str, Any]:
+    try:
+        await appium_mgr.reconfigure(
+            port,
+            accepting_new_sessions=req.accepting_new_sessions,
+            stop_pending=req.stop_pending,
+            grid_run_id=req.grid_run_id,
+        )
+    except DeviceNotFoundError as exc:
+        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
+    return {
+        "port": port,
+        "accepting_new_sessions": req.accepting_new_sessions,
+        "stop_pending": req.stop_pending,
+        "grid_run_id": str(req.grid_run_id) if req.grid_run_id else None,
+    }
 
 
 @app.post("/agent/appium/stop")

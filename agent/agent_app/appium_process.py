@@ -270,6 +270,9 @@ class AppiumLaunchSpec:
     manage_grid_node: bool
     pack_id: str
     platform_id: str
+    accepting_new_sessions: bool = True
+    stop_pending: bool = False
+    grid_run_id: uuid.UUID | None = None
     appium_platform_name: str | None = None
     workaround_env: dict[str, str] | None = None
     insecure_features: list[str] = field(default_factory=list)
@@ -325,6 +328,8 @@ class AppiumProcessManager:
         self._appium_restart_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_attempts: dict[int, collections.deque[float]] = {}
         self._appium_restart_backoff_steps: dict[int, int] = {}
+        self._stop_pending_ports: set[int] = set()
+        self._stop_pending_tasks: dict[int, asyncio.Task[None]] = {}
         self._recent_restart_events: collections.deque[AppiumRestartEvent] = collections.deque(
             maxlen=MAX_RESTART_EVENTS
         )
@@ -516,7 +521,7 @@ class AppiumProcessManager:
     async def _auto_restart_appium(self, port: int, exit_code: int | None) -> None:
         last_exit_code = exit_code
         while True:
-            if port in self._intentional_stop_ports:
+            if port in self._intentional_stop_ports or port in self._stop_pending_ports:
                 return
 
             history = self._trim_restart_attempts(self._appium_restart_attempts, port)
@@ -639,6 +644,9 @@ class AppiumProcessManager:
             plugins=spec.plugins,
             extra_caps=spec.extra_caps,
             stereotype_caps=spec.stereotype_caps,
+            accepting_new_sessions=spec.accepting_new_sessions,
+            stop_pending=spec.stop_pending,
+            grid_run_id=spec.grid_run_id,
             session_override=spec.session_override,
             device_type=spec.device_type,
             ip_address=spec.ip_address,
@@ -749,6 +757,9 @@ class AppiumProcessManager:
         plugins: list[str] | None = None,
         extra_caps: dict[str, Any] | None = None,
         stereotype_caps: dict[str, Any] | None = None,
+        accepting_new_sessions: bool = True,
+        stop_pending: bool = False,
+        grid_run_id: uuid.UUID | None = None,
         session_override: bool = True,
         device_type: str | None = None,
         ip_address: str | None = None,
@@ -808,6 +819,9 @@ class AppiumProcessManager:
             plugins=list(plugins) if plugins else None,
             extra_caps=merged_extra_caps if merged_extra_caps else None,
             stereotype_caps=dict(stereotype_caps) if stereotype_caps else None,
+            accepting_new_sessions=accepting_new_sessions,
+            stop_pending=stop_pending,
+            grid_run_id=grid_run_id,
             session_override=session_override,
             device_type=device_type,
             ip_address=ip_address,
@@ -837,6 +851,7 @@ class AppiumProcessManager:
 
             self._launch_specs[port] = spec
             self._intentional_stop_ports.discard(port)
+            self._stop_pending_ports.discard(port)
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
 
             if manage_grid_node:
@@ -872,6 +887,8 @@ class AppiumProcessManager:
             caps.update(spec.stereotype_caps)
         elif spec.extra_caps:
             caps.update(spec.extra_caps)
+        caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
+        caps["gridfleet:available"] = spec.accepting_new_sessions
 
         node_port = self._allocate_node_port()
         # Selenium hub deserializes nodeId via UUID.fromString — derive a stable UUID
@@ -913,6 +930,78 @@ class AppiumProcessManager:
         self._grid_supervisors[spec.port] = handle
         return handle
 
+    async def reconfigure(
+        self,
+        port: int,
+        *,
+        accepting_new_sessions: bool,
+        stop_pending: bool,
+        grid_run_id: uuid.UUID | None,
+    ) -> None:
+        handle = self._grid_supervisors.get(port)
+        if handle is None or handle.service is None:
+            raise DeviceNotFoundError(f"No running grid node for Appium port {port}")
+        if port not in self._info:
+            raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
+
+        service = handle.service
+        caps = service.slot_stereotype_caps()
+        caps["gridfleet:available"] = accepting_new_sessions
+        caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id is not None else "free"
+        await service.reregister_with_stereotype(new_caps=caps)
+
+        spec = self._launch_specs.get(port)
+        if spec is not None:
+            self._launch_specs[port] = AppiumLaunchSpec(
+                connection_target=spec.connection_target,
+                port=spec.port,
+                plugins=spec.plugins,
+                extra_caps=spec.extra_caps,
+                stereotype_caps=spec.stereotype_caps,
+                accepting_new_sessions=accepting_new_sessions,
+                stop_pending=stop_pending,
+                grid_run_id=grid_run_id,
+                session_override=spec.session_override,
+                device_type=spec.device_type,
+                ip_address=spec.ip_address,
+                manage_grid_node=spec.manage_grid_node,
+                pack_id=spec.pack_id,
+                platform_id=spec.platform_id,
+                appium_platform_name=spec.appium_platform_name,
+                workaround_env=spec.workaround_env,
+                insecure_features=list(spec.insecure_features),
+                grid_slots=list(spec.grid_slots),
+                lifecycle_actions=list(spec.lifecycle_actions),
+                connection_behavior=dict(spec.connection_behavior),
+                headless=spec.headless,
+            )
+
+        if stop_pending:
+            self._stop_pending_ports.add(port)
+            if service.has_active_session():
+                self._ensure_stop_when_grid_idle_task(port)
+                return
+            await self.stop(port)
+            return
+        self._stop_pending_ports.discard(port)
+        self._cancel_task(self._stop_pending_tasks, port)
+
+    def _ensure_stop_when_grid_idle_task(self, port: int) -> None:
+        existing = self._stop_pending_tasks.get(port)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(self._stop_when_grid_idle(port))
+        self._register_port_task(self._stop_pending_tasks, port, task)
+
+    async def _stop_when_grid_idle(self, port: int) -> None:
+        while port in self._stop_pending_ports:
+            handle = self._grid_supervisors.get(port)
+            service = handle.service if handle is not None else None
+            if service is None or not service.has_active_session():
+                await self.stop(port)
+                return
+            await asyncio.sleep(1)
+
     async def _cleanup_started_appium_after_grid_node_failure(
         self, port: int, appium_proc: asyncio.subprocess.Process
     ) -> None:
@@ -925,6 +1014,8 @@ class AppiumProcessManager:
         self._launch_specs.pop(port, None)
         self._appium_restart_attempts.pop(port, None)
         self._appium_restart_backoff_steps.pop(port, None)
+        self._stop_pending_ports.discard(port)
+        self._cancel_task(self._stop_pending_tasks, port)
         if appium_proc.returncode is None:
             appium_proc.send_signal(signal.SIGTERM)
             try:
@@ -969,6 +1060,10 @@ class AppiumProcessManager:
             self._intentional_stop_ports.add(port)
             self._cancel_task(self._appium_restart_tasks, port)
             self._cancel_task(self._appium_watch_tasks, port)
+            current = asyncio.current_task()
+            stop_pending_task = self._stop_pending_tasks.get(port)
+            if stop_pending_task is not None and stop_pending_task is not current:
+                self._cancel_task(self._stop_pending_tasks, port)
 
             # Stop Grid Node first. A grid-node failure must not leak the
             # Appium process; suppress and log so we always reach the Appium
@@ -1057,7 +1152,7 @@ class AppiumProcessManager:
         for port in ports:
             with contextlib.suppress(Exception):
                 await self.stop(port)
-        for task_map in (self._appium_restart_tasks, self._appium_watch_tasks):
+        for task_map in (self._appium_restart_tasks, self._appium_watch_tasks, self._stop_pending_tasks):
             for task in task_map.values():
                 task.cancel()
             task_map.clear()
