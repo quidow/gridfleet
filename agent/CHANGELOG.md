@@ -2,6 +2,23 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.7.0...gridfleet-agent-v0.8.0) (2026-05-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** remove tool ensure endpoint and management logic
+
+### Features
+
+* **agent:** remove tool ensure endpoint and management logic ([89a581c](https://github.com/quidow/gridfleet/commit/89a581c5221c6272882bf6e4f3ee90b25052cba5))
+* remove host tool ensure/version management ([#190](https://github.com/quidow/gridfleet/issues/190)) ([b2562c1](https://github.com/quidow/gridfleet/commit/b2562c16d75ef14c0f4c9131c03151b73f337802))
+
+
+### Bug Fixes
+
+* **agent:** stop requiring global appium runtime ([ef70225](https://github.com/quidow/gridfleet/commit/ef702257983f6d2ae7a69fae721c1b071b5121a4))
+
 ## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.6.2...gridfleet-agent-v0.7.0) (2026-05-11)
 
 
