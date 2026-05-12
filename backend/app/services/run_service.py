@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -32,10 +32,20 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id, write_desired_state
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_COOLDOWN,
+    PRIORITY_FORCED_RELEASE,
+    PRIORITY_RUN_ROUTING,
+    RECOVERY,
+    RESERVATION,
+    IntentRegistration,
+)
 from app.services.pack_platform_resolver import assert_runnable
 from app.services.settings_service import settings_service
 
@@ -47,6 +57,50 @@ class _UnmetRequirementError(Exception):
         self.requirement = requirement
         self.matched_count = matched_count
         super().__init__(f"{requirement.pack_id}/{requirement.platform_id}")
+
+
+def _cooldown_intents(
+    *,
+    run_id: uuid.UUID,
+    reason: str,
+    count: int,
+    expires_at: datetime,
+) -> list[IntentRegistration]:
+    return [
+        IntentRegistration(
+            source=f"cooldown:node:{run_id}",
+            axis=NODE_PROCESS,
+            run_id=run_id,
+            expires_at=expires_at,
+            payload={"action": "stop", "priority": PRIORITY_COOLDOWN, "stop_mode": "defer"},
+        ),
+        IntentRegistration(
+            source=f"cooldown:grid:{run_id}",
+            axis=GRID_ROUTING,
+            run_id=run_id,
+            expires_at=expires_at,
+            payload={"accepting_new_sessions": False, "priority": PRIORITY_COOLDOWN},
+        ),
+        IntentRegistration(
+            source=f"cooldown:reservation:{run_id}",
+            axis=RESERVATION,
+            run_id=run_id,
+            expires_at=expires_at,
+            payload={
+                "excluded": True,
+                "priority": PRIORITY_COOLDOWN,
+                "exclusion_reason": reason,
+                "cooldown_count": count,
+            },
+        ),
+        IntentRegistration(
+            source=f"cooldown:recovery:{run_id}",
+            axis=RECOVERY,
+            run_id=run_id,
+            expires_at=expires_at,
+            payload={"allowed": False, "priority": PRIORITY_COOLDOWN, "reason": reason},
+        ),
+    ]
 
 
 def now_utc() -> datetime:
@@ -410,15 +464,17 @@ async def _attempt_create_run(
     await db.flush()
 
     for device in all_matched:
-        node = device.appium_node
-        if node is None:
-            continue
-        await write_desired_grid_run_id(
+        await register_intents_and_reconcile(
             db,
-            node=node,
-            run_id=run.id,
-            caller="run_create",
-            actor=data.created_by,
+            device_id=device.id,
+            intents=[
+                IntentRegistration(
+                    source=f"run:{run.id}",
+                    axis=GRID_ROUTING,
+                    run_id=run.id,
+                    payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
+                )
+            ],
             reason=f"reserved for run {run.id}",
         )
 
@@ -553,12 +609,11 @@ async def exclude_device_from_run(
         device = await device_locking.lock_device(db, device_id, load_sessions=False)
     except NoResultFound:
         device = None
-    if device is not None and device.appium_node is not None:
-        await write_desired_grid_run_id(
+    if device is not None:
+        await revoke_intents_and_reconcile(
             db,
-            node=device.appium_node,
-            run_id=None,
-            caller="run_exclude_device",
+            device_id=device.id,
+            sources=[f"run:{run.id}"],
             reason=reason,
         )
     if commit:
@@ -904,19 +959,17 @@ async def cooldown_device(
             expires_at=excluded_until,
         )
 
-        # Stop the Appium node so Selenium Grid cannot route new sessions
-        # to this device while the cooldown TTL is active. Do this inside the
-        # same transaction (while run and reservation rows are locked) to
-        # prevent a concurrent complete_run/cancel_run from releasing the
-        # reservation and leaving the node wrongly stopped.
-        if device.appium_node is not None:
-            await write_desired_state(
-                db,
-                node=device.appium_node,
-                target=AppiumDesiredState.stopped,
-                caller="cooldown",
-                reason=f"Cooldown: {clean_reason}",
-            )
+        await register_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            intents=_cooldown_intents(
+                run_id=run.id,
+                reason=clean_reason,
+                count=cooldown_count_after,
+                expires_at=excluded_until,
+            ),
+            reason=f"Cooldown: {clean_reason}",
+        )
 
     await db.commit()
 
@@ -1140,10 +1193,11 @@ async def _clear_desired_grid_run_id_for_run(
     db: AsyncSession,
     *,
     run: TestRun,
-    caller: DesiredGridRunIdCaller,
+    caller: str,
     actor: str | None = None,
     reason: str | None = None,
 ) -> None:
+    del actor
     for reservation in run.device_reservations:
         if reservation.released_at is not None:
             continue
@@ -1151,16 +1205,32 @@ async def _clear_desired_grid_run_id_for_run(
             device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
         except NoResultFound:
             continue
-        node = device.appium_node
-        if node is None:
-            continue
-        await write_desired_grid_run_id(
+        sources = [
+            f"run:{run.id}",
+            f"cooldown:node:{run.id}",
+            f"cooldown:grid:{run.id}",
+            f"cooldown:reservation:{run.id}",
+            f"cooldown:recovery:{run.id}",
+        ]
+        if caller == "run_force_release":
+            await register_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                intents=[
+                    IntentRegistration(
+                        source=f"forced_release:{run.id}",
+                        axis=NODE_PROCESS,
+                        run_id=run.id,
+                        payload={"action": "stop", "priority": PRIORITY_FORCED_RELEASE, "stop_mode": "hard"},
+                    )
+                ],
+                reason=reason or f"force release run {run.id}",
+            )
+        await revoke_intents_and_reconcile(
             db,
-            node=node,
-            run_id=None,
-            caller=caller,
-            actor=actor,
-            reason=reason,
+            device_id=device.id,
+            sources=sources,
+            reason=reason or f"clear run {run.id} intents",
         )
 
 

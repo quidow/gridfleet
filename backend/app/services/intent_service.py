@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models.device_intent import DeviceIntent
 from app.models.device_intent_dirty import DeviceIntentDirty
+from app.services.intent_reconciler import _reconcile_device
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -138,3 +139,27 @@ class IntentService:
             .order_by(DeviceIntent.axis, DeviceIntent.source)
         )
         return list(result.scalars().all())
+
+
+async def register_intents_and_reconcile(
+    db: AsyncSession,
+    *,
+    device_id: UUID,
+    intents: list[IntentRegistration],
+    reason: str,
+) -> None:
+    service = IntentService(db)
+    await service.register_intents(device_id=device_id, intents=intents, reason=reason)
+    await _reconcile_device(db, device_id)
+
+
+async def revoke_intents_and_reconcile(
+    db: AsyncSession,
+    *,
+    device_id: UUID,
+    sources: list[str],
+    reason: str,
+) -> None:
+    service = IntentService(db)
+    await service.revoke_intents(device_id=device_id, sources=sources, reason=reason)
+    await _reconcile_device(db, device_id)
