@@ -3,6 +3,7 @@ import { HostActionButtons, HostAgentVersionNotice } from '../hosts/hostPresenta
 import type { HostRead } from '../../types';
 import DefinitionList from '../ui/DefinitionList';
 import HostOverviewResourceStrip from './HostOverviewResourceStrip';
+import HostToolVersionsPanel from './HostToolVersionsPanel';
 import { EMPTY_GLYPH } from '../../utils/emptyValue';
 
 type Props = {
@@ -24,8 +25,6 @@ export default function HostOverviewPanel({
   onReject,
   onDiscover,
 }: Props) {
-  const capabilities = host.capabilities as { platforms?: string[]; tools?: Record<string, string> } | null;
-
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -78,38 +77,7 @@ export default function HostOverviewPanel({
         </div>
       </div>
 
-      {capabilities ? (
-        <div className="rounded-lg border border-border bg-surface-1 p-5">
-          <h2 className="mb-4 text-sm font-medium text-text-3">Capabilities</h2>
-          <div className="space-y-3">
-            {Array.isArray(capabilities.platforms) && capabilities.platforms.length > 0 ? (
-              <div>
-                <dt className="mb-1 text-xs text-text-3">Platforms</dt>
-                <dd className="flex flex-wrap gap-1.5">
-                  {capabilities.platforms.map((platform) => (
-                    <span key={platform} className="inline-block rounded bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">
-                      {platform}
-                    </span>
-                  ))}
-                </dd>
-              </div>
-            ) : null}
-            {capabilities.tools && Object.keys(capabilities.tools).length > 0 ? (
-              <div>
-                <dt className="mb-1 text-xs text-text-3">Tools</dt>
-                <dd className="space-y-1">
-                  {Object.entries(capabilities.tools).map(([name, version]) => (
-                    <div key={name} className="flex justify-between text-sm">
-                      <span className="text-text-2">{name}</span>
-                      <span className="font-mono text-text-3">{version}</span>
-                    </div>
-                  ))}
-                </dd>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      <HostToolVersionsPanel host={host} />
     </div>
   );
 }
