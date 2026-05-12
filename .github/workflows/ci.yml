@@ -71,7 +71,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: uv sync --extra dev
+        run: uv sync --extra dev --locked
       - name: Check formatting
         working-directory: backend
         run: uv run --locked --extra dev ruff format --check app/ tests/
@@ -125,57 +125,7 @@ jobs:
 
       - name: Test
         working-directory: backend
-        run: uv run --locked --extra dev pytest -q -n auto
-
-  frontend-verify-types:
-    name: Frontend / Verify OpenAPI Types
-    runs-on: ubuntu-latest
-    env:
-      UV_LINK_MODE: copy
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-suffix: frontend-verify-types
-          python-version: "3.12"
-          cache-dependency-glob: |
-            backend/pyproject.toml
-            backend/uv.lock
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: uv sync --extra dev
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Regenerate OpenAPI types
-        working-directory: frontend
-        run: npm run types:generate
-
-      - name: Test OpenAPI type surface
-        working-directory: frontend
-        run: npm run test -- src/api/openapi.test.ts
-
-      - name: Verify generated file is up to date
-        working-directory: frontend
-        run: |
-          if ! git diff --exit-code -- src/api/openapi.ts; then
-            echo "::error::frontend/src/api/openapi.ts is stale. Run 'npm run types:generate' in frontend/ and commit the result."
-            exit 1
-          fi
+        run: uv run --locked --extra dev pytest -q -n auto --cov=app --cov-report=term-missing:skip-covered
 
   agent:
     name: Agent
@@ -332,6 +282,32 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: frontend
+          python-version: "3.12"
+          cache-dependency-glob: |
+            backend/pyproject.toml
+            backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --extra dev --locked
+
+      - name: Regenerate OpenAPI types
+        working-directory: frontend
+        run: npm run types:generate
+
+      - name: Verify generated file is up to date
+        working-directory: frontend
+        run: |
+          if ! git diff --exit-code -- src/api/openapi.ts; then
+            echo "::error::frontend/src/api/openapi.ts is stale. Run 'npm run types:generate' in frontend/ and commit the result."
+            exit 1
+          fi
+
       - name: Lint
         working-directory: frontend
         run: npm run lint
@@ -339,6 +315,10 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+
+      - name: Unit tests
+        working-directory: frontend
+        run: npm run test
 
       - name: Cache Playwright browsers
         uses: actions/cache@v5
@@ -361,19 +341,6 @@ jobs:
         working-directory: frontend
         run: npm run test:e2e:mocked
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-suffix: frontend
-          python-version: "3.12"
-          cache-dependency-glob: |
-            backend/pyproject.toml
-            backend/uv.lock
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: uv sync --extra dev
       - name: Run backend migrations
         working-directory: backend
         run: uv run --locked --extra dev alembic upgrade head

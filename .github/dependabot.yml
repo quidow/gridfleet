@@ -74,7 +74,7 @@ updates:
       docker-dependencies:
         patterns:
           - "*"
-  - package-ecosystem: docker
+  - package-ecosystem: docker-compose
     directory: "/docker"
     schedule:
       interval: weekly
@@ -82,6 +82,6 @@ updates:
       prefix: "docker"
       include: "scope"
     groups:
-      docker-dependencies:
+      docker-compose-dependencies:
         patterns:
           - "*"
