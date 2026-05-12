@@ -2418,6 +2418,7 @@ export interface components {
             /** Needs Attention */
             needs_attention: boolean;
             operational_state: components["schemas"]["DeviceOperationalState"];
+            orchestration: components["schemas"]["DeviceOrchestrationRead"];
             /** Os Version */
             os_version: string;
             /** Pack Id */
@@ -2602,6 +2603,21 @@ export interface components {
          * @enum {string}
          */
         DeviceHold: "maintenance" | "reserved";
+        /** DeviceIntentSummaryRead */
+        DeviceIntentSummaryRead: {
+            /** Axis */
+            axis: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id?: string | null;
+            /** Source */
+            source: string;
+        };
         /** DeviceLifecyclePolicySummaryRead */
         DeviceLifecyclePolicySummaryRead: {
             /** Backoff Until */
@@ -2624,6 +2640,15 @@ export interface components {
          * @enum {string}
          */
         DeviceOperationalState: "available" | "busy" | "offline" | "verifying";
+        /** DeviceOrchestrationRead */
+        DeviceOrchestrationRead: {
+            /** Derived */
+            derived: {
+                [key: string]: unknown;
+            };
+            /** Intents */
+            intents: components["schemas"]["DeviceIntentSummaryRead"][];
+        };
         /** DevicePatch */
         DevicePatch: {
             /** Auto Manage */
