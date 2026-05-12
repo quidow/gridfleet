@@ -45,6 +45,19 @@ class AppiumNode(Base):
     )
     desired_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     desired_grid_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    accepting_new_sessions: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    stop_pending: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     transition_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     transition_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

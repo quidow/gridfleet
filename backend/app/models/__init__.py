@@ -1,3 +1,4 @@
+from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
@@ -8,6 +9,8 @@ from app.models.control_plane_state_entry import ControlPlaneStateEntry
 from app.models.device import Device
 from app.models.device_event import DeviceEvent
 from app.models.device_group import DeviceGroup, DeviceGroupMembership
+from app.models.device_intent import DeviceIntent
+from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.device_reservation import DeviceReservation
 from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
 from app.models.driver_pack import (
@@ -35,6 +38,7 @@ from app.models.webhook import Webhook
 from app.models.webhook_delivery import WebhookDelivery
 
 __all__ = [
+    "AgentReconfigureOutbox",
     "AnalyticsCapacitySnapshot",
     "AppiumNode",
     "AppiumNodeResourceClaim",
@@ -46,6 +50,8 @@ __all__ = [
     "DeviceEvent",
     "DeviceGroup",
     "DeviceGroupMembership",
+    "DeviceIntent",
+    "DeviceIntentDirty",
     "DeviceReservation",
     "DeviceTestDataAuditLog",
     "DriverPack",
