@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.models.device import ConnectionType, DeviceType
 from app.models.host import HostStatus, OSType
@@ -130,40 +130,10 @@ class HostResourceTelemetryResponse(BaseModel):
 
 
 class HostToolStatusRead(BaseModel):
-    appium: str | None = None
     node: str | None = None
     node_provider: str | None = None
     node_error: str | None = None
     go_ios: str | None = None
-    selenium_jar: str | None = None
-    selenium_jar_path: str | None = None
-
-
-class ToolEnsureResultItemRead(BaseModel):
-    success: bool
-    action: str | None = None
-    version: str | None = None
-    previous_version: str | None = None
-    error: str | None = None
-    node_provider: str | None = None
-    output: str | None = None
-
-
-class HostToolEnsureResultRead(BaseModel):
-    appium: ToolEnsureResultItemRead | None = None
-    selenium_jar: ToolEnsureResultItemRead | None = None
-
-
-class HostToolEnsureJobRead(BaseModel):
-    job_id: str
-    status: Literal["pending", "running", "completed", "failed", "cancelled"]
-    host_id: uuid.UUID
-    hostname: str | None = None
-    target_versions: dict[str, str | None] = Field(default_factory=dict)
-    result: HostToolEnsureResultRead | None = None
-    error: str | None = None
-    started_at: str
-    finished_at: str | None = None
 
 
 class DiscoveredDevice(BaseModel):

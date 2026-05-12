@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
@@ -16,7 +16,6 @@ from app.routers.hosts import _auto_discover, _auto_prepare_host_diagnostics
 from app.services import control_plane_state_store
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.job_queue import run_pending_jobs_once
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {
@@ -368,7 +367,11 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
         resp = await client.get(f"/api/hosts/{host.id}/tools/status")
 
     assert resp.status_code == 200
-    assert resp.json()["node_provider"] == "fnm"
+    payload = resp.json()
+    assert payload["node_provider"] == "fnm"
+    assert "appium" not in payload
+    assert "selenium_jar" not in payload
+    assert "selenium_jar_path" not in payload
     status_mock.assert_awaited_once_with("10.0.0.40", 5100)
 
 
@@ -378,81 +381,6 @@ async def test_get_host_tool_status_requires_online_host(client: AsyncClient) ->
     resp = await client.get(f"/api/hosts/{host['id']}/tools/status")
 
     assert resp.status_code == 400
-
-
-async def test_ensure_host_tools_uses_configured_versions(client: AsyncClient, db_session: AsyncSession) -> None:
-    host = Host(
-        hostname="ensure-tools-host",
-        ip="10.0.0.41",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.commit()
-    await db_session.refresh(host)
-
-    settings_resp = await client.put(
-        "/api/settings/bulk",
-        json={"settings": {"appium.target_version": "3.3.0", "grid.selenium_jar_version": "4.41.0"}},
-    )
-    assert settings_resp.status_code == 200
-
-    resp = await client.post(f"/api/hosts/{host.id}/tools/ensure")
-
-    assert resp.status_code == 202
-    data = resp.json()
-    assert data["status"] == "pending"
-    assert data["host_id"] == str(host.id)
-    assert data["target_versions"] == {
-        "appium": "3.3.0",
-        "selenium_jar": "4.41.0",
-    }
-
-    job_resp = await client.get(f"/api/hosts/{host.id}/tools/ensure-jobs/{data['job_id']}")
-    assert job_resp.status_code == 200
-    assert job_resp.json()["job_id"] == data["job_id"]
-
-    reset_resp = await client.post("/api/settings/reset/appium.target_version")
-    assert reset_resp.status_code == 200
-
-
-async def test_host_tool_ensure_job_runs_in_worker(client: AsyncClient, db_session: AsyncSession) -> None:
-    host = Host(
-        hostname="ensure-worker-host",
-        ip="10.0.0.43",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.commit()
-    await db_session.refresh(host)
-
-    resp = await client.post(f"/api/hosts/{host.id}/tools/ensure")
-    assert resp.status_code == 202
-    job_id = resp.json()["job_id"]
-    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-
-    with patch(
-        "app.services.host_tools_execution.ensure_agent_tools",
-        new=AsyncMock(return_value={"appium": {"success": True, "action": "none", "version": "3.3.0"}}),
-    ) as ensure_mock:
-        worked = await run_pending_jobs_once(session_factory)
-
-    assert worked is True
-    ensure_mock.assert_awaited_once_with(
-        "10.0.0.43",
-        5100,
-        appium_version="3.3.0",
-        selenium_jar_version="4.41.0",
-    )
-
-    job_resp = await client.get(f"/api/hosts/{host.id}/tools/ensure-jobs/{job_id}")
-    assert job_resp.status_code == 200
-    data = job_resp.json()
-    assert data["status"] == "completed"
-    assert data["result"]["appium"]["version"] == "3.3.0"
 
 
 async def test_delete_host(client: AsyncClient) -> None:
@@ -635,7 +563,7 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
     assert reset_resp.status_code == 200
 
 
-async def test_auto_prepare_host_diagnostics_ensures_tools(db_session: AsyncSession) -> None:
+async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSession) -> None:
     host = Host(
         hostname="runtime-prepare-host",
         ip="10.0.0.42",
@@ -646,22 +574,15 @@ async def test_auto_prepare_host_diagnostics_ensures_tools(db_session: AsyncSess
     db_session.add(host)
     await db_session.commit()
     await db_session.refresh(host)
-    calls: list[str] = []
-
-    async def fake_ensure(db: AsyncSession, loaded_host: Host) -> dict[str, Any]:
-        calls.append("ensure")
-        assert loaded_host.id == host.id
-        return {"appium": {"success": True}}
-
+    sync = AsyncMock()
     with (
         patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.host_tools.ensure_host_tools", side_effect=fake_ensure),
         patch("app.routers.hosts.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
-        patch("app.routers.hosts.plugin_service.auto_sync_host_plugins", new=AsyncMock()),
+        patch("app.routers.hosts.plugin_service.auto_sync_host_plugins", sync),
     ):
         await _auto_prepare_host_diagnostics(host.id)
 
-    assert calls == ["ensure"]
+    sync.assert_awaited_once_with(host, [])
 
 
 async def test_hosts_capabilities_reports_terminal_flag(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:

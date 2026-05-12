@@ -45,16 +45,16 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
         started_at=stale_started_at,
         scheduled_at=datetime.now(UTC),
     )
-    tools = Job(
+    recovery = Job(
         id=uuid4(),
-        kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE,
+        kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
         status=job_queue.JOB_STATUS_RUNNING,
         payload={},
         snapshot={"status": job_queue.JOB_STATUS_RUNNING, "error": "boom", "finished_at": "yesterday"},
         started_at=stale_started_at,
         scheduled_at=datetime.now(UTC),
     )
-    db_session.add_all([verification, tools])
+    db_session.add_all([verification, recovery])
     await db_session.commit()
 
     with patch(
@@ -69,19 +69,19 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
                 _session_factory(db_session),
                 kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
             )
-        count_tools = await job_queue.reset_stale_running_jobs(
+        count_recovery = await job_queue.reset_stale_running_jobs(
             _session_factory(db_session),
-            kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE,
+            kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
         )
 
     await db_session.refresh(verification)
-    await db_session.refresh(tools)
+    await db_session.refresh(recovery)
     assert count_verification == 1
-    assert count_tools == 1
+    assert count_recovery == 1
     assert verification.snapshot["retried"] is True
-    assert tools.snapshot["status"] == job_queue.JOB_STATUS_PENDING
-    assert tools.snapshot["error"] is None
-    assert tools.snapshot["finished_at"] is None
+    assert recovery.snapshot["status"] == job_queue.JOB_STATUS_PENDING
+    assert recovery.snapshot["error"] is None
+    assert recovery.snapshot["finished_at"] is None
 
 
 async def test_claim_next_job_respects_kind_and_schedule(db_session: AsyncSession) -> None:
@@ -95,16 +95,16 @@ async def test_claim_next_job_respects_kind_and_schedule(db_session: AsyncSessio
     )
     ready = Job(
         id=uuid4(),
-        kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE,
+        kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
         status=job_queue.JOB_STATUS_PENDING,
-        payload={"host_id": "1"},
+        payload={"device_id": "1"},
         snapshot={},
         scheduled_at=datetime.now(UTC) - timedelta(minutes=1),
     )
     db_session.add_all([future, ready])
     await db_session.commit()
 
-    job = await job_queue.claim_next_job(_session_factory(db_session), kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE)
+    job = await job_queue.claim_next_job(_session_factory(db_session), kind=job_queue.JOB_KIND_DEVICE_RECOVERY)
 
     assert job is not None
     assert job.id == ready.id
@@ -121,15 +121,15 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         snapshot={},
         scheduled_at=datetime.now(UTC),
     )
-    tools = Job(
+    recovery = Job(
         id=uuid4(),
-        kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE,
+        kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
         status=job_queue.JOB_STATUS_PENDING,
-        payload={"host_id": "1"},
+        payload={"device_id": "1"},
         snapshot={},
         scheduled_at=datetime.now(UTC),
     )
-    db_session.add_all([verification, tools])
+    db_session.add_all([verification, recovery])
     await db_session.commit()
 
     with patch(
@@ -146,17 +146,17 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     verification_runner.assert_awaited_once()
 
     with patch(
-        "app.services.job_queue.run_persisted_host_tool_ensure_job",
+        "app.services.job_queue.run_device_recovery_job",
         new=AsyncMock(),
-    ) as tools_runner:
+    ) as recovery_runner:
         assert (
             await job_queue.run_pending_jobs_once(
                 _session_factory(db_session),
-                kind=job_queue.JOB_KIND_HOST_TOOLS_ENSURE,
+                kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
             )
             is True
         )
-    tools_runner.assert_awaited_once()
+    recovery_runner.assert_awaited_once()
 
 
 async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: AsyncSession) -> None:
@@ -201,5 +201,5 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
     ):
         await job_queue.durable_job_worker_loop(session_factory)
 
-    assert reset_jobs.await_count == 3
+    assert reset_jobs.await_count == 2
     sleep.assert_awaited()
