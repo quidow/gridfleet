@@ -99,7 +99,6 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 | `--grid-publish-url` | `tcp://localhost:4442` | installer CLI | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | installer CLI | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
 | `--grid-node-port-start` | `5555` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
-| `--selenium-version` | `4.41.0` | installer CLI | Controls which Selenium server JAR the installer downloads |
 
 ## External Client Variables
 

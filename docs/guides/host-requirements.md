@@ -24,7 +24,7 @@ These are the parts the agent can install, verify, or keep aligned after the hos
 
 | Artifact | How it is managed | Manager setting |
 | --- | --- | --- |
-| Appium binary | installed or updated with npm | `appium.target_version` |
+| Appium runtime | installed per driver pack under `AGENT_RUNTIME_ROOT` | driver pack catalog |
 | Appium driver packs | reconciled from the active pack catalog and checked with Appium doctor | driver pack catalog |
 | Appium plugins | installed or removed to match the registry | plugin registry |
 | Appium default plugin activation | passed to managed Appium nodes as `--use-plugins` | `appium.default_plugins` |
@@ -121,10 +121,8 @@ Those warnings are shown in the host surfaces so operators can distinguish:
 
 Current remediation behavior:
 
-- missing `appium`
-  - Host Detail can install it if `appium.target_version` is set
-- missing `go_ios`, `java`, `adb`, Xcode, or the Android SDK
-  - informational only; these still require operator setup
+- Appium runtimes are reconciled by the desired driver-pack loop.
+- Missing host-level tools such as `go_ios`, `java`, `adb`, Xcode, or the Android SDK are informational and require operator setup.
 
 ## Verification Checklist
 

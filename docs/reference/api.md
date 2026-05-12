@@ -95,9 +95,7 @@ Current auth behavior:
 | `GET` | `/api/hosts/{host_id}` | Read host detail including current devices | path `host_id` | `HostDetail` |
 | `GET` | `/api/hosts/{host_id}/diagnostics` | Read backend-owned host diagnostics (breaker state, latest Appium process snapshot, recent agent-local Appium recovery events) | path `host_id` | `HostDiagnosticsRead` |
 | `GET` | `/api/hosts/{host_id}/resource-telemetry` | Read recent host CPU, memory, and disk telemetry using backend bucketing | `since`, `until`, `bucket_minutes` | `HostResourceTelemetryResponse` |
-| `GET` | `/api/hosts/{host_id}/tools/status` | Read host agent Appium, Node, Node provider, and iOS helper versions | path `host_id` | tool status object |
-| `POST` | `/api/hosts/{host_id}/tools/ensure` | Start a background job to ensure configured host tool target versions | path `host_id` | `HostToolEnsureJobRead` |
-| `GET` | `/api/hosts/{host_id}/tools/ensure-jobs/{job_id}` | Read host tool ensure job status/result | path `host_id`, `job_id` | `HostToolEnsureJobRead` |
+| `GET` | `/api/hosts/{host_id}/tools/status` | Read host agent Node, Node provider, and iOS helper versions | path `host_id` | `HostToolStatusRead` |
 | `DELETE` | `/api/hosts/{host_id}` | Delete an empty host | path `host_id` | empty `204` |
 | `POST` | `/api/hosts/{host_id}/approve` | Approve a pending host | path `host_id` | `HostRead` |
 | `POST` | `/api/hosts/{host_id}/reject` | Reject a pending host | path `host_id` | empty `204` |

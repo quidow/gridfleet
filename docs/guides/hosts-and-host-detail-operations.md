@@ -65,7 +65,7 @@ Main sections:
 - `Devices`
   - current attached device records for that host
 - `Tool Versions`
-  - Appium, Node provider, Node, and iOS helper versions plus a background `Ensure Versions` job
+  - Node provider, Node, and iOS helper versions
 - `Appium Drivers`
   - required versus installed driver versions plus `Sync Drivers`
 
