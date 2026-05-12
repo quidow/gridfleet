@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -12,9 +13,17 @@ from app.database import async_session
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus
+from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
-from app.services import appium_node_locking, control_plane_state_store, device_health, device_locking, lifecycle_policy
+from app.services import (
+    appium_node_locking,
+    control_plane_state_store,
+    device_health,
+    device_locking,
+    lifecycle_policy,
+)
 from app.services.agent_operations import (
     get_pack_devices,
     pack_device_lifecycle_action,
@@ -571,12 +580,81 @@ async def _check_connectivity(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _check_expired_cooldowns(db: AsyncSession) -> None:
+    """Restore devices whose cooldown TTL has expired and restart their nodes."""
+    now = datetime.now(UTC)
+    stmt = (
+        select(DeviceReservation)
+        .where(DeviceReservation.excluded.is_(True))
+        .where(DeviceReservation.excluded_until.isnot(None))
+        .where(DeviceReservation.excluded_until < now)
+        .where(DeviceReservation.released_at.is_(None))
+        .options(selectinload(DeviceReservation.device).selectinload(Device.appium_node))
+        .options(selectinload(DeviceReservation.run))
+    )
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+
+    for entry in entries:
+        device = entry.device
+        run = entry.run
+        if device is None:
+            continue
+        if run is not None and run.state in (RunState.completed, RunState.cancelled, RunState.failed):
+            continue
+
+        locked_device = await device_locking.lock_device(db, device.id, load_sessions=True)
+        # Re-read the reservation under lock to avoid races.
+        fresh_result = await db.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.run_id == entry.run_id)
+            .where(DeviceReservation.device_id == device.id)
+            .where(DeviceReservation.released_at.is_(None))
+            .with_for_update()
+            .limit(1)
+        )
+        fresh_entry = fresh_result.scalar_one_or_none()
+        if fresh_entry is None or not fresh_entry.excluded or fresh_entry.excluded_until is None:
+            continue
+        if fresh_entry.excluded_until > now:
+            continue
+
+        fresh_entry.excluded = False
+        fresh_entry.exclusion_reason = None
+        fresh_entry.excluded_at = None
+        fresh_entry.excluded_until = None
+
+        if (
+            locked_device.auto_manage
+            and locked_device.hold != DeviceHold.maintenance
+            and locked_device.appium_node is not None
+            and locked_device.appium_node.desired_state == AppiumDesiredState.stopped
+        ):
+            await write_desired_state(
+                db,
+                node=locked_device.appium_node,
+                target=AppiumDesiredState.running,
+                caller="cooldown_expired",
+                reason="Cooldown TTL expired — restoring device",
+                desired_port=locked_device.appium_node.port,
+            )
+
+        await db.commit()
+        logger.info(
+            "cooldown_expired_restored",
+            device_id=str(device.id),
+            device_name=device.name,
+            run_id=str(run.id) if run is not None else None,
+        )
+
+
 async def device_connectivity_loop() -> None:
     """Background loop that checks device connectivity via host agents."""
     while True:
         interval = float(settings_service.get("general.device_check_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
+                await _check_expired_cooldowns(db)
                 await _check_connectivity(db)
         except LeadershipLost as exc:
             logger.error(

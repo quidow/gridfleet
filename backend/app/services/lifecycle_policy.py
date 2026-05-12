@@ -400,6 +400,16 @@ async def attempt_auto_recovery(
             suppression_reason=MAINTENANCE_HOLD_SUPPRESSION_REASON,
             run=run,
         )
+    if entry is not None and entry.excluded and entry.excluded_until is not None and entry.excluded_until > now():
+        return await record_recovery_suppressed(
+            db,
+            device,
+            current_state,
+            source=source,
+            reason=reason,
+            suppression_reason="Device is in active cooldown",
+            run=run,
+        )
     if current_state.get("stop_pending"):
         return await record_recovery_suppressed(
             db,

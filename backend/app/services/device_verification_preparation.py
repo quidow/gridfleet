@@ -269,6 +269,16 @@ async def validate_create_request(
     if payload.get("host_id") and host is None:
         return await _validation_failed(job, "Assigned host was not found")
 
+    if not _is_transport_identity(
+        payload.get("identity_value"),
+        payload.get("connection_target"),
+        payload.get("ip_address"),
+    ):
+        try:
+            await ensure_device_payload_identity_available(db, payload)
+        except DeviceIdentityConflictError as exc:
+            return await _validation_failed(job, str(exc))
+
     resolution_error = await resolve_host_derived_payload(payload, host, http_client_factory=http_client_factory, db=db)
     if resolution_error:
         return await _validation_failed(job, resolution_error)

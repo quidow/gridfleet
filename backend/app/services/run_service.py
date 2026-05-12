@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from fastapi import HTTPException
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.appium_node import AppiumNode
+from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
@@ -32,7 +32,7 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
-from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id
+from app.services.desired_state_writer import DesiredGridRunIdCaller, write_desired_grid_run_id, write_desired_state
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
 from app.services.event_bus import queue_event_for_session
@@ -820,6 +820,138 @@ async def report_preparation_failure(
     refreshed_run = await get_run(db, run.id)
     assert refreshed_run is not None
     return refreshed_run
+
+
+_COOLDOWN_ESCALATION_REASON_PREFIX = "Exceeded cooldown threshold "
+
+
+async def cooldown_device(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    device_id: uuid.UUID,
+    *,
+    reason: str,
+    ttl_seconds: int,
+) -> tuple[datetime | None, int, bool, int]:
+    """Apply a run-scoped cooldown to a reserved device.
+
+    Returns (excluded_until, cooldown_count, escalated, threshold).
+    """
+    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
+    if ttl_seconds > max_ttl:
+        raise ValueError(f"ttl_seconds must be <= {max_ttl}")
+    clean_reason = reason.strip()
+    if not clean_reason:
+        raise ValueError("Cooldown reason is required")
+
+    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
+
+    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
+    run = run_result.scalar_one_or_none()
+    if run is None:
+        raise ValueError("Run not found")
+    if run.state in TERMINAL_STATES:
+        raise ValueError(f"Cannot cooldown device in terminal run '{run.state.value}'")
+
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=True)
+    except NoResultFound:
+        raise ValueError("Device not found") from None
+
+    result = await db.execute(
+        select(DeviceReservation)
+        .options(selectinload(DeviceReservation.device))
+        .where(DeviceReservation.run_id == run_id)
+        .where(DeviceReservation.device_id == device_id)
+        .where(DeviceReservation.released_at.is_(None))
+        .with_for_update()
+        .limit(1)
+    )
+    entry = result.scalar_one_or_none()
+    if entry is None:
+        raise ValueError(f"Device {device_id} is not actively reserved by this run")
+
+    entry.cooldown_count += 1
+    cooldown_count_after = entry.cooldown_count
+    escalate = threshold > 0 and cooldown_count_after >= threshold
+
+    if escalate:
+        entry.excluded = True
+        entry.excluded_at = datetime.now(UTC)
+        entry.excluded_until = None
+        entry.exclusion_reason = (
+            f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
+        )
+    else:
+        excluded_at = datetime.now(UTC)
+        excluded_until = excluded_at + timedelta(seconds=ttl_seconds)
+        entry.excluded = True
+        entry.exclusion_reason = clean_reason
+        entry.excluded_at = excluded_at
+        entry.excluded_until = excluded_until
+
+        await lifecycle_incident_service.record_lifecycle_incident(
+            db,
+            device,
+            event_type=DeviceEventType.lifecycle_run_cooldown_set,
+            summary_state=DeviceLifecyclePolicySummaryState.excluded,
+            reason=clean_reason,
+            detail=f"Cooldown set for {ttl_seconds}s",
+            source="testkit",
+            run_id=run.id,
+            run_name=run.name,
+            ttl_seconds=ttl_seconds,
+            expires_at=excluded_until,
+        )
+
+        # Stop the Appium node so Selenium Grid cannot route new sessions
+        # to this device while the cooldown TTL is active. Do this inside the
+        # same transaction (while run and reservation rows are locked) to
+        # prevent a concurrent complete_run/cancel_run from releasing the
+        # reservation and leaving the node wrongly stopped.
+        if device.appium_node is not None:
+            await write_desired_state(
+                db,
+                node=device.appium_node,
+                target=AppiumDesiredState.stopped,
+                caller="cooldown",
+                reason=f"Cooldown: {clean_reason}",
+            )
+
+    await db.commit()
+
+    if not escalate:
+        return excluded_until, cooldown_count_after, False, threshold
+
+    # Escalation path
+    device = await device_locking.lock_device(db, device_id, load_sessions=True)
+    run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    run_obj = run_for_event.scalar_one()
+
+    await lifecycle_policy_actions.exclude_run_if_needed(
+        db,
+        device,
+        reason=(
+            entry.exclusion_reason
+            or f"{_COOLDOWN_ESCALATION_REASON_PREFIX}({cooldown_count_after}/{threshold}): {clean_reason}"
+        ),
+        source="testkit",
+    )
+
+    await maintenance_service.enter_maintenance(db, device, commit=False, allow_reserved=True)
+    await lifecycle_incident_service.record_lifecycle_incident(
+        db,
+        device,
+        event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
+        summary_state=DeviceLifecyclePolicySummaryState.excluded,
+        reason=clean_reason,
+        detail=f"Cooldown threshold reached ({cooldown_count_after}/{threshold})",
+        source="testkit",
+        run_id=run_obj.id,
+        run_name=run_obj.name,
+    )
+    await db.commit()
+    return None, cooldown_count_after, True, threshold
 
 
 async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:

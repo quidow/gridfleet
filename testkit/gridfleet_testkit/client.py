@@ -8,7 +8,7 @@ import os
 import signal
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -119,6 +119,21 @@ def _raise_or_warn(operation: str, suppress_errors: bool, exc: Exception) -> Non
     if not suppress_errors:
         raise exc
     logger.warning("Failed to %s with GridFleet: %s", operation, exc)
+
+
+class CooldownSetResult(TypedDict):
+    status: Literal["cooldown_set"]
+    excluded_until: str
+    cooldown_count: int
+
+
+class CooldownEscalatedResult(TypedDict):
+    status: Literal["maintenance_escalated"]
+    cooldown_count: int
+    threshold: int
+
+
+CooldownResult = CooldownSetResult | CooldownEscalatedResult
 
 
 class HeartbeatThread(threading.Thread):
@@ -548,6 +563,23 @@ class GridFleetClient:
         )
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
+
+    def cooldown_device(
+        self,
+        run_id: str,
+        device_id: str,
+        *,
+        reason: str,
+        ttl_seconds: int,
+    ) -> CooldownResult:
+        resp = httpx.post(
+            f"{self.base_url}/runs/{run_id}/devices/{device_id}/cooldown",
+            json={"reason": reason, "ttl_seconds": ttl_seconds},
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("CooldownResult", resp.json())
 
     def start_heartbeat(self, run_id: str, interval: int = 30) -> HeartbeatThread:
         thread = HeartbeatThread(self.base_url, run_id, interval, auth=self._auth)

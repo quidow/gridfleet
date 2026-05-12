@@ -144,6 +144,25 @@ class RunCreateResponse(BaseModel):
     created_at: datetime
 
 
+class RunCooldownRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=200)
+    ttl_seconds: int = Field(ge=1)
+
+
+class RunCooldownResponse(BaseModel):
+    status: Literal["cooldown_set"]
+    excluded_until: datetime
+    cooldown_count: int
+
+
+class RunCooldownEscalatedResponse(BaseModel):
+    status: Literal["maintenance_escalated"]
+    cooldown_count: int
+    threshold: int
+
+
 class HeartbeatResponse(BaseModel):
     state: RunState
     last_heartbeat: datetime

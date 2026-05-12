@@ -247,6 +247,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             "app.services.device_connectivity._check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
+        patch("app.services.device_connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
         patch("app.services.device_connectivity.settings_service.get", return_value=1),
         patch("app.services.device_connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),

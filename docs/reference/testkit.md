@@ -11,6 +11,7 @@
 - Supported public Appium helpers: `build_appium_options`, `create_appium_driver`, `get_connection_target_from_driver`, `get_device_config_for_driver`, `get_device_test_data_for_driver`
 - Supported public client helpers: `GridFleetClient`, `HeartbeatThread`, `register_run_cleanup`
 - Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `build_error_session_payload`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
+- Supported public result types: `CooldownResult`, `CooldownSetResult`, `CooldownEscalatedResult`
 - Supported public exceptions: `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
 - Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
 - Manual hardware examples live under `testkit/examples/`
@@ -150,6 +151,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.update_session_status(session_id, status)` | Report final session status |
 | `GridFleetClient.complete_run(run_id)` | Complete a run |
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
+| `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
 | `GridFleetClient.start_heartbeat(run_id, interval=30)` | Start a background heartbeat thread |
 | `build_error_session_payload(fields)` | Build a `/api/sessions` payload for driver-creation failures without importing pytest |
 | `hydrate_allocated_device(device_handle, run_id, client)` | Combine a device handle with optional device config and live capabilities |
@@ -200,6 +202,7 @@ Pass `fetch_test_data=True` to `hydrate_allocated_device(...)` to populate `allo
 
 - `UnknownIncludeError(ValueError)`: raised when the backend rejects one or more `?include=` keys. Exposes `values` with the rejected key names. The `ValueError` base is part of the contract.
 - `ReserveCapabilitiesUnsupportedError(ValueError)`: raised when a reserve-time `include` request contains `"capabilities"`, which is not supported at reserve time. The `ValueError` base is part of the contract.
+- `CooldownResult`: union response type from `cooldown_device`, with `status` equal to `"cooldown_set"` or `"maintenance_escalated"`. `CooldownSetResult` and `CooldownEscalatedResult` are the concrete TypedDict variants.
 
 ## Example Reservation Flow
 
@@ -241,6 +244,34 @@ client.signal_active(run_id)
 ```
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
+
+## Cooling Down Unstable Devices
+
+If a reserved device becomes unstable during a test, call `cooldown_device` to exclude it from the run for a TTL. Repeated cooldowns on the same device within the same run may escalate the device to maintenance when the threshold is reached.
+
+```python
+from gridfleet_testkit import GridFleetClient
+
+client = GridFleetClient()
+result = client.cooldown_device(
+    run_id="run-123",
+    device_id="device-456",
+    reason="Connection dropped mid-test",
+    ttl_seconds=120,
+)
+```
+
+The response is a `CooldownResult` union:
+
+```python
+# Normal cooldown
+{"status": "cooldown_set", "excluded_until": "2026-05-12T10:00:00Z", "cooldown_count": 2}
+
+# Escalated to maintenance
+{"status": "maintenance_escalated", "cooldown_count": 3, "threshold": 3}
+```
+
+The manager enforces a maximum TTL via `general.device_cooldown_max_sec` (default 3600s).
 
 ## Device Handles
 

@@ -14,6 +14,9 @@ from app.models.test_run import RunState
 from app.schemas.run import (
     HeartbeatResponse,
     ReservedDeviceInfo,
+    RunCooldownEscalatedResponse,
+    RunCooldownRequest,
+    RunCooldownResponse,
     RunCreate,
     RunCreateResponse,
     RunDetail,
@@ -217,6 +220,44 @@ async def report_preparation_failed(
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
+
+
+@router.post("/{run_id}/devices/{device_id}/cooldown", status_code=200)
+async def cooldown_device_endpoint(
+    run_id: uuid.UUID,
+    device_id: uuid.UUID,
+    payload: RunCooldownRequest,
+    db: AsyncSession = Depends(get_db),
+) -> RunCooldownResponse | RunCooldownEscalatedResponse:
+    try:
+        excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
+            db,
+            run_id,
+            device_id,
+            reason=payload.reason,
+            ttl_seconds=payload.ttl_seconds,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from e
+        if "ttl_seconds must be <=" in msg:
+            raise HTTPException(status_code=422, detail=msg) from e
+        raise HTTPException(status_code=409, detail=msg) from e
+
+    if escalated:
+        return RunCooldownEscalatedResponse(
+            status="maintenance_escalated",
+            cooldown_count=cooldown_count,
+            threshold=threshold,
+        )
+    if excluded_until is None:
+        raise HTTPException(status_code=500, detail="Cooldown returned no expiry")
+    return RunCooldownResponse(
+        status="cooldown_set",
+        excluded_until=excluded_until,
+        cooldown_count=cooldown_count,
+    )
 
 
 @router.post("/{run_id}/heartbeat", response_model=HeartbeatResponse)
