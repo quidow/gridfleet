@@ -636,6 +636,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3650,
     ),
     SettingDefinition(
+        key="retention.agent_reconfigure_outbox_days",
+        category="retention",
+        setting_type="int",
+        default=7,
+        description="Delete delivered or abandoned agent reconfigure outbox rows older than N days",
+        min_value=1,
+        max_value=3650,
+    ),
+    SettingDefinition(
         key="retention.host_resource_telemetry_hours",
         category="retention",
         setting_type="int",

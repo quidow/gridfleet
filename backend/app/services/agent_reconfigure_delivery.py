@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from app import metrics_recorders
@@ -16,14 +16,23 @@ from app.services import agent_operations
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+DELIVERY_BATCH_SIZE = 5
+MAX_DELIVERY_ATTEMPTS = 10
+ABANDONED_REASON_MAX_ATTEMPTS = "max delivery attempts exceeded"
 
-async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> None:
+
+async def deliver_agent_reconfigures(db: AsyncSession, device_id: object, *, limit: int = DELIVERY_BATCH_SIZE) -> None:
+    await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
         int(
             await db.scalar(
                 select(func.count())
                 .select_from(AgentReconfigureOutbox)
-                .where(AgentReconfigureOutbox.delivered_at.is_(None))
+                .where(
+                    AgentReconfigureOutbox.delivered_at.is_(None),
+                    AgentReconfigureOutbox.abandoned_at.is_(None),
+                    AgentReconfigureOutbox.delivery_attempts < MAX_DELIVERY_ATTEMPTS,
+                )
             )
             or 0
         )
@@ -35,8 +44,11 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> Non
                 .where(
                     AgentReconfigureOutbox.device_id == device_id,
                     AgentReconfigureOutbox.delivered_at.is_(None),
+                    AgentReconfigureOutbox.abandoned_at.is_(None),
+                    AgentReconfigureOutbox.delivery_attempts < MAX_DELIVERY_ATTEMPTS,
                 )
                 .order_by(AgentReconfigureOutbox.created_at)
+                .limit(limit)
             )
         )
         .scalars()
@@ -55,7 +67,7 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> Non
             await db.execute(select(Device).where(Device.id == row.device_id).options(selectinload(Device.host)))
         ).scalar_one()
         if device.host is None:
-            row.delivery_attempts += 1
+            _record_delivery_failure(row)
             await db.commit()
             continue
         try:
@@ -68,7 +80,7 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> Non
                 grid_run_id=row.grid_run_id,
             )
         except (AgentUnreachableError, AgentResponseError):
-            row.delivery_attempts += 1
+            _record_delivery_failure(row)
             await db.commit()
             continue
         row.delivered_at = datetime.now(UTC)
@@ -80,7 +92,11 @@ async def deliver_pending_agent_reconfigures(db: AsyncSession, *, limit: int = 1
         (
             await db.execute(
                 select(AgentReconfigureOutbox.device_id)
-                .where(AgentReconfigureOutbox.delivered_at.is_(None))
+                .where(
+                    AgentReconfigureOutbox.delivered_at.is_(None),
+                    AgentReconfigureOutbox.abandoned_at.is_(None),
+                    AgentReconfigureOutbox.delivery_attempts < MAX_DELIVERY_ATTEMPTS,
+                )
                 .group_by(AgentReconfigureOutbox.device_id)
                 .order_by(func.min(AgentReconfigureOutbox.created_at))
                 .limit(limit)
@@ -91,3 +107,38 @@ async def deliver_pending_agent_reconfigures(db: AsyncSession, *, limit: int = 1
     )
     for device_id in device_ids:
         await deliver_agent_reconfigures(db, device_id)
+
+
+async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id: object) -> None:
+    ranked = (
+        select(
+            AgentReconfigureOutbox.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=AgentReconfigureOutbox.reconciled_generation,
+                order_by=(AgentReconfigureOutbox.created_at.desc(), AgentReconfigureOutbox.id.desc()),
+            )
+            .label("rank"),
+        )
+        .where(
+            AgentReconfigureOutbox.device_id == device_id,
+            AgentReconfigureOutbox.delivered_at.is_(None),
+            AgentReconfigureOutbox.abandoned_at.is_(None),
+        )
+        .subquery()
+    )
+    result = await db.execute(
+        update(AgentReconfigureOutbox)
+        .where(AgentReconfigureOutbox.id.in_(select(ranked.c.id).where(ranked.c.rank > 1)))
+        .values(delivered_at=datetime.now(UTC))
+    )
+    if int(getattr(result, "rowcount", 0) or 0) > 0:
+        await db.commit()
+
+
+def _record_delivery_failure(row: AgentReconfigureOutbox) -> None:
+    row.delivery_attempts += 1
+    if row.delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
+        row.abandoned_at = datetime.now(UTC)
+        row.abandoned_reason = ABANDONED_REASON_MAX_ATTEMPTS
+        metrics_recorders.AGENT_RECONFIGURE_OUTBOX_ABANDONED.inc()

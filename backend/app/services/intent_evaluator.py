@@ -154,15 +154,21 @@ def evaluate_reservation(intents: list[DeviceIntent], now: datetime) -> Reservat
 
 def evaluate_recovery(intents: list[DeviceIntent], now: datetime) -> RecoveryDecision:
     active = _active_intents(intents, now)
-    deny_winner = _highest([intent for intent in active if not bool(intent.payload.get("allowed", True))])
+    if not active:
+        return RecoveryDecision(allowed=True, reason=None, source=None)
+    highest_priority = max(_priority(intent) for intent in active)
+    winners = [intent for intent in active if _priority(intent) == highest_priority]
+    # Deny wins only within the highest priority tier, so low-priority safety
+    # blocks do not override explicit higher-priority operator recovery intent.
+    deny_winner = _highest([intent for intent in winners if not bool(intent.payload.get("allowed", True))])
     if deny_winner is not None:
         return RecoveryDecision(
             allowed=False,
             reason=_optional_str(deny_winner.payload.get("reason")) or _intent_reason(deny_winner),
             source=deny_winner.source,
         )
-    allow_winner = _highest(active)
-    if allow_winner is None:
+    allow_winner = _highest(winners)
+    if allow_winner is None:  # pragma: no cover - winners is non-empty, kept for type narrowing.
         return RecoveryDecision(allowed=True, reason=None, source=None)
     return RecoveryDecision(
         allowed=True,

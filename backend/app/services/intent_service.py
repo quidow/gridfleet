@@ -72,20 +72,40 @@ class IntentService:
         intents: list[IntentRegistration],
         reason: str,
     ) -> list[DeviceIntent]:
-        registered: list[DeviceIntent] = []
-        for intent in intents:
-            registered.append(
-                await self.register_intent(
-                    device_id=device_id,
-                    source=intent.source,
-                    axis=intent.axis,
-                    payload=intent.payload,
-                    run_id=intent.run_id,
-                    expires_at=intent.expires_at,
-                    reason=reason,
-                )
-            )
-        return registered
+        if not intents:
+            return []
+        now = datetime.now(UTC)
+        stmt = insert(DeviceIntent).values(
+            [
+                {
+                    "device_id": device_id,
+                    "source": intent.source,
+                    "axis": intent.axis,
+                    "run_id": intent.run_id,
+                    "payload": dict(intent.payload),
+                    "expires_at": intent.expires_at,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for intent in intents
+            ]
+        )
+        upsert = stmt.on_conflict_do_update(
+            index_elements=[DeviceIntent.device_id, DeviceIntent.source],
+            set_={
+                "axis": stmt.excluded.axis,
+                "run_id": stmt.excluded.run_id,
+                "payload": stmt.excluded.payload,
+                "expires_at": stmt.excluded.expires_at,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        ).returning(DeviceIntent.id, DeviceIntent.source)
+        rows = (await self._db.execute(upsert)).all()
+        await self.mark_dirty(device_id, reason=reason)
+        ids_by_source = {source: intent_id for intent_id, source in rows}
+        result = await self._db.execute(select(DeviceIntent).where(DeviceIntent.id.in_(ids_by_source.values())))
+        intents_by_id = {intent.id: intent for intent in result.scalars().all()}
+        return [intents_by_id[ids_by_source[intent.source]] for intent in intents]
 
     async def revoke_intent(self, *, device_id: UUID, source: str, reason: str) -> bool:
         stmt = (

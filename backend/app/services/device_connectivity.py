@@ -589,6 +589,8 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
     """Delegate expired cooldown cleanup to the intent reconciler."""
     await _reconcile_expired_intents(db)
     now = datetime.now(UTC)
+    # Transitional cleanup for pre-intent cooldown reservations. Remove once
+    # all cooldown writes are guaranteed to flow through DeviceIntent rows.
     legacy_entries = (
         (
             await db.execute(

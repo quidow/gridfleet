@@ -192,13 +192,35 @@ def test_reservation_returns_highest_run_id_excluded_until_and_cooldown_count() 
     assert decision.cooldown_count == 3
 
 
-def test_recovery_blocks_when_any_active_deny_intent_exists() -> None:
+def test_recovery_uses_highest_priority_intent() -> None:
     decision = evaluate_recovery(
         [
             _intent(
-                source="auto_recovery:device",
+                source="operator:allow",
                 axis=RECOVERY,
-                payload={"allowed": True, "priority": 20, "reason": "backoff elapsed"},
+                payload={"allowed": True, "priority": 100, "reason": "operator override"},
+            ),
+            _intent(
+                source="maintenance:device",
+                axis=RECOVERY,
+                payload={"allowed": False, "priority": 80, "reason": "maintenance"},
+            ),
+        ],
+        datetime.now(UTC),
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "operator override"
+    assert decision.source == "operator:allow"
+
+
+def test_recovery_same_priority_deny_wins() -> None:
+    decision = evaluate_recovery(
+        [
+            _intent(
+                source="operator:allow",
+                axis=RECOVERY,
+                payload={"allowed": True, "priority": 80, "reason": "operator override"},
             ),
             _intent(
                 source="maintenance:device",

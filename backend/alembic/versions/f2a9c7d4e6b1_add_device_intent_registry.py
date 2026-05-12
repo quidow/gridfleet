@@ -65,6 +65,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("delivered_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("delivery_attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("abandoned_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("abandoned_reason", sa.String(), nullable=True),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )

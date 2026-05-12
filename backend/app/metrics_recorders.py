@@ -156,6 +156,10 @@ AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED = Counter(
     "agent_reconfigure_outbox_stale_skipped_total",
     "Stale agent reconfigure outbox rows skipped by delivery.",
 )
+AGENT_RECONFIGURE_OUTBOX_ABANDONED = Counter(
+    "agent_reconfigure_outbox_abandoned_total",
+    "Agent reconfigure outbox rows abandoned after exhausting delivery attempts.",
+)
 
 
 def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:

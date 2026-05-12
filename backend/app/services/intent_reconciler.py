@@ -254,7 +254,7 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         and (node.desired_state == AppiumDesiredState.running or node.stop_pending)
     )
     if should_stage_reconfigure:
-        _stage_agent_reconfigure(db, node)
+        await _stage_agent_reconfigure(db, node)
     await db.flush()
 
 
@@ -346,7 +346,25 @@ async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceRese
     )
 
 
-def _stage_agent_reconfigure(db: AsyncSession, node: AppiumNode) -> None:
+async def _stage_agent_reconfigure(db: AsyncSession, node: AppiumNode) -> None:
+    existing = (
+        await db.execute(
+            select(AgentReconfigureOutbox.id)
+            .where(
+                AgentReconfigureOutbox.device_id == node.device_id,
+                AgentReconfigureOutbox.delivered_at.is_(None),
+                AgentReconfigureOutbox.abandoned_at.is_(None),
+                AgentReconfigureOutbox.reconciled_generation == node.generation,
+                AgentReconfigureOutbox.port == node.port,
+                AgentReconfigureOutbox.accepting_new_sessions == node.accepting_new_sessions,
+                AgentReconfigureOutbox.stop_pending == node.stop_pending,
+                AgentReconfigureOutbox.grid_run_id == node.desired_grid_run_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
     db.add(
         AgentReconfigureOutbox(
             device_id=node.device_id,

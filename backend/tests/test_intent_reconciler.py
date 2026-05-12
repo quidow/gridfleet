@@ -18,6 +18,7 @@ from app.services.intent_reconciler import (
     _reconcile_device,
     _reconcile_dirty_devices,
     _reconcile_expired_intents,
+    _stage_agent_reconfigure,
     run_device_intent_reconciler_once,
 )
 from app.services.intent_service import IntentService
@@ -298,6 +299,28 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert outbox.reconciled_generation == 8
     assert outbox.accepting_new_sessions is False
+
+
+async def test_stage_agent_reconfigure_dedupes_identical_undelivered_generation(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="stage-dedupe")
+    node = await _seed_node(db_session, device.id, generation=3)
+    node.port = 4723
+    node.accepting_new_sessions = False
+    node.stop_pending = True
+    await db_session.commit()
+
+    await _stage_agent_reconfigure(db_session, node)
+    await _stage_agent_reconfigure(db_session, node)
+    await db_session.commit()
+
+    rows = (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].reconciled_generation == 3
+    assert rows[0].accepting_new_sessions is False
+    assert rows[0].stop_pending is True
 
 
 async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(

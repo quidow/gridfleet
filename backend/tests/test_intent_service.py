@@ -11,7 +11,7 @@ from app.models.device_intent import DeviceIntent
 from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.test_run import TestRun
 from app.services.intent_service import IntentService
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS
+from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -89,6 +89,45 @@ async def test_register_intent_stores_run_id_as_column(db_session: AsyncSession,
     assert stored is not None
     assert stored.run_id == run.id
     assert "run_id" not in stored.payload
+
+
+async def test_register_intents_batches_dirty_mark(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="intent-batch")
+    service = IntentService(db_session)
+
+    registered = await service.register_intents(
+        device_id=device.id,
+        reason="batch",
+        intents=[
+            IntentRegistration(
+                source="batch:node",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": 70},
+            ),
+            IntentRegistration(
+                source="batch:grid",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 70},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    intents = (
+        (
+            await db_session.execute(
+                select(DeviceIntent).where(DeviceIntent.device_id == device.id).order_by(DeviceIntent.source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    dirty = await db_session.get(DeviceIntentDirty, device.id)
+    assert [intent.source for intent in registered] == ["batch:node", "batch:grid"]
+    assert [intent.source for intent in intents] == ["batch:grid", "batch:node"]
+    assert dirty is not None
+    assert dirty.generation == 1
+    assert dirty.reason == "batch"
 
 
 async def test_revoke_intent_deletes_and_marks_dirty(db_session: AsyncSession, db_host: Host) -> None:
