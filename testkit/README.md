@@ -255,7 +255,7 @@ elif result["status"] == "maintenance_escalated":
     print(f"Escalated after {result['cooldown_count']} cooldowns")
 ```
 
-The manager enforces a maximum TTL via the `general.device_cooldown_max_sec` setting. The default is 3600 seconds. A `ValueError` is raised if `ttl_seconds` exceeds the maximum.
+The manager enforces a maximum TTL via the `general.device_cooldown_max_sec` setting. The default is 3600 seconds. An `httpx.HTTPStatusError` with status 422 is raised if `ttl_seconds` exceeds the maximum.
 
 ### Allocated Device Hydration
 
