@@ -6,25 +6,26 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
-from app.services.desired_state_writer import DesiredStateCaller
 from app.services.lifecycle_policy import attempt_auto_recovery, build_lifecycle_policy
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 async def _mark_device_available(
-    _db: AsyncSession,
+    db: AsyncSession,
     *,
-    node: AppiumNode,
-    target: AppiumDesiredState,
-    caller: DesiredStateCaller,
+    device_id: object,
+    intents: object,
+    reason: str,
     **kwargs: object,
 ) -> None:
-    node.device.operational_state = DeviceOperationalState.available
+    del intents, reason, kwargs
+    device = await db.get(Device, device_id)
+    assert device is not None
+    device.operational_state = DeviceOperationalState.available
 
 
 async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
@@ -69,7 +70,10 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     # Patch start_managed_node and the viability probe to success so the
     # recovery path can complete past the stale-clear.
     with (
-        patch("app.services.lifecycle_policy.write_desired_state", new=AsyncMock(side_effect=_mark_device_available)),
+        patch(
+            "app.services.lifecycle_policy.register_intents_and_reconcile",
+            new=AsyncMock(side_effect=_mark_device_available),
+        ),
         patch(
             "app.services.session_viability.run_session_viability_probe",
             new_callable=AsyncMock,

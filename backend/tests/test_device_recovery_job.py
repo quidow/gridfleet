@@ -7,11 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services import device_locking, job_queue, maintenance_service
-from app.services.desired_state_writer import DesiredStateCaller
 from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
 from app.services.job_status_constants import JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from tests.helpers import create_device, create_reserved_run
@@ -25,15 +23,18 @@ def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSessio
 
 
 async def _make_device_available(
-    _db: AsyncSession,
+    db: AsyncSession,
     *,
-    node: AppiumNode,
-    target: AppiumDesiredState,
-    caller: DesiredStateCaller,
+    device_id: object,
+    intents: object,
+    reason: str,
     **kwargs: object,
 ) -> None:
-    """Side-effect for write_desired_state stub — marks device available."""
-    node.device.operational_state = DeviceOperationalState.available
+    """Side-effect for intent registration stub — marks device available."""
+    del intents, reason, kwargs
+    device = await db.get(Device, device_id)
+    assert device is not None
+    device.operational_state = DeviceOperationalState.available
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -127,7 +128,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
     with (
         patch(
-            "app.services.lifecycle_policy.write_desired_state",
+            "app.services.lifecycle_policy.register_intents_and_reconcile",
             new=AsyncMock(side_effect=_make_device_available),
         ),
         patch(

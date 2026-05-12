@@ -10,10 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - FastAPI depende
 
 from app.database import get_db
 from app.models.appium_node import AppiumNode
+from app.models.device_event import DeviceEventType
 from app.schemas.device import AppiumNodeRead
 from app.services import appium_node_locking, device_locking
 from app.services.auth_dependencies import require_admin
-from app.services.desired_state_writer import write_desired_state
+from app.services.device_event_service import record_event
 
 router = APIRouter(prefix="/api/admin/appium-nodes", tags=["admin"])
 
@@ -41,14 +42,21 @@ async def clear_transition(
         await db.refresh(locked_node)
         return locked_node
 
-    await write_desired_state(
+    old_token = locked_node.transition_token
+    locked_node.transition_token = None
+    locked_node.transition_deadline = None
+    await record_event(
         db,
-        node=locked_node,
-        target=locked_node.desired_state,
-        caller="admin_clear_transition",
-        desired_port=locked_node.desired_port,
-        actor=username,
-        reason=body.reason,
+        locked_node.device_id,
+        DeviceEventType.desired_state_changed,
+        {
+            "field": "transition_token",
+            "old_value": str(old_token),
+            "new_value": None,
+            "caller": "admin_clear_transition",
+            "actor": username,
+            "reason": body.reason,
+        },
     )
     await db.commit()
     await db.refresh(locked_node)
