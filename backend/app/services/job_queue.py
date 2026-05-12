@@ -13,11 +13,9 @@ from app.observability import get_logger, observe_background_loop
 from app.services.device_recovery_job import run_device_recovery_job
 from app.services.device_verification_job_state import reset_snapshot_for_retry
 from app.services.device_verification_runner import run_persisted_verification_job
-from app.services.host_tools_runner import run_persisted_host_tool_ensure_job
 from app.services.job_kind_constants import (
     JOB_KIND_DEVICE_RECOVERY,
     JOB_KIND_DEVICE_VERIFICATION,
-    JOB_KIND_HOST_TOOLS_ENSURE,
 )
 from app.services.job_status_constants import (
     JOB_STATUS_FAILED,
@@ -159,14 +157,6 @@ async def run_pending_jobs_once(
         )
         return True
 
-    if row.kind == JOB_KIND_HOST_TOOLS_ENSURE:
-        await run_persisted_host_tool_ensure_job(
-            str(row.id),
-            row.payload,
-            session_factory=session_factory,
-        )
-        return True
-
     if row.kind == JOB_KIND_DEVICE_RECOVERY:
         await run_device_recovery_job(
             str(row.id),
@@ -195,7 +185,6 @@ async def durable_job_worker_loop(
 ) -> None:
     async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
         await reset_stale_running_jobs(session_factory)
-        await reset_stale_running_jobs(session_factory, kind=JOB_KIND_HOST_TOOLS_ENSURE)
         await reset_stale_running_jobs(session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
     while True:
         try:

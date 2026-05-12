@@ -12,13 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_app.appium_process import _build_env
-from agent_app.capabilities import refresh_capabilities_snapshot
 from agent_app.tool_paths import _parse_node_version
-from agent_app.tool_paths import find_appium as _find_appium
 
 logger = logging.getLogger(__name__)
 
-APPIUM_INSTALL_TIMEOUT_SEC = 180
 TOOL_VERSION_TIMEOUT_SEC = 10
 
 
@@ -108,6 +105,7 @@ def _find_fnm_binary() -> str | None:
     if found:
         return found
     for path in [
+        "/opt/homebrew/bin/fnm",
         "/usr/local/bin/fnm",
         os.path.expanduser("~/.local/bin/fnm"),
         os.path.expanduser("~/Library/Application Support/fnm/fnm"),
@@ -231,18 +229,6 @@ async def _get_node_version(provider: NodeProvider | None) -> str | None:
     return _first_version(result.output)
 
 
-async def _get_appium_version(provider: NodeProvider | None = None) -> str | None:
-    appium = _find_appium()
-    env = _provider_env(provider)
-    result = await _run_optional([appium, "--version"], env=env)
-    if result is None or result.returncode != 0:
-        if provider and provider.command_prefix:
-            result = await _run_optional(provider.command("appium", "--version"), env=env)
-        if result is None or result.returncode != 0:
-            return None
-    return _first_version(result.output)
-
-
 async def _get_go_ios_version(provider: NodeProvider | None = None) -> str | None:
     env = _provider_env(provider)
     result = await _run_optional(["ios", "--version"], env=env)
@@ -259,77 +245,10 @@ async def get_tool_status() -> dict[str, Any]:
     if provider and provider.bin_paths:
         _prepend_process_path(provider.bin_paths)
     node_version = await _get_node_version(provider)
-    appium_version = await _get_appium_version(provider)
     go_ios_version = await _get_go_ios_version(provider)
     return {
-        "appium": appium_version,
         "node": node_version,
         "node_provider": provider.name if provider and not provider.error else None,
         "node_error": provider.error if provider and provider.error else None,
         "go_ios": go_ios_version,
     }
-
-
-async def ensure_appium(version: str) -> dict[str, Any]:
-    version = version.strip()
-    if not version:
-        return {"success": True, "action": "skipped"}
-
-    provider = await detect_node_provider()
-    if provider and provider.bin_paths:
-        _prepend_process_path(provider.bin_paths)
-
-    current_version = await _get_appium_version(provider)
-    if current_version == version:
-        return {
-            "success": True,
-            "action": "none",
-            "version": current_version,
-            "node_provider": provider.name if provider and not provider.error else None,
-        }
-
-    if provider is None:
-        return {"success": False, "error": "node_not_found"}
-    if provider.error:
-        return {"success": False, "error": provider.error, "node_provider": provider.name}
-    if not provider.npm_path and not provider.command_prefix:
-        return {"success": False, "error": "node_not_found", "node_provider": provider.name}
-
-    cmd = provider.command("npm", "install", "-g", f"appium@{version}")
-    result = await _run_optional(cmd, timeout=APPIUM_INSTALL_TIMEOUT_SEC, env=_provider_env(provider))
-    if result is None:
-        return {"success": False, "error": "install_failed", "node_provider": provider.name}
-    if result.returncode != 0:
-        return {
-            "success": False,
-            "error": result.output or "npm install failed",
-            "node_provider": provider.name,
-        }
-
-    installed_version = await _get_appium_version(provider)
-    if installed_version != version:
-        return {
-            "success": False,
-            "error": "installed_version_mismatch",
-            "expected_version": version,
-            "version": installed_version,
-            "node_provider": provider.name,
-            "output": result.output,
-        }
-
-    await refresh_capabilities_snapshot()
-    return {
-        "success": True,
-        "action": "installed" if current_version is None else "updated",
-        "version": installed_version,
-        "previous_version": current_version,
-        "node_provider": provider.name,
-        "output": result.output,
-    }
-
-
-async def ensure_tools(appium_version: str | None) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    if appium_version is not None:
-        result["appium"] = await ensure_appium(appium_version)
-    return result

@@ -431,35 +431,6 @@ async def get_tool_status(
     return payload
 
 
-async def ensure_tools(
-    host: str,
-    agent_port: int,
-    *,
-    appium_version: str | None,
-    selenium_jar_version: str | None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 360,
-) -> dict[str, Any]:
-    response = await _send_request(
-        "POST",
-        f"{agent_base_url(host, agent_port)}/agent/tools/ensure",
-        endpoint="tools_ensure",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body={
-            "appium_version": appium_version,
-            "selenium_jar_version": selenium_jar_version,
-        },
-        timeout=timeout,
-    )
-    _raise_for_status(response, host=host, action="ensure tools")
-    payload = _as_dict(response.json())
-    if payload is None:
-        raise AgentUnreachableError(host, f"Agent ensure tools failed on host {host} (invalid payload)")
-    return payload
-
-
 async def get_pack_devices(
     host: str,
     agent_port: int,

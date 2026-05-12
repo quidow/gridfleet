@@ -21,6 +21,12 @@ def test_node_provider_command_and_fnm_discovery_helpers() -> None:
     ):
         assert _find_fnm_binary() == "/usr/local/bin/fnm"
 
+    with (
+        patch("agent_app.tools_manager.shutil.which", return_value=None),
+        patch("agent_app.tools_manager._is_executable", side_effect=lambda path: path == "/opt/homebrew/bin/fnm"),
+    ):
+        assert _find_fnm_binary() == "/opt/homebrew/bin/fnm"
+
     with patch.dict(os.environ, {"FNM_DIR": "~/custom-fnm", "XDG_DATA_HOME": "~/xdg"}, clear=True):
         bases = _fnm_base_dirs()
     assert os.path.expanduser("~/custom-fnm") in bases

@@ -324,13 +324,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=60,
     ),
     SettingDefinition(
-        key="grid.selenium_jar_version",
-        category="grid",
-        setting_type="string",
-        default="4.41.0",
-        description="Target Selenium Server JAR version for host agents (empty = unmanaged)",
-    ),
-    SettingDefinition(
         key="appium.port_range_start",
         category="grid",
         setting_type="int",
@@ -356,13 +349,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="string",
         default="",
         description="Comma-separated Appium plugins for all nodes",
-    ),
-    SettingDefinition(
-        key="appium.target_version",
-        category="grid",
-        setting_type="string",
-        default="3.3.0",
-        description="Target Appium binary version installed by host agents (empty = unmanaged)",
     ),
     SettingDefinition(
         key="appium.startup_timeout_sec",

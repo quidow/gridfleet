@@ -8,7 +8,6 @@ import type {
   HostResourceTelemetry,
   HostRead,
   HostDiagnostics,
-  HostToolEnsureJob,
   HostToolStatus,
   IntakeCandidate,
 } from '../types';
@@ -44,16 +43,6 @@ export async function fetchHostResourceTelemetry(
 
 export async function fetchHostToolStatus(id: string): Promise<HostToolStatus> {
   const { data } = await api.get(`/hosts/${id}/tools/status`);
-  return data;
-}
-
-export async function ensureHostTools(id: string): Promise<HostToolEnsureJob> {
-  const { data } = await api.post(`/hosts/${id}/tools/ensure`);
-  return data;
-}
-
-export async function fetchHostToolEnsureJob(hostId: string, jobId: string): Promise<HostToolEnsureJob> {
-  const { data } = await api.get(`/hosts/${hostId}/tools/ensure-jobs/${jobId}`);
   return data;
 }
 

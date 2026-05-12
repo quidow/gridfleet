@@ -5,8 +5,6 @@ import {
   createHost,
   deleteHost,
   discoverDevices,
-  ensureHostTools,
-  fetchHostToolEnsureJob,
   fetchIntakeCandidates,
   fetchHost,
   fetchHostResourceTelemetry,
@@ -64,18 +62,6 @@ export function useHostToolStatus(id: string, enabled = true) {
     queryFn: () => fetchHostToolStatus(id),
     refetchInterval: connected ? 60_000 : 15_000,
     enabled: !!id && enabled,
-  });
-}
-
-export function useHostToolEnsureJob(hostId: string, jobId: string | null) {
-  return useQuery({
-    queryKey: ['host-tools-ensure-job', hostId, jobId],
-    queryFn: () => fetchHostToolEnsureJob(hostId, jobId!),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === 'pending' || status === 'running' ? 1_000 : false;
-    },
-    enabled: !!hostId && !!jobId,
   });
 }
 
@@ -145,15 +131,4 @@ export function useRejectHost() {
 
 export function useHostCapabilities() {
   return useQuery({ queryKey: ['host-capabilities'], queryFn: getHostCapabilities, staleTime: 60_000 });
-}
-
-export function useEnsureHostTools() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (hostId: string) => ensureHostTools(hostId),
-    onSuccess: async (_data, hostId) => {
-      await qc.invalidateQueries({ queryKey: ['host-tools-status', hostId] });
-      await qc.invalidateQueries({ queryKey: ['host', hostId] });
-    },
-  });
 }

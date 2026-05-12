@@ -33,11 +33,9 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `general.lifecycle_recovery_backoff_max_sec` | `general` | `int` | `900` | none | `1..86400` | Maximum delay for lifecycle automatic recovery backoff |
 | `grid.hub_url` | `grid` | `string` | `http://selenium-hub:4444` | `GRIDFLEET_GRID_HUB_URL` | none | Selenium Grid hub URL used by the manager and managed nodes |
 | `grid.session_poll_interval_sec` | `grid` | `int` | `5` | none | `1..60` | Poll interval for Grid session sync |
-| `grid.selenium_jar_version` | `grid` | `string` | `4.41.0` | none | none | Target Selenium Server JAR version for host agents; empty disables management |
 | `appium.port_range_start` | `grid` | `int` | `4723` | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `1024..65535` | Start of the managed Appium node port range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.default_plugins` | `grid` | `string` | empty string | none | none | Comma-separated Appium plugins added to every managed node |
-| `appium.target_version` | `grid` | `string` | `3.3.0` | none | none | Target Appium binary version installed by host agents; empty disables management |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
 | `appium.reservation_ttl_sec` | `grid` | `int` | `900` | none | `180..7200` | TTL for temporary Appium parallel-resource reservations; must exceed `appium.startup_timeout_sec + 5s` |
 | `appium.resource_sweeper_interval_sec` | `grid` | `int` | `300` | none | `30..3600` | Cadence of the leader-only loop that reaps expired temporary Appium resource claims |

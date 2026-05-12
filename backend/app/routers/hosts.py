@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session, get_db
-from app.errors import AgentCallError
 from app.models.host import Host
 from app.schemas.driver_pack import HostDriverPacksOut
 from app.schemas.host import (
@@ -22,7 +21,6 @@ from app.schemas.host import (
     HostRead,
     HostRegister,
     HostResourceTelemetryResponse,
-    HostToolEnsureJobRead,
     HostToolStatusRead,
     IntakeCandidateRead,
 )
@@ -31,7 +29,6 @@ from app.services import (
     host_diagnostics,
     host_resource_telemetry,
     host_service,
-    host_tools,
     host_versioning,
     pack_discovery_service,
     platform_label_service,
@@ -101,12 +98,6 @@ async def _auto_prepare_host_diagnostics(host_id: uuid.UUID) -> None:
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
-            try:
-                await host_tools.ensure_host_tools(db, host)
-            except (AgentCallError, OSError) as exc:
-                logger.warning("Automatic tool ensure failed for host %s: %s", host.hostname, exc)
-                await host_tools.store_tool_ensure_result(db, host.id, {"error": str(exc)})
-                await db.commit()
             plugins = await plugin_service.list_plugins(db)
             await plugin_service.auto_sync_host_plugins(host, plugins)
     except Exception:
@@ -240,28 +231,6 @@ async def get_host_tool_status(host_id: uuid.UUID, db: AsyncSession = Depends(ge
         host.ip,
         host.agent_port,
     )
-
-
-@router.post("/{host_id}/tools/ensure", response_model=HostToolEnsureJobRead, status_code=202)
-async def ensure_host_tools(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
-    if host.status.value != "online":
-        raise HTTPException(status_code=400, detail="Host must be online to ensure tool versions")
-    return await host_tools.start_host_tool_ensure_job(db, host)
-
-
-@router.get("/{host_id}/tools/ensure-jobs/{job_id}", response_model=HostToolEnsureJobRead)
-async def get_host_tool_ensure_job(
-    host_id: uuid.UUID,
-    job_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    job = await host_tools.get_host_tool_ensure_job(db, job_id)
-    if job is None or job.get("host_id") != str(host_id):
-        raise HTTPException(status_code=404, detail="Tool ensure job not found")
-    return job
 
 
 @router.delete("/{host_id}", status_code=204)

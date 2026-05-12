@@ -9,15 +9,12 @@ from agent_app.tools_manager import (
     _detect_nvm_provider,
     _detect_system_provider,
     _first_version,
-    _get_appium_version,
     _get_node_version,
     _prepend_process_path,
     _provider_env,
     _run_command,
     _run_optional,
     detect_node_provider,
-    ensure_appium,
-    ensure_tools,
 )
 
 
@@ -141,7 +138,7 @@ async def test_detect_node_provider_respects_precedence() -> None:
     nvm.assert_not_called()
 
 
-async def test_get_node_and_appium_versions_handle_fallbacks() -> None:
+async def test_get_node_version_handles_provider_command() -> None:
     provider = NodeProvider(
         name="fnm",
         node_path="/fnm/node",
@@ -155,40 +152,3 @@ async def test_get_node_and_appium_versions_handle_fallbacks() -> None:
         return_value=CommandResult(0, "v20.11.1"),
     ):
         assert await _get_node_version(provider) == "20.11.1"
-
-    with patch(
-        "agent_app.tools_manager._run_optional",
-        new_callable=AsyncMock,
-        side_effect=[CommandResult(1, "bad"), CommandResult(0, "3.1.0")],
-    ):
-        assert await _get_appium_version(provider) == "3.1.0"
-
-
-async def test_ensure_appium_and_other_tool_flows_cover_remaining_branches() -> None:
-    assert await ensure_appium("   ") == {"success": True, "action": "skipped"}
-
-    provider = NodeProvider(name="system", node_path="/usr/bin/node", npm_path=None, command_prefix=[])
-    with (
-        patch("agent_app.tools_manager.detect_node_provider", new_callable=AsyncMock, return_value=provider),
-        patch("agent_app.tools_manager._get_appium_version", new_callable=AsyncMock, return_value=None),
-    ):
-        assert await ensure_appium("3.3.0") == {"success": False, "error": "node_not_found", "node_provider": "system"}
-
-    provider = NodeProvider(name="fnm", node_path="/fnm/node", npm_path="/fnm/npm", command_prefix=["fnm"])
-    with (
-        patch("agent_app.tools_manager.detect_node_provider", new_callable=AsyncMock, return_value=provider),
-        patch("agent_app.tools_manager._get_appium_version", new_callable=AsyncMock, side_effect=[None, "3.2.0"]),
-        patch(
-            "agent_app.tools_manager._run_optional",
-            new_callable=AsyncMock,
-            return_value=CommandResult(0, "installed"),
-        ),
-    ):
-        mismatch = await ensure_appium("3.3.0")
-
-    assert mismatch["error"] == "installed_version_mismatch"
-
-    with patch("agent_app.tools_manager.ensure_appium", new_callable=AsyncMock, return_value={"success": True}):
-        combined = await ensure_tools("3.3.0")
-
-    assert combined == {"appium": {"success": True}}

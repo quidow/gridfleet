@@ -366,7 +366,7 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         get_response=_response(
             "GET",
             "http://10.0.0.5:5100/agent/tools/status",
-            payload={"node_provider": "fnm", "appium": "3.3.0"},
+            payload={"node_provider": "fnm", "node": "24.14.1"},
         )
     )
 
@@ -382,41 +382,6 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         (
             "http://10.0.0.5:5100/agent/tools/status",
             {"params": None, "headers": {}, "timeout": 15},
-        )
-    ]
-
-
-async def test_ensure_tools_post_request_keeps_json_body() -> None:
-    client = StrictAgentClient(
-        post_response=_response(
-            "POST",
-            "http://10.0.0.5:5100/agent/tools/ensure",
-            payload={"appium": {"success": True}},
-        )
-    )
-
-    payload = await agent_operations.ensure_tools(
-        "10.0.0.5",
-        5100,
-        appium_version="3.3.0",
-        selenium_jar_version="4.41.0",
-        http_client_factory=_strict_client_factory(client),
-        timeout=240,
-    )
-
-    assert payload["appium"]["success"] is True
-    assert client.post_calls == [
-        (
-            "http://10.0.0.5:5100/agent/tools/ensure",
-            {
-                "params": None,
-                "headers": {},
-                "json": {
-                    "appium_version": "3.3.0",
-                    "selenium_jar_version": "4.41.0",
-                },
-                "timeout": 240,
-            },
         )
     ]
 

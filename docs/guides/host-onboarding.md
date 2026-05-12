@@ -89,7 +89,7 @@ Open the host in Hosts or Host Detail and confirm:
 - the reported IP and OS are correct
 - the reported agent version is not marked `outdated`
 - the capabilities block matches what the machine should support
-- the Tool Versions section shows the expected Appium, Node, Node provider, and iOS helper versions
+- the Tool Versions section shows the expected Node, Node provider, and iOS helper versions
 - the Appium Drivers section is present and can be synced
 
 The Host Detail page is the best place to confirm all of that before importing devices.

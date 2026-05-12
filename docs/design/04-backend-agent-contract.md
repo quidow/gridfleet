@@ -66,8 +66,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
 | GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
 | POST | `/agent/plugins/sync` | plugin sync flow | install/remove plugin set | 2xx required |
-| GET | `/agent/tools/status` | host onboarding | Appium binary, Selenium jar status | 2xx required |
-| POST | `/agent/tools/ensure` | host onboarding | install/upgrade tools | 2xx required |
+| GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
 | WS | `/agent/terminal` | host terminal feature | interactive shell over WebSocket | out of scope here |
 
 Each row has a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). Routers and services should never call `httpx` directly — go through these wrappers so the circuit breaker and metrics fire.
@@ -150,7 +149,6 @@ Per endpoint, a brief contract:
 | `/agent/appium/{port}/probe-session` | yes-ish | Each probe creates and tears down its own Appium session. Concurrent probes are bounded by `node_health.PROBE_CONCURRENCY_PER_HOST = 2`. |
 | `/agent/appium/{port}/logs` | yes | Read-only |
 | `/agent/plugins/sync` | yes | Replaces full plugin set; converges to the requested state |
-| `/agent/tools/ensure` | yes | Tool installer is idempotent |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
 | `/agent/driver-packs/status` | yes | Replaces previous status; full snapshot |
 
@@ -209,7 +207,6 @@ Each wrapper picks a default. Override via the `timeout=` argument when the call
 | `/agent/plugins` | 15 s | adapter-fetched |
 | `/agent/plugins/sync` | 180 s | npm install |
 | `/agent/tools/status` | 15 s | local probe |
-| `/agent/tools/ensure` | 360 s | tool install |
 | `/agent/pack/devices` | 45 s | adapter discovery |
 
 Timeouts are deliberately tight on health-path endpoints so a slow agent does not pin the leader's loops. They are deliberately loose on installer endpoints because operator-initiated install is allowed to take minutes.

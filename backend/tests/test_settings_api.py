@@ -260,25 +260,12 @@ async def test_appium_session_override_setting_defaults_true_and_can_be_updated(
     await client.post("/api/settings/reset/appium.session_override")
 
 
-async def test_runtime_tool_version_settings_are_readable_and_writable(client: AsyncClient) -> None:
+async def test_removed_global_runtime_tool_version_settings_are_not_registered(client: AsyncClient) -> None:
     appium_resp = await client.get("/api/settings/appium.target_version")
-    assert appium_resp.status_code == 200
-    assert appium_resp.json()["value"] == "3.3.0"
+    assert appium_resp.status_code == 404
 
     selenium_resp = await client.get("/api/settings/grid.selenium_jar_version")
-    assert selenium_resp.status_code == 200
-    assert selenium_resp.json()["value"] == "4.41.0"
-
-    update_resp = await client.put(
-        "/api/settings/bulk",
-        json={"settings": {"appium.target_version": "3.4.0", "grid.selenium_jar_version": ""}},
-    )
-    assert update_resp.status_code == 200
-    values = {setting["key"]: setting["value"] for setting in update_resp.json()}
-    assert values == {"appium.target_version": "3.4.0", "grid.selenium_jar_version": ""}
-
-    await client.post("/api/settings/reset/appium.target_version")
-    await client.post("/api/settings/reset/grid.selenium_jar_version")
+    assert selenium_resp.status_code == 404
 
 
 async def test_update_toast_events_rejects_unknown_values(client: AsyncClient) -> None:

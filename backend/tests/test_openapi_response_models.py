@@ -34,8 +34,6 @@ def test_public_anonymous_responses_have_named_openapi_components() -> None:
         "TestDataRead",
         "TestDataAuditEntryRead",
         "HostToolStatusRead",
-        "ToolEnsureResultItemRead",
-        "HostToolEnsureResultRead",
     }
     assert expected_components <= set(components)
 

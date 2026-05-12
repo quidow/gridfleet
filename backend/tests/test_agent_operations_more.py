@@ -342,15 +342,12 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
         )
 
 
-async def test_appium_logs_and_tool_endpoints_raise_for_invalid_payload() -> None:
+async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
     logs_client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/appium/4723/logs", payload=["bad"])
     )
     tool_status_client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/tools/status", payload=["bad"])
-    )
-    ensure_tools_client = StrictAgentClient(
-        post_response=_response("POST", "http://10.0.0.5:5100/agent/tools/ensure", payload=["bad"])
     )
 
     with pytest.raises(AgentUnreachableError, match="fetch Appium logs failed"):
@@ -367,15 +364,6 @@ async def test_appium_logs_and_tool_endpoints_raise_for_invalid_payload() -> Non
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(tool_status_client),
-        )
-
-    with pytest.raises(AgentUnreachableError, match="ensure tools failed"):
-        await agent_operations.ensure_tools(
-            "10.0.0.5",
-            5100,
-            appium_version=None,
-            selenium_jar_version=None,
-            http_client_factory=_strict_client_factory(ensure_tools_client),
         )
 
 

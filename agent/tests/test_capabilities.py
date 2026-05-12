@@ -59,6 +59,20 @@ async def test_detect_capabilities_reports_linux_missing_prerequisites_without_a
     assert capabilities["missing_prerequisites"] == []
 
 
+async def test_detect_capabilities_does_not_require_global_appium_runtime() -> None:
+    with (
+        patch("agent_app.capabilities._find_appium", return_value="/node/bin/appium"),
+        patch(
+            "agent_app.capabilities._get_tool_version",
+            new_callable=AsyncMock,
+            side_effect=[None, "1.0.41", None, None],
+        ),
+    ):
+        capabilities = await detect_capabilities()
+
+    assert "appium" not in capabilities["missing_prerequisites"]
+
+
 async def test_detect_capabilities_checks_adapter_tools_by_command_name() -> None:
     with (
         patch("agent_app.capabilities._find_appium", return_value="/node/bin/appium"),

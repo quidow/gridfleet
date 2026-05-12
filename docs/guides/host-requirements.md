@@ -24,7 +24,7 @@ These are the parts the agent can install, verify, or keep aligned after the hos
 
 | Artifact | How it is managed | Manager setting |
 | --- | --- | --- |
-| Appium binary | installed or updated with npm | `appium.target_version` |
+| Appium runtime | installed per driver pack under `AGENT_RUNTIME_ROOT` | driver pack catalog |
 | Appium driver packs | reconciled from the active pack catalog and checked with Appium doctor | driver pack catalog |
 | Appium plugins | installed or removed to match the registry | plugin registry |
 | Appium default plugin activation | passed to managed Appium nodes as `--use-plugins` | `appium.default_plugins` |
@@ -45,7 +45,7 @@ Linux hosts are for Android and Roku lanes only.
 ### Required Before Agent Install
 
 - **Node.js and npm**
-  - Required so the agent can install or upgrade Appium.
+  - Required so the agent can install per-pack Appium runtimes and drivers.
   - The agent can detect Node from fnm, nvm, standard macOS paths, or a system install, but it does not install Node itself.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
@@ -67,7 +67,7 @@ macOS hosts can run both Apple and Android lanes.
 ### Required Before Agent Install
 
 - **Node.js and npm**
-  - Required so the agent can install or upgrade Appium.
+  - Required so the agent can install per-pack Appium runtimes and drivers.
   - fnm, nvm, standard macOS paths, and system Node are all supported discovery paths.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
@@ -116,15 +116,12 @@ Hosts report `missing_prerequisites` from registration and periodic capability r
 Those warnings are shown in the host surfaces so operators can distinguish:
 
 - a host that is enrolled but cannot yet run a lane
-- a host that can self-remediate with the existing ensure-tools flow
 - a host that still needs manual setup
 
 Current remediation behavior:
 
-- missing `appium`
-  - Host Detail can install it if `appium.target_version` is set
-- missing `go_ios`, `java`, `adb`, Xcode, or the Android SDK
-  - informational only; these still require operator setup
+- Appium runtimes are reconciled by the desired driver-pack loop.
+- Missing host-level tools such as `go_ios`, `java`, `adb`, Xcode, or the Android SDK are informational and require operator setup.
 
 ## Verification Checklist
 
