@@ -299,6 +299,7 @@ def _build_device_info(device: Device, *, platform_label: str | None) -> Reserve
         manufacturer=device.manufacturer,
         model=device.model,
         excluded=False,
+        tags=device.tags or None,
     )
 
 

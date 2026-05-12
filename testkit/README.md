@@ -158,6 +158,7 @@ finally:
 | `GridFleetClient.get_device_by_connection_target(connection_target)` | Fetch one device detail row by runtime connection target |
 | `GridFleetClient.get_device_capabilities(device_id)` | Fetch current Appium capability metadata for a device |
 | `GridFleetClient.get_device_test_data(device_id)` | Fetch operator-attached free-form test_data for a device |
+| `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.replace_device_test_data(device_id, body)` | Replace test_data with the supplied object |
 | `GridFleetClient.merge_device_test_data(device_id, body)` | Deep-merge into device test_data |
 | `GridFleetClient.resolve_device_id_by_connection_target(connection_target)` | Resolve the backend device id for a runtime connection target |
@@ -181,6 +182,38 @@ finally:
 | `resolve_device_handle_from_driver(driver, client)` | Resolve the assigned manager device row from a running Appium session |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
 | `register_run_cleanup(client, run_id, heartbeat_thread=None)` | Register `atexit` cleanup callable and return it; stops the heartbeat thread on exit but does not complete or cancel the run by default |
+
+### Targeting Devices by Tag
+
+GridFleet injects device tags into Grid node stereotypes as `appium:gridfleet:tag:<key>` capabilities, so Selenium Grid can route sessions to devices matching specific tags.
+
+```python
+@pytest.mark.parametrize(
+    "appium_driver",
+    [
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+            "appium:gridfleet:tag:screen_type": "4k",
+        }
+    ],
+    indirect=True,
+)
+def test_4k_display(appium_driver):
+    ...
+```
+
+The same capability works for free sessions:
+
+```python
+driver = create_appium_driver(
+    pack_id="appium-uiautomator2",
+    platform_id="android_mobile",
+    capabilities={"appium:gridfleet:tag:screen_type": "4k"},
+)
+```
+
+When an operator edits device tags, GridFleet marks the device for re-verification. The next verification restarts the Appium node and re-registers it with the updated Grid stereotype.
 
 ### Worker Identity
 

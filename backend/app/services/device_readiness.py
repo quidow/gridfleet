@@ -84,6 +84,7 @@ READINESS_IMPACTING_FIELDS = frozenset(
         "connection_type",
         "ip_address",
         "device_config",
+        "tags",
     }
 )
 

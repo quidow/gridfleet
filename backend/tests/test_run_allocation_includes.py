@@ -85,6 +85,26 @@ def test_reserved_device_info_construction_without_tier1_still_valid() -> None:
     assert info.device_type is None
 
 
+def test_reserved_device_info_has_tags_field() -> None:
+    hints = get_type_hints(ReservedDeviceInfo)
+    assert "tags" in hints
+
+
+def test_reserved_device_info_round_trips_with_tags() -> None:
+    info = ReservedDeviceInfo(
+        device_id="d-1",
+        identity_value="iv-1",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        os_version="12",
+        tags={"screen_type": "4k"},
+    )
+    dumped = info.model_dump()
+    assert dumped["tags"] == {"screen_type": "4k"}
+    rebuilt = ReservedDeviceInfo.model_validate(dumped)
+    assert rebuilt.tags == {"screen_type": "4k"}
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession, default_host_id: str) -> None:
@@ -106,6 +126,22 @@ async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession
     assert info.connection_type == "virtual"
     assert info.manufacturer == "Google"
     assert info.model == "Pixel 7"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_build_device_info_populates_tags(db_session: AsyncSession, default_host_id: str) -> None:
+    created = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="tagged-device",
+    )
+    created.tags = {"screen_type": "4k", "rack": "A1"}
+    await db_session.flush()
+    result = await db_session.execute(select(Device).where(Device.id == created.id).options(selectinload(Device.host)))
+    device = result.scalar_one()
+    info = _build_device_info(device, platform_label="Android")
+    assert info.tags == {"screen_type": "4k", "rack": "A1"}
 
 
 @pytest.mark.db

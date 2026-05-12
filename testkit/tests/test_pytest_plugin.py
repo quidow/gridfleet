@@ -188,6 +188,33 @@ def test_appium_driver_builds_capabilities_and_reports_status(monkeypatch, repor
     assert gridfleet_client.reported_statuses == [("sess-1", expected_status, True)]
 
 
+def test_appium_driver_passes_tag_capabilities_through(monkeypatch):
+    created_drivers = []
+    install_fake_appium(monkeypatch, created_drivers)
+    RecordingClient.instances.clear()
+    gridfleet_client = RecordingClient()
+
+    request = FakeRequest(
+        {
+            "pack_id": "appium-uiautomator2",
+            "platform_id": "android_mobile",
+            "appium:gridfleet:tag:screen_type": "4k",
+        },
+        test_name="test_tag_cap",
+    )
+
+    fixture_fn = pytest_plugin.appium_driver.__wrapped__
+    generator = fixture_fn(request, gridfleet_client)
+    driver = next(generator)
+
+    assert created_drivers[0][1]["appium:gridfleet:tag:screen_type"] == "4k"
+    assert created_drivers[0][1]["gridfleet:testName"] == "test_tag_cap"
+
+    driver.quit()
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
 def test_device_config_uses_runtime_connection_target():
     gridfleet_client = types.SimpleNamespace(get_device_config=lambda target: {"target": target})
     driver = types.SimpleNamespace(capabilities={"appium:udid": "SERIAL123"})

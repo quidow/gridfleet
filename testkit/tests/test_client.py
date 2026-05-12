@@ -187,6 +187,27 @@ def test_get_device_fetches_device_detail_by_id(monkeypatch):
     assert calls == [("http://manager/api/devices/dev-1", 10)]
 
 
+def test_get_run_fetches_run_endpoint(monkeypatch):
+    calls: list[tuple[str, int | None]] = []
+
+    def fake_get(
+        url: str,
+        *,
+        timeout: int | None = None,
+        auth: Any = None,
+    ) -> DummyResponse:
+        calls.append((url, timeout))
+        return DummyResponse({"id": "run-1", "name": "smoke"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.get", fake_get)
+
+    client = GridFleetClient("http://manager/api")
+    run = client.get_run("run-1")
+
+    assert run == {"id": "run-1", "name": "smoke"}
+    assert calls == [("http://manager/api/runs/run-1", 10)]
+
+
 def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
     calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
 

@@ -328,6 +328,17 @@ def test_hydrate_uses_inline_test_data() -> None:
     assert client.test_data_calls == []
 
 
+def test_hydrate_allocated_device_populates_inline_tags() -> None:
+    client = FakeClient()
+    allocated = hydrate_allocated_device(
+        device_handle(tags={"screen_type": "4k"}),
+        run_id="run-1",
+        client=client,
+        fetch_config=False,
+    )
+    assert allocated.tags == {"screen_type": "4k"}
+
+
 def test_hydrate_defaults_test_data_to_none_when_absent() -> None:
     client = FakeClient()
     allocated = hydrate_allocated_device(

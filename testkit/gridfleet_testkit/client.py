@@ -290,6 +290,16 @@ class GridFleetClient:
         resp.raise_for_status()
         return cast("dict[str, Any]", resp.json())
 
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        """Fetch one run detail row by backend run id."""
+        resp = httpx.get(
+            f"{self.base_url}/runs/{run_id}",
+            timeout=10,
+            auth=self._auth,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
     def replace_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Replace device test_data with the supplied object."""
         resp = httpx.put(
