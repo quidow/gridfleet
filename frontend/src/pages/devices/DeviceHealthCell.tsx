@@ -30,7 +30,11 @@ const REASON_CLASSES: Record<UnifiedHealthTone, string> = {
 };
 
 function displayReason(value: string): string {
-  return value.split('|')[0]?.trim() || value;
+  const parts = value.split('|').map((part) => part.trim()).filter(Boolean);
+  if (parts[0]?.toLowerCase() === 'healthy' && parts.length > 1) {
+    return parts.slice(1).join(' · ');
+  }
+  return parts[0] || value;
 }
 
 function DeviceHealthCellInner({ device }: Props) {

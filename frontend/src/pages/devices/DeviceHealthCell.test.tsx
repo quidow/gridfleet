@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import DeviceHealthCell from './DeviceHealthCell';
 import type { DeviceRead } from '../../types';
@@ -46,5 +47,19 @@ describe('DeviceHealthCell', () => {
   it('still renders the label for ok tone', () => {
     render(<DeviceHealthCell device={baseDevice({})} />);
     expect(screen.getByText(/Healthy|Available|Verified/i)).toBeInTheDocument();
+  });
+
+  it('shows the unhealthy reason after a healthy device-check prefix', async () => {
+    render(
+      <DeviceHealthCell
+        device={baseDevice({
+          health_summary: { healthy: false, summary: 'Healthy | Node: stopped' },
+        })}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /health details for test/i }));
+
+    expect(screen.getByText('Node: stopped')).toBeInTheDocument();
   });
 });
