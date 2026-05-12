@@ -2,6 +2,20 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.9.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.8.0...gridfleet-testkit-v0.9.0) (2026-05-12)
+
+
+### Features
+
+* **testkit:** add run detail client helper ([c80a8cc](https://github.com/quidow/gridfleet/commit/c80a8cc95093c2f46a7e714c96ff0b33018af5ba))
+* **testkit:** expose allocation device tags ([0bf5e2e](https://github.com/quidow/gridfleet/commit/0bf5e2e04b806fadd0afcd3c95073828d0c2414e))
+* **testkit:** support tag-based device targeting ([db0d0e3](https://github.com/quidow/gridfleet/commit/db0d0e3d3d1231828bb22a707d3bdcab6c0ec717))
+
+
+### Documentation
+
+* **testkit:** document tag-based device targeting ([096841b](https://github.com/quidow/gridfleet/commit/096841b737dec71524d0edfa4c538d9cc69e7c2c))
+
 ## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.7.0...gridfleet-testkit-v0.8.0) (2026-05-12)
 
 
