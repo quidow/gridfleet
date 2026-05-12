@@ -588,6 +588,7 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
         .where(DeviceReservation.excluded.is_(True))
         .where(DeviceReservation.excluded_until.isnot(None))
         .where(DeviceReservation.excluded_until < now)
+        .where(DeviceReservation.released_at.is_(None))
         .options(selectinload(DeviceReservation.device).selectinload(Device.appium_node))
         .options(selectinload(DeviceReservation.run))
     )

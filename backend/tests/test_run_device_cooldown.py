@@ -570,3 +570,50 @@ async def test_expired_cooldown_does_not_restart_auto_manage_off(
     # But node must stay stopped because auto_manage is off
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
+
+
+async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSession, default_host_id: str) -> None:
+    """Released reservations with stale excluded_until must be ignored."""
+    from app.services.device_connectivity import _check_expired_cooldowns
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-released",
+        name="Cooldown Released",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="released-run",
+        state=RunState.completed,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=1),
+        cooldown_count=1,
+        released_at=datetime.now(UTC),
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+
+    await _check_expired_cooldowns(db_session)
+
+    # Stale released row should be untouched
+    await db_session.refresh(reservation)
+    assert reservation.excluded is True
+    assert reservation.exclusion_reason == "flaky"
