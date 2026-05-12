@@ -29,6 +29,10 @@ def test_release_with_cooldown_route_not_registered() -> None:
     assert "/api/runs/{run_id}/devices/{device_id}/release-with-cooldown" not in _route_paths()
 
 
+def test_cooldown_route_is_registered() -> None:
+    assert "/api/runs/{run_id}/devices/{device_id}/cooldown" in _route_paths()
+
+
 @pytest.mark.asyncio
 async def test_claim_endpoint_returns_404(client: AsyncClient) -> None:
     resp = await client.post(f"/api/runs/{uuid.uuid4()}/claim", json={"worker_id": "gw0"})
