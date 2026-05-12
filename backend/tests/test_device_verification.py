@@ -699,11 +699,15 @@ async def test_verification_job_duplicate_identity_is_reported_during_validation
         os_version=DEVICE_PAYLOAD["os_version"],
     )
 
-    resp = await client.post(
-        "/api/devices/verification-jobs",
-        json=device_payload(default_host_id, identity_value="verify-dup"),
-    )
-    job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+    with patch(
+        "app.services.device_verification_preparation.normalize_pack_device",
+        new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
+    ):
+        resp = await client.post(
+            "/api/devices/verification-jobs",
+            json=device_payload(default_host_id, identity_value="verify-dup"),
+        )
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "failed"
     _assert_job_stage(job, stage="validation", status="failed", detail_contains="already registered")
@@ -736,20 +740,24 @@ async def test_verification_rejects_global_scoped_duplicate_identity_across_host
     )
 
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    resp = await client.post(
-        "/api/devices/verification-jobs",
-        json={
-            "host_id": other_host_id,
-            "identity_value": "ios-udid-dup-001",
-            "name": "Host Two iPhone",
-            "pack_id": "appium-xcuitest",
-            "platform_id": "ios",
-            "identity_scheme": "apple_udid",
-            "identity_scope": "global",
-            "os_version": DEVICE_PAYLOAD["os_version"],
-        },
-    )
-    job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+    with patch(
+        "app.services.device_verification_preparation.normalize_pack_device",
+        new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
+    ):
+        resp = await client.post(
+            "/api/devices/verification-jobs",
+            json={
+                "host_id": other_host_id,
+                "identity_value": "ios-udid-dup-001",
+                "name": "Host Two iPhone",
+                "pack_id": "appium-xcuitest",
+                "platform_id": "ios",
+                "identity_scheme": "apple_udid",
+                "identity_scope": "global",
+                "os_version": DEVICE_PAYLOAD["os_version"],
+            },
+        )
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "failed"
     _assert_job_stage(job, stage="validation", status="failed", detail_contains="already registered")
@@ -787,6 +795,7 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
     with (
+        patch("app.services.device_verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)),
         patch(
             "app.services.device_verification_execution.wait_for_node_running",
             new=AsyncMock(return_value=None),
@@ -1039,12 +1048,13 @@ async def test_existing_device_verification_requires_missing_setup_fields(
     await db_session.commit()
     await db_session.refresh(device)
 
-    resp = await client.post(
-        f"/api/devices/{device.id}/verification-jobs",
-        json={"host_id": default_host_id},
-    )
-    assert resp.status_code == 202
-    job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+    with patch("app.services.device_verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)):
+        resp = await client.post(
+            f"/api/devices/{device.id}/verification-jobs",
+            json={"host_id": default_host_id},
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
     assert job["status"] == "failed"
     assert "roku_password" in (job["error"] or "")
 
