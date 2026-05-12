@@ -1,9 +1,11 @@
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.models.appium_node import AppiumNode
+from app.models.device import ConnectionType, Device, DeviceType
 from app.services.agent_snapshot import RunningAppiumNode
 from app.services.appium_reconciler import (
     OrphanAppiumNode,
@@ -11,6 +13,7 @@ from app.services.appium_reconciler import (
     detect_orphans,
     reconcile_host_orphans,
 )
+from app.services.appium_reconciler_agent import build_agent_start_payload
 
 
 def _running_node(*, target: str, port: int) -> RunningAppiumNode:
@@ -20,6 +23,50 @@ def _running_node(*, target: str, port: int) -> RunningAppiumNode:
         connection_target=target,
         platform_id="roku_network",
     )
+
+
+def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_id = uuid.uuid4()
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="serial-1",
+        connection_target="serial-1",
+        name="Pixel",
+        os_version="14",
+        host_id=uuid.uuid4(),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        accepting_new_sessions=False,
+        stop_pending=True,
+        desired_grid_run_id=run_id,
+    )
+    monkeypatch.setattr(
+        "app.services.appium_reconciler_agent.settings_service.get",
+        Mock(
+            side_effect=lambda key: {
+                "grid.hub_url": "http://grid:4444",
+                "appium.session_override": True,
+                "appium.default_plugins": "",
+            }[key]
+        ),
+    )
+
+    payload = build_agent_start_payload(device, 4723)
+
+    assert payload["accepting_new_sessions"] is False
+    assert payload["stop_pending"] is True
+    assert payload["grid_run_id"] == str(run_id)
+    assert payload["stereotype_caps"]["gridfleet:available"] is False
+    assert payload["stereotype_caps"]["gridfleet:run_id"] == str(run_id)
 
 
 def test_detect_orphans_returns_empty_when_every_running_node_has_matching_db_row() -> None:

@@ -250,6 +250,21 @@ def build_agent_start_payload(
 ) -> dict[str, Any]:
     headless = (device.tags or {}).get("emulator_headless", "true") != "false"
     manager_owned_keys = appium_capability_keys.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
+    node = cast("AppiumNode | None", device.appium_node)
+    accepting_new_sessions = node.accepting_new_sessions if node is not None else True
+    stop_pending = node.stop_pending if node is not None else False
+    grid_run_id = node.desired_grid_run_id if node is not None else None
+    stereotype_caps = (
+        build_grid_stereotype_caps(
+            device,
+            session_caps=allocated_caps,
+            extra_caps=extra_caps,
+            manager_owned_keys=manager_owned_keys,
+        )
+        or {}
+    )
+    stereotype_caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id else "free"
+    stereotype_caps["gridfleet:available"] = accepting_new_sessions
     return {
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
@@ -266,13 +281,10 @@ def build_agent_start_payload(
             )
             or None
         ),
-        "stereotype_caps": build_grid_stereotype_caps(
-            device,
-            session_caps=allocated_caps,
-            extra_caps=extra_caps,
-            manager_owned_keys=manager_owned_keys,
-        )
-        or None,
+        "stereotype_caps": stereotype_caps or None,
+        "accepting_new_sessions": accepting_new_sessions,
+        "stop_pending": stop_pending,
+        "grid_run_id": str(grid_run_id) if grid_run_id else None,
         "device_type": device.device_type.value,
         "ip_address": device.ip_address,
         "allocated_caps": allocated_caps or None,
