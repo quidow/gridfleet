@@ -11,6 +11,8 @@ from app.schemas.host import HostCreate, HostRegister, HostUpdate
 from app.services.event_bus import queue_event_for_session
 from app.services.settings_service import settings_service
 
+_LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
+
 
 def _coerce_missing_prerequisites(value: object) -> list[str] | None:
     if not isinstance(value, list):
@@ -22,10 +24,13 @@ def _coerce_missing_prerequisites(value: object) -> list[str] | None:
     return missing
 
 
-def _normalize_capabilities(capabilities: dict[str, Any] | None) -> dict[str, Any] | None:
+def normalize_capabilities(capabilities: dict[str, Any] | None) -> dict[str, Any] | None:
     if capabilities is None:
         return None
     normalized = dict(capabilities)
+    tools = normalized.get("tools")
+    if isinstance(tools, dict):
+        normalized["tools"] = {name: version for name, version in tools.items() if name not in _LEGACY_GLOBAL_TOOL_KEYS}
     if "missing_prerequisites" in normalized:
         missing = _coerce_missing_prerequisites(normalized["missing_prerequisites"])
         normalized["missing_prerequisites"] = missing or []
@@ -36,7 +41,7 @@ def update_missing_prerequisites_from_health(host: Host, missing_prerequisites: 
     missing = _coerce_missing_prerequisites(missing_prerequisites)
     if missing is None:
         return
-    capabilities = dict(host.capabilities or {})
+    capabilities = normalize_capabilities(dict(host.capabilities or {})) or {}
     capabilities["missing_prerequisites"] = missing
     host.capabilities = capabilities
 
@@ -69,7 +74,7 @@ async def update_host(db: AsyncSession, host_id: uuid.UUID, data: HostUpdate) ->
         return None
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == "capabilities":
-            value = _normalize_capabilities(value)
+            value = normalize_capabilities(value)
         setattr(host, field, value)
     await db.commit()
     await db.refresh(host)
@@ -100,7 +105,7 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
         if data.agent_port is not None:
             host.agent_port = data.agent_port
         host.agent_version = data.agent_version
-        host.capabilities = _normalize_capabilities(data.capabilities)
+        host.capabilities = normalize_capabilities(data.capabilities)
         if host.status == HostStatus.offline:
             host.status = HostStatus.online
         await db.commit()
@@ -116,7 +121,7 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
         os_type=data.os_type,
         agent_port=agent_port,
         agent_version=data.agent_version,
-        capabilities=_normalize_capabilities(data.capabilities),
+        capabilities=normalize_capabilities(data.capabilities),
         status=status,
     )
     db.add(host)

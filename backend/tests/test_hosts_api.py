@@ -86,6 +86,32 @@ async def test_get_host_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_get_host_filters_legacy_global_appium_capability(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    host = Host(
+        hostname="legacy-appium-host",
+        ip="192.168.1.130",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        capabilities={
+            "platforms": [],
+            "tools": {"appium": "3.3.0", "adb": "1.0.41"},
+            "missing_prerequisites": [],
+        },
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+
+    resp = await client.get(f"/api/hosts/{host.id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["capabilities"]["tools"] == {"adb": "1.0.41"}
+
+
 async def test_get_host_diagnostics_not_found(client: AsyncClient) -> None:
     resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/diagnostics")
     assert resp.status_code == 404
@@ -517,10 +543,12 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
     data = resp.json()
     assert data["missing_prerequisites"] == ["java"]
     assert data["capabilities"]["missing_prerequisites"] == ["java"]
+    assert "appium" not in data["capabilities"]["tools"]
 
     detail_resp = await client.get(f"/api/hosts/{data['id']}")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["missing_prerequisites"] == ["java"]
+    assert "appium" not in detail_resp.json()["capabilities"]["tools"]
 
 
 async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncClient) -> None:

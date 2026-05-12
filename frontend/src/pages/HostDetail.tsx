@@ -12,7 +12,6 @@ import HostDetailStatusPills from './hostDetail/HostDetailStatusPills';
 import HostOverviewPanel from '../components/hostDetail/HostOverviewPanel';
 import HostDiagnosticsPanel from '../components/hostDetail/HostDiagnosticsPanel';
 import HostResourceTelemetryPanel from '../components/hostDetail/HostResourceTelemetryPanel';
-import HostToolVersionsPanel from '../components/hostDetail/HostToolVersionsPanel';
 import HostDevicesPanel from '../components/hostDetail/HostDevicesPanel';
 import HostDriversPanel from '../components/hostDetail/HostDriversPanel';
 import HostPluginsPanel from '../components/hostDetail/HostPluginsPanel';
@@ -92,7 +91,6 @@ export default function HostDetail() {
             diagnosticsLoading={diagnosticsLoading}
             diagnosticsError={diagnosticsError}
           />
-          <HostToolVersionsPanel host={host} />
           <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
         </div>
       )}

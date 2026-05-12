@@ -21,9 +21,12 @@ def test_coerce_missing_prerequisites_filters_duplicates_and_invalid_items() -> 
 
 
 def test_normalize_capabilities_handles_missing_prerequisites() -> None:
-    assert host_service._normalize_capabilities(None) is None
-    assert host_service._normalize_capabilities({"missing_prerequisites": ["adb", "adb", 3]}) == {
+    assert host_service.normalize_capabilities(None) is None
+    assert host_service.normalize_capabilities({"missing_prerequisites": ["adb", "adb", 3]}) == {
         "missing_prerequisites": ["adb"]
+    }
+    assert host_service.normalize_capabilities({"tools": {"appium": "3.3.0", "adb": "1.0.41"}}) == {
+        "tools": {"adb": "1.0.41"}
     }
 
 

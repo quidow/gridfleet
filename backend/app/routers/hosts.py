@@ -68,6 +68,7 @@ def _serialize_host(host: Host) -> dict[str, Any]:
         host.agent_version,
         recommended_version,
     )
+    payload["capabilities"] = host_service.normalize_capabilities(payload.get("capabilities"))
     return payload
 
 

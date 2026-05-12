@@ -9,13 +9,10 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from agent_app.tool_paths import find_appium as _find_appium
-
 logger = logging.getLogger(__name__)
 
 _CAPABILITIES_REFRESH_INTERVAL_SEC = 600
 _TOOL_CHECKS: list[tuple[str, str | None, list[str], str]] = [
-    ("appium", None, ["--version"], r"(\d+\.\d+\.\d+)"),
     ("adb", None, ["--version"], r"Android Debug Bridge.*?(\d+\.\d+\.\d+)"),
     ("xcodebuild", "xcodebuild", ["-version"], r"Xcode\s+(\d+\.\d+(?:\.\d+)?)"),
     ("go_ios", "ios", ["--version"], r"v?(\d+\.\d+\.\d+)"),
@@ -53,8 +50,6 @@ async def _get_tool_version(cmd: str, args: list[str], pattern: str) -> str | No
 def _resolve_tool_command(name: str, configured_cmd: str | None) -> str:
     if configured_cmd:
         return configured_cmd
-    if name == "appium":
-        return _find_appium()
     return name
 
 
