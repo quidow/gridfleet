@@ -45,7 +45,7 @@ Linux hosts are for Android and Roku lanes only.
 ### Required Before Agent Install
 
 - **Node.js and npm**
-  - Required so the agent can install or upgrade Appium.
+  - Required so the agent can install per-pack Appium runtimes and drivers.
   - The agent can detect Node from fnm, nvm, standard macOS paths, or a system install, but it does not install Node itself.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
@@ -67,7 +67,7 @@ macOS hosts can run both Apple and Android lanes.
 ### Required Before Agent Install
 
 - **Node.js and npm**
-  - Required so the agent can install or upgrade Appium.
+  - Required so the agent can install per-pack Appium runtimes and drivers.
   - fnm, nvm, standard macOS paths, and system Node are all supported discovery paths.
 - **Android SDK**
   - Required for Android mobile, Android TV, Fire TV, and Android emulator lanes.
@@ -116,7 +116,6 @@ Hosts report `missing_prerequisites` from registration and periodic capability r
 Those warnings are shown in the host surfaces so operators can distinguish:
 
 - a host that is enrolled but cannot yet run a lane
-- a host that can self-remediate with the existing ensure-tools flow
 - a host that still needs manual setup
 
 Current remediation behavior:
