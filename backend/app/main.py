@@ -58,7 +58,6 @@ from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.grid_node_run_id_reconciler import grid_node_run_id_reconciler_loop
 from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
@@ -66,6 +65,7 @@ from app.services.heartbeat import (
     shutdown_background_tasks,
 )
 from app.services.host_resource_telemetry import host_resource_telemetry_loop
+from app.services.intent_reconciler import device_intent_reconciler_loop
 from app.services.job_queue import durable_job_worker_loop
 from app.services.node_health import node_health_loop
 from app.services.pack_drain import pack_drain_loop
@@ -203,7 +203,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
                 asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
                 asyncio.create_task(appium_reconciler_loop(), name="appium_reconciler_loop"),
-                asyncio.create_task(grid_node_run_id_reconciler_loop(), name="grid_node_run_id_reconciler_loop"),
+                asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
             ]
         watcher_task = asyncio.create_task(
             control_plane_leader_watcher_loop(),

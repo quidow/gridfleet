@@ -126,6 +126,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
+    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -144,6 +146,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "session_viability_loop",
             "fleet_capacity_collector_loop",
             "pack_drain_loop",
+            "appium_reconciler_loop",
+            "device_intent_reconciler_loop",
         }
         task_names = {task.get_name() for task in created_tasks}
         assert task_names >= expected_leader_loop_names
@@ -318,6 +322,8 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
+    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
 
     async with main.lifespan(main.app):
         pass
