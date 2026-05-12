@@ -437,3 +437,70 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     state = refreshed_device.lifecycle_policy_state
     assert state.get("last_action") == "recovery_suppressed"
     assert state.get("recovery_suppressed_reason") == "Device is in active cooldown"
+
+
+async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: AsyncSession, default_host_id: str) -> None:
+    """If a device enters maintenance while cooldown is active, expiry must not restart it."""
+    from app.models.host import Host
+    from app.services.device_connectivity import _check_expired_cooldowns
+
+    host = await db_session.get(Host, default_host_id)
+    assert host is not None
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="cooldown-maint",
+        name="Cooldown Maintenance",
+        operational_state="available",
+    )
+    run = TestRun(
+        name="maint-run",
+        state=RunState.active,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        pid=1234,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.stopped,
+    )
+    db_session.add(node)
+
+    reservation = DeviceReservation(
+        run_id=run.id,
+        device_id=device.id,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        os_version=device.os_version,
+        excluded=True,
+        exclusion_reason="flaky",
+        excluded_at=datetime.now(UTC) - timedelta(seconds=120),
+        excluded_until=datetime.now(UTC) - timedelta(seconds=1),
+        cooldown_count=1,
+    )
+    db_session.add(reservation)
+
+    # Operator puts device in maintenance after cooldown began
+    device.hold = DeviceHold.maintenance
+    await db_session.commit()
+
+    await _check_expired_cooldowns(db_session)
+
+    # Exclusion should be cleared
+    await db_session.refresh(reservation)
+    assert reservation.excluded is False
+    assert reservation.exclusion_reason is None
+
+    # But node must stay stopped because device is in maintenance
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped

@@ -624,7 +624,8 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
         fresh_entry.excluded_until = None
 
         if (
-            locked_device.appium_node is not None
+            locked_device.hold != DeviceHold.maintenance
+            and locked_device.appium_node is not None
             and locked_device.appium_node.desired_state == AppiumDesiredState.stopped
         ):
             await write_desired_state(
