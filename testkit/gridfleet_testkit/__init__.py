@@ -31,6 +31,9 @@ from .appium import (
     get_device_test_data_for_driver,
 )
 from .client import (
+    CooldownEscalatedResult,
+    CooldownResult,
+    CooldownSetResult,
     GridFleetClient,
     HeartbeatThread,
     ReserveCapabilitiesUnsupportedError,
@@ -50,6 +53,9 @@ __all__ = [
     "GRIDFLEET_API_URL",
     "GRID_URL",
     "AllocatedDevice",
+    "CooldownEscalatedResult",
+    "CooldownResult",
+    "CooldownSetResult",
     "GridFleetClient",
     "HeartbeatThread",
     "ReserveCapabilitiesUnsupportedError",
