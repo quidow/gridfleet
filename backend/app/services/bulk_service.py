@@ -3,7 +3,6 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -12,14 +11,21 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.errors import AgentCallError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.services.device_service import delete_device
 from app.services.event_bus import event_bus, queue_event_for_session
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_AUTO_RECOVERY,
+    PRIORITY_OPERATOR_STOP,
+    IntentRegistration,
+)
 from app.services.maintenance_service import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
@@ -53,7 +59,38 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-async def _bulk_start_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+def _operator_stop_sources(device_id: uuid.UUID) -> list[str]:
+    return [f"operator:stop:node:{device_id}", f"operator:stop:grid:{device_id}"]
+
+
+def _operator_start_source(device_id: uuid.UUID) -> str:
+    return f"operator:start:{device_id}"
+
+
+def _operator_start_intent(device: Device, desired_port: int) -> IntentRegistration:
+    return IntentRegistration(
+        source=_operator_start_source(device.id),
+        axis=NODE_PROCESS,
+        payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": desired_port},
+    )
+
+
+def _operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
+    return [
+        IntentRegistration(
+            source=f"operator:stop:node:{device_id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_OPERATOR_STOP, "stop_mode": "hard"},
+        ),
+        IntentRegistration(
+            source=f"operator:stop:grid:{device_id}",
+            axis=GRID_ROUTING,
+            payload={"accepting_new_sessions": False, "priority": PRIORITY_OPERATOR_STOP},
+        ),
+    ]
+
+
+async def _bulk_start_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned")
     desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
@@ -67,46 +104,47 @@ async def _bulk_start_one(db: AsyncSession, device: Device, caller: DesiredState
         db.add(node)
         await db.flush()
         device.appium_node = node
-    await write_desired_state(
+    await revoke_intents_and_reconcile(
         db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller=caller,
-        desired_port=desired_port,
+        device_id=device.id,
+        sources=_operator_stop_sources(device.id),
+        reason=f"{caller} start requested",
+    )
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=[_operator_start_intent(device, desired_port)],
+        reason=f"{caller} start requested",
     )
     await db.commit()
     await db.refresh(node)
     return node
 
 
-async def _bulk_stop_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    await write_desired_state(
+    await register_intents_and_reconcile(
         db,
-        node=node,
-        target=AppiumDesiredState.stopped,
-        caller=caller,
+        device_id=device.id,
+        intents=_operator_stop_intents(device.id),
+        reason=f"{caller} stop requested",
     )
     await db.commit()
     await db.refresh(node)
     return node
 
 
-async def _bulk_restart_one(db: AsyncSession, device: Device, caller: DesiredStateCaller) -> AppiumNode:
+async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         return await _bulk_start_one(db, device, caller)
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-    await write_desired_state(
+    await register_intents_and_reconcile(
         db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller=caller,
-        desired_port=node.port,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
+        device_id=device.id,
+        intents=[_operator_start_intent(device, node.port)],
+        reason=f"{caller} restart requested",
     )
     await db.commit()
     await db.refresh(node)
@@ -119,7 +157,7 @@ async def _run_per_device_node_action(
     *,
     operation: str,
     action_fn: Callable[..., Awaitable[object]],
-    caller: DesiredStateCaller,
+    caller: str,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
     session_factory = _session_factory_from_db(db)
@@ -157,7 +195,7 @@ async def bulk_start_nodes(
     db: AsyncSession,
     device_ids: list[uuid.UUID],
     *,
-    caller: DesiredStateCaller = "bulk",
+    caller: str = "bulk",
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -172,7 +210,7 @@ async def bulk_stop_nodes(
     db: AsyncSession,
     device_ids: list[uuid.UUID],
     *,
-    caller: DesiredStateCaller = "bulk",
+    caller: str = "bulk",
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -187,7 +225,7 @@ async def bulk_restart_nodes(
     db: AsyncSession,
     device_ids: list[uuid.UUID],
     *,
-    caller: DesiredStateCaller = "bulk",
+    caller: str = "bulk",
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,

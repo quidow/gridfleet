@@ -3,12 +3,16 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState
 from app.models.device import Device, DeviceHold
-from app.services import appium_node_locking
-from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.desired_state_writer import write_desired_state
 from app.services.device_state import legacy_label_for_audit
+from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_MAINTENANCE,
+    RECOVERY,
+    IntentRegistration,
+)
 from app.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
@@ -17,6 +21,34 @@ from app.services.lifecycle_state_machine_types import TransitionEvent
 logger = logging.getLogger(__name__)
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
+
+
+def _maintenance_sources(device_id: uuid.UUID) -> list[str]:
+    return [
+        f"maintenance:node:{device_id}",
+        f"maintenance:grid:{device_id}",
+        f"maintenance:recovery:{device_id}",
+    ]
+
+
+def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
+    return [
+        IntentRegistration(
+            source=f"maintenance:node:{device_id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_MAINTENANCE, "stop_mode": "graceful"},
+        ),
+        IntentRegistration(
+            source=f"maintenance:grid:{device_id}",
+            axis=GRID_ROUTING,
+            payload={"accepting_new_sessions": False, "priority": PRIORITY_MAINTENANCE},
+        ),
+        IntentRegistration(
+            source=f"maintenance:recovery:{device_id}",
+            axis=RECOVERY,
+            payload={"allowed": False, "priority": PRIORITY_MAINTENANCE, "reason": "Device in maintenance"},
+        ),
+    ]
 
 
 async def enter_maintenance(
@@ -35,15 +67,12 @@ async def enter_maintenance(
         reason="Operator entered maintenance",
     )
 
-    if device.appium_node and device.appium_node.observed_running:
-        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-        if node is not None:
-            await write_desired_state(
-                db,
-                node=node,
-                target=AppiumDesiredState.stopped,
-                caller="maintenance_enter",
-            )
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=_maintenance_intents(device.id),
+        reason="Operator entered maintenance",
+    )
 
     if commit:
         await db.commit()
@@ -67,18 +96,12 @@ async def exit_maintenance(
     )
     clear_maintenance_recovery_suppression(device)
 
-    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    if node is not None:
-        desired_port = None
-        if device.host_id is not None:
-            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
-        await write_desired_state(
-            db,
-            node=node,
-            target=AppiumDesiredState.running,
-            caller="maintenance_exit",
-            desired_port=desired_port,
-        )
+    await revoke_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        sources=_maintenance_sources(device.id),
+        reason="Operator exited maintenance",
+    )
 
     if commit:
         await db.commit()
