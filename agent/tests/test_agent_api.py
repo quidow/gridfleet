@@ -579,7 +579,6 @@ async def test_agent_tools_status(client: AsyncClient) -> None:
         "agent_app.main.get_tool_status",
         new_callable=AsyncMock,
         return_value={
-            "appium": "3.3.0",
             "node": "24.14.1",
             "node_provider": "fnm",
             "go_ios": "1.0.207",
@@ -593,20 +592,10 @@ async def test_agent_tools_status(client: AsyncClient) -> None:
     status.assert_awaited_once_with()
 
 
-async def test_agent_tools_ensure_serializes_and_returns_result(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.main.ensure_tools",
-        new_callable=AsyncMock,
-        return_value={"appium": {"success": True, "action": "none", "version": "3.3.0"}},
-    ) as ensure:
-        resp = await client.post(
-            "/agent/tools/ensure",
-            json={"appium_version": "3.3.0"},
-        )
+async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:
+    resp = await client.post("/agent/tools/ensure", json={"appium_version": "3.3.0"})
 
-    assert resp.status_code == 200
-    assert resp.json()["appium"]["success"] is True
-    ensure.assert_awaited_once_with("3.3.0")
+    assert resp.status_code == 404
 
 
 async def test_health_includes_version_guidance(client: AsyncClient) -> None:

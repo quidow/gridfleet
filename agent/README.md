@@ -36,8 +36,8 @@ The agent itself only needs Python 3.12, which `uv` fetches automatically — yo
 
 | Tool | Needed for | Detection |
 |---|---|---|
-| Java 11+ | Selenium Grid relay node | `java -version`, `JAVA_HOME`, `/usr/libexec/java_home` (macOS) |
-| Node.js 20+ | Appium per-session | `nvm`, `fnm`, `$PATH` |
+| Java 11+ | Android driver build tools | `java -version`, `JAVA_HOME`, `/usr/libexec/java_home` (macOS) |
+| Node.js 20+ | Per-pack Appium runtimes | `nvm`, `fnm`, `$PATH` |
 | Android SDK platform-tools | ADB-based devices | `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `~/Library/Android/sdk`, `~/Android/Sdk` |
 
 ## Manual install
@@ -127,7 +127,6 @@ All flags below belong to `install`; `status`, `update`, and `uninstall` accept 
 | `--grid-publish-url` | `tcp://localhost:4442` | `AGENT_GRID_PUBLISH_URL` | Grid event bus publish. |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | `AGENT_GRID_SUBSCRIBE_URL` | Grid event bus subscribe. |
 | `--grid-node-port-start` | `5555` | `AGENT_GRID_NODE_PORT_START` | First port allocated to relay nodes. |
-| `--selenium-version` | `4.41.0` | jar version | Pinned Selenium server jar. |
 | `--enable-web-terminal` | off | `AGENT_ENABLE_WEB_TERMINAL=true` | Requires `--terminal-token`. |
 | `--terminal-token` | none | `AGENT_TERMINAL_TOKEN` | Required when web terminal enabled. |
 

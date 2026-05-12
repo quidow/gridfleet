@@ -59,14 +59,13 @@ from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugin_manager import get_installed_plugins, sync_plugins
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
-from agent_app.tools_manager import ensure_tools, get_tool_status
+from agent_app.tools_manager import get_tool_status
 from agent_app.version_guidance import get_version_guidance
 
 configure_logging()
 logger = logging.getLogger(__name__)
 
 appium_mgr = AppiumProcessManager()
-tools_ensure_lock = asyncio.Lock()
 GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
@@ -305,10 +304,6 @@ class PluginConfig(BaseModel):
 
 class PluginSyncRequest(BaseModel):
     plugins: list[PluginConfig]
-
-
-class ToolsEnsureRequest(BaseModel):
-    appium_version: str | None = None
 
 
 class GridNodeReregisterRequest(BaseModel):
@@ -792,12 +787,6 @@ async def sync_agent_plugins(req: PluginSyncRequest) -> dict[str, Any]:
 @app.get("/agent/tools/status")
 async def agent_tools_status() -> dict[str, Any]:
     return await get_tool_status()
-
-
-@app.post("/agent/tools/ensure")
-async def ensure_agent_tools(req: ToolsEnsureRequest) -> dict[str, Any]:
-    async with tools_ensure_lock:
-        return await ensure_tools(req.appium_version)
 
 
 @app.websocket("/agent/terminal")
