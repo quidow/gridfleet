@@ -39,6 +39,7 @@ class AllocatedDevice:
     live_capabilities: dict[str, Any] | None
     test_data: dict[str, Any] | None = None
     unavailable_includes: tuple[UnavailableInclude, ...] = ()
+    tags: dict[str, str] | None = None
 
     @property
     def is_real_device(self) -> bool:
@@ -153,6 +154,11 @@ def hydrate_allocated_device(
         test_data = client.get_device_test_data(device_id)
     else:
         test_data = None
+    inline_tags = payload.get("tags")
+    if isinstance(inline_tags, dict):
+        tags: dict[str, str] | None = inline_tags
+    else:
+        tags = None
 
     return AllocatedDevice(
         run_id=run_id,
@@ -173,6 +179,7 @@ def hydrate_allocated_device(
         live_capabilities=live_capabilities,
         test_data=test_data,
         unavailable_includes=unavailable_includes,
+        tags=tags,
     )
 
 
