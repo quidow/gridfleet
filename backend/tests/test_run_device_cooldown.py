@@ -230,8 +230,10 @@ async def test_cooldown_preserves_desired_grid_run_id(
     # free Grid pool during cooldown.  The reservation excluded flag is the
     # signal, not the node tag.
     assert node.desired_grid_run_id == run_id
-    # The node must be stopped so Grid cannot route new sessions during TTL.
-    assert node.desired_state == AppiumDesiredState.stopped
+    # Cooldown keeps the process alive for in-flight sessions but blocks routing.
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
 
 
 async def test_cooldown_does_not_mutate_operational_state(
@@ -299,7 +301,7 @@ async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncS
     assert info["cooldown_count"] == 1
 
 
-async def test_cooldown_stops_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-stop")
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
@@ -324,7 +326,9 @@ async def test_cooldown_stops_appium_node(client: AsyncClient, db_session: Async
     assert resp.status_code == 200
 
     await db_session.refresh(node)
-    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
 
 
 async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSession, default_host_id: str) -> None:

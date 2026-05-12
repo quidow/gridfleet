@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import freeze_background_loops_enabled
@@ -16,6 +17,7 @@ from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.middleware import RequestContextMiddleware
+from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
 from app.routers import (
     admin_appium_nodes,
@@ -45,7 +47,7 @@ from app.routers import (
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
 from app.services import auth as auth_service
-from app.services import device_health, device_service, webhook_dispatcher
+from app.services import device_health, device_service, host_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
@@ -56,7 +58,6 @@ from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.grid_node_run_id_reconciler import grid_node_run_id_reconciler_loop
 from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
@@ -64,6 +65,7 @@ from app.services.heartbeat import (
     shutdown_background_tasks,
 )
 from app.services.host_resource_telemetry import host_resource_telemetry_loop
+from app.services.intent_reconciler import device_intent_reconciler_loop
 from app.services.job_queue import durable_job_worker_loop
 from app.services.node_health import node_health_loop
 from app.services.pack_drain import pack_drain_loop
@@ -103,6 +105,29 @@ def _validate_leader_keepalive_settings() -> None:
         raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
 
 
+async def _validate_online_agent_contracts(db: AsyncSession) -> None:
+    result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
+    hosts = result.scalars().all()
+    downgraded = False
+    for host in hosts:
+        try:
+            host_service.validate_orchestration_contract(
+                host.capabilities,
+                host_label=f"{host.hostname} ({host.id})",
+            )
+        except ValueError as exc:
+            logger.warning(
+                "host_orchestration_contract_unsupported_marking_offline",
+                host_id=str(host.id),
+                hostname=host.hostname,
+                reason=str(exc),
+            )
+            host.status = HostStatus.offline
+            downgraded = True
+    if downgraded:
+        await db.commit()
+
+
 async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: str) -> None:
     if not tasks:
         return
@@ -125,19 +150,21 @@ async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: 
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
-    await agent_http_pool.reopen()
 
     event_bus.configure(session_factory=session_factory, engine=engine)
     settings_service.configure_store_refresh(session_factory)
     webhook_dispatcher.configure(session_factory)
-    event_bus.register_handler(settings_service.handle_system_event)
-    event_bus.register_handler(webhook_dispatcher.handle_system_event)
-    await event_bus.start()
 
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
         await settings_service.initialize(db)
+        await _validate_online_agent_contracts(db)
     _validate_leader_keepalive_settings()
+
+    await agent_http_pool.reopen()
+    event_bus.register_handler(settings_service.handle_system_event)
+    event_bus.register_handler(webhook_dispatcher.handle_system_event)
+    await event_bus.start()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
@@ -186,7 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
                 asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
                 asyncio.create_task(appium_reconciler_loop(), name="appium_reconciler_loop"),
-                asyncio.create_task(grid_node_run_id_reconciler_loop(), name="grid_node_run_id_reconciler_loop"),
+                asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
             ]
         watcher_task = asyncio.create_task(
             control_plane_leader_watcher_loop(),

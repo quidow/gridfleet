@@ -314,6 +314,38 @@ async def appium_stop(
     )
 
 
+async def agent_appium_reconfigure(
+    host: str,
+    agent_port: int,
+    *,
+    port: int,
+    accepting_new_sessions: bool,
+    stop_pending: bool,
+    grid_run_id: uuid.UUID | None,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = 10,
+) -> dict[str, Any]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/reconfigure",
+        endpoint="appium_reconfigure",
+        host=host,
+        agent_port=agent_port,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+        json_body={
+            "accepting_new_sessions": accepting_new_sessions,
+            "stop_pending": stop_pending,
+            "grid_run_id": str(grid_run_id) if grid_run_id else None,
+        },
+    )
+    _raise_for_status(response, host=host, action="reconfigure Appium node")
+    payload = _as_dict(response.json())
+    if payload is None:
+        raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid payload)")
+    return payload
+
+
 async def grid_node_reregister(
     host: str,
     agent_port: int,

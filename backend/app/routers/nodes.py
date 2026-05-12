@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +9,10 @@ from app.models.device import Device, DeviceHold
 from app.observability import get_logger
 from app.routers.device_route_helpers import get_device_for_update_or_404
 from app.schemas.device import AppiumNodeRead
+from app.services import appium_reconciler_agent as node_manager
 from app.services import run_service
 from app.services.appium_reconciler import converge_device_now
-from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.desired_state_writer import write_desired_state
 from app.services.device_readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
-from app.services.settings_service import settings_service
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 logger = get_logger(__name__)
@@ -60,27 +57,10 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
         )
     if device.host_id is None:
         raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
-    node: AppiumNode | None = device.appium_node
-    if node is None:
-        node = AppiumNode(
-            device_id=device.id,
-            port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
-        )
-        db.add(node)
-        await db.flush()
-        device.appium_node = node
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller="operator_route",
-        desired_port=desired_port,
-    )
-    await db.commit()
-    await db.refresh(node)
-    return node
+    try:
+        return await node_manager.start_node(db, device, caller="operator_route")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/node/stop", response_model=AppiumNodeRead)
@@ -90,15 +70,10 @@ async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
     node: AppiumNode | None = device.appium_node
     if node is None or node.desired_state != AppiumDesiredState.running:
         raise HTTPException(status_code=400, detail=f"No running node for device {device.id}")
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.stopped,
-        caller="operator_route",
-    )
-    await db.commit()
-    await db.refresh(node)
-    return node
+    try:
+        return await node_manager.stop_node(db, device, caller="operator_route")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
@@ -110,19 +85,7 @@ async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     node: AppiumNode | None = device.appium_node
     if node is None or node.desired_state != AppiumDesiredState.running:
         return await start_node(device_id, db)
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-    token = uuid.uuid4()
-    deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller="operator_restart",
-        desired_port=node.port,
-        transition_token=token,
-        transition_deadline=deadline,
-    )
-    await db.commit()
+    node = await node_manager.restart_node(db, device, caller="operator_restart")
     try:
         converged_node = await converge_device_now(device.id, db=db)
         if converged_node is not None:

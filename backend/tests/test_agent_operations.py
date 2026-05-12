@@ -193,6 +193,50 @@ async def test_grid_node_reregister_returns_none_for_free_pool() -> None:
     assert client.post_calls[0][1]["json"] == {"target_run_id": None}
 
 
+async def test_agent_appium_reconfigure_posts_payload() -> None:
+    grid_run_id = uuid.uuid4()
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST",
+            "http://10.0.0.5:5100/agent/appium/4723/reconfigure",
+            payload={
+                "port": 4723,
+                "accepting_new_sessions": False,
+                "stop_pending": True,
+                "grid_run_id": str(grid_run_id),
+            },
+        )
+    )
+
+    payload = await agent_operations.agent_appium_reconfigure(
+        "10.0.0.5",
+        5100,
+        port=4723,
+        accepting_new_sessions=False,
+        stop_pending=True,
+        grid_run_id=grid_run_id,
+        http_client_factory=_strict_client_factory(client),
+        timeout=10,
+    )
+
+    assert payload["grid_run_id"] == str(grid_run_id)
+    assert client.post_calls == [
+        (
+            "http://10.0.0.5:5100/agent/appium/4723/reconfigure",
+            {
+                "params": None,
+                "headers": {},
+                "json": {
+                    "accepting_new_sessions": False,
+                    "stop_pending": True,
+                    "grid_run_id": str(grid_run_id),
+                },
+                "timeout": 10,
+            },
+        )
+    ]
+
+
 async def test_pack_device_health_get_request() -> None:
     client = StrictAgentClient(
         get_response=_response(

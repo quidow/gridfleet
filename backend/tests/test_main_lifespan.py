@@ -6,12 +6,16 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+from sqlalchemy import select
+
 from app import main
+from app.models.host import Host, HostStatus
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from pytest import MonkeyPatch
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class FakeLoop:
@@ -86,6 +90,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -122,6 +128,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
+    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -140,6 +148,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "session_viability_loop",
             "fleet_capacity_collector_loop",
             "pack_drain_loop",
+            "appium_reconciler_loop",
+            "device_intent_reconciler_loop",
         }
         task_names = {task.get_name() for task in created_tasks}
         assert task_names >= expected_leader_loop_names
@@ -168,6 +178,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -215,6 +226,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -274,6 +286,8 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
 
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -310,6 +324,8 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
+    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
 
     async with main.lifespan(main.app):
         pass
@@ -317,3 +333,16 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     assert sequence.index("try_acquire_returned") < sequence.index("watcher_task_created"), (
         f"watcher created before try_acquire completed: {sequence}"
     )
+
+
+async def test_startup_marks_unsupported_online_agent_contracts_offline(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    db_host.capabilities = {"orchestration_contract_version": 1}
+    await db_session.commit()
+
+    await main._validate_online_agent_contracts(db_session)
+
+    host = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalar_one()
+    assert host.status == HostStatus.offline

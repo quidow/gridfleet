@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import DeviceHold
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     )
     assert len(events) == 1
     assert events[0].details is not None
-    assert events[0].details["caller"] == "maintenance_exit"
+    assert events[0].details["caller"] == "intent_reconciler"
     assert events[0].details["new_desired_state"] == "running"
 
 
@@ -88,4 +89,17 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
+    await db_session.refresh(device)
+    assert device.recovery_allowed is False
+    assert device.recovery_blocked_reason == "Device in maintenance"
     assert node.observed_running
+    intents = (
+        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    )
+    assert {intent.source for intent in intents} == {
+        f"maintenance:node:{device.id}",
+        f"maintenance:grid:{device.id}",
+        f"maintenance:recovery:{device.id}",
+    }

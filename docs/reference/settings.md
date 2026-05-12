@@ -57,6 +57,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `retention.sessions_days` | `retention` | `int` | `90` | none | `1..3650` | Delete completed sessions older than N days |
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |
 | `retention.device_events_days` | `retention` | `int` | `90` | none | `1..3650` | Delete device incident events older than N days |
+| `retention.agent_reconfigure_outbox_days` | `retention` | `int` | `7` | none | `1..3650` | Delete delivered or abandoned agent reconfigure outbox rows older than N days |
 | `retention.cleanup_interval_hours` | `retention` | `int` | `24` | none | `1..168` | Interval for the retention cleanup loop |
 
 ## Notes

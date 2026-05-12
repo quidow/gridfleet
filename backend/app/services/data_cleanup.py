@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select
 
 from app.database import async_session
+from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device_event import DeviceEvent
@@ -30,6 +31,7 @@ DELETE_BATCH_SIZE = 1000
 MAX_BATCHES_PER_TABLE = 10
 CleanupModel = (
     type[Session]
+    | type[AgentReconfigureOutbox]
     | type[ConfigAuditLog]
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
@@ -75,6 +77,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
     events_deleted = 0
     host_resource_samples_deleted = 0
     capacity_snapshots_deleted = 0
+    agent_reconfigure_outbox_deleted = 0
 
     # Sessions (only completed ones)
     sessions_days: int = settings_service.get("retention.sessions_days")
@@ -100,6 +103,19 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             model=ConfigAuditLog,
             timestamp_column=ConfigAuditLog.changed_at,
             cutoff=cutoff,
+        )
+
+    outbox_days: int = settings_service.get("retention.agent_reconfigure_outbox_days")
+    if outbox_days > 0:
+        cutoff = now - timedelta(days=outbox_days)
+        agent_reconfigure_outbox_deleted = await _delete_in_batches(
+            db,
+            model=AgentReconfigureOutbox,
+            timestamp_column=AgentReconfigureOutbox.created_at,
+            cutoff=cutoff,
+            extra_predicates=(
+                (AgentReconfigureOutbox.delivered_at.is_not(None) | AgentReconfigureOutbox.abandoned_at.is_not(None)),
+            ),
         )
 
     # DeviceTestDataAuditLog (reuses retention.audit_log_days)
@@ -148,13 +164,14 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
 
     logger.info(
         "Data cleanup completed: sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
-        "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d",
+        "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, agent_reconfigure_outbox=%d",
         sessions_deleted,
         audit_deleted,
         test_data_audit_deleted,
         events_deleted,
         host_resource_samples_deleted,
         capacity_snapshots_deleted,
+        agent_reconfigure_outbox_deleted,
     )
     await event_bus.publish(
         "system.cleanup_completed",
@@ -165,6 +182,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             "device_events_deleted": events_deleted,
             "host_resource_samples_deleted": host_resource_samples_deleted,
             "capacity_snapshots_deleted": capacity_snapshots_deleted,
+            "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
         },
     )
 

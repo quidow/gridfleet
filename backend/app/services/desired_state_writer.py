@@ -37,6 +37,7 @@ DesiredStateCaller = Literal[
     "appium_reconciler",
     "cooldown",
     "cooldown_expired",
+    "intent_reconciler",
 ]
 
 DesiredGridRunIdCaller = Literal[
@@ -49,6 +50,7 @@ DesiredGridRunIdCaller = Literal[
     "run_exclude_device",
     "run_restore_device",
     "reservation_backfill",
+    "intent_reconciler",
 ]
 
 

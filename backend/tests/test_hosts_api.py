@@ -460,6 +460,7 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.0.9",
+                "capabilities": {"orchestration_contract_version": 2},
             },
         )
 
@@ -486,6 +487,7 @@ async def test_hosts_list_and_detail_include_recommended_agent_version(client: A
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.2.0",
+                "capabilities": {"orchestration_contract_version": 2},
             },
         )
 
@@ -514,6 +516,7 @@ async def test_agent_update_available_false_when_current(client: AsyncClient) ->
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.3.0",
+                "capabilities": {"orchestration_contract_version": 2},
             },
         )
 
@@ -535,6 +538,7 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
                     "platforms": ["android_mobile", "roku"],
                     "tools": {"appium": "3.0.0"},
                     "missing_prerequisites": ["java"],
+                    "orchestration_contract_version": 2,
                 },
             },
         )
@@ -572,6 +576,7 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
                 "os_type": "linux",
                 "agent_port": 5100,
                 "agent_version": "0.1.0",
+                "capabilities": {"orchestration_contract_version": 2},
             },
         )
         host_id = register_resp.json()["id"]

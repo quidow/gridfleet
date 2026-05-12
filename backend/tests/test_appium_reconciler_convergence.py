@@ -29,6 +29,7 @@ def _row(**kw: object) -> DesiredRow:
         "port": None,
         "pid": None,
         "active_connection_target": None,
+        "stop_pending": False,
     }
     defaults.update(kw)
     return DesiredRow(**defaults)  # type: ignore[arg-type]
@@ -123,6 +124,21 @@ def test_desired_stopped_with_observed_picks_stop() -> None:
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
     assert action.kind == "stop"
     assert action.port == 4723
+
+
+def test_desired_stopped_with_stop_pending_keeps_observed_node_for_agent_drain() -> None:
+    row = _row(
+        desired_state="stopped",
+        port=4723,
+        pid=1,
+        active_connection_target="emulator-5554",
+        stop_pending=True,
+    )
+    obs = ObservedEntry(port=4723, pid=1, connection_target=row.connection_target)
+
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+
+    assert action.kind == "no_op"
 
 
 def test_desired_stopped_no_observed_picks_noop_or_db_clear() -> None:

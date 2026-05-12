@@ -48,34 +48,23 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     restart_entered = asyncio.Event()
     allow_restart = asyncio.Event()
 
-    async def fake_write_desired_state(
+    async def fake_restart_node(
         db: AsyncSession,
+        _device: Device,
         *,
-        node: AppiumNode,
-        target: AppiumDesiredState,
         caller: str,
-        **kwargs: object,
-    ) -> None:
-        if caller != "operator_restart" and caller != "operator_route":
-            from app.services.desired_state_writer import write_desired_state as real_write
-
-            await real_write(
-                db,
-                node=node,
-                target=target,
-                caller=caller,
-                **kwargs,
-            )
-            return
-        assert node is not None
+        **_kwargs: object,
+    ) -> AppiumNode:
+        assert caller == "operator_restart"
+        device = await db.get(Device, device_id)
+        assert device is not None
+        assert device.appium_node is not None
         restart_entered.set()
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        node.desired_state = target
-        if target == AppiumDesiredState.running:
-            node.transition_token = kwargs.get("transition_token")
+        return device.appium_node
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(devices_control, "write_desired_state", fake_write_desired_state)
+    monkeypatch.setattr(devices_control.node_manager, "restart_node", fake_restart_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:

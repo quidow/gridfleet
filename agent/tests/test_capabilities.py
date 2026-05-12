@@ -92,10 +92,25 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
         new_callable=AsyncMock,
         side_effect=[first_snapshot, second_snapshot],
     ) as detect:
-        assert get_capabilities_snapshot() == {"platforms": [], "tools": {}, "missing_prerequisites": []}
-        assert await get_or_refresh_capabilities_snapshot() == first_snapshot
-        assert await get_or_refresh_capabilities_snapshot() == first_snapshot
-        assert await get_or_refresh_capabilities_snapshot(force=True) == second_snapshot
+        default_snapshot = {
+            "platforms": [],
+            "tools": {},
+            "missing_prerequisites": [],
+            "orchestration_contract_version": 2,
+        }
+        assert get_capabilities_snapshot() == default_snapshot
+        assert await get_or_refresh_capabilities_snapshot() == {
+            **first_snapshot,
+            "orchestration_contract_version": 2,
+        }
+        assert await get_or_refresh_capabilities_snapshot() == {
+            **first_snapshot,
+            "orchestration_contract_version": 2,
+        }
+        assert await get_or_refresh_capabilities_snapshot(force=True) == {
+            **second_snapshot,
+            "orchestration_contract_version": 2,
+        }
 
     assert detect.await_count == 2
     clear_capabilities_snapshot()

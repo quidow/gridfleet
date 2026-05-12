@@ -3,6 +3,7 @@ import json
 from collections import deque
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -116,6 +117,29 @@ class FailingGridNodeHandle(RecordingGridNodeHandle):
     async def wait_until_running(self) -> None:
         self.wait_until_running_called = True
         raise RuntimeError("grid node failed")
+
+
+class ReconfigurableGridNodeService:
+    def __init__(self, *, busy: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.busy = busy
+
+    def slot_stereotype_caps(self) -> dict[str, object]:
+        return {"platformName": "Android", "gridfleet:run_id": "free", "gridfleet:available": True}
+
+    def has_active_session(self) -> bool:
+        return self.busy
+
+    async def reregister_with_stereotype(
+        self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
+    ) -> None:
+        self.calls.append(dict(new_caps))
+
+
+class ReconfigurableGridNodeHandle(RecordingGridNodeHandle):
+    def __init__(self, service: ReconfigurableGridNodeService) -> None:
+        super().__init__()
+        self.service = service
 
 
 def test_parse_node_version_prefers_version_tuple() -> None:
@@ -424,8 +448,98 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         "platformName": "android_mobile",
         "appium:platform": "android_mobile",
         "gridfleet:run_id": "free",
+        "gridfleet:available": True,
     }
     await manager.shutdown()
+
+
+async def test_start_with_accepting_new_sessions_false_marks_grid_unavailable() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5678)
+    configs: list[GridNodeConfig] = []
+    run_id = uuid4()
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch(
+            "agent_app.appium_process.start_grid_node_supervisor",
+            side_effect=lambda *, factory, config: configs.append(config) or RecordingGridNodeHandle(),
+        ),
+    ):
+        await manager.start(
+            connection_target="device-unavailable",
+            port=4728,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+            accepting_new_sessions=False,
+            grid_run_id=run_id,
+        )
+
+    caps = configs[0].slots[0].stereotype.caps
+    assert caps["gridfleet:available"] is False
+    assert caps["gridfleet:run_id"] == str(run_id)
+    await manager.shutdown()
+
+
+async def test_reconfigure_updates_grid_stereotype() -> None:
+    manager = AppiumProcessManager()
+    run_id = uuid4()
+    service = ReconfigurableGridNodeService()
+    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=123,
+        connection_target="device-1",
+        platform_id="android_mobile",
+    )
+
+    await manager.reconfigure(
+        4723,
+        accepting_new_sessions=False,
+        stop_pending=False,
+        grid_run_id=run_id,
+    )
+
+    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id), "gridfleet:available": False}]
+
+
+async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
+    manager = AppiumProcessManager()
+
+    with pytest.raises(DeviceNotFoundError):
+        await manager.reconfigure(
+            4723,
+            accepting_new_sessions=True,
+            stop_pending=False,
+            grid_run_id=None,
+        )
+
+
+async def test_stop_pending_stops_when_no_grid_session_and_blocks_auto_restart() -> None:
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService(busy=False)
+    handle = ReconfigurableGridNodeHandle(service)
+    appium_proc = FakeProcess(pid=5002)
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=5002,
+        connection_target="device-1",
+        platform_id="android_mobile",
+    )
+    manager._logs[4723] = deque(["line"], maxlen=10)
+    manager._log_tasks[4723] = []
+
+    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
+    await manager._auto_restart_appium(4723, exit_code=9)
+
+    assert handle.stop_called is True
+    assert 4723 not in manager._grid_supervisors
+    assert manager.process_snapshot()["recent_restart_events"] == []
 
 
 async def test_start_can_disable_session_override() -> None:

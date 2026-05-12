@@ -32,6 +32,7 @@ class DesiredRow:
     port: int | None
     pid: int | None
     active_connection_target: str | None
+    stop_pending: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,8 @@ def decide_convergence_action(
         return ConvergenceAction(kind="stop", port=observed.port, clear_desired_port=True)
 
     if observed is not None:
+        if row.stop_pending:
+            return ConvergenceAction(kind="no_op")
         return ConvergenceAction(kind="stop", port=observed.port)
     if row.pid is not None or row.active_connection_target is not None:
         return ConvergenceAction(kind="db_clear_stale_running")

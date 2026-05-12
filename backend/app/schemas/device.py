@@ -297,6 +297,19 @@ class DeviceHealthRead(BaseModel):
     healthy: bool
 
 
+class DeviceIntentSummaryRead(BaseModel):
+    source: str
+    axis: str
+    run_id: uuid.UUID | None = None
+    payload: dict[str, Any]
+    expires_at: datetime | None = None
+
+
+class DeviceOrchestrationRead(BaseModel):
+    intents: list[DeviceIntentSummaryRead]
+    derived: dict[str, Any]
+
+
 class HardwareTelemetryState(enum.StrEnum):
     unknown = "unknown"
     fresh = "fresh"
@@ -359,6 +372,7 @@ class DeviceListRead(BaseModel):
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
     sessions: list[SessionRead] = Field(default_factory=list)
+    orchestration: DeviceOrchestrationRead
 
 
 class DeviceVerificationJobRead(BaseModel):

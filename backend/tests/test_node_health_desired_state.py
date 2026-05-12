@@ -1,4 +1,4 @@
-"""Phase 3: node_health auto-restart writes desired_state with a transition_token."""
+"""Node health auto-restart registers an intent with a transition token."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from app.services.agent_probe_result import ProbeResult
 from tests.helpers import create_device
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
-async def test_node_health_auto_restart_writes_transition_token_with_health_restart_caller(
+async def test_node_health_auto_restart_registers_transition_token_intent(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -70,7 +71,16 @@ async def test_node_health_auto_restart_writes_transition_token_with_health_rest
     )
     assert any(
         event.details is not None
-        and event.details.get("caller") == "health_restart"
+        and event.details.get("caller") == "intent_reconciler"
         and event.details.get("transition_token") is not None
         for event in events
     )
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.payload["transition_token"] == str(node.transition_token)

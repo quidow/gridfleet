@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.models.appium_node import AppiumNode
 from app.models.device import (
     ConnectionType,
     Device,
@@ -37,10 +37,17 @@ from app.services import (
     lifecycle_policy,
     run_service,
 )
-from app.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.services.device_connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
 from app.services.device_identity_conflicts import (
     ensure_device_payload_identity_available,
+)
+from app.services.intent_service import register_intents_and_reconcile
+from app.services.intent_types import (
+    GRID_ROUTING,
+    NODE_PROCESS,
+    PRIORITY_DEVICE_DELETE,
+    RECOVERY,
+    IntentRegistration,
 )
 from app.services.node_service_types import NodeManagerError
 
@@ -344,16 +351,36 @@ async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Dev
         return None
 
 
-async def _stop_node(db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "device_delete") -> AppiumNode:
-    """Write stopped desired state for a single device."""
+def _device_delete_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
+    return [
+        IntentRegistration(
+            source=f"device_delete:node:{device_id}",
+            axis=NODE_PROCESS,
+            payload={"action": "stop", "priority": PRIORITY_DEVICE_DELETE, "stop_mode": "graceful"},
+        ),
+        IntentRegistration(
+            source=f"device_delete:grid:{device_id}",
+            axis=GRID_ROUTING,
+            payload={"accepting_new_sessions": False, "priority": PRIORITY_DEVICE_DELETE},
+        ),
+        IntentRegistration(
+            source=f"device_delete:recovery:{device_id}",
+            axis=RECOVERY,
+            payload={"allowed": False, "priority": PRIORITY_DEVICE_DELETE, "reason": "Device delete requested"},
+        ),
+    ]
+
+
+async def _stop_node(db: AsyncSession, device: Device, *, caller: str = "device_delete") -> AppiumNode:
+    """Register stop intent for a single device."""
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    await write_desired_state(
+    await register_intents_and_reconcile(
         db,
-        node=node,
-        target=AppiumDesiredState.stopped,
-        caller=caller,
+        device_id=device.id,
+        intents=_device_delete_intents(device.id),
+        reason=f"{caller} requested",
     )
     await db.commit()
     await db.refresh(node)
