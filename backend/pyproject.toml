@@ -15,7 +15,7 @@ dependencies = [
     "alembic==1.18.4",
     "greenlet==3.5.0",
     "httpx==0.28.1",
-    "sse-starlette==3.4.2",
+    "sse-starlette==3.4.3",
     "prometheus-client==0.25.0",
     "structlog==25.5.0",
     "pyyaml==6.0.3",
