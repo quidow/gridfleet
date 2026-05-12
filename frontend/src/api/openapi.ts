@@ -1782,6 +1782,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/devices/{device_id}/cooldown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cooldown Device Endpoint */
+        post: operations["cooldown_device_endpoint_api_runs__run_id__devices__device_id__cooldown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/devices/{device_id}/preparation-failed": {
         parameters: {
             query?: never;
@@ -4262,6 +4279,40 @@ export interface components {
             } | null;
             /** Unavailable Includes */
             unavailable_includes?: components["schemas"]["UnavailableInclude"][] | null;
+        };
+        /** RunCooldownEscalatedResponse */
+        RunCooldownEscalatedResponse: {
+            /** Cooldown Count */
+            cooldown_count: number;
+            /**
+             * Status
+             * @constant
+             */
+            status: "maintenance_escalated";
+            /** Threshold */
+            threshold: number;
+        };
+        /** RunCooldownRequest */
+        RunCooldownRequest: {
+            /** Reason */
+            reason: string;
+            /** Ttl Seconds */
+            ttl_seconds: number;
+        };
+        /** RunCooldownResponse */
+        RunCooldownResponse: {
+            /** Cooldown Count */
+            cooldown_count: number;
+            /**
+             * Excluded Until
+             * Format: date-time
+             */
+            excluded_until: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "cooldown_set";
         };
         /** RunCreate */
         RunCreate: {
@@ -8625,6 +8676,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cooldown_device_endpoint_api_runs__run_id__devices__device_id__cooldown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunCooldownRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunCooldownResponse"] | components["schemas"]["RunCooldownEscalatedResponse"];
                 };
             };
             /** @description Validation Error */
