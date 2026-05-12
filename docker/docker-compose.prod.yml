@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-bookworm
+    image: postgres:18-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gridfleet}
@@ -31,7 +31,7 @@ services:
         max-file: "3"
 
   selenium-hub:
-    image: selenium/hub:4.41.0
+    image: selenium/hub:4.43.0
     restart: unless-stopped
     ports:
       - "${GRID_PUBLISH_PORT:-4442}:4442"
