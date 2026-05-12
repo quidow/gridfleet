@@ -199,7 +199,7 @@ async def test_cooldown_device_increments_count(
     assert entry.cooldown_count == 3
 
 
-async def test_cooldown_clears_desired_grid_run_id(
+async def test_cooldown_preserves_desired_grid_run_id(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-grid")
@@ -226,7 +226,10 @@ async def test_cooldown_clears_desired_grid_run_id(
     assert resp.status_code == 200
 
     await db_session.refresh(node)
-    assert node.desired_grid_run_id is None
+    # desired_grid_run_id must stay set so the device does not fall into the
+    # free Grid pool during cooldown.  The reservation excluded flag is the
+    # signal, not the node tag.
+    assert node.desired_grid_run_id == run_id
 
 
 async def test_cooldown_does_not_mutate_operational_state(

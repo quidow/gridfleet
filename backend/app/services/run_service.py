@@ -890,15 +890,6 @@ async def cooldown_device(
         entry.excluded_at = excluded_at
         entry.excluded_until = excluded_until
 
-        if device.appium_node is not None:
-            await write_desired_grid_run_id(
-                db,
-                node=device.appium_node,
-                run_id=None,
-                caller="run_cooldown",
-                reason=clean_reason,
-            )
-
         await lifecycle_incident_service.record_lifecycle_incident(
             db,
             device,
