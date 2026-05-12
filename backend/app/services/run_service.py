@@ -904,12 +904,11 @@ async def cooldown_device(
             expires_at=excluded_until,
         )
 
-    await db.commit()
-
-    if not escalate:
         # Stop the Appium node so Selenium Grid cannot route new sessions
-        # to this device while the cooldown TTL is active.
-        device = await device_locking.lock_device(db, device_id, load_sessions=True)
+        # to this device while the cooldown TTL is active. Do this inside the
+        # same transaction (while run and reservation rows are locked) to
+        # prevent a concurrent complete_run/cancel_run from releasing the
+        # reservation and leaving the node wrongly stopped.
         if device.appium_node is not None:
             await write_desired_state(
                 db,
@@ -918,7 +917,10 @@ async def cooldown_device(
                 caller="cooldown",
                 reason=f"Cooldown: {clean_reason}",
             )
-            await db.commit()
+
+    await db.commit()
+
+    if not escalate:
         return excluded_until, cooldown_count_after, False, threshold
 
     # Escalation path
