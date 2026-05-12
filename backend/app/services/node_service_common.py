@@ -42,6 +42,9 @@ def build_extra_caps(
     extra.update(sanitize_appium_caps(config.get("appium_caps"), manager_owned=owned))
     if session_caps:
         extra.update(session_caps)
+    if device.tags:
+        for key, value in device.tags.items():
+            extra[f"appium:gridfleet:tag:{key}"] = value
 
     return extra
 

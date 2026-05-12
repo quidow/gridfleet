@@ -79,6 +79,7 @@ class ReservedDeviceInfo(BaseModel):
     live_capabilities: dict[str, Any] | None = None
     test_data: dict[str, Any] | None = None
     unavailable_includes: list[UnavailableInclude] | None = None
+    tags: dict[str, str] | None = None
 
 
 class SessionCounts(BaseModel):

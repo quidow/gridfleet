@@ -1,7 +1,7 @@
 import uuid
 
 from app.models.device import ConnectionType, Device, DeviceType
-from app.services.node_service_common import build_extra_caps
+from app.services.node_service_common import build_extra_caps, build_grid_stereotype_caps
 
 
 def _device(**overrides: object) -> Device:
@@ -48,3 +48,23 @@ def test_build_extra_caps_skips_missing_optional_columns() -> None:
     assert "appium:model" not in caps
     assert "appium:os_version" not in caps
     assert caps["appium:platform"] == "android_mobile"
+
+
+def test_build_grid_stereotype_caps_includes_tag_caps() -> None:
+    device = _device(tags={"screen_type": "4k", "rack": "A1"})
+
+    caps = build_grid_stereotype_caps(device)
+
+    assert caps["appium:gridfleet:tag:screen_type"] == "4k"
+    assert caps["appium:gridfleet:tag:rack"] == "A1"
+
+
+def test_build_grid_stereotype_caps_keeps_db_tags_authoritative() -> None:
+    device = _device(
+        tags={"screen_type": "4k"},
+        device_config={"appium_caps": {"appium:gridfleet:tag:screen_type": "hd"}},
+    )
+
+    caps = build_grid_stereotype_caps(device)
+
+    assert caps["appium:gridfleet:tag:screen_type"] == "4k"
