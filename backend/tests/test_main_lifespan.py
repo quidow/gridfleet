@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from app import main
 
 if TYPE_CHECKING:
@@ -86,6 +88,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -168,6 +172,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -215,6 +220,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -274,6 +280,8 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
 
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
     monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
     monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
@@ -317,3 +325,43 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     assert sequence.index("try_acquire_returned") < sequence.index("watcher_task_created"), (
         f"watcher created before try_acquire completed: {sequence}"
     )
+
+
+async def test_startup_rejects_unsupported_agent_contract(monkeypatch: MonkeyPatch) -> None:
+    db = AsyncMock()
+    session_factory = FakeSessionFactory(db)
+    engine = SimpleNamespace(dispose=AsyncMock())
+
+    import app.database as database_module
+    import app.services.event_bus as event_bus_module
+    import app.services.settings_service as settings_service_module
+
+    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
+    monkeypatch.setattr(database_module, "async_session", session_factory)
+    monkeypatch.setattr(main, "session_factory", session_factory)
+    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
+    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
+    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
+    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
+    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
+    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
+    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
+    monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
+    monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
+    monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
+    monkeypatch.setattr(main, "engine", engine)
+    monkeypatch.setattr(
+        main,
+        "_validate_online_agent_contracts",
+        AsyncMock(side_effect=RuntimeError("unsupported orchestration contract for host old-agent")),
+    )
+
+    with pytest.raises(RuntimeError, match="unsupported orchestration contract"):
+        async with main.lifespan(main.app):
+            pass
+
+    assert pool_reopen.await_count == 0
+    assert pool_close.await_count == 0

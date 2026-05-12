@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import freeze_background_loops_enabled
@@ -16,6 +17,7 @@ from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.middleware import RequestContextMiddleware
+from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
 from app.routers import (
     admin_appium_nodes,
@@ -45,7 +47,7 @@ from app.routers import (
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
 from app.services import auth as auth_service
-from app.services import device_health, device_service, webhook_dispatcher
+from app.services import device_health, device_service, host_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
@@ -103,6 +105,19 @@ def _validate_leader_keepalive_settings() -> None:
         raise RuntimeError(f"Misconfigured leader keepalive settings: {error}")
 
 
+async def _validate_online_agent_contracts(db: AsyncSession) -> None:
+    result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
+    hosts = result.scalars().all()
+    for host in hosts:
+        try:
+            host_service.validate_orchestration_contract(
+                host.capabilities,
+                host_label=f"{host.hostname} ({host.id})",
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+
 async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: str) -> None:
     if not tasks:
         return
@@ -125,19 +140,21 @@ async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: 
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
-    await agent_http_pool.reopen()
 
     event_bus.configure(session_factory=session_factory, engine=engine)
     settings_service.configure_store_refresh(session_factory)
     webhook_dispatcher.configure(session_factory)
-    event_bus.register_handler(settings_service.handle_system_event)
-    event_bus.register_handler(webhook_dispatcher.handle_system_event)
-    await event_bus.start()
 
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
         await settings_service.initialize(db)
+        await _validate_online_agent_contracts(db)
     _validate_leader_keepalive_settings()
+
+    await agent_http_pool.reopen()
+    event_bus.register_handler(settings_service.handle_system_event)
+    event_bus.register_handler(webhook_dispatcher.handle_system_event)
+    await event_bus.start()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()

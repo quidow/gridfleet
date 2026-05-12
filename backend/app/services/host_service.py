@@ -12,6 +12,7 @@ from app.services.event_bus import queue_event_for_session
 from app.services.settings_service import settings_service
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
+MIN_ORCHESTRATION_CONTRACT_VERSION = 2
 
 
 def _coerce_missing_prerequisites(value: object) -> list[str] | None:
@@ -35,6 +36,31 @@ def normalize_capabilities(capabilities: dict[str, Any] | None) -> dict[str, Any
         missing = _coerce_missing_prerequisites(normalized["missing_prerequisites"])
         normalized["missing_prerequisites"] = missing or []
     return normalized
+
+
+def orchestration_contract_version(capabilities: dict[str, Any] | None) -> int | None:
+    if capabilities is None:
+        return None
+    value = capabilities.get("orchestration_contract_version")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def validate_orchestration_contract(capabilities: dict[str, Any] | None, *, host_label: str) -> None:
+    version = orchestration_contract_version(capabilities)
+    if version is None or version < MIN_ORCHESTRATION_CONTRACT_VERSION:
+        raise ValueError(
+            f"Host {host_label} reports unsupported orchestration contract; "
+            f"expected orchestration_contract_version >= {MIN_ORCHESTRATION_CONTRACT_VERSION}"
+        )
 
 
 def update_missing_prerequisites_from_health(host: Host, missing_prerequisites: object) -> None:
@@ -94,6 +120,7 @@ async def delete_host(db: AsyncSession, host_id: uuid.UUID) -> bool:
 
 async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
+    validate_orchestration_contract(data.capabilities, host_label=data.hostname)
     stmt = select(Host).where(Host.hostname == data.hostname)
     result = await db.execute(stmt)
     host = result.scalar_one_or_none()
