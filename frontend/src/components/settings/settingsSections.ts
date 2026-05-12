@@ -57,7 +57,7 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       id: 'grid-routing',
       title: 'Grid Routing',
       description: 'Core Selenium Grid endpoint and polling cadence.',
-      settingKeys: ['grid.hub_url', 'grid.session_poll_interval_sec', 'grid.selenium_jar_version'],
+      settingKeys: ['grid.hub_url', 'grid.session_poll_interval_sec'],
     },
     {
       id: 'appium-nodes',
@@ -69,7 +69,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
         'appium.startup_timeout_sec',
         'appium.session_override',
         'appium.default_plugins',
-        'appium.target_version',
       ],
     },
   ],

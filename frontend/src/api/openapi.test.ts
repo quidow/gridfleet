@@ -12,8 +12,6 @@ describe('generated openapi.ts', () => {
     expectTypeOf<components['schemas']['ConfigAuditEntryRead']>().not.toBeNever();
     expectTypeOf<components['schemas']['TestDataAuditEntryRead']>().not.toBeNever();
     expectTypeOf<components['schemas']['HostToolStatusRead']>().not.toBeNever();
-    expectTypeOf<components['schemas']['ToolEnsureResultItemRead']>().not.toBeNever();
-    expectTypeOf<components['schemas']['HostToolEnsureResultRead']>().not.toBeNever();
     expectTypeOf<components['schemas']['HTTPValidationError']>().not.toBeNever();
   });
 });

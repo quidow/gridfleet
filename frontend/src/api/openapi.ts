@@ -1592,40 +1592,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/hosts/{host_id}/tools/ensure": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Ensure Host Tools */
-        post: operations["ensure_host_tools_api_hosts__host_id__tools_ensure_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/hosts/{host_id}/tools/ensure-jobs/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Host Tool Ensure Job */
-        get: operations["get_host_tool_ensure_job_api_hosts__host_id__tools_ensure_jobs__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/hosts/{host_id}/tools/status": {
         parameters: {
             query?: never;
@@ -3821,43 +3787,8 @@ export interface components {
          * @enum {string}
          */
         HostStatus: "online" | "offline" | "pending";
-        /** HostToolEnsureJobRead */
-        HostToolEnsureJobRead: {
-            /** Error */
-            error?: string | null;
-            /** Finished At */
-            finished_at?: string | null;
-            /**
-             * Host Id
-             * Format: uuid
-             */
-            host_id: string;
-            /** Hostname */
-            hostname?: string | null;
-            /** Job Id */
-            job_id: string;
-            result?: components["schemas"]["HostToolEnsureResultRead"] | null;
-            /** Started At */
-            started_at: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "pending" | "running" | "completed" | "failed" | "cancelled";
-            /** Target Versions */
-            target_versions?: {
-                [key: string]: string | null;
-            };
-        };
-        /** HostToolEnsureResultRead */
-        HostToolEnsureResultRead: {
-            appium?: components["schemas"]["ToolEnsureResultItemRead"] | null;
-            selenium_jar?: components["schemas"]["ToolEnsureResultItemRead"] | null;
-        };
         /** HostToolStatusRead */
         HostToolStatusRead: {
-            /** Appium */
-            appium?: string | null;
             /** Go Ios */
             go_ios?: string | null;
             /** Node */
@@ -3866,10 +3797,6 @@ export interface components {
             node_error?: string | null;
             /** Node Provider */
             node_provider?: string | null;
-            /** Selenium Jar */
-            selenium_jar?: string | null;
-            /** Selenium Jar Path */
-            selenium_jar_path?: string | null;
         };
         /** IntakeCandidateRead */
         IntakeCandidateRead: {
@@ -4827,23 +4754,6 @@ export interface components {
         /** TestDataRead */
         TestDataRead: {
             [key: string]: unknown;
-        };
-        /** ToolEnsureResultItemRead */
-        ToolEnsureResultItemRead: {
-            /** Action */
-            action?: string | null;
-            /** Error */
-            error?: string | null;
-            /** Node Provider */
-            node_provider?: string | null;
-            /** Output */
-            output?: string | null;
-            /** Previous Version */
-            previous_version?: string | null;
-            /** Success */
-            success: boolean;
-            /** Version */
-            version?: string | null;
         };
         /** UnavailableInclude */
         UnavailableInclude: {
@@ -8280,69 +8190,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostResourceTelemetryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    ensure_host_tools_api_hosts__host_id__tools_ensure_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                host_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HostToolEnsureJobRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_host_tool_ensure_job_api_hosts__host_id__tools_ensure_jobs__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                host_id: string;
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HostToolEnsureJobRead"];
                 };
             };
             /** @description Validation Error */

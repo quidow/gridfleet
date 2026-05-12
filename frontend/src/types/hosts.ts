@@ -66,9 +66,6 @@ export type HostResourceTelemetry = Omit<Schemas['HostResourceTelemetryResponse'
   samples: HostResourceSample[];
 };
 export type HostToolStatus = Schemas['HostToolStatusRead'];
-export type ToolEnsureResultItem = Schemas['ToolEnsureResultItemRead'];
-export type HostToolEnsureResult = Schemas['HostToolEnsureResultRead'];
-export type HostToolEnsureJob = Schemas['HostToolEnsureJobRead'];
 export type HostCreate = Schemas['HostCreate'];
 export type DiscoveredDevice = Omit<Schemas['DiscoveredDevice'], 'platform_label' | 'readiness_state'> & {
   platform_label: string | null;

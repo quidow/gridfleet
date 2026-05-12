@@ -2,7 +2,7 @@ const PREREQUISITE_DESCRIPTIONS: Record<string, string> = {
   adb: 'Required for Android mobile, Android TV, and Fire TV devices.',
   appium: 'Required to run Appium drivers and managed nodes.',
   go_ios: 'Required for iOS real-device battery telemetry.',
-  java: 'Required for Selenium Grid relay nodes and Android driver build tools.',
+  java: 'Required for Android driver build tools.',
   xcodebuild: 'Required for iOS and tvOS automation on macOS.',
 };
 
