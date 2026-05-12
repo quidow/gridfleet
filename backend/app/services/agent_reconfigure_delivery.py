@@ -73,3 +73,21 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object) -> Non
             continue
         row.delivered_at = datetime.now(UTC)
         await db.commit()
+
+
+async def deliver_pending_agent_reconfigures(db: AsyncSession, *, limit: int = 100) -> None:
+    device_ids = (
+        (
+            await db.execute(
+                select(AgentReconfigureOutbox.device_id)
+                .where(AgentReconfigureOutbox.delivered_at.is_(None))
+                .group_by(AgentReconfigureOutbox.device_id)
+                .order_by(func.min(AgentReconfigureOutbox.created_at))
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for device_id in device_ids:
+        await deliver_agent_reconfigures(db, device_id)

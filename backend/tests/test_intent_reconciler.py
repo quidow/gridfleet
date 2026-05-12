@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
+from app.errors import AgentUnreachableError
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device_intent import DeviceIntent
@@ -187,6 +188,57 @@ async def test_expired_running_metadata_change_is_delivered(
     )
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert outbox.delivered_at is not None
+
+
+async def test_pending_reconfigure_from_expired_last_intent_is_retried(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="expired-retry")
+    node = await _seed_node(db_session, device.id, generation=4)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    node.accepting_new_sessions = False
+    await db_session.commit()
+    service = IntentService(db_session)
+    intent = await service.register_intent(
+        device_id=device.id,
+        source="expired:grid:block",
+        axis=GRID_ROUTING,
+        payload={"accepting_new_sessions": False, "priority": 90},
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        reason="expired block",
+    )
+    await db_session.commit()
+    await _reconcile_dirty_devices(db_session, limit=10)
+    intent.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+    reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
+    monkeypatch.setattr("app.services.agent_operations.agent_appium_reconfigure", reconfigure)
+    monkeypatch.setattr("app.services.intent_reconciler.assert_current_leader", AsyncMock())
+
+    await _reconcile_expired_intents(db_session)
+
+    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    dirty_rows = (await db_session.execute(select(DeviceIntentDirty))).scalars().all()
+    intents = (
+        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    )
+    assert outbox.delivered_at is None
+    assert outbox.delivery_attempts == 1
+    assert dirty_rows == []
+    assert intents == []
+
+    await run_device_intent_reconciler_once(db_session, cycle=1)
+
+    await db_session.refresh(outbox)
+    assert outbox.delivered_at is not None
+    assert outbox.delivery_attempts == 1
+    assert reconfigure.await_count == 2
 
 
 async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(

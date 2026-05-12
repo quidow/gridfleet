@@ -18,7 +18,7 @@ from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.device_reservation import DeviceReservation
 from app.observability import get_logger, observe_background_loop
 from app.services import device_locking
-from app.services.agent_reconfigure_delivery import deliver_agent_reconfigures
+from app.services.agent_reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.services.device_event_service import record_event
@@ -67,6 +67,7 @@ async def device_intent_reconciler_loop() -> None:
 async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> None:
     await assert_current_leader(db)
     full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
+    await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
     if cycle % full_scan_every == 0:
         await _reconcile_all_devices_once(db)
