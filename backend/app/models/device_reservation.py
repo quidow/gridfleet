@@ -4,8 +4,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID, ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -25,6 +25,13 @@ class DeviceReservation(Base):
             "device_id",
             unique=True,
             postgresql_where=text("released_at IS NULL"),
+        ),
+        ExcludeConstraint(
+            ("device_id", "="),
+            ("excluded_window", "&&"),
+            name="ex_device_reservations_device_excluded_window",
+            using="gist",
+            where=text("excluded = true AND excluded_window IS NOT NULL"),
         ),
     )
 
@@ -46,6 +53,18 @@ class DeviceReservation(Base):
     exclusion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     excluded_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    excluded_window: Mapped[Any | None] = mapped_column(
+        TSTZRANGE,
+        Computed(
+            "CASE "
+            "WHEN excluded_at IS NOT NULL AND excluded_until IS NOT NULL "
+            "THEN tstzrange(excluded_at, excluded_until, '[)') "
+            "ELSE NULL "
+            "END",
+            persisted=True,
+        ),
+        nullable=True,
+    )
     cooldown_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

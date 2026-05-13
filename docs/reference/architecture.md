@@ -40,6 +40,10 @@ API `effective_state` as the derived read model.
 - `tags` and hardware detections are JSON fields attached to the `Device` model.
 - Process configurations use `GRIDFLEET_` prefixed env vars, while the device configuration mostly delegates to a dynamic Database Settings Registry.
 
+PostgreSQL 18-specific primitives are part of the backend contract. Append-heavy internal rows use database-side UUIDv7 defaults for locality-friendly IDs. Queryable JSON payloads use JSONB with targeted GIN indexes. Device search uses PostgreSQL full-text search over operator-visible identity fields. Reservation cooldown overlap is enforced with a GiST exclusion constraint over a generated `tstzrange`. JSONB fields that are read as whole payloads, such as `software_versions`, job payloads, and event details, intentionally do not have GIN indexes until code paths query inside them.
+
+The PostgreSQL 18 migration is a fresh baseline. Environments that have already run the squashed baseline must rebuild or be migrated manually; editing the baseline does not apply these changes to an already-stamped database.
+
 ## 2. Host Agent 
 
 Agents run on physical lab hosts or VMs where devices are attached. Unlike the centralized Backend, Agents run on the 'edge' and govern physical connections.

@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -21,8 +21,8 @@ class ConfigAuditLog(Base):
     device_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    previous_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    new_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    previous_config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    new_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

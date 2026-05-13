@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import Select, asc, case, desc, func, or_, select
+from sqlalchemy import Select, asc, case, desc, func, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +16,7 @@ from app.models.device import (
     DeviceOperationalState,
     DeviceType,
     HardwareHealthStatus,
+    device_search_vector_expression,
 )
 from app.models.host import Host
 from app.observability import sanitize_log_value
@@ -173,17 +174,10 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
     if filters.hardware_health_status is not None:
         stmt = stmt.where(Device.hardware_health_status == filters.hardware_health_status)
     if filters.tags:
-        for key, value in filters.tags.items():
-            stmt = stmt.where(Device.tags[key].astext == value)
+        stmt = stmt.where(Device.tags.contains(filters.tags))
     if filters.search:
-        term = f"%{filters.search}%"
-        stmt = stmt.where(
-            or_(
-                Device.name.ilike(term),
-                Device.identity_value.ilike(term),
-                Device.connection_target.ilike(term),
-            )
-        )
+        query = func.websearch_to_tsquery("simple", filters.search)
+        stmt = stmt.where(device_search_vector_expression().op("@@")(query))
     return stmt
 
 

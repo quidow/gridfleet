@@ -182,6 +182,38 @@ async def test_list_devices(client: AsyncClient, db_session: AsyncSession, defau
     assert all("hardware_telemetry_state" in item for item in data)
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_devices_filters_tags_with_jsonb_containment(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        name="Smoke One",
+        identity_value="jsonb-1",
+        connection_target="jsonb-1",
+        tags={"team": "qa", "lane": "smoke"},
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        name="Smoke Two",
+        identity_value="jsonb-2",
+        connection_target="jsonb-2",
+        tags={"team": "dev", "lane": "smoke"},
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/devices", params={"tags.team": "qa", "tags.lane": "smoke"})
+
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()}
+    assert names == {"Smoke One"}
+
+
 @pytest.mark.asyncio
 async def test_list_devices_filter_platform(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
