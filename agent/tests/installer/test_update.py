@@ -55,7 +55,7 @@ def test_format_update_dry_run_names_uv_and_restart_commands(tmp_path: Path) -> 
     assert "GridFleet Agent update dry run" in output
     # build_upgrade_command returns [bin_path, "tool", "upgrade", package_spec] when uid matches
     assert "tool upgrade gridfleet-agent==0.3.0" in output
-    assert "systemctl restart gridfleet-agent" in output
+    assert "systemctl --user restart gridfleet-agent" in output
     assert "Wait for active local nodes to drain" in output
     assert "http://localhost:5200/agent/health" in output
 
@@ -102,7 +102,7 @@ def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_l
     assert drains == ["http://localhost:5200/agent/health"]
     # commands[0] is the upgrade cmd: [bin_path, "tool", "upgrade", "gridfleet-agent==0.3.0"]
     assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent==0.3.0"]
-    assert commands[1] == ["systemctl", "restart", "gridfleet-agent"]
+    assert commands[1] == ["systemctl", "--user", "restart", "gridfleet-agent"]
 
 
 def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
@@ -129,16 +129,16 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
     assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent"]
 
 
-def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
+def test_update_agent_restarts_launchd_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # operator.uid=0 → _restart_command uses gui/0/com.gridfleet.agent
     operator = _make_operator(tmp_path, uid=0)
     commands: list[list[str]] = []
 
     def record(command: list[str]) -> None:
         commands.append(command)
 
+    monkeypatch.setattr("os.getuid", lambda: 0)
     update_agent(
         config,
         operator=operator,
@@ -154,23 +154,25 @@ def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
     assert commands[1] == ["launchctl", "kickstart", "-k", "gui/0/com.gridfleet.agent"]
 
 
-def test_update_agent_uses_operator_uid_for_launchd_restart_on_macos(tmp_path: Path) -> None:
+def test_update_agent_uses_current_uid_for_launchd_restart_on_macos(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # operator uid is 501 — this is what ends up in the launchctl command
-    operator = OperatorIdentity(login="ops", uid=501, home=tmp_path / "home" / "ops")
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
     commands: list[list[str]] = []
 
     def record(command: list[str]) -> None:
         commands.append(command)
 
+    monkeypatch.setattr("os.getuid", lambda: 501)
     update_agent(
         config,
         operator=operator,
         uv_runtime=uv_runtime,
         to_version=None,
         os_name="Darwin",
-        current_uid=501,
+        current_uid=1001,
         run_command=record,
         drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
