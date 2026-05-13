@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-bookworm
+    image: postgres:18-bookworm
     environment:
       POSTGRES_USER: gridfleet
       POSTGRES_PASSWORD: gridfleet
@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gridfleet"]
       interval: 5s
@@ -70,5 +70,5 @@ services:
       - debug
 
 volumes:
-  pgdata:
+  pgdata18:
   driver-pack-storage:

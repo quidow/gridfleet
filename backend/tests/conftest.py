@@ -35,6 +35,7 @@ def _test_database_url(base_database_url: str, worker_id: str | None = None) -> 
 
 
 TEST_DATABASE_URL = _test_database_url(settings.database_url, os.getenv("PYTEST_XDIST_WORKER"))
+_TEST_DATABASE_READY = False
 
 DB_FIXTURE_NAMES = frozenset(
     {
@@ -92,6 +93,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 @pytest_asyncio.fixture(scope="session")
 async def ensure_test_database() -> None:
     await _ensure_test_database_exists()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def ensure_test_database_for_db_tests(request: pytest.FixtureRequest) -> None:
+    global _TEST_DATABASE_READY
+
+    if request.node.get_closest_marker("db") is None or _TEST_DATABASE_READY:
+        return
+    await _ensure_test_database_exists()
+    _TEST_DATABASE_READY = True
 
 
 @pytest_asyncio.fixture

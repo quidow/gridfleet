@@ -17,7 +17,7 @@ System prerequisites:
 - `uv`
 - Node.js 24
 - Docker with `docker compose`
-- PostgreSQL 16+ for backend tests, either local or through Docker
+- PostgreSQL 18 for backend tests, either local or through Docker
 
 Bring up the local stack:
 

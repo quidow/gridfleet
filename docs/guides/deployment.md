@@ -143,6 +143,15 @@ The installer writes a LaunchAgent at `~/Library/LaunchAgents/com.gridfleet.agen
 
 ## 4. Backup And Restore
 
+Production Compose uses the official PostgreSQL 18 image. PostgreSQL 18 stores
+container data under `/var/lib/postgresql/<major>/docker`, so the Compose volume
+is mounted at `/var/lib/postgresql`. For existing PostgreSQL 16 deployments, take
+a backup before changing the running stack and restore it into a fresh PostgreSQL
+18 volume; do not point PostgreSQL 18 directly at an old PostgreSQL 16 data
+directory. The Alembic history is also squashed to a PostgreSQL 18 baseline, so
+the upgraded application expects a fresh database schema rather than applying the
+new migration chain on top of a previously migrated database.
+
 ### Create A Backup
 
 From the repo root on the manager host:

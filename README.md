@@ -152,7 +152,7 @@ Prerequisites:
 - `uv`
 - Node.js 24
 - Docker with `docker compose`
-- PostgreSQL 16+ for backend tests, or the Docker Postgres service
+- PostgreSQL 18 for backend tests, or the Docker Postgres service
 
 Backend:
 
