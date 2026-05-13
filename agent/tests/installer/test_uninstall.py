@@ -21,6 +21,7 @@ def _make_config(tmp_path: Path) -> InstallConfig:
 def test_uninstall_linux_stops_disables_removes_files_and_reloads(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)

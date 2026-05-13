@@ -102,6 +102,7 @@ def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.
 def test_install_no_start_writes_config_runtime_dir_and_service(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user)
@@ -131,6 +132,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(
 def test_install_no_start_aligns_linux_writable_paths_to_service_user(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
@@ -449,6 +451,7 @@ def test_poll_agent_health_times_out_after_failed_attempts() -> None:
 def test_install_no_start_uses_operator_identity_for_systemd_user(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     from agent_app.installer.identity import OperatorIdentity
 

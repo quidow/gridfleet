@@ -36,6 +36,7 @@ def test_parse_config_env_skips_comments_and_blank_lines(tmp_path: Path) -> None
 
 
 def test_collect_status_reads_files_service_state_and_health(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     Path(config.config_dir).mkdir(parents=True)
