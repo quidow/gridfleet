@@ -183,16 +183,19 @@ def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
 
 
 def _start_service(
-    os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None], uid: int | None = None
+    os_name: str,
+    service_file: Path,
+    *,
+    run_command: Callable[[list[str]], None],
 ) -> None:
     if os_name == "Linux":
-        run_command(["systemctl", "daemon-reload"])
-        run_command(["systemctl", "enable", "gridfleet-agent"])
-        run_command(["systemctl", "start", "gridfleet-agent"])
+        run_command(["systemctl", "--user", "daemon-reload"])
+        run_command(["systemctl", "--user", "enable", "gridfleet-agent"])
+        run_command(["systemctl", "--user", "start", "gridfleet-agent"])
         return
     if os_name == "Darwin":
-        resolved_uid = _resolve_uid(uid)
-        domain_target = f"gui/{resolved_uid}"
+        uid = os.getuid()
+        domain_target = f"gui/{uid}"
         with contextlib.suppress(RuntimeError):
             run_command(["launchctl", "bootout", f"{domain_target}/com.gridfleet.agent"])
         run_command(["launchctl", "bootstrap", domain_target, str(service_file)])
@@ -295,7 +298,6 @@ def install_with_start(
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
-    uid: int | None = None,
 ) -> InstallResult:
     resolved_os = os_name or platform.system()
     result = install_no_start(
@@ -306,8 +308,7 @@ def install_with_start(
         executable=executable,
         download=download,
     )
-    resolved_uid = uid if uid is not None else operator.uid
-    _start_service(resolved_os, result.service_file, run_command=run_command, uid=resolved_uid)
+    _start_service(resolved_os, result.service_file, run_command=run_command)
 
     api_auth = (
         (config.api_auth_username, config.api_auth_password)

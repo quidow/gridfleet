@@ -234,9 +234,9 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
     assert result.started is True
     assert result.health == HealthCheckResult(ok=True, message="healthy")
     assert commands == [
-        ["systemctl", "daemon-reload"],
-        ["systemctl", "enable", "gridfleet-agent"],
-        ["systemctl", "start", "gridfleet-agent"],
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "gridfleet-agent"],
+        ["systemctl", "--user", "start", "gridfleet-agent"],
     ]
     assert health_urls == ["http://localhost:5200/agent/health"]
 
@@ -296,6 +296,7 @@ def test_install_with_start_skips_manager_registration_when_health_fails(tmp_pat
 
 def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr("os.getuid", lambda: 1729)
     config = _make_config(tmp_path)
     operator = _make_operator(login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
@@ -312,14 +313,13 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytes
         download=lambda _url, dest: dest.write_text("selenium"),
         run_command=lambda command: commands.append(command),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=False, message="health check timed out"),
-        uid=0,
     )
 
     assert result.started is True
     assert result.health == HealthCheckResult(ok=False, message="health check timed out")
     assert commands == [
-        ["launchctl", "bootout", "gui/0/com.gridfleet.agent"],
-        ["launchctl", "bootstrap", "gui/0", str(result.service_file)],
+        ["launchctl", "bootout", "gui/1729/com.gridfleet.agent"],
+        ["launchctl", "bootstrap", "gui/1729", str(result.service_file)],
     ]
 
 
@@ -661,3 +661,45 @@ def test_install_with_start_omits_auth_when_unset(tmp_path: Path, os_name: str) 
     )
 
     assert captured["auth"] is None
+
+
+def test_start_service_linux_invokes_systemctl_user(tmp_path: Path) -> None:
+    from agent_app.installer.install import _start_service
+
+    service_file = tmp_path / "systemd/user/gridfleet-agent.service"
+    service_file.parent.mkdir(parents=True)
+    service_file.write_text("")
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> None:
+        calls.append(cmd)
+
+    _start_service("Linux", service_file, run_command=fake_run)
+
+    assert calls == [
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "gridfleet-agent"],
+        ["systemctl", "--user", "start", "gridfleet-agent"],
+    ]
+
+
+def test_start_service_darwin_uses_current_uid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import _start_service
+
+    service_file = tmp_path / "com.gridfleet.agent.plist"
+    service_file.write_text("")
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> None:
+        calls.append(cmd)
+
+    monkeypatch.setattr("os.getuid", lambda: 1729)
+
+    _start_service("Darwin", service_file, run_command=fake_run)
+
+    assert calls == [
+        ["launchctl", "bootout", "gui/1729/com.gridfleet.agent"],
+        ["launchctl", "bootstrap", "gui/1729", str(service_file)],
+    ]
