@@ -248,11 +248,15 @@ async def test_record_and_reset_start_failure_state(
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
     assert device.lifecycle_policy_state["backoff_until"] is not None
+    assert device.lifecycle_policy_state["last_failure_source"] == "appium_reconciler"
+    assert device.lifecycle_policy_state["last_failure_reason"] == "timeout"
 
     await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
+    assert device.lifecycle_policy_state.get("last_failure_source") is None
+    assert device.lifecycle_policy_state.get("last_failure_reason") is None
 
     monkeypatch.setattr("app.services.appium_reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
     await appium_reconciler._record_start_failure(
@@ -261,6 +265,68 @@ async def test_record_and_reset_start_failure_state(
         require_leader=False,
         session_scope=_scope,
     )
+
+
+async def test_reset_start_failure_noop_for_non_reconciler_source(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Non-Reconciler Failure Device",
+        identity_value="non-reconciler-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    device.lifecycle_policy_state = {
+        "last_failure_source": "connectivity",
+        "last_failure_reason": "ping_timeout",
+    }
+    await db_session.commit()
+
+    row = _desired_row(device_id=device.id)
+
+    @asynccontextmanager
+    async def _scope() -> AsyncSession:
+        yield db_session
+
+    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("last_failure_source") == "connectivity"
+    assert device.lifecycle_policy_state.get("last_failure_reason") == "ping_timeout"
+
+
+async def test_reset_start_failure_clears_orphaned_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Orphaned Reason Device",
+        identity_value="orphaned-reason-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    device.lifecycle_policy_state = {
+        "last_failure_source": None,
+        "last_failure_reason": "ghost_error",
+    }
+    await db_session.commit()
+
+    row = _desired_row(device_id=device.id)
+
+    @asynccontextmanager
+    async def _scope() -> AsyncSession:
+        yield db_session
+
+    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("last_failure_source") is None
+    assert device.lifecycle_policy_state.get("last_failure_reason") is None
 
 
 async def test_clear_transition_token_and_touch_noop(
