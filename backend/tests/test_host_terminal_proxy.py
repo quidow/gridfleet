@@ -4,7 +4,7 @@ import json
 import pytest
 import websockets
 
-from app.services.host_terminal_proxy import proxy_terminal_session
+from app.services.host_terminal_proxy import BrowserSocket, proxy_terminal_session
 
 
 class _FakeBrowser:
@@ -21,6 +21,22 @@ class _FakeBrowser:
 
     async def close(self, code: int = 1000) -> None:
         self.closed_code = code
+
+
+class _BareBrowserSocket(BrowserSocket):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_browser_socket_protocol_default_methods_raise() -> None:
+    bare = _BareBrowserSocket()
+
+    with pytest.raises(NotImplementedError):
+        await bare.send_text("data")
+    with pytest.raises(NotImplementedError):
+        await bare.receive_text()
+    with pytest.raises(NotImplementedError):
+        await bare.close()
 
 
 @pytest.mark.asyncio
@@ -98,6 +114,30 @@ async def test_proxy_returns_browser_disconnect_when_browser_closes_first(
             timeout=5.0,
         )
         assert reason == "browser_disconnect"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_proxy_decodes_binary_agent_frames(
+    unused_tcp_port: int,
+) -> None:
+    async def binary_agent(ws: websockets.ServerConnection) -> None:
+        await ws.send(b"ready-\xff")
+
+    server = await websockets.serve(binary_agent, "127.0.0.1", unused_tcp_port)
+    try:
+        browser = _FakeBrowser()
+        agent_url = f"ws://127.0.0.1:{unused_tcp_port}"
+
+        reason = await asyncio.wait_for(
+            proxy_terminal_session(browser=browser, agent_url=agent_url, agent_token="tkn"),
+            timeout=5.0,
+        )
+
+        assert reason == "agent_disconnect"
+        assert browser.sent == ["ready-\ufffd"]
     finally:
         server.close()
         await server.wait_closed()

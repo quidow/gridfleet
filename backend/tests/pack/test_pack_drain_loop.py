@@ -1,7 +1,13 @@
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.driver_pack import DriverPack, PackState
+from app.services import pack_drain
 from app.services.pack_drain import complete_draining_packs_once
 
 pytestmark = pytest.mark.asyncio
@@ -25,3 +31,32 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
     refreshed = await db_session.get(DriverPack, "draining-pack")
     assert refreshed is not None
     assert refreshed.state == PackState.disabled
+
+
+async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
+    @asynccontextmanager
+    async def cycle() -> AsyncIterator[None]:
+        yield
+
+    class Observation:
+        def cycle(self) -> AbstractAsyncContextManager[None]:
+            return cycle()
+
+    class SessionScope:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch("app.services.pack_drain.observe_background_loop", new=Mock(return_value=Observation())),
+        patch("app.services.pack_drain.async_session", new=Mock(return_value=SessionScope())),
+        patch("app.services.pack_drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
+        patch("app.services.pack_drain.logger.info") as info,
+        patch("app.services.pack_drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await pack_drain.pack_drain_loop()
+
+    info.assert_called_once_with("Completed draining driver packs: %s", "pack-a")
