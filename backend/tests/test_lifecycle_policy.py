@@ -1527,6 +1527,11 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         "run_session_viability_probe",
         AsyncMock(return_value={"status": "passed"}),
     )
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "wait_for_node_running",
+        AsyncMock(return_value=None),
+    )
 
     assert await attempt_auto_recovery(db, device, source="device_checks", reason="reconnected") is True  # type: ignore[arg-type]
     assert db.added

@@ -250,6 +250,13 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         # actions (maintenance enter, delete) can preempt — see
         # `tests/test_concurrency_reconnect_restart_lock.py`. Locking at the
         # router would serialise these and break preemption.
+        #
+        # Clear stale session-viability failures so health checks can evaluate
+        # the device after the node restarts.
+        device.session_viability_status = None
+        device.session_viability_error = None
+        device.recovery_allowed = True
+        device.recovery_blocked_reason = None
         try:
             node = device.appium_node
             if node is None or not node.observed_running:
