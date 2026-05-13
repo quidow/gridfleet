@@ -660,11 +660,28 @@ def upgrade() -> None:
         sa.Column("exclusion_reason", sa.String(), nullable=True),
         sa.Column("excluded_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("excluded_until", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "excluded_window",
+            postgresql.TSTZRANGE(),
+            sa.Computed(
+                "CASE WHEN excluded_at IS NOT NULL AND excluded_until IS NOT NULL "
+                "THEN tstzrange(excluded_at, excluded_until, '[)') ELSE NULL END",
+                persisted=True,
+            ),
+            nullable=True,
+        ),
         sa.Column("cooldown_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("released_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["run_id"], ["test_runs.id"], ondelete="CASCADE"),
+        postgresql.ExcludeConstraint(
+            ("device_id", "="),
+            ("excluded_window", "&&"),
+            name="ex_device_reservations_device_excluded_window",
+            using="gist",
+            where=sa.text("excluded = true AND excluded_window IS NOT NULL"),
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_device_reservations_device_id"), "device_reservations", ["device_id"], unique=False)
