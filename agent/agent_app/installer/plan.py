@@ -312,6 +312,9 @@ WantedBy=default.target
 
 def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str:
     env_entries = _launchd_env_entries(config, discovery)
+    log_dir = Path.home() / "Library" / "Logs" / "gridfleet-agent"
+    stdout_path = escape(str(log_dir / "stdout.log"))
+    stderr_path = escape(str(log_dir / "stderr.log"))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -320,7 +323,7 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
     <string>com.gridfleet.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{config.resolved_bin_path}</string>
+        <string>{escape(config.resolved_bin_path)}</string>
         <string>serve</string>
         <string>--host</string>
         <string>0.0.0.0</string>
@@ -328,7 +331,7 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
         <string>{config.port}</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>{config.agent_dir}</string>
+    <string>{escape(config.agent_dir)}</string>
     <key>EnvironmentVariables</key>
     <dict>
 {env_entries}
@@ -338,9 +341,9 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/gridfleet-agent.log</string>
+    <string>{stdout_path}</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/gridfleet-agent.err</string>
+    <string>{stderr_path}</string>
 </dict>
 </plist>
 """

@@ -371,6 +371,24 @@ def test_default_install_config_darwin_uses_application_support(
     assert config.config_dir == str(tmp_path / "Library/Application Support/gridfleet-agent/config")
 
 
+def test_render_launchd_plist_uses_library_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "Library/Application Support/gridfleet-agent"),
+        config_dir=str(tmp_path / "Library/Application Support/gridfleet-agent/config"),
+        bin_path=str(tmp_path / "Library/Application Support/gridfleet-agent/venv/bin/gridfleet-agent"),
+    )
+    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+
+    rendered = render_launchd_plist(config, discovery)
+
+    expected_log_dir = tmp_path / "Library/Logs/gridfleet-agent"
+    assert f"<string>{expected_log_dir}/stdout.log</string>" in rendered
+    assert f"<string>{expected_log_dir}/stderr.log</string>" in rendered
+    assert "/tmp/gridfleet-agent.log" not in rendered
+    assert "/tmp/gridfleet-agent.err" not in rendered
+
+
 def test_default_install_config_rejects_unknown_os() -> None:
     from agent_app.installer.plan import default_install_config
 
