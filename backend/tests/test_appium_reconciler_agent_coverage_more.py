@@ -520,6 +520,44 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     set_extra.assert_awaited_once_with(db, node_id=node.id, capability_key="custom:flag", value="yes")
 
 
+async def test_mark_node_started_clears_stale_reconciler_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await _loaded_device(db_session, db_host, "mark-start-clear")
+    device.lifecycle_policy_state = {
+        "last_failure_source": "appium_reconciler",
+        "last_failure_reason": "http_error",
+    }
+    await db_session.commit()
+
+    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        node_agent.appium_node_locking,
+        "lock_appium_node_for_device",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
+    monkeypatch.setattr(node_agent, "ready_operational_state", AsyncMock(return_value=DeviceOperationalState.available))
+    monkeypatch.setattr(node_agent, "set_operational_state", AsyncMock())
+    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+
+    await node_agent.mark_node_started(
+        db_session,
+        device,
+        port=4723,
+        pid=123,
+    )
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    assert reloaded.lifecycle_policy_state is not None
+    assert reloaded.lifecycle_policy_state.get("last_failure_source") is None
+    assert reloaded.lifecycle_policy_state.get("last_failure_reason") is None
+
+
 async def test_pack_cap_helpers_cover_empty_and_stereotype_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     device = SimpleNamespace(
         pack_id="pack",

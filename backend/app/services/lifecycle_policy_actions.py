@@ -97,9 +97,16 @@ def record_reconciler_start_failure_state(
 
 def reset_reconciler_start_failure_state(device: Device) -> None:
     fresh = policy_state(device)
+    original = dict(fresh)
+    if fresh.get("last_failure_source") == "appium_reconciler" or (
+        fresh.get("last_failure_reason") and not fresh.get("last_failure_source")
+    ):
+        fresh["last_failure_source"] = None
+        fresh["last_failure_reason"] = None
     fresh["recovery_backoff_attempts"] = 0
     fresh["backoff_until"] = None
-    write_state(device, fresh)
+    if fresh != original:
+        write_state(device, fresh)
 
 
 def auto_stopped_summary_state(

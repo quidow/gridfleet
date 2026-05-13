@@ -814,7 +814,14 @@ async def _reset_start_failure(
         if device is None:
             return
         current = lifecycle_policy_state(device)
-        if not current.get("recovery_backoff_attempts") and not current.get("backoff_until"):
+        has_reconciler_failure = current.get("last_failure_source") == "appium_reconciler"
+        has_orphaned_reason = bool(current.get("last_failure_reason") and not current.get("last_failure_source"))
+        if (
+            not current.get("recovery_backoff_attempts")
+            and not current.get("backoff_until")
+            and not has_reconciler_failure
+            and not has_orphaned_reason
+        ):
             return
         reset_reconciler_start_failure_state(device)
         await db.commit()

@@ -43,6 +43,7 @@ from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.event_bus import queue_event_for_session
+from app.services.lifecycle_policy_actions import reset_reconciler_start_failure_state
 from app.services.lifecycle_policy_state import (
     record_manual_recovered,
 )
@@ -183,6 +184,7 @@ async def mark_node_started(
         device,
         mark_offline=False,
     )
+    reset_reconciler_start_failure_state(device)
     if clear_transition:
         node.transition_token = None
         node.transition_deadline = None
