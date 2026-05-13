@@ -72,7 +72,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_GRID_NODE_HEARTBEAT_SEC` | `5` | agent process | Seconds between Python Grid Node `NODE_STATUS` heartbeats. |
 | `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC` | `300` | agent process | Maximum session age before the Python Grid Node asks Appium to delete the session and frees the slot. |
 | `AGENT_GRID_NODE_PROXY_TIMEOUT_SEC` | `60` | agent process | Upstream Appium request timeout for proxied Grid Node HTTP commands. |
-| `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). Must be writable by the agent user; the Python installer creates it during `gridfleet-agent install`. |
+| `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
 | `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First Python Grid Node HTTP port assigned on the host |
@@ -89,8 +89,7 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `VERSION` | `latest` | bootstrap wrapper | Optional PyPI version pinned via `uv tool install gridfleet-agent==VERSION` by `scripts/install-agent.sh` |
-| `--user` | current shell user | installer CLI | Service account / file owner |
+| `VERSION` | `latest` | bootstrap wrapper | Optional PyPI version pinned via `uv pip install --python <venv_python> gridfleet-agent==VERSION` by `scripts/install-agent.sh` |
 | `--port` | `5100` | installer CLI | Convenience input that becomes process `AGENT_AGENT_PORT` |
 | `--manager-url` | `http://localhost:8000` | installer CLI | Written into the generated service env/config |
 | `--manager-auth-username` | unset | installer CLI | Optional machine-auth username written into the generated service env/config |

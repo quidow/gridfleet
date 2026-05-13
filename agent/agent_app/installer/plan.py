@@ -214,6 +214,7 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
         f"AGENT_GRID_PUBLISH_URL={config.grid_publish_url}",
         f"AGENT_GRID_SUBSCRIBE_URL={config.grid_subscribe_url}",
         f"AGENT_GRID_NODE_PORT_START={config.grid_node_port_start}",
+        f"AGENT_RUNTIME_ROOT={config.agent_dir}/runtimes",
         f"PATH={build_service_path(discovery)}",
     ]
     if discovery.android_home:

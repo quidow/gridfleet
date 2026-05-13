@@ -80,15 +80,6 @@ def validate_dedicated_venv(
         )
 
 
-def _resolve_uid(uid: int | None = None) -> int:
-    if uid is not None:
-        return uid
-    sudo_uid = os.environ.get("SUDO_UID")
-    if sudo_uid and sudo_uid.isdecimal():
-        return int(sudo_uid)
-    return os.getuid()
-
-
 _LEGACY_PATHS: tuple[Path, ...] = (
     Path("/opt/gridfleet-agent"),
     Path("/etc/gridfleet-agent/config.env"),
