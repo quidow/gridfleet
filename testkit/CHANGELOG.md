@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.9.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.0...gridfleet-testkit-v0.9.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **testkit:** align release policy with commitlint ([5dd8220](https://github.com/quidow/gridfleet/commit/5dd822010460e994f2e3c5b6676a69bed05678ed))
+
 ## [0.9.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.8.0...gridfleet-testkit-v0.9.0) (2026-05-12)
 
 
