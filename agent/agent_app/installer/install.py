@@ -87,6 +87,36 @@ def _resolve_uid(uid: int | None = None) -> int:
     return os.getuid()
 
 
+_LEGACY_PATHS: tuple[Path, ...] = (
+    Path("/opt/gridfleet-agent"),
+    Path("/etc/gridfleet-agent/config.env"),
+    Path("/etc/systemd/system/gridfleet-agent.service"),
+)
+
+_LEGACY_UNINSTALL_URL = "https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/uninstall-legacy-agent.sh"
+
+
+def detect_legacy_install() -> Path | None:
+    """Return the first legacy artefact path that exists, or None."""
+    for candidate in _LEGACY_PATHS:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+class LegacyInstallDetectedError(RuntimeError):
+    """Raised when /opt or /etc artefacts from a pre-user-scope install remain."""
+
+    def __init__(self, path: Path) -> None:
+        message = (
+            f"Legacy root-scope install detected at {path}. "
+            f"Run `curl -LsSf {_LEGACY_UNINSTALL_URL} | sudo sh` once to remove the root-owned files, "
+            "then re-run this installer without sudo."
+        )
+        super().__init__(message)
+        self.path = path
+
+
 def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
     del operator  # SUDO_USER fallbacks gone; operator is the calling user.
     if os_name == "Linux":
@@ -121,6 +151,10 @@ def install_no_start(
     config_dir = Path(config.config_dir)
     runtime_dir = agent_dir / "runtimes"
     service_file = _service_file_path(config, resolved_os, operator)
+
+    legacy = detect_legacy_install()
+    if legacy is not None:
+        raise LegacyInstallDetectedError(legacy)
 
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)

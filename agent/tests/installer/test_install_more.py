@@ -5,6 +5,7 @@ from typing import Never
 
 import pytest
 
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import (
     _host_list_contains,
     _manager_hosts_url,
@@ -14,7 +15,7 @@ from agent_app.installer.install import (
     poll_manager_registration,
     resolve_bin_path,
 )
-from agent_app.installer.plan import InstallConfig
+from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
 
 def test_resolve_bin_path_with_none_uses_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,3 +186,56 @@ def test_validate_dedicated_venv_rejects_other_path(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="must run from"):
         validate_dedicated_venv(config, executable=other)
+
+
+LEGACY_MARKERS = [
+    Path("/opt/gridfleet-agent"),
+    Path("/etc/gridfleet-agent/config.env"),
+    Path("/etc/systemd/system/gridfleet-agent.service"),
+]
+
+
+def test_detect_legacy_install_returns_first_existing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import detect_legacy_install
+
+    fake_paths = {marker: (tmp_path / marker.name) for marker in LEGACY_MARKERS}
+    # Only the second marker exists.
+    second = fake_paths[LEGACY_MARKERS[1]]
+    second.parent.mkdir(parents=True, exist_ok=True)
+    second.write_text("")
+    monkeypatch.setattr(
+        "agent_app.installer.install._LEGACY_PATHS",
+        tuple(fake_paths.values()),
+    )
+
+    found = detect_legacy_install()
+
+    assert found == second
+
+
+def test_detect_legacy_install_returns_none_when_clean(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import detect_legacy_install
+
+    monkeypatch.setattr(
+        "agent_app.installer.install._LEGACY_PATHS",
+        (tmp_path / "nope", tmp_path / "also-nope"),
+    )
+
+    assert detect_legacy_install() is None
+
+
+def test_install_no_start_aborts_on_legacy_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import LegacyInstallDetectedError, install_no_start
+    from agent_app.installer.plan import default_install_config
+
+    fake_legacy = tmp_path / "fake-opt-gridfleet-agent"
+    fake_legacy.mkdir()
+    monkeypatch.setattr("agent_app.installer.install._LEGACY_PATHS", (fake_legacy,))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))  # type: ignore[arg-type]
+
+    config = default_install_config("Linux")
+    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    operator = OperatorIdentity(login="anyone", uid=4242, home=tmp_path / "home")
+
+    with pytest.raises(LegacyInstallDetectedError, match="Legacy root-scope install"):
+        install_no_start(config, discovery, operator=operator, os_name="Linux")
