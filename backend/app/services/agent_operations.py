@@ -243,35 +243,6 @@ async def appium_status(
     return _as_dict(response.json())
 
 
-async def appium_probe_session(
-    host: str,
-    agent_port: int,
-    port: int,
-    *,
-    capabilities: dict[str, Any],
-    timeout_sec: int,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int | None = None,
-) -> tuple[bool, str | None]:
-    response = await _send_request(
-        "POST",
-        f"{agent_base_url(host, agent_port)}/agent/appium/{port}/probe-session",
-        endpoint="appium_probe_session",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body={"capabilities": capabilities, "timeout_sec": timeout_sec},
-        timeout=timeout if timeout is not None else timeout_sec,
-    )
-    if response.status_code != 200:
-        return False, _response_error_detail(response) or f"Probe session failed (HTTP {response.status_code})"
-
-    payload = _as_dict(response.json())
-    if payload is None or payload.get("ok") is not True:
-        return False, "Probe session returned an invalid payload"
-    return True, None
-
-
 async def appium_start(
     agent_base: str,
     *,

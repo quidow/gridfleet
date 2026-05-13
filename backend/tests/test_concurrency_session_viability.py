@@ -62,12 +62,7 @@ async def test_session_viability_restore_handles_external_reservation(
     probe_started = asyncio.Event()
     external_done = asyncio.Event()
 
-    async def fake_probe(
-        db: AsyncSession,
-        device_arg: Device,
-        capabilities: dict[str, Any],
-        timeout_sec: int,
-    ) -> tuple[bool, str | None]:
+    async def fake_probe(capabilities: dict[str, Any], timeout_sec: int) -> tuple[bool, str | None]:
         probe_started.set()
         await external_done.wait()
         return True, None
@@ -78,7 +73,7 @@ async def test_session_viability_restore_handles_external_reservation(
     async def fake_get_caps(*_a: object, **_kw: object) -> dict[str, Any]:
         return {"platformName": "Android"}
 
-    monkeypatch.setattr(session_viability, "probe_session_via_agent_node", fake_probe)
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", fake_get_caps)
 
