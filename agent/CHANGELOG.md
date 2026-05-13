@@ -2,6 +2,26 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.9.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.8.0...gridfleet-agent-v0.9.0) (2026-05-13)
+
+
+### Features
+
+* **agent:** support live appium node reconfiguration ([36186a1](https://github.com/quidow/gridfleet/commit/36186a1dbb859a5d29e80223d06215cd868daed8))
+* **main:** add device orchestration intent registry ([b42b3d4](https://github.com/quidow/gridfleet/commit/b42b3d47e96e1ee1257bdd6f7676f027eed6de57))
+
+
+### Bug Fixes
+
+* **agent:** address code scanning review comments ([e816232](https://github.com/quidow/gridfleet/commit/e8162324a60776574a73ce852f0ef9ec5d186317))
+* **agent:** stop advertising global appium capability ([546890a](https://github.com/quidow/gridfleet/commit/546890adc68a822bab1dc260c7d0b00b8f21413d))
+* **main:** satisfy intent registry verification ([5b0a097](https://github.com/quidow/gridfleet/commit/5b0a097788e2cd128d0e9d5721fe12602785b4bb))
+
+
+### Dependencies
+
+* **deps:** bump mypy in /agent ([#195](https://github.com/quidow/gridfleet/issues/195)) ([1317e59](https://github.com/quidow/gridfleet/commit/1317e59bbd4ae6969ed3c717c24b43dbfefec722))
+
 ## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.7.0...gridfleet-agent-v0.8.0) (2026-05-12)
 
 
