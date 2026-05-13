@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import getpass
 import os
 import platform
 import shutil
@@ -54,6 +55,7 @@ class InstallResult:
     started: bool
     health: HealthCheckResult | None = None
     registration: RegistrationCheckResult | None = None
+    linger_warning: str | None = None
 
 
 def resolve_bin_path(*, executable: Path | None = None) -> str:
@@ -189,6 +191,27 @@ def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
+def check_linger(*, run_command: Callable[[list[str]], str] | None = None) -> str | None:
+    """Probe `loginctl show-user --property=Linger` for the current user.
+
+    Returns a warning string if linger is off or unknown, None if linger is on.
+    Never raises — this is best-effort; missing loginctl on non-systemd boxes is fine.
+    """
+    user = getpass.getuser()
+    cmd = ["loginctl", "show-user", user, "--property=Linger"]
+    try:
+        if run_command is None:
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=5)
+            output = result.stdout.strip()
+        else:
+            output = run_command(cmd).strip()
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None  # loginctl missing — not a systemd host.
+    if output == "Linger=yes":
+        return None
+    return f"WARNING: user-instance linger is off. For headless hosts, run: sudo loginctl enable-linger {user}"
+
+
 def _start_service(
     os_name: str,
     service_file: Path,
@@ -305,6 +328,7 @@ def install_with_start(
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
+    linger_check: Callable[[], str | None] = check_linger,
 ) -> InstallResult:
     resolved_os = os_name or platform.system()
     result = install_no_start(
@@ -316,6 +340,8 @@ def install_with_start(
         download=download,
     )
     _start_service(resolved_os, result.service_file, run_command=run_command)
+
+    linger_warning = linger_check() if resolved_os == "Linux" else None
 
     api_auth = (
         (config.api_auth_username, config.api_auth_password)
@@ -332,4 +358,5 @@ def install_with_start(
         started=True,
         health=health,
         registration=registration,
+        linger_warning=linger_warning,
     )

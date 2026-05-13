@@ -239,3 +239,36 @@ def test_install_no_start_aborts_on_legacy_paths(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(LegacyInstallDetectedError, match="Legacy root-scope install"):
         install_no_start(config, discovery, operator=operator, os_name="Linux")
+
+
+def test_check_linger_returns_warning_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    import getpass
+
+    from agent_app.installer.install import check_linger
+
+    captured: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> str:
+        captured.append(cmd)
+        return "Linger=no"
+
+    warning = check_linger(run_command=fake_run)
+
+    user = getpass.getuser()
+    assert captured == [["loginctl", "show-user", user, "--property=Linger"]]
+    assert warning is not None
+    assert "loginctl enable-linger" in warning
+    assert user in warning
+
+
+def test_check_linger_returns_none_when_on() -> None:
+    from agent_app.installer.install import check_linger
+
+    assert check_linger(run_command=lambda _cmd: "Linger=yes") is None
+
+
+def test_check_linger_returns_warning_when_unknown() -> None:
+    from agent_app.installer.install import check_linger
+
+    warning = check_linger(run_command=lambda _cmd: "")
+    assert warning is not None
