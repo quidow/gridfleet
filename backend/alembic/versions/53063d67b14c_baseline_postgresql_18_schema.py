@@ -286,6 +286,25 @@ def upgrade() -> None:
     op.create_index(op.f("ix_devices_identity_value"), "devices", ["identity_value"], unique=False)
     op.create_index("ix_devices_device_config_gin", "devices", ["device_config"], unique=False, postgresql_using="gin")
     op.create_index("ix_devices_pack_platform", "devices", ["pack_id", "platform_id"], unique=False)
+    op.create_index(
+        "ix_devices_search_vector_gin",
+        "devices",
+        [
+            sa.text(
+                "to_tsvector('simple'::regconfig, (((((((((((((((COALESCE(name, ''::character varying)::text || "
+                "' '::text) || COALESCE(identity_value, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(connection_target, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(manufacturer, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(model, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(model_number, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(os_version, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(pack_id, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(platform_id, ''::character varying)::text)"
+            )
+        ],
+        unique=False,
+        postgresql_using="gin",
+    )
     op.create_index("ix_devices_tags_gin", "devices", ["tags"], unique=False, postgresql_using="gin")
     op.create_index("ix_devices_test_data_gin", "devices", ["test_data"], unique=False, postgresql_using="gin")
     op.create_index(
@@ -836,6 +855,7 @@ def downgrade() -> None:
     )
     op.drop_index("ix_devices_test_data_gin", table_name="devices")
     op.drop_index("ix_devices_tags_gin", table_name="devices")
+    op.drop_index("ix_devices_search_vector_gin", table_name="devices")
     op.drop_index("ix_devices_pack_platform", table_name="devices")
     op.drop_index("ix_devices_device_config_gin", table_name="devices")
     op.drop_index(op.f("ix_devices_identity_value"), table_name="devices")

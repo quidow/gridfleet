@@ -79,6 +79,21 @@ class Device(Base):
         Index("ix_devices_tags_gin", "tags", postgresql_using="gin"),
         Index("ix_devices_device_config_gin", "device_config", postgresql_using="gin"),
         Index("ix_devices_test_data_gin", "test_data", postgresql_using="gin"),
+        Index(
+            "ix_devices_search_vector_gin",
+            text(
+                "to_tsvector('simple'::regconfig, (((((((((((((((COALESCE(name, ''::character varying)::text || "
+                "' '::text) || COALESCE(identity_value, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(connection_target, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(manufacturer, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(model, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(model_number, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(os_version, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(pack_id, ''::character varying)::text) || ' '::text) || "
+                "COALESCE(platform_id, ''::character varying)::text)"
+            ),
+            postgresql_using="gin",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
