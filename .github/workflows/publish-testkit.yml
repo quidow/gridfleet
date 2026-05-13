@@ -42,23 +42,23 @@ jobs:
 
       - name: Install dependencies
         working-directory: testkit
-        run: uv sync --extra dev --extra appium --locked
+        run: uv sync --extra dev --locked
 
       - name: Check formatting
         working-directory: testkit
-        run: uv run --locked --extra dev --extra appium ruff format --check gridfleet_testkit/ tests/ examples/
+        run: uv run --locked --extra dev ruff format --check gridfleet_testkit/ tests/ examples/
 
       - name: Lint
         working-directory: testkit
-        run: uv run --locked --extra dev --extra appium ruff check gridfleet_testkit/ tests/ examples/
+        run: uv run --locked --extra dev ruff check gridfleet_testkit/ tests/ examples/
 
       - name: Type check
         working-directory: testkit
-        run: uv run --locked --extra dev --extra appium mypy gridfleet_testkit/ tests/ examples/
+        run: uv run --locked --extra dev mypy gridfleet_testkit/ tests/ examples/
 
       - name: Test
         working-directory: testkit
-        run: uv run --locked --extra dev --extra appium pytest -q
+        run: uv run --locked --extra dev pytest -q
 
       - name: Build package
         working-directory: testkit

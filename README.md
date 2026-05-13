@@ -192,7 +192,7 @@ Run the fastest relevant checks for the area you changed:
 ```bash
 cd backend && uv run ruff check app/ tests/ && uv run mypy app/ && uv run pytest -q -n auto
 cd agent && uv run ruff check agent_app/ tests/ && uv run mypy agent_app/ && uv run pytest -q
-cd testkit && uv run --extra dev --extra appium pytest -q
+cd testkit && uv run --extra dev pytest -q
 cd frontend && npm run lint && npm run build && npm run test:e2e:mocked
 ```
 

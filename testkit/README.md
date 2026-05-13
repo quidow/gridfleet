@@ -69,6 +69,7 @@ uv pip install "git+https://github.com/<org>/<repo>.git#subdirectory=testkit"
 ```
 
 The package supports Python 3.10 and newer.
+`Appium-Python-Client` is installed as a runtime dependency because the pytest fixtures create real Appium sessions.
 
 ## Environment
 

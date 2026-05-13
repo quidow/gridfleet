@@ -354,7 +354,7 @@ jobs:
 Install the supported testkit package first:
 
 ```bash
-uv pip install -e ./testkit[appium]
+uv pip install -e ./testkit
 ```
 
 The public `GridFleetClient` and cleanup helpers come from `gridfleet_testkit`:

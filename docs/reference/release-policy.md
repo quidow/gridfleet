@@ -27,14 +27,26 @@ All commits to `main` must follow [Conventional Commits](https://www.conventiona
 feat(agent): add pack drain endpoint
 fix(testkit): handle missing device_id
 feat(backend)!: remove v1 sessions API
-refactor(frontend): update device filters
+docs(main): update release policy
 ```
 
-Allowed scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`.
+Allowed scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`, `deps-dev`, `main`.
 
 Breaking changes use `!` after the scope: `feat(backend)!: description`.
 
-release-please reads these commits to decide which components need a version bump and what type (patch, minor, major).
+release-please reads commits for the release-managed component scopes (`backend`, `agent`, `frontend`, `testkit`) to decide which components need a version bump and what type (patch, minor, major).
+
+Use one of these types when a component-scoped commit should create a release note and version bump:
+
+| Type | Release effect |
+| --- | --- |
+| `fix(scope): ...` | Patch |
+| `perf(scope): ...` | Patch |
+| `deps(scope): ...` | Patch |
+| `feat(scope): ...` | Minor |
+| `type(scope)!: ...` | Major after `v1.0.0`; minor while pre-`v1.0.0` |
+
+Commitlint enforces that component scopes use those release-please types. Non-release work should use a non-component scope, for example `docs(main): ...`, `ci(main): ...`, `test(main): ...`, or `chore(main): ...`.
 
 ## Automated Release Flow
 

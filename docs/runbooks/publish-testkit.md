@@ -18,7 +18,7 @@ Use GitHub environments named `testpypi` and `pypi`; require manual approval on 
 
 1. Update `testkit/pyproject.toml` version.
 2. Run `cd testkit && uv lock`.
-3. Run `cd testkit && uv run --locked --extra dev --extra appium pytest -q`.
+3. Run `cd testkit && uv run --locked --extra dev pytest -q`.
 4. Run `cd testkit && uv build --no-sources`.
 5. Trigger the `Publish Testkit` workflow with `repository=testpypi`.
 6. Verify install from TestPyPI in a clean environment.
