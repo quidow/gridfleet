@@ -58,12 +58,12 @@ def _slow_timeout() -> HeartbeatPingResult:
 async def test_four_slow_hosts_run_in_parallel(
     populated_hosts_4_slow: contextlib.AbstractAsyncContextManager[AsyncSession],
 ) -> None:
-    """4 slow hosts each take 2s; sequential >= 8s, parallel (concurrency>=4) ~ 2s.
-    Bound: < 6s leaves CI slack while still proving parallelism."""
+    """4 slow hosts each take 0.5s; sequential >= 2s, parallel (concurrency>=4) ~ 0.5s.
+    Bound: < 1.8s leaves CI slack while still proving parallelism."""
     from app.services.heartbeat import _check_hosts
 
     async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.5)
         return _slow_timeout()
 
     with patch("app.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
@@ -71,7 +71,7 @@ async def test_four_slow_hosts_run_in_parallel(
         async with populated_hosts_4_slow as db:
             await _check_hosts(db)
         elapsed = time.monotonic() - started
-    assert elapsed < 6.0, f"Expected parallelization to bring runtime under 6s, got {elapsed:.1f}s"
+    assert elapsed < 1.8, f"Expected parallelization to bring runtime under 1.8s, got {elapsed:.1f}s"
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
 
     async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
         if ip == "1.1.1.1":
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(0.5)
             return _slow_timeout()
         return _ok()
 

@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.exc import NoResultFound
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -312,3 +315,28 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     assert summary["healthy"] is False
     assert "relay_restart_exhausted" in summary["summary"]
     assert device.appium_node.observed_running
+
+
+async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = object()
+    device = SimpleNamespace(id=__import__("uuid").uuid4())
+    monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
+
+    assert await svc._lock(db, device) is None  # type: ignore[arg-type]
+    await svc.update_device_checks(db, device, healthy=True, summary="ok")  # type: ignore[arg-type]
+    await svc.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]
+    await svc.apply_node_state_transition(db, device)  # type: ignore[arg-type]
+    await svc.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]
+
+    locked = SimpleNamespace(
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=True,
+        appium_node=SimpleNamespace(pid=1, active_connection_target="dev", health_running=True),
+    )
+    monkeypatch.setattr(svc, "is_ready_for_use_async", AsyncMock(return_value=False))
+    set_state = AsyncMock()
+    monkeypatch.setattr(svc, "set_operational_state", set_state)
+
+    await svc._restore_available_for_healthy_signal(db, locked)  # type: ignore[arg-type]
+
+    set_state.assert_not_awaited()

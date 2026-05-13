@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import ConnectionType, DeviceHold, DeviceOperationalState, DeviceType, HardwareHealthStatus
 from app.models.session import Session, SessionStatus
+from app.models.test_run import TestRun
 from app.schemas.device import HardwareTelemetryState
 from app.schemas.device_filters import DeviceQueryFilters
 from app.services import device_service, session_service
@@ -82,6 +83,22 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
         limit=1,
     )
     assert newer_page.items
+
+    filtered_page = await session_service.list_sessions_cursor(
+        db_session,
+        device_id=device.id,
+        status=SessionStatus.passed,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        started_after=now - timedelta(minutes=4),
+        started_before=now,
+        limit=10,
+    )
+    assert [session.session_id for session in filtered_page.items] == ["sess-old"]
+    device_sessions = await session_service.get_device_sessions(db_session, device.id)
+    assert [session.session_id for session in device_sessions] == ["sess-old"]
+    heatmap_rows = await session_service.get_device_session_outcome_heatmap_rows(db_session, device.id, days=1)
+    assert heatmap_rows == [(sessions[0].started_at, SessionStatus.passed)]
 
     empty_page = await session_service.list_sessions_cursor(
         db_session,
@@ -162,10 +179,142 @@ async def test_register_and_finish_session_guard_paths(
         "app.services.session_service.lifecycle_policy.complete_deferred_stop_if_session_ended",
         AsyncMock(),
     )
+    run = TestRun(name="terminal reservation", requirements=[])
+    db_session.add(run)
+    await db_session.flush()
+    monkeypatch.setattr(
+        "app.services.session_service.run_service.get_device_reservation_with_entry",
+        AsyncMock(return_value=(run, SimpleNamespace(excluded=False))),
+    )
+    monkeypatch.setattr(
+        "app.services.session_service.run_service.reservation_entry_is_excluded",
+        lambda _entry: False,
+    )
+    terminal_with_run = await session_service.register_session(
+        db_session,
+        session_id="terminal-reserved-session",
+        test_name="terminal reserved",
+        device_id=device.id,
+        status=SessionStatus.failed,
+    )
+    assert terminal_with_run.run_id is not None
+
     assert await session_service.update_session_status(db_session, "missing-status", SessionStatus.passed) is None
     unchanged = await session_service.update_session_status(db_session, "running-no-target", SessionStatus.running)
     assert unchanged is not None
     assert unchanged.ended_at is None
+
+
+async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = SimpleNamespace(session_id="vanished-device", device_id=__import__("uuid").uuid4(), ended_at=None)
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    monkeypatch.setattr(session_service, "get_session", AsyncMock(return_value=session))
+
+    result = await session_service.mark_session_finished(db, "vanished-device")
+
+    assert result is session
+    db.commit.assert_awaited_once()
+
+
+async def test_session_service_missing_and_insert_conflict_guards(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    monkeypatch.setattr(session_service, "get_session", AsyncMock(side_effect=[None, None, None, None]))
+    monkeypatch.setattr(session_service, "_lock_resolved_device_for_session", AsyncMock(return_value=None))
+
+    with pytest.raises(ValueError, match="Session insert conflicted"):
+        await session_service.register_session(db, session_id="conflict", test_name="conflict")
+
+    assert await session_service.mark_session_finished(db, "missing") is None
+    assert await session_service.update_session_status(db, "missing", SessionStatus.passed) is None
+
+
+async def test_register_terminal_session_with_device_runs_deferred_stop_completion(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="terminal-device-session",
+        connection_target="terminal-device-session",
+        name="Terminal Device Session",
+    )
+    monkeypatch.setattr(
+        session_service.run_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(None, None)),
+    )
+    complete = AsyncMock()
+    monkeypatch.setattr(session_service.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
+
+    session = await session_service.register_session(
+        db_session,
+        session_id="terminal-device-session-id",
+        test_name="terminal device",
+        device_id=device.id,
+        status=SessionStatus.failed,
+    )
+
+    assert session.device_id == device.id
+    complete.assert_awaited_once()
+
+
+async def test_session_service_private_resolution_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    device_id = __import__("uuid").uuid4()
+    node = SimpleNamespace(active_connection_target="agent-target")
+    device = SimpleNamespace(id=device_id, connection_target="primary-target", appium_node=node)
+
+    assert session_service._device_matches_session_connection(device, None) is True
+    assert session_service._device_matches_session_connection(device, "primary-target") is True
+    assert session_service._device_matches_session_connection(device, "agent-target") is True
+    assert session_service._device_matches_session_connection(device, "other") is False
+
+    monkeypatch.setattr(session_service, "_resolve_device_for_session", AsyncMock(return_value=None))
+    assert (
+        await session_service._lock_resolved_device_for_session(
+            AsyncMock(),
+            device_id=device_id,
+            connection_target="primary-target",
+        )
+        is None
+    )
+
+    monkeypatch.setattr(session_service, "_resolve_device_for_session", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        session_service.device_locking, "lock_device", AsyncMock(return_value=SimpleNamespace(id=device_id))
+    )
+    locked = await session_service._lock_resolved_device_for_session(
+        AsyncMock(),
+        device_id=device_id,
+        connection_target="different",
+    )
+    assert locked is not None
+
+    monkeypatch.setattr(session_service.device_locking, "lock_device", AsyncMock(return_value=device))
+    assert (
+        await session_service._lock_resolved_device_for_session(
+            AsyncMock(),
+            device_id=None,
+            connection_target="agent-target",
+        )
+        is device
+    )
+
+    wrong_locked = SimpleNamespace(id=__import__("uuid").uuid4(), connection_target="other")
+    monkeypatch.setattr(session_service.device_locking, "lock_device", AsyncMock(return_value=wrong_locked))
+    assert (
+        await session_service._lock_resolved_device_for_session(
+            AsyncMock(),
+            device_id=device_id,
+            connection_target="missing",
+        )
+        is None
+    )
 
 
 async def test_device_service_filters_pagination_update_and_delete_branches(
@@ -246,6 +395,54 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     telemetry_devices = await device_service.list_devices_by_filters(db_session, telemetry_filters)
     assert [device.id for device in telemetry_devices] == [available.id]
 
+    page, total = await device_service.list_devices_paginated(
+        db_session,
+        DeviceQueryFilters(platform_id="android_mobile"),
+        limit=10,
+        offset=0,
+    )
+    assert total >= 2
+    assert any(device.id == available.id for device in page)
+    assert (
+        await device_service.count_devices_by_filters(
+            db_session,
+            DeviceQueryFilters(platform_id="android_mobile"),
+        )
+        >= 2
+    )
+
+    maintenance_devices = await device_service.list_devices_by_filters(
+        db_session,
+        DeviceQueryFilters(status="maintenance"),
+    )
+    assert [device.id for device in maintenance_devices] == [maintenance.id]
+
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="device-filter-reserved",
+        connection_target="device-filter-reserved",
+        name="Reserved Device",
+        operational_state=DeviceOperationalState.available,
+        hold=DeviceHold.reserved,
+    )
+    verifying = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="device-filter-verifying",
+        connection_target="device-filter-verifying",
+        name="Verifying Device",
+        operational_state=DeviceOperationalState.verifying,
+    )
+    await db_session.commit()
+    reserved_devices = await device_service.list_devices_by_filters(db_session, DeviceQueryFilters(status="reserved"))
+    verifying_devices = await device_service.list_devices_by_filters(
+        db_session,
+        DeviceQueryFilters(status="verifying"),
+    )
+    assert [device.id for device in reserved_devices] == [reserved.id]
+    assert [device.id for device in verifying_devices] == [verifying.id]
+
     assert await device_service.get_device(db_session, available.id) is not None
     assert (
         await device_service.update_device(
@@ -260,3 +457,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     fake_running = SimpleNamespace(id=maintenance.id, appium_node=SimpleNamespace(observed_running=True))
     relocked = await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id)
     assert relocked is not None
+
+    monkeypatch.setattr("app.services.device_service._stop_node", AsyncMock())
+    monkeypatch.setattr("app.services.device_service._lock_device_for_delete", AsyncMock(return_value=None))
+    assert await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id) is None

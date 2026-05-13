@@ -3,7 +3,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services import appium_reconciler, heartbeat, session_sync, session_viability
+from app.services import (
+    appium_reconciler,
+    fleet_capacity,
+    hardware_telemetry,
+    heartbeat,
+    session_sync,
+    session_viability,
+)
 from app.services import control_plane_leader_keepalive as keepalive
 from app.services import control_plane_leader_watcher as watcher
 from app.services.control_plane_leader import LeadershipLost
@@ -88,6 +95,49 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
         await session_sync.session_sync_loop()
 
     session_sync._sync_sessions.assert_awaited_once()
+
+
+async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(session_sync, "async_session", lambda: _Session())
+    monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(session_sync.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+
+    with pytest.raises(asyncio.CancelledError):
+        await session_sync.session_sync_loop()
+
+
+async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fleet_capacity.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(fleet_capacity, "async_session", lambda: _Session())
+    monkeypatch.setattr(
+        fleet_capacity,
+        "collect_capacity_snapshot_once",
+        AsyncMock(side_effect=[RuntimeError("boom"), None]),
+    )
+    monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
+
+    with pytest.raises(asyncio.CancelledError):
+        await fleet_capacity.fleet_capacity_collector_loop()
+
+    assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
+
+    monkeypatch.setattr(hardware_telemetry.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(hardware_telemetry, "async_session", lambda: _Session())
+    monkeypatch.setattr(
+        hardware_telemetry,
+        "poll_hardware_telemetry_once",
+        AsyncMock(side_effect=[RuntimeError("boom"), None]),
+    )
+    monkeypatch.setattr(hardware_telemetry.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
+
+    with pytest.raises(asyncio.CancelledError):
+        await hardware_telemetry.hardware_telemetry_loop()
+
+    assert hardware_telemetry.poll_hardware_telemetry_once.await_count == 2
 
 
 async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:

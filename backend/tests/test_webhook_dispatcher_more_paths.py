@@ -1,4 +1,6 @@
+import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -48,6 +50,118 @@ async def test_claim_retry_and_pending_no_work_paths() -> None:
     delivery = SimpleNamespace(webhook_id=uuid.uuid4())
     db = _Db(delivery)
     assert await webhook_dispatcher.retry_delivery(db, wrong_webhook, uuid.uuid4()) is None
+
+    retry_id = uuid.uuid4()
+    reset_delivery = SimpleNamespace(
+        webhook_id=wrong_webhook,
+        status="failed",
+        attempts=2,
+        last_attempt_at="old",
+        next_retry_at=None,
+        last_error="down",
+        last_http_status=500,
+    )
+    db = _Db(reset_delivery)
+    assert await webhook_dispatcher.retry_delivery(db, wrong_webhook, retry_id) is reset_delivery
+    assert reset_delivery.status == "pending"
+    assert reset_delivery.attempts == 0
+    db.refresh.assert_awaited_once_with(reset_delivery)
+
+
+async def test_list_deliveries_counts_rows() -> None:
+    first = SimpleNamespace(id=uuid.uuid4())
+    second = SimpleNamespace(id=uuid.uuid4())
+
+    class ItemsResult:
+        def scalars(self) -> "ItemsResult":
+            return self
+
+        def all(self) -> list[object]:
+            return [first, second]
+
+    class CountResult:
+        def scalar_one(self) -> int:
+            return 2
+
+    db = _Db()
+    db.execute = AsyncMock(side_effect=[ItemsResult(), CountResult()])
+
+    items, total = await webhook_dispatcher.list_deliveries(db, uuid.uuid4())
+
+    assert items == [first, second]
+    assert total == 2
+
+
+async def test_handle_system_event_no_factory_and_missing_event_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(webhook_dispatcher, "_session_factory", None)
+    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
+
+    db = _Db()
+    monkeypatch.setattr(webhook_dispatcher, "_session_factory", _Factory(db))
+    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
+    db.execute.assert_awaited_once()
+
+
+async def test_run_pending_delivery_uses_owned_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    delivery = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(webhook_dispatcher, "claim_next_delivery", AsyncMock(return_value=delivery))
+    process = AsyncMock()
+    monkeypatch.setattr(webhook_dispatcher, "_process_delivery", process)
+
+    assert await webhook_dispatcher.run_pending_webhook_deliveries_once(_Factory(_Db())) is True
+    process.assert_awaited_once()
+
+
+async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Observation:
+        @asynccontextmanager
+        async def cycle(self):  # noqa: ANN202
+            yield None
+
+    class Client:
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(webhook_dispatcher.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(webhook_dispatcher, "observe_background_loop", MagicMock(return_value=Observation()))
+    monkeypatch.setattr(
+        webhook_dispatcher,
+        "run_pending_webhook_deliveries_once",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    log_exception = MagicMock()
+    monkeypatch.setattr(webhook_dispatcher.logger, "exception", log_exception)
+
+    with pytest.raises(asyncio.CancelledError):
+        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
+
+    log_exception.assert_called_once_with("Webhook dispatcher error")
+
+
+async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Observation:
+        @asynccontextmanager
+        async def cycle(self):  # noqa: ANN202
+            yield None
+
+    class Client:
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(webhook_dispatcher.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(webhook_dispatcher, "observe_background_loop", MagicMock(return_value=Observation()))
+    monkeypatch.setattr(webhook_dispatcher, "run_pending_webhook_deliveries_once", AsyncMock(return_value=False))
+    monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+
+    with pytest.raises(asyncio.CancelledError):
+        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
 
 
 async def test_process_delivery_missing_records_marks_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +234,12 @@ async def test_process_delivery_success_and_failure_paths(monkeypatch: pytest.Mo
         transport_client,
     )
     assert failure.await_args.kwargs["http_status"] is None
+
+    await webhook_dispatcher._process_delivery(
+        delivery_id,
+        _Factory(_Db(delivery, webhook, system_event), _Db()),
+        client,
+    )
 
 
 async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.MonkeyPatch) -> None:

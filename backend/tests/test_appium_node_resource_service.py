@@ -58,8 +58,9 @@ async def test_reserve_skips_taken_port(db_session: AsyncSession) -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_reserve_returns_pool_exhausted_error(db_session: AsyncSession) -> None:
+async def test_reserve_returns_pool_exhausted_error(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
     host_id = uuidlib.uuid4()
+    monkeypatch.setattr(svc, "POOL_SIZE", 8)
     for offset in range(svc.POOL_SIZE):
         node_id = await _make_node(db_session, host_id)
         db_session.add(
@@ -99,6 +100,34 @@ async def test_release_managed_deletes_claim(db_session: AsyncSession) -> None:
     await svc.release_managed(db_session, node_id=node_id)
     await db_session.commit()
     assert await svc.get_capabilities(db_session, node_id=node_id) == {}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_claims_for_node_orders_by_capability_key(db_session: AsyncSession) -> None:
+    host_id = uuidlib.uuid4()
+    node_id = await _make_node(db_session, host_id)
+    db_session.add_all(
+        [
+            AppiumNodeResourceClaim(
+                host_id=host_id,
+                capability_key="appium:zPort",
+                port=9002,
+                node_id=node_id,
+            ),
+            AppiumNodeResourceClaim(
+                host_id=host_id,
+                capability_key="appium:aPort",
+                port=9001,
+                node_id=node_id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    claims = await svc.list_claims_for_node(db_session, node_id=node_id)
+
+    assert [claim.capability_key for claim in claims] == ["appium:aPort", "appium:zPort"]
 
 
 @pytest.mark.db

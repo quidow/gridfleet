@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -121,3 +124,66 @@ def test_payload_requires_reverification_when_tags_change() -> None:
 
     assert device_readiness.payload_requires_reverification(device, {"tags": {"screen_type": "4k"}})
     assert not device_readiness.payload_requires_reverification(device, {"tags": {"screen_type": "hd"}})
+
+
+async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
+    release = SimpleNamespace(platforms=[platform])
+    pack = SimpleNamespace(releases=[release], current_release=None)
+    session = SimpleNamespace(scalar=AsyncMock(return_value=pack))
+    device = SimpleNamespace(pack_id="pack", platform_id="android_mobile", device_type=None)
+    monkeypatch.setattr(device_readiness, "selected_release", lambda _releases, _current: release)
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_from_required_fields",
+        lambda _device, _fields: device_readiness.DeviceAssessment(
+            readiness_state="verified",
+            missing_setup_fields=[],
+        ),
+    )
+
+    readiness = await device_readiness.assess_device_async(session, device)  # type: ignore[arg-type]
+
+    assert readiness.readiness_state == "verified"
+    assert await device_readiness.is_ready_for_use_async(session, device) is True  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_from_required_fields",
+        lambda _device, _fields: device_readiness.DeviceAssessment(
+            readiness_state="unexpected",
+            missing_setup_fields=[],
+        ),
+    )
+    with pytest.raises(ValueError, match="Unknown readiness state"):
+        await device_readiness.assess_device_async(session, device)  # type: ignore[arg-type]
+
+
+async def test_readiness_error_detail_setup_and_verification_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = object()
+    device = object()
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_async",
+        AsyncMock(
+            return_value=device_readiness.DeviceReadiness(
+                readiness_state="setup_required",
+                missing_setup_fields=["ip_address", "os_version"],
+                can_verify_now=False,
+            )
+        ),
+    )
+    assert (
+        await device_readiness.readiness_error_detail_async(session, device, action="start")
+        == "Device cannot start until setup is complete (ip_address, os_version)"
+    )
+
+    device_readiness.assess_device_async.return_value = device_readiness.DeviceReadiness(
+        readiness_state="verification_required",
+        missing_setup_fields=[],
+        can_verify_now=True,
+    )
+    assert (
+        await device_readiness.readiness_error_detail_async(session, device, action="start")
+        == "Device cannot start until verification succeeds"
+    )

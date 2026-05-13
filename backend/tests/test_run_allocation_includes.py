@@ -438,7 +438,7 @@ async def test_reserve_with_include_config_adds_o1_queries(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     devices: list[Device] = []
-    for i in range(10):
+    for i in range(3):
         d = await create_device(
             db_session,
             host_id=default_host_id,

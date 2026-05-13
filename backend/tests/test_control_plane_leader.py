@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,3 +83,46 @@ async def test_release_swallows_unlock_failure_and_closes_connection() -> None:
 
     connection.close.assert_awaited_once()
     assert leader._connection is None
+
+
+class _BeginContext:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+async def test_preempt_skips_fresh_missing_pid_and_changed_heartbeat_rows() -> None:
+    leader = ControlPlaneLeader()
+    connection = AsyncMock()
+    connection.execute.return_value = SimpleNamespace(first=lambda: None)
+    assert await leader._try_preempt(connection, stale_threshold_sec=30) is False
+
+    connection.execute.return_value = SimpleNamespace(
+        first=lambda: SimpleNamespace(age=60, lock_backend_pid=None, holder_id=uuid.uuid4())
+    )
+    assert await leader._try_preempt(connection, stale_threshold_sec=30) is False
+
+    connection.begin = lambda: _BeginContext()
+    connection.execute.side_effect = [
+        SimpleNamespace(first=lambda: SimpleNamespace(age=60, lock_backend_pid=123, holder_id=uuid.uuid4())),
+        SimpleNamespace(first=lambda: None),
+    ]
+    assert await leader._try_preempt(connection, stale_threshold_sec=30) is False
+
+
+async def test_preempt_warns_once_when_termination_does_not_grant_lock() -> None:
+    leader = ControlPlaneLeader()
+    connection = AsyncMock()
+    connection.begin = lambda: _BeginContext()
+    holder_id = uuid.uuid4()
+    connection.execute.side_effect = [
+        SimpleNamespace(first=lambda: SimpleNamespace(age=60, lock_backend_pid=123, holder_id=holder_id)),
+        SimpleNamespace(first=lambda: object()),
+        SimpleNamespace(scalar=lambda: False),
+        SimpleNamespace(scalar=lambda: False),
+    ]
+
+    assert await leader._try_preempt(connection, stale_threshold_sec=30) is False
+    assert leader._privilege_warned is True

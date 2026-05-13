@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -10,9 +11,11 @@ import pytest
 from sqlalchemy import select
 
 from app import agent_client, database, health, metrics
-from app.errors import AgentUnreachableError, CircuitOpenError
+from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
-from app.services import control_plane_state_store, run_reaper
+from app.services import control_plane_state_store, device_identity, grid_service, run_reaper
+from app.shutdown import ShutdownCoordinator
+from app.type_defs import AsyncSessionContextManager, SessionFactory
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -183,3 +186,126 @@ async def test_control_plane_state_store_round_trip(db_session: AsyncSession) ->
         select(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace == "demo")
     )
     assert remaining.scalars().all() == []
+
+
+async def test_type_def_protocol_defaults_raise() -> None:
+    with pytest.raises(NotImplementedError):
+        await agent_client.AgentHttpClient.__aenter__(object())
+    with pytest.raises(NotImplementedError):
+        await agent_client.AgentHttpClient.__aexit__(object(), None, None, None)
+    with pytest.raises(NotImplementedError):
+        await agent_client.AgentHttpClient.get(object(), "http://agent")
+    with pytest.raises(NotImplementedError):
+        await agent_client.AgentHttpClient.post(object(), "http://agent")
+    with pytest.raises(NotImplementedError):
+        await AsyncSessionContextManager.__aenter__(object())
+    with pytest.raises(NotImplementedError):
+        await AsyncSessionContextManager.__aexit__(object(), None, None, None)
+    with pytest.raises(NotImplementedError):
+        SessionFactory.__call__(object())
+
+
+def test_error_detail_and_transport_helpers() -> None:
+    response_error = AgentResponseError("10.0.0.1", "bad", http_status=503, details={"extra": True})
+    assert response_error.http_status == 503
+    assert response_error.details["http_status"] == 503
+    assert response_error.details["extra"] is True
+
+    assert agent_client.classify_httpx_transport(httpx.TimeoutException("slow"))[0] == "timeout"
+    assert agent_client.classify_httpx_transport(httpx.ConnectError("Name resolution failed"))[0] == "dns_error"
+    assert agent_client.classify_httpx_transport(httpx.ConnectError("refused"))[0] == "connect_error"
+    assert agent_client.classify_httpx_transport(RuntimeError("boom"))[0] == "unexpected_error"
+
+
+def test_grid_status_device_ids_ignore_malformed_nodes() -> None:
+    assert grid_service.available_node_device_ids({"value": None}) is None
+    assert grid_service.available_node_device_ids({"value": {"nodes": None}}) is None
+    assert grid_service.available_node_device_ids(
+        {
+            "value": {
+                "nodes": [
+                    "bad-node",
+                    {"availability": "DOWN", "slots": [{"stereotype": {"gridfleet:DeviceId": "ignored"}}]},
+                    {"slots": "bad-slots"},
+                    {"slots": ["bad-slot", {"stereotype": "bad-stereotype"}]},
+                    {"slots": [{"stereotype": {"gridfleet:deviceId": "device-1"}}]},
+                    {"slots": [{"stereotype": {"appium:gridfleet:deviceId": "device-2"}}]},
+                ]
+            }
+        }
+    ) == {"device-1", "device-2"}
+
+
+async def test_grid_service_reuses_and_closes_shared_client(monkeypatch: MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.is_closed = False
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+            self.is_closed = True
+
+    created: list[FakeClient] = []
+
+    def fake_client_factory() -> FakeClient:
+        client = FakeClient()
+        created.append(client)
+        return client
+
+    await grid_service.close()
+    monkeypatch.setattr("app.services.grid_service.httpx.AsyncClient", fake_client_factory)
+
+    first = grid_service._get_client()
+    second = grid_service._get_client()
+    assert first is second
+    await grid_service.close()
+    assert created == [first]
+    assert first.closed is True
+
+
+async def test_shutdown_coordinator_idempotent_paths() -> None:
+    coordinator = ShutdownCoordinator()
+    coordinator.request_finished()
+    assert coordinator.active_requests() == 0
+
+    coordinator.request_started()
+    await coordinator.begin_shutdown()
+    await coordinator.begin_shutdown()
+    assert coordinator.is_shutting_down() is True
+    assert await coordinator.wait_for_drain(timeout=0.001) is False
+
+    coordinator.request_finished()
+    assert await coordinator.wait_for_drain(timeout=0.1) is True
+    coordinator.reset()
+    assert coordinator.is_shutting_down() is False
+    assert coordinator.active_requests() == 0
+
+
+def test_device_identity_helpers_cover_host_port_and_fallbacks() -> None:
+    assert device_identity.looks_like_ip_address(None) is False
+    assert device_identity.looks_like_ip_address("not-an-ip") is False
+    assert device_identity.looks_like_ip_address("10.0.0.5") is True
+    assert device_identity.parse_ip_from_connection_target(None) is None
+    assert device_identity.parse_ip_from_connection_target("10.0.0.5:5555") == "10.0.0.5"
+    assert device_identity.parse_ip_from_connection_target("10.0.0.6") == "10.0.0.6"
+    assert device_identity.parse_ip_from_connection_target("serial:5555") is None
+    assert device_identity.looks_like_ip_port_target(None) is False
+    assert device_identity.looks_like_ip_port_target("10.0.0.5:5555") is True
+    assert device_identity.looks_like_ip_port_target("10.0.0.5:abc") is False
+    assert device_identity.is_host_scoped_identity(identity_scope="host") is True
+
+    assert (
+        device_identity.appium_connection_target(SimpleNamespace(connection_target="tcp", identity_value="id")) == "tcp"
+    )
+    assert device_identity.appium_connection_target(SimpleNamespace(connection_target="", identity_value="id")) == "id"
+    with pytest.raises(ValueError, match="no connection target"):
+        device_identity.appium_connection_target(SimpleNamespace(connection_target="", identity_value=""))
+
+    assert device_identity.derive_pack_identity(
+        identity_scheme="scheme",
+        identity_scope="host",
+        identity_value=None,
+        connection_target=None,
+        ip_address="10.0.0.7",
+    ) == ("scheme", "host", "10.0.0.7", "10.0.0.7", "10.0.0.7")

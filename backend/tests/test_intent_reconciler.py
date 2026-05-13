@@ -15,6 +15,7 @@ from app.models.device_intent_dirty import DeviceIntentDirty
 from app.models.device_reservation import DeviceReservation
 from app.services.control_plane_leader import LeadershipLost
 from app.services.intent_reconciler import (
+    _reconcile_all_devices_once,
     _reconcile_device,
     _reconcile_dirty_devices,
     _reconcile_expired_intents,
@@ -346,6 +347,35 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
     await db_session.commit()
 
     assert await db_session.get(DeviceIntentDirty, device.id) is not None
+
+
+async def test_full_scan_reconciles_each_intent_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = await create_device(db_session, host_id=db_host.id, name="full-scan-a")
+    second = await create_device(db_session, host_id=db_host.id, name="full-scan-b")
+    db_session.add_all(
+        [
+            DeviceIntent(device_id=first.id, source="test-a", axis=NODE_PROCESS, payload={}),
+            DeviceIntent(device_id=second.id, source="test-b", axis=NODE_PROCESS, payload={}),
+        ]
+    )
+    await db_session.commit()
+    reconciled: list[object] = []
+    deliver = AsyncMock()
+
+    async def fake_reconcile(_db: AsyncSession, device_id: object) -> None:
+        reconciled.append(device_id)
+
+    monkeypatch.setattr("app.services.intent_reconciler._reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.services.intent_reconciler.deliver_agent_reconfigures", deliver)
+
+    await _reconcile_all_devices_once(db_session)
+
+    assert set(reconciled) == {first.id, second.id}
+    assert deliver.await_count == 2
 
 
 async def test_reconciler_cycle_checks_leadership_before_writes(

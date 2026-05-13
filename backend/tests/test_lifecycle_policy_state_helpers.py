@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from app.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_deferred_stop,
     default_state,
+    parse_iso,
     record_backoff_suppressed,
+    record_manual_recovered,
     record_recovery_failed,
     record_recovery_recovered,
     record_recovery_started,
@@ -80,3 +83,26 @@ def test_record_recovery_recovered_clears_backoff_and_stamps_action() -> None:
     assert state["recovery_backoff_attempts"] == 0
     assert state["recovery_suppressed_reason"] is None
     assert state["last_action"] == "auto_recovered"
+
+
+def test_parse_iso_and_manual_recovered_edges() -> None:
+    assert parse_iso(None) is None
+    assert parse_iso("") is None
+    assert parse_iso("not a date") is None
+    assert parse_iso("2026-05-07T01:02:03Z") is not None
+
+    state = default_state()
+    state["last_failure_source"] = "node_health"
+    state["last_failure_reason"] = "boom"
+    state["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
+    state["backoff_until"] = "2026-05-07T01:02:03+00:00"
+    state["recovery_backoff_attempts"] = 2
+
+    record_manual_recovered(state)
+
+    assert state["last_failure_source"] is None
+    assert state["last_failure_reason"] is None
+    assert state["recovery_suppressed_reason"] is None
+    assert state["backoff_until"] is None
+    assert state["recovery_backoff_attempts"] == 0
+    assert state["last_action"] == "manual_recovered"

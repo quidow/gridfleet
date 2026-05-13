@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -366,3 +367,59 @@ async def test_concurrent_get_client_during_close_does_not_leak() -> None:
     with pytest.raises(PoolClosedError):
         await pool.get_client("10.0.0.1", 5100)
     assert pool.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_pool_close_logs_client_close_failures() -> None:
+    pool = AgentHttpPool()
+    entry_client = AsyncMock()
+    entry_client.aclose.side_effect = RuntimeError("entry close failed")
+    stale_client = AsyncMock()
+    stale_client.aclose.side_effect = RuntimeError("stale close failed")
+    pool._entries[("10.0.0.1", 5100)] = pool_module._PooledEntry(
+        client=entry_client,
+        config=pool_module._ClientConfig(max_keepalive=1, keepalive_expiry=1.0),
+        max_timeout=1.0,
+    )
+    pool._deferred.append(pool_module._DeferredEntry(client=stale_client, deferred_at=1.0, close_after=1.0))
+
+    await pool.close()
+
+    entry_client.aclose.assert_awaited_once()
+    stale_client.aclose.assert_awaited_once()
+    assert pool.size() == 0
+    assert pool.deferred_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_ready_deferred_drain_logs_close_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pool_module, "DEFERRED_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(pool_module.time, "monotonic", lambda: 10.0)
+    pool = AgentHttpPool()
+    stale_client = AsyncMock()
+    stale_client.aclose.side_effect = RuntimeError("drain failed")
+    pool._deferred.append(pool_module._DeferredEntry(client=stale_client, deferred_at=1.0, close_after=1.0))
+
+    try:
+        client = await pool.get_client("10.0.0.1", 5100)
+        assert not client.is_closed
+        stale_client.aclose.assert_awaited_once()
+        assert pool.deferred_count() == 0
+    finally:
+        await pool.close()
+
+
+def test_enforce_deferred_cap_evicts_safe_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pool_module, "DEFERRED_MAX", 1)
+    pool = AgentHttpPool()
+    safe_client = object()
+    unsafe_client = object()
+    pool._deferred = [
+        pool_module._DeferredEntry(client=safe_client, deferred_at=1.0, close_after=5.0),
+        pool_module._DeferredEntry(client=unsafe_client, deferred_at=2.0, close_after=50.0),
+    ]
+
+    evicted = pool._enforce_cap_locked(10.0)
+
+    assert evicted == [safe_client]
+    assert [entry.client for entry in pool._deferred] == [unsafe_client]

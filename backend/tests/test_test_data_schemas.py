@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.test_data import TEST_DATA_MAX_BYTES, TestDataPayload
+from app.schemas.test_data import TEST_DATA_MAX_BYTES, TestDataAuditEntryRead, TestDataPayload, TestDataRead
 
 
 def test_root_must_be_object() -> None:
@@ -26,3 +26,9 @@ def test_size_cap_rejected() -> None:
 def test_size_under_cap_accepted() -> None:
     small = {"k": "x" * 1024}
     TestDataPayload.model_validate(small)
+
+
+def test_schema_classes_are_not_pytest_tests() -> None:
+    assert TestDataPayload.__test__ is False
+    assert TestDataRead.__test__ is False
+    assert TestDataAuditEntryRead.__test__ is False

@@ -1,9 +1,11 @@
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host
-from app.services import device_locking
+from app.services import device_locking, maintenance_service
 from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from tests.helpers import create_device
 
@@ -152,3 +154,49 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     assert device.lifecycle_policy_state.get("backoff_until") == backoff_until
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 3
     assert device.lifecycle_policy_state.get("last_action") == "recovery_suppressed"
+
+
+async def test_enter_and_exit_maintenance_commit_false_branches(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-no-commit",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    result = await enter_maintenance(db_session, device, commit=False)
+    assert result.hold == DeviceHold.maintenance
+
+    result = await exit_maintenance(db_session, device, commit=False)
+    assert result.hold is None
+
+    with pytest.raises(ValueError, match="not in maintenance"):
+        await exit_maintenance(db_session, device, commit=False)
+
+
+async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-schedules-recovery",
+        hold=DeviceHold.maintenance,
+    )
+    await db_session.commit()
+
+    schedule = AsyncMock()
+    monkeypatch.setattr(maintenance_service, "schedule_device_recovery", schedule)
+    await exit_maintenance(db_session, device)
+    schedule.assert_awaited_once_with(db_session, device.id)
+
+    device.hold = DeviceHold.maintenance
+    await db_session.commit()
+    schedule.side_effect = RuntimeError("queue down")
+    await exit_maintenance(db_session, device)

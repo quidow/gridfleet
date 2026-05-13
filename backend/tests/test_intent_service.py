@@ -236,3 +236,13 @@ async def test_get_intents_by_axis_filters_device_and_axis(db_session: AsyncSess
 
     intents = await service.get_intents_by_axis(device.id, GRID_ROUTING)
     assert [intent.id for intent in intents] == [expected.id]
+    all_intents = await service.get_intents(device.id)
+    assert {intent.axis for intent in all_intents} == {GRID_ROUTING, NODE_PROCESS}
+
+
+async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="intent-empty")
+    service = IntentService(db_session)
+
+    assert await service.register_intents(device_id=device.id, intents=[], reason="noop") == []
+    assert await db_session.get(DeviceIntentDirty, device.id) is None

@@ -24,10 +24,14 @@ class TestDataPayload(RootModel[dict[str, Any]]):
 
 
 class TestDataRead(RootModel[dict[str, Any]]):
+    __test__ = False
+
     pass
 
 
 class TestDataAuditEntryRead(BaseModel):
+    __test__ = False
+
     id: uuid.UUID
     previous_test_data: dict[str, Any] | None = None
     new_test_data: dict[str, Any]

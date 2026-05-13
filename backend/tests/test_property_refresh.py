@@ -1,10 +1,14 @@
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.models.host import Host, HostStatus, OSType
 from app.services.pack_discovery_service import refresh_device_properties
-from app.services.property_refresh import _refresh_all_properties
+from app.services.property_refresh import _refresh_all_properties, property_refresh_loop
 from tests.helpers import create_device_record
 
 
@@ -108,6 +112,25 @@ async def test_property_refresh_continues_after_device_failure(
 
     refreshed_identity_values = [await_call.args[1].identity_value for await_call in refresh_device.await_args_list]
     assert refreshed_identity_values == [first.identity_value, second.identity_value]
+
+
+async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
+    class _Observation:
+        @asynccontextmanager
+        async def cycle(self) -> AsyncGenerator[None, None]:
+            yield None
+
+    with (
+        patch("app.services.property_refresh.observe_background_loop", return_value=_Observation()),
+        patch("app.services.property_refresh._refresh_all_properties", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        patch("app.services.property_refresh.settings_service.get", return_value=1),
+        patch("app.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.services.property_refresh.logger.exception") as log_exception,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await property_refresh_loop()
+
+    log_exception.assert_called_once_with("Property refresh cycle failed")
 
 
 async def test_refresh_device_properties_preserves_discovery_identity_fields(

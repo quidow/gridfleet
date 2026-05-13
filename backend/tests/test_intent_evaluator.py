@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 from app.models.appium_node import AppiumDesiredState
 from app.models.device_intent import DeviceIntent
 from app.services.intent_evaluator import (
+    _optional_datetime,
+    _optional_int,
+    _optional_uuid,
+    _stop_mode,
     evaluate_grid_routing,
     evaluate_node_process,
     evaluate_recovery,
@@ -61,6 +65,35 @@ def test_idle_start_returns_running() -> None:
     assert decision.desired_state == "running"
     assert decision.desired_port == 4723
     assert map_node_process_decision(decision) == (AppiumDesiredState.running, True, False)
+
+
+def test_node_process_start_drops_transition_token_without_deadline() -> None:
+    decision = evaluate_node_process(
+        [
+            _intent(
+                source="baseline:idle",
+                axis=NODE_PROCESS,
+                payload={
+                    "action": "start",
+                    "priority": 10,
+                    "desired_port": True,
+                    "transition_token": str(uuid.uuid4()),
+                },
+            )
+        ],
+        datetime.now(UTC),
+    )
+
+    assert decision.desired_state == "running"
+    assert decision.desired_port is None
+    assert decision.transition_token is None
+
+
+def test_intent_evaluator_small_coercion_fallbacks() -> None:
+    assert _stop_mode("unexpected") == "hard"
+    assert _optional_int(True) is None
+    assert _optional_uuid("not-a-uuid") is None
+    assert _optional_datetime("not-a-date") is None
 
 
 def test_cooldown_defer_stop_returns_running_blocked() -> None:

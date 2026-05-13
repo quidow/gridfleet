@@ -63,6 +63,23 @@ async def test_auth_session_reports_disabled_when_feature_off(client: AsyncClien
     }
 
 
+async def test_login_and_logout_report_disabled_when_auth_off(client: AsyncClient) -> None:
+    login_response = await client.post("/api/auth/login", json={"username": "operator", "password": "secret"})
+    logout_response = await client.post("/api/auth/logout")
+
+    expected = {
+        "enabled": False,
+        "authenticated": False,
+        "username": None,
+        "csrf_token": None,
+        "expires_at": None,
+    }
+    assert login_response.status_code == 200
+    assert login_response.json() == expected
+    assert logout_response.status_code == 200
+    assert logout_response.json() == expected
+
+
 async def test_login_sets_session_cookie_and_restores_session(
     client: AsyncClient,
     auth_settings: dict[str, str],
@@ -424,3 +441,53 @@ def test_issue_session_does_not_store_password_derived_marker_in_token(monkeypat
 
     assert session.authenticated is True
     assert session.username == "operator"
+
+
+def test_auth_token_and_cookie_guard_branches(auth_settings: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(auth.settings, "auth_enabled", True)
+    monkeypatch.setattr(auth.settings, "auth_username", auth_settings["auth_username"])
+    monkeypatch.setattr(auth.settings, "auth_session_secret", auth_settings["auth_session_secret"])
+
+    def token_for(payload: dict[str, object]) -> str:
+        encoded = auth._base64url_encode(auth._json_dumps(payload))
+        return f"v1.{encoded}.{auth._sign_payload(encoded)}"
+
+    assert auth._decode_session_payload("v2.bad.signature") is None
+    assert auth._decode_session_payload("v1.bad.signature") is None
+    encoded_bad_json = auth._base64url_encode(b"not-json")
+    assert auth._decode_session_payload(f"v1.{encoded_bad_json}.{auth._sign_payload(encoded_bad_json)}") is None
+
+    token, _ = auth.issue_session()
+    payload = auth._decode_session_payload(token)
+    assert payload is not None
+
+    missing_sub = dict(payload)
+    missing_sub.pop("sub")
+    assert auth._decode_session_payload(token_for(missing_sub)) == missing_sub
+    session = auth.resolve_browser_session_from_headers(
+        Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={token_for(missing_sub)}"})
+    )
+    assert session.authenticated is False
+
+    empty_user = {**payload, "sub": ""}
+    assert (
+        auth.resolve_browser_session_from_headers(
+            Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={token_for(empty_user)}"})
+        ).authenticated
+        is False
+    )
+    empty_csrf = {**payload, "csrf": ""}
+    assert (
+        auth.resolve_browser_session_from_headers(
+            Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={token_for(empty_csrf)}"})
+        ).authenticated
+        is False
+    )
+
+    class BadCookie:
+        def load(self, _raw: str) -> None:
+            raise ValueError("bad cookie")
+
+    monkeypatch.setattr(auth, "SimpleCookie", BadCookie)
+    assert auth._read_cookie(Headers({"cookie": "broken=cookie"}), auth.SESSION_COOKIE_NAME) is None
+    assert auth._authenticate_basic_auth(Headers({"authorization": "Basic not-base64"})) is None

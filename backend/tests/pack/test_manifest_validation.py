@@ -198,6 +198,83 @@ def test_health_check_entry_rejects_invalid_applies_when_connection_type() -> No
         load_manifest_yaml(yaml_text)
 
 
+def test_health_check_entry_rejects_empty_applies_when_connection_types() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    health_checks:\n"
+            "      - id: ip_ping\n"
+            "        label: IP Ping\n"
+            "        applies_when:\n"
+            "          connection_types: []\n"
+        ),
+    )
+    with pytest.raises(ManifestValidationError, match="connection_types must not be empty"):
+        load_manifest_yaml(yaml_text)
+
+
+def test_device_type_override_rejects_unknown_default_capability_template() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    device_type_overrides:\n"
+            "      real_device:\n"
+            "        default_capabilities:\n"
+            "          appium:udid: '{device.serial}'\n"
+        ),
+    )
+    with pytest.raises(ManifestValidationError, match=r"unknown .*template variable"):
+        load_manifest_yaml(yaml_text)
+
+
+def test_appium_installable_rejects_invalid_version_metadata() -> None:
+    bad_specifier = _base_yaml().replace('version: ">=2,<3"', 'version: "not a specifier"')
+    with pytest.raises(ManifestValidationError, match="invalid version specifier"):
+        load_manifest_yaml(bad_specifier)
+
+    bad_recommended = _base_yaml().replace('recommended: "2.11.5"', 'recommended: "not-a-version"')
+    with pytest.raises(ManifestValidationError, match="invalid recommended version"):
+        load_manifest_yaml(bad_recommended)
+
+    outside_range = _base_yaml().replace('recommended: "2.11.5"', 'recommended: "4.0.0"')
+    with pytest.raises(ManifestValidationError, match="does not satisfy version range"):
+        load_manifest_yaml(outside_range)
+
+
+def test_appium_installable_rejects_github_repo_mismatches() -> None:
+    missing_repo = _base_yaml().replace(
+        "appium_server:\n  {source: npm, package: appium",
+        "appium_server:\n  {source: github, package: appium",
+    )
+    with pytest.raises(ManifestValidationError, match="github_repo is required"):
+        load_manifest_yaml(missing_repo)
+
+    npm_with_repo = _base_yaml().replace(
+        "known_bad: []}",
+        "known_bad: [], github_repo: appium/appium}",
+        1,
+    )
+    with pytest.raises(ManifestValidationError, match="github_repo must be None"):
+        load_manifest_yaml(npm_with_repo)
+
+    invalid_repo = _base_yaml().replace(
+        "appium_server:\n  {source: npm, package: appium",
+        'appium_server:\n  {source: github, package: appium, github_repo: "not a repo"',
+    )
+    with pytest.raises(ManifestValidationError, match="owner/repo"):
+        load_manifest_yaml(invalid_repo)
+
+
+def test_load_manifest_rejects_invalid_yaml_and_non_mapping_root() -> None:
+    with pytest.raises(ManifestValidationError, match="Failed to parse manifest YAML"):
+        load_manifest_yaml("schema_version: [")
+
+    with pytest.raises(ManifestValidationError, match="dictionary at the top level"):
+        load_manifest_yaml("- just\n- a list\n")
+
+
 def test_health_check_entry_applies_when_optional() -> None:
     yaml_text = _base_yaml().replace(
         _IDENTITY_LINE,

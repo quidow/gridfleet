@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,6 +26,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seed
 @pytest.fixture(autouse=True)
 def disable_reconciler_fencing_for_integration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.services.appium_reconciler.assert_current_leader", AsyncMock())
+    stop_response = MagicMock()
+    stop_response.raise_for_status.return_value = None
+    monkeypatch.setattr("app.services.appium_reconciler.appium_stop", AsyncMock(return_value=stop_response))
 
 
 class _SharedSessionContext:

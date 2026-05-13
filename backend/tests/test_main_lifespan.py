@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
 from app import main
@@ -14,7 +15,7 @@ from app.models.host import Host, HostStatus
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
-    from pytest import MonkeyPatch
+    from pytest import LogCaptureFixture, MonkeyPatch
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -346,3 +347,58 @@ async def test_startup_marks_unsupported_online_agent_contracts_offline(
 
     host = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalar_one()
     assert host.status == HostStatus.offline
+
+
+async def test_cancel_and_wait_logs_non_cancelled_task_failure(caplog: LogCaptureFixture) -> None:
+    async def failing() -> None:
+        raise RuntimeError("shutdown boom")
+
+    task = asyncio.create_task(failing(), name="failing-task")
+    await asyncio.sleep(0)
+
+    await main._cancel_and_wait_for_tasks([task], label="backend")
+
+    assert any(
+        isinstance(record.msg, dict)
+        and record.msg["message"] == "%s task %s failed during shutdown"
+        and record.msg["positional_args"] == ("backend", "failing-task")
+        for record in caplog.records
+    )
+
+
+async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "check_liveness", AsyncMock(return_value={"status": "ok"}))
+    assert await main.live_health() == {"status": "ok"}
+
+    monkeypatch.setattr(main, "check_readiness", AsyncMock(return_value=({"status": "ready"}, 202)))
+    ready = await main.ready_health(db=AsyncMock())
+    health = await main.health(db=AsyncMock())
+    assert isinstance(ready, JSONResponse)
+    assert isinstance(health, JSONResponse)
+    assert ready.status_code == 202
+    assert health.status_code == 202
+
+    monkeypatch.setattr(main, "refresh_system_gauges", AsyncMock())
+    monkeypatch.setattr(main, "render_metrics", Mock(return_value=b"metrics"))
+    metrics = await main.metrics(db=AsyncMock())
+    assert isinstance(metrics, Response)
+    assert metrics.body == b"metrics"
+
+    ready_device = SimpleNamespace()
+    blocked_device = SimpleNamespace()
+    monkeypatch.setattr(main.device_service, "list_devices", AsyncMock(return_value=[ready_device, blocked_device]))
+    monkeypatch.setattr(main, "is_ready_for_use_async", AsyncMock(side_effect=[True, True]))
+    monkeypatch.setattr(
+        main.device_health,
+        "device_allows_allocation",
+        Mock(side_effect=[True, False]),
+    )
+
+    availability = await main.check_availability(platform_id="android_mobile", count=2, db=AsyncMock())
+
+    assert availability == {
+        "available": False,
+        "requested": 2,
+        "matched": 1,
+        "platform_id": "android_mobile",
+    }

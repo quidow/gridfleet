@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -19,6 +21,9 @@ from app.models.device import (
 )
 from app.schemas.device import HardwareTelemetryState
 from app.services import hardware_telemetry, host_resource_telemetry
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 class FlushSession:
@@ -76,6 +81,7 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
     assert hardware_telemetry._coerce_int("12") == 12
     assert hardware_telemetry._coerce_int("bad") is None
     assert hardware_telemetry._coerce_int(object()) is None
+    assert hardware_telemetry._coerce_int(12.9) == 12
     assert hardware_telemetry._coerce_float(False) is None
     assert hardware_telemetry._coerce_float("12.5") == 12.5
     assert hardware_telemetry._coerce_float("bad") is None
@@ -114,6 +120,9 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
     )
 
     device.battery_temperature_c = 55
+    device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.unknown
+    assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.unknown
+    device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
     with patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
         assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.critical
     device.battery_temperature_c = 45
@@ -327,6 +336,58 @@ async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors(
     assert db.rolled_back is True
 
 
+async def test_poll_host_resource_telemetry_commits_successful_samples() -> None:
+    host = SimpleNamespace(id=uuid.uuid4(), hostname="host-1", ip="10.0.0.1", agent_port=5100)
+
+    class Result:
+        def scalars(self) -> Result:
+            return self
+
+        def all(self) -> list[object]:
+            return [host]
+
+    class PollSession(FlushSession):
+        async def execute(self, *_args: object, **_kwargs: object) -> Result:
+            return Result()
+
+    db = PollSession()
+    with patch(
+        "app.services.host_resource_telemetry.agent_host_telemetry",
+        new=AsyncMock(return_value={"cpu_percent": 50}),
+    ):
+        await host_resource_telemetry.poll_host_resource_telemetry_once(db)
+
+    assert db.committed is True
+    assert db.added
+
+
+async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> None:
+    class _Observation:
+        @asynccontextmanager
+        async def cycle(self) -> AsyncGenerator[None, None]:
+            yield None
+
+    @asynccontextmanager
+    async def fake_session() -> AsyncGenerator[FlushSession, None]:
+        yield FlushSession()
+
+    with (
+        patch("app.services.host_resource_telemetry.observe_background_loop", return_value=_Observation()),
+        patch("app.services.host_resource_telemetry.async_session", fake_session),
+        patch(
+            "app.services.host_resource_telemetry.poll_host_resource_telemetry_once",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch("app.services.host_resource_telemetry.settings_service.get", return_value=1),
+        patch("app.services.host_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.services.host_resource_telemetry.logger.exception") as log_exception,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await host_resource_telemetry.host_resource_telemetry_loop()
+
+    log_exception.assert_called_once_with("Host resource telemetry loop failed")
+
+
 async def test_fetch_host_resource_telemetry_validation_paths() -> None:
     host_id = uuid.uuid4()
 
@@ -364,3 +425,20 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
                     bucket_minutes=bucket_minutes,
                 )
             assert message in str(exc.value)
+
+
+async def test_fetch_host_resource_telemetry_returns_none_for_missing_host() -> None:
+    class MissingHostSession:
+        async def scalar(self, *_args: object, **_kwargs: object) -> object | None:
+            return None
+
+    assert (
+        await host_resource_telemetry.fetch_host_resource_telemetry(
+            MissingHostSession(),  # type: ignore[arg-type]
+            uuid.uuid4(),
+            since=datetime(2026, 5, 1, tzinfo=UTC),
+            until=datetime(2026, 5, 2, tzinfo=UTC),
+            bucket_minutes=5,
+        )
+        is None
+    )

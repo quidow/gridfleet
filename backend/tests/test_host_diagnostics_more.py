@@ -23,11 +23,18 @@ def test_host_diagnostics_normalizers_reject_invalid_shapes() -> None:
     assert host_diagnostics._coerce_int("bad") is None
     assert host_diagnostics._normalize_recovery_process("grid_relay") == "grid_relay"
     assert host_diagnostics._normalize_recovery_process("unexpected") == "appium"
+    other_event = DeviceEvent(
+        device_id=__import__("uuid").uuid4(),
+        event_type=DeviceEventType.hardware_health_changed,
+        details={},
+    )
+    assert host_diagnostics._is_agent_local_recovery_event(other_event) is False
     assert (
         host_diagnostics._normalize_occurred_at("2026-05-01T12:00:00Z", fallback)
         .isoformat()
         .startswith("2026-05-01T12:00:00")
     )
+    assert host_diagnostics._normalize_occurred_at(fallback, datetime.now(UTC)) == fallback
     assert host_diagnostics._normalize_occurred_at("not-a-date", fallback) == fallback
     assert host_diagnostics._normalize_process_nodes("bad") == []
     assert host_diagnostics._normalize_process_nodes([{"port": True}, "bad", {"port": "4731", "pid": "123"}]) == [
@@ -94,6 +101,26 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     unmanaged = diagnostics.appium_processes.running_nodes[1]
     assert unmanaged.managed is False
     assert unmanaged.node_id is None
+
+
+async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(db_session: AsyncSession) -> None:
+    host, _device = await seed_host_and_device(db_session, identity="diagnostics-reported-at")
+    snapshots = [
+        {"reported_at": datetime(2026, 5, 1, 12, 0, tzinfo=UTC), "running_nodes": []},
+        {"reported_at": "not-a-date", "running_nodes": []},
+    ]
+
+    with patch(
+        "app.services.host_diagnostics.control_plane_state_store.get_value",
+        new=AsyncMock(side_effect=snapshots),
+    ):
+        first = await host_diagnostics.get_host_diagnostics(db_session, host)
+        second = await host_diagnostics.get_host_diagnostics(db_session, host)
+
+    assert first is not None
+    assert first.appium_processes.reported_at == snapshots[0]["reported_at"]
+    assert second is not None
+    assert second.appium_processes.reported_at is None
 
 
 async def test_get_host_diagnostics_filters_and_normalizes_recent_recovery_events(

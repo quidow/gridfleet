@@ -135,6 +135,47 @@ async def test_restart_event_ingest_filters_and_stale_nodes(monkeypatch: pytest.
     ) == [{"port": 4723, "pid": 123, "connection_target": "dev", "platform_id": "android"}]
 
 
+async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    host = Host(hostname="h2", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    host.id = uuid.uuid4()
+    monkeypatch.setattr(heartbeat.control_plane_state_store, "get_value", AsyncMock(return_value=5))
+    set_value = AsyncMock()
+    monkeypatch.setattr(heartbeat.control_plane_state_store, "set_value", set_value)
+
+    await heartbeat._ingest_appium_restart_events(
+        MagicMock(),
+        host,
+        {"appium_processes": {"recent_restart_events": [{"sequence": 5, "port": 4723, "kind": "crash_detected"}]}},
+    )
+    set_value.assert_not_awaited()
+
+    class Cycle:
+        def cycle(self) -> "Cycle":
+            return self
+
+        async def __aenter__(self) -> "Cycle":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Session:
+        async def __aenter__(self) -> "Session":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
+    monkeypatch.setattr(heartbeat, "async_session", lambda: Session())
+    monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+
+    with pytest.raises(asyncio.CancelledError):
+        await heartbeat.heartbeat_loop()
+
+
 def _dead_result() -> HeartbeatPingResult:
     return HeartbeatPingResult(
         outcome=HeartbeatOutcome.timeout,

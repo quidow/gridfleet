@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import NoResultFound
 
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumNode
@@ -73,6 +74,9 @@ async def test_node_action_helpers_create_stop_and_restart(monkeypatch: pytest.M
     restart_intent = register.await_args.kwargs["intents"][0]
     assert restart_intent.payload["desired_port"] == 4800
     assert restart_intent.payload["transition_token"]
+
+    with pytest.raises(NodeManagerError, match="No running node"):
+        await bulk_service._bulk_stop_one(db, _device(appium_node=None), "operator")
 
 
 async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,3 +185,47 @@ def test_bulk_small_helpers_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     err = AgentCallError("10.0.0.1", "agent down")
     assert str(err) == "agent down"
+
+
+async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = uuid.uuid4()
+    second = uuid.uuid4()
+    third = uuid.uuid4()
+    db = _db()
+
+    class Session:
+        def __init__(self) -> None:
+            self.rollback = AsyncMock()
+            self.commit = AsyncMock()
+
+        async def __aenter__(self) -> "Session":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(bulk_service, "_load_existing_device_ids", AsyncMock(return_value=[first, second, third]))
+    monkeypatch.setattr(bulk_service, "_session_factory_from_db", lambda _db: Session)
+    monkeypatch.setattr(
+        bulk_service.device_locking,
+        "lock_device",
+        AsyncMock(side_effect=[NoResultFound, SimpleNamespace(id=second), SimpleNamespace(id=third)]),
+    )
+
+    async def action(_session: object, device: object, _caller: str) -> None:
+        if device.id == second:
+            raise RuntimeError("action failed")
+
+    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
+
+    result = await bulk_service._run_per_device_node_action(
+        db,
+        [first, second, third],
+        operation="restart",
+        action_fn=action,
+        caller="bulk",
+    )
+
+    assert result["succeeded"] == 1
+    assert result["errors"][str(first)] == "Device not found"
+    assert result["errors"][str(second)] == "action failed"

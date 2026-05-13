@@ -1,7 +1,9 @@
 import asyncio
 import uuid
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -12,7 +14,7 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
-from app.services import device_health
+from app.services import device_health, node_health
 from app.services.agent_probe_result import ProbeResult
 from app.services.node_health import (
     _check_node_health,
@@ -1222,3 +1224,112 @@ async def test_node_health_recovery_clears_pending_stop(
     assert len(incidents) == 1
     detail = (incidents[0].details or {}).get("detail") or ""
     assert "resumed healthy operation" in detail.lower()
+
+
+async def test_build_probe_capabilities_handles_capability_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="nh-probe-error",
+        connection_target="nh-probe-error",
+        name="Probe Error",
+        os_version="14",
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    monkeypatch.setattr(node_health, "_should_probe_node_health", AsyncMock(return_value=True))
+    monkeypatch.setattr(node_health.capability_service, "get_device_capabilities", AsyncMock(side_effect=RuntimeError))
+
+    assert await node_health._build_probe_capabilities_for_node(AsyncMock(), device) is None
+
+
+async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = Device(
+        id=uuid.uuid4(),
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="nh-early",
+        connection_target="nh-early",
+        name="Node Health Early",
+        os_version="14",
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db = AsyncMock()
+
+    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
+    await node_health._process_node_health(
+        db,
+        AppiumNode(device_id=device.id, port=4723, grid_url="http://grid"),
+        device,
+        result=ProbeResult(status="ack"),
+        grid_device_ids=None,
+    )
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid",
+        pid=1,
+        active_connection_target="old",
+    )
+    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=node))
+    await node_health._process_node_health(
+        db,
+        node,
+        device,
+        result=ProbeResult(status="ack"),
+        grid_device_ids=None,
+        observed_port=4724,
+        observed_pid=1,
+        observed_active_connection_target="old",
+    )
+
+    node.pid = None
+    await node_health._process_node_health(
+        db,
+        node,
+        device,
+        result=ProbeResult(status="ack"),
+        grid_device_ids=None,
+    )
+
+    node.pid = 1
+    await node_health._process_node_health(
+        db,
+        node,
+        device,
+        result=ProbeResult(status="indeterminate"),
+        grid_device_ids=None,
+    )
+
+
+async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Observation:
+        @asynccontextmanager
+        async def cycle(self) -> AsyncGenerator[None, None]:
+            yield None
+
+    @asynccontextmanager
+    async def fake_session() -> AsyncGenerator[AsyncMock, None]:
+        yield AsyncMock()
+
+    monkeypatch.setattr(node_health, "observe_background_loop", MagicMock(return_value=Observation()))
+    monkeypatch.setattr(node_health, "async_session", fake_session)
+    monkeypatch.setattr(node_health, "_check_nodes", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(node_health.settings_service, "get", lambda key: 1)
+    monkeypatch.setattr(node_health.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    log_exception = MagicMock()
+    monkeypatch.setattr(node_health.logger, "exception", log_exception)
+
+    with pytest.raises(asyncio.CancelledError):
+        await node_health.node_health_loop()
+
+    log_exception.assert_called_once_with("Node health check failed")

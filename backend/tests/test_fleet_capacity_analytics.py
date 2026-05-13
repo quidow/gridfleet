@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,8 @@ from app.models.host import Host, HostStatus, OSType
 from app.models.session import Session, SessionStatus
 from app.services.fleet_capacity import (
     _count_schedulable_capacity,
+    _extract_grid_counts,
+    _now,
     collect_capacity_snapshot_once,
     get_fleet_capacity_timeline,
     is_unmet_demand_session,
@@ -90,6 +93,20 @@ async def test_unmet_demand_classifier_counts_only_capacity_failures() -> None:
     assert is_unmet_demand_session(post_launch_capacity_error) is False
     assert is_unmet_demand_session(unfinished_pre_execution_error) is False
     assert is_unmet_demand_session(slow_pre_execution_error) is False
+
+
+async def test_fleet_capacity_helper_guard_paths(db_session: AsyncSession) -> None:
+    assert _now().tzinfo == UTC
+    assert _extract_grid_counts({"error": "down", "value": {"ready": False}}) is None
+    assert _extract_grid_counts({"value": "bad"}) is None
+
+    with pytest.raises(ValueError, match="bucket_minutes"):
+        await get_fleet_capacity_timeline(
+            db_session,
+            date_from=datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
+            date_to=datetime(2026, 4, 18, 10, 1, tzinfo=UTC),
+            bucket_minutes=0,
+        )
 
 
 async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejections(

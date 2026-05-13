@@ -74,7 +74,7 @@ quote-style = "double"
 source = ["app"]
 
 [tool.coverage.report]
-fail_under = 95.0
+fail_under = 99.0
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import random
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy import func, select
 
@@ -16,6 +21,7 @@ from app.models.session import Session, SessionStatus
 from app.models.setting import Setting
 from app.models.test_run import RunState, TestRun
 from app.seeding.context import SeedContext
+from app.seeding.scenarios import full_demo
 from app.seeding.scenarios.full_demo import apply_full_demo
 from app.services import device_presenter
 from app.services.settings_registry import SETTINGS_REGISTRY
@@ -179,3 +185,39 @@ async def test_full_demo_seeds_operator_history_surfaces(db_session) -> None:  #
 
     assert await db_session.scalar(select(func.count()).select_from(ConfigAuditLog)) == 3
     assert await db_session.scalar(select(func.count()).select_from(HostTerminalSession)) == 3
+
+
+@pytest.mark.asyncio
+async def test_full_demo_telemetry_builder_batches_host_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 5, 1, tzinfo=UTC)
+    fake_session = SimpleNamespace(add_all=list.append, flush=AsyncMock())
+    ctx = SimpleNamespace(session=fake_session, now=now, rng=random.Random(42))
+    host = SimpleNamespace(id="host-1")
+    added_batches: list[list[object]] = []
+
+    def add_all(batch: list[object]) -> None:
+        added_batches.append(list(batch))
+
+    fake_session.add_all = add_all
+
+    monkeypatch.setattr(
+        full_demo,
+        "host_resource_series",
+        lambda _ctx, *, host_id, days_back: (f"{host_id}-{index}" for index in range(501)),
+    )
+    monkeypatch.setattr(
+        full_demo,
+        "make_capacity_snapshot",
+        lambda _ctx, **kwargs: {"captured_at": kwargs["captured_at"]},
+    )
+
+    await full_demo._build_telemetry(ctx, [host])  # type: ignore[arg-type]
+
+    assert added_batches[0][0] == "host-1-0"
+    assert len(added_batches[0]) == 500
+    assert added_batches[1] == ["host-1-500"]
+    assert any(
+        isinstance(batch[0], dict) and batch[0]["captured_at"] == now - timedelta(days=90)
+        for batch in added_batches[1:]
+    )
+    assert fake_session.flush.await_count >= 2

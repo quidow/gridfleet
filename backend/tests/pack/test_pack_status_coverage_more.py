@@ -109,3 +109,17 @@ async def test_pack_status_helper_fallbacks(db_session: AsyncSession, db_host: H
     assert pack_status_service._desired_driver_version(pack, {}) is None
     assert pack_status_service._installed_driver_version(pack, {}) is None
     assert pack_status_service._compute_drift(pack, {}, {}) is False
+
+    pack.resolved_install_spec = {"appium_driver": {"uiautomator2": "5.0.0"}}
+    assert pack_status_service._desired_driver_version(pack, {}) == "5.0.0"
+    pack.resolved_install_spec = {}
+    release = type("Release", (), {"manifest_json": {"appium_driver": {"recommended": "6.0.0"}}})()
+    assert pack_status_service._desired_driver_version(pack, {(pack.pack_id, pack.pack_release): release}) == "6.0.0"
+
+    runtime = HostRuntimeInstallation(
+        host_id=db_host.id,
+        runtime_id="rt",
+        driver_specs=[{"version": "5.0.0"}],
+    )
+    pack.runtime_id = "rt"
+    assert pack_status_service._installed_driver_version(pack, {"rt": runtime}) == "5.0.0"

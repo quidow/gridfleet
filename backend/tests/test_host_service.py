@@ -24,6 +24,7 @@ def test_coerce_missing_prerequisites_filters_duplicates_and_invalid_items() -> 
 
 def test_normalize_capabilities_handles_missing_prerequisites() -> None:
     assert host_service.normalize_capabilities(None) is None
+    assert host_service.orchestration_contract_version({"orchestration_contract_version": True}) is None
     assert host_service.normalize_capabilities({"missing_prerequisites": ["adb", "adb", 3]}) == {
         "missing_prerequisites": ["adb"]
     }
@@ -182,6 +183,7 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     assert await host_service.approve_host(db_session, online.id) is None
 
     assert await host_service.reject_host(db_session, reject_me.id) is True
+    assert db_session.in_transaction() is False
     assert await host_service.reject_host(db_session, online.id) is False
 
 

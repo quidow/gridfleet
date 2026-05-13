@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -411,3 +412,34 @@ async def test_dispatch_502_on_transport_error_records_degraded(
     ).scalar_one()
     assert row.ok is False
     assert row.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (_response("POST", "http://example.test", status_code=400, payload={"ok": True}), "rejected"),
+        (_response("POST", "http://example.test", status_code=500, payload={"ok": True}), "failed"),
+        (
+            httpx.Response(200, request=httpx.Request("POST", "http://example.test"), content=b"not-json"),
+            "invalid JSON",
+        ),
+        (_response("POST", "http://example.test", payload=[]), "not an object"),
+        (_response("POST", "http://example.test", payload={"ok": "yes"}), "missing boolean"),
+    ],
+)
+async def test_call_agent_rejects_bad_agent_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    response: httpx.Response,
+    message: str,
+) -> None:
+    monkeypatch.setattr(pack_feature_dispatch_service, "agent_request", AsyncMock(return_value=response))
+
+    with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match=message):
+        await pack_feature_dispatch_service._call_agent(
+            host="10.0.0.1",
+            url="http://10.0.0.1:5100/agent/pack/features/f/actions/a",
+            body={"pack_id": PACK_ID, "args": {}},
+            http_client_factory=_factory(StrictAgentClient()),
+            timeout=5,
+        )

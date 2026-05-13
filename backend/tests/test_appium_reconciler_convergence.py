@@ -254,3 +254,74 @@ async def test_converge_host_rows_skips_one_failed_row_continues_others() -> Non
     )
 
     write_observed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
+    expired = _row(
+        desired_state="running",
+        desired_port=4723,
+        transition_token=uuid.uuid4(),
+        transition_deadline=datetime.now(UTC) - timedelta(seconds=1),
+        port=4723,
+        pid=1,
+        active_connection_target="emulator-5554",
+    )
+    stale = _row(
+        desired_state="stopped",
+        connection_target="stale",
+        port=4724,
+        pid=2,
+        active_connection_target="stale",
+    )
+    clear_token = AsyncMock()
+    write_observed = AsyncMock()
+
+    await converge_host_rows(
+        host_id=expired.host_id,
+        rows=[expired, stale],
+        agent_running=[ObservedEntry(port=4723, pid=1, connection_target=expired.connection_target)],
+        now=datetime.now(UTC),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=write_observed,
+        clear_token=clear_token,
+    )
+
+    clear_token.assert_awaited_once_with(row=expired, reason="deadline_elapsed")
+    write_observed.assert_awaited_once_with(
+        row=stale,
+        state="stopped",
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
+    noop = _row(desired_state="stopped")
+    await converge_host_rows(
+        host_id=noop.host_id,
+        rows=[noop],
+        agent_running=[],
+        now=datetime.now(UTC),
+        start_agent=AsyncMock(),
+        stop_agent=AsyncMock(),
+        write_observed=AsyncMock(),
+        clear_token=AsyncMock(),
+    )
+
+    failing = _row(desired_state="running", desired_port=4723)
+    with pytest.raises(RuntimeError, match="start failed"):
+        await converge_host_rows(
+            host_id=failing.host_id,
+            rows=[failing],
+            agent_running=[],
+            now=datetime.now(UTC),
+            start_agent=AsyncMock(side_effect=RuntimeError("start failed")),
+            stop_agent=AsyncMock(),
+            write_observed=AsyncMock(),
+            clear_token=AsyncMock(),
+            raise_errors=True,
+        )

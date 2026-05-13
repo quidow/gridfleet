@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus
@@ -76,6 +77,42 @@ async def _setup_host_and_device(
 
     await db_session.commit()
     return host, device, node
+
+
+async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = Host(hostname="dc-agent-host", ip="10.0.0.10", os_type="linux", agent_port=5100, status=HostStatus.online)
+    monkeypatch.setattr(
+        "app.services.device_connectivity.get_pack_devices",
+        AsyncMock(return_value={"candidates": "not-a-list"}),
+    )
+    assert await _get_agent_devices(host) == set()
+
+    monkeypatch.setattr(
+        "app.services.device_connectivity.get_pack_devices",
+        AsyncMock(
+            return_value={
+                "candidates": [
+                    "bad",
+                    {"identity_value": "serial-1", "detected_properties": "bad"},
+                    {
+                        "identity_value": "serial-2",
+                        "detected_properties": {"connection_target": "10.0.0.5:5555"},
+                    },
+                ]
+            }
+        ),
+    )
+    aliases = await _get_agent_devices(host)
+    assert aliases is not None
+    assert {"serial-1", "serial-2", "10.0.0.5:5555"} <= aliases
+
+    monkeypatch.setattr(
+        "app.services.device_connectivity.get_pack_devices",
+        AsyncMock(side_effect=AgentCallError("10.0.0.10", "down")),
+    )
+    assert await _get_agent_devices(host) is None
 
 
 async def test_connected_device_stays_available(db_session: AsyncSession) -> None:
@@ -161,6 +198,129 @@ async def test_endpoint_only_offline_device_auto_starts_when_health_passes(db_se
     _, kwargs = mock_recover.call_args
     assert kwargs["reason"] == "Startup recovery after healthy endpoint check"
     assert "YJ1234567890" not in await get_connectivity_control_plane_state(db_session)
+
+
+async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hysteresis(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host, failing, _ = await _setup_host_and_device(db_session, connection_target="192.168.1.51")
+    failing.identity_value = "endpoint-failing"
+    failing.connection_type = ConnectionType.network
+    failing.ip_address = "192.168.1.51"
+    ping_miss = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-ping-miss",
+        connection_target="192.168.1.52",
+        name="Endpoint Ping Miss",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.52",
+    )
+    db_session.add(ping_miss)
+    await db_session.commit()
+
+    _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
+    monkeypatch.setattr("app.services.device_connectivity._uses_endpoint_health", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", AsyncMock(return_value=set()))
+
+    async def endpoint_health(device: Device, **_kwargs: object) -> dict[str, object]:
+        if device.identity_value == "endpoint-failing":
+            return {"healthy": False}
+        return healthy_payload(adb=True, ip_ping=False)
+
+    monkeypatch.setattr("app.services.device_connectivity._get_device_health", endpoint_health)
+    monkeypatch.setattr(
+        "app.services.device_connectivity.lifecycle_policy.handle_health_failure",
+        AsyncMock(),
+    )
+
+    await _check_connectivity(db_session)
+
+    await db_session.refresh(failing)
+    await db_session.refresh(ping_miss)
+    assert failing.device_checks_healthy is False
+    assert ping_miss.device_checks_healthy is True
+    assert ping_miss.device_checks_summary == "Healthy (ip_ping miss 1/2)"
+
+
+async def test_endpoint_offline_recovery_skip_and_failure_branches(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host, not_ready, _ = await _setup_host_and_device(
+        db_session,
+        connection_target="192.168.1.53",
+        device_operational_state=DeviceOperationalState.offline,
+    )
+    not_ready.identity_value = "endpoint-not-ready"
+    not_ready.connection_type = ConnectionType.network
+    not_ready.ip_address = "192.168.1.53"
+    manual = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-manual",
+        connection_target="192.168.1.54",
+        name="Endpoint Manual",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.54",
+        auto_manage=False,
+    )
+    failed_recovery = Device(
+        pack_id="appium-roku-dlenroc",
+        platform_id="roku_network",
+        identity_scheme="roku_serial",
+        identity_scope="global",
+        identity_value="endpoint-failed-recovery",
+        connection_target="192.168.1.55",
+        name="Endpoint Failed Recovery",
+        os_version="14",
+        host_id=_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+        ip_address="192.168.1.55",
+    )
+    db_session.add_all([manual, failed_recovery])
+    await db_session.commit()
+
+    _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
+    monkeypatch.setattr("app.services.device_connectivity._uses_endpoint_health", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", AsyncMock(return_value=set()))
+    monkeypatch.setattr(
+        "app.services.device_connectivity._get_device_health",
+        AsyncMock(return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]}),
+    )
+
+    async def endpoint_ready(_db: AsyncSession, device: Device) -> bool:
+        return device.identity_value != "endpoint-not-ready"
+
+    monkeypatch.setattr("app.services.device_connectivity.is_ready_for_use_async", endpoint_ready)
+    monkeypatch.setattr(
+        "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+        AsyncMock(return_value=False),
+    )
+
+    await _check_connectivity(db_session)
+
+    assert "endpoint-not-ready" not in await get_connectivity_control_plane_state(db_session)
+    assert "endpoint-manual" not in await get_connectivity_control_plane_state(db_session)
+    assert "endpoint-failed-recovery" in await get_connectivity_control_plane_state(db_session)
 
 
 async def test_running_avd_alias_keeps_stable_target_connected(db_session: AsyncSession) -> None:
@@ -409,6 +569,47 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline  # still offline
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)  # still tracked for next attempt
+
+
+async def test_connected_offline_manual_device_skips_non_endpoint_auto_recovery(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host, device, _ = await _setup_host_and_device(
+        db_session,
+        device_operational_state=DeviceOperationalState.offline,
+    )
+    device.auto_manage = False
+    await db_session.commit()
+    monkeypatch.setattr("app.services.device_connectivity.is_ready_for_use_async", AsyncMock(return_value=True))
+
+    with (
+        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.services.device_connectivity._get_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True},
+        ),
+    ):
+        await _check_connectivity(db_session)
+
+    assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
+
+
+async def test_offline_disconnected_device_tracks_stopped_leftover_node(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _host, _device, _ = await _setup_host_and_device(
+        db_session,
+        device_operational_state=DeviceOperationalState.offline,
+    )
+    monkeypatch.setattr("app.services.device_connectivity._stop_disconnected_node", AsyncMock(return_value=object()))
+
+    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+        await _check_connectivity(db_session)
+
+    assert "dc-001" in await get_connectivity_control_plane_state(db_session)
 
 
 async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:

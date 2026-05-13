@@ -1,4 +1,6 @@
+import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -806,6 +808,17 @@ def test_lifecycle_summary_surfaces_reconciler_start_failure() -> None:
     assert summary["label"] == "Node Start Failed"
     assert summary["detail"] == "port_occupied"
 
+    manual = build_lifecycle_policy_summary(
+        {
+            "recovery_state": "manual",
+            "last_action": "operator_disabled",
+            "recovery_suppressed_reason": "manual override",
+        }
+    )
+    assert manual["state"] == "manual"
+    assert manual["label"] == "Manual Recovery"
+    assert manual["detail"] == "manual override"
+
 
 async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_incident(
     db_session: AsyncSession,
@@ -1255,3 +1268,286 @@ def test_lifecycle_run_import_order_is_acyclic() -> None:
 
     assert lifecycle_policy.build_lifecycle_policy is lifecycle_policy_summary.build_lifecycle_policy
     assert hasattr(run_service, "reservation_entry_is_excluded")
+
+
+async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = AsyncMock()
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        hold=DeviceHold.maintenance,
+        lifecycle_policy_state={},
+        recovery_allowed=True,
+        recovery_blocked_reason=None,
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=True,
+        appium_node=None,
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
+    )
+    suppressed = AsyncMock(return_value="suppressed")
+    monkeypatch.setattr(lifecycle_policy_module, "record_recovery_suppressed", suppressed)
+
+    assert await handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
+
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(None, None)),
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
+    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+
+    device.hold = None
+    device.recovery_allowed = False
+    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+
+    device.recovery_allowed = True
+    device.hold = DeviceHold.maintenance
+    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+
+    device.hold = None
+    lifecycle_policy_module.has_running_client_session.return_value = True
+    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+
+    lifecycle_policy_module.has_running_client_session.return_value = False
+    device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
+    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
+    db.commit.assert_awaited()
+
+
+async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+    db.add = lambda _row: None
+    run = SimpleNamespace(id=uuid.uuid4(), name="active-run", state=RunState.active)
+    excluded_entry = SimpleNamespace(excluded=True, excluded_until=None, exclusion_reason="flaky")
+    node = SimpleNamespace(observed_running=True)
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        host_id=uuid.uuid4(),
+        hold=None,
+        lifecycle_policy_state={},
+        recovery_allowed=True,
+        recovery_blocked_reason=None,
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=True,
+        appium_node=node,
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: node)
+    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(run, excluded_entry)),
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "reservation_entry_is_excluded",
+        lambda entry: bool(entry and entry.excluded),
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.session_viability,
+        "run_session_viability_probe",
+        AsyncMock(return_value={"status": "passed"}),
+    )
+    monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(lifecycle_policy_module, "restore_run_if_needed", AsyncMock(return_value=(run, excluded_entry)))
+    monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module, "set_hold", AsyncMock())
+    monkeypatch.setattr(
+        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.lifecycle_incident_service,
+        "record_lifecycle_incident",
+        AsyncMock(),
+    )
+
+    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
+    lifecycle_policy_module.restore_run_if_needed.assert_awaited_once()
+    lifecycle_policy_module.set_hold.assert_awaited_with(
+        device,
+        DeviceHold.reserved,
+        reason="Rejoined run after checks: reconnected",
+    )
+
+    busy = SimpleNamespace(
+        id=uuid.uuid4(),
+        host_id=uuid.uuid4(),
+        hold=None,
+        lifecycle_policy_state={},
+        recovery_allowed=True,
+        recovery_blocked_reason=None,
+        operational_state=DeviceOperationalState.busy,
+        auto_manage=True,
+        appium_node=node,
+    )
+    lifecycle_policy_module._reload_device.return_value = busy
+    lifecycle_policy_module.device_locking.lock_device.return_value = busy
+    lifecycle_policy_module.run_reservation_service.get_device_reservation_with_entry.return_value = (None, None)
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "reservation_entry_is_excluded",
+        lambda _entry: True,
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "ready_operational_state",
+        AsyncMock(return_value=DeviceOperationalState.offline),
+    )
+    machine = SimpleNamespace(transition=AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module, "_MACHINE", machine)
+
+    assert await attempt_auto_recovery(db, busy, source="checks", reason="reconnected") is True
+    machine.transition.assert_awaited()
+    assert machine.transition.await_args.args[1] is lifecycle_policy_module.TransitionEvent.AUTO_STOP_EXECUTED
+
+
+async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        recovery_allowed=True,
+        recovery_blocked_reason=None,
+        lifecycle_policy_state={},
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=True,
+        hold=None,
+        host_id=None,
+        appium_node=None,
+    )
+    run = SimpleNamespace(id=uuid.uuid4(), name="recovery-run")
+    db = AsyncMock()
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(lifecycle_policy_module, "policy_state", lambda _device: {})
+    monkeypatch.setattr(lifecycle_policy_module, "write_state", lambda _device, state: setattr(_device, "state", state))
+    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(run, None)),
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service, "reservation_entry_is_excluded", lambda _: False
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
+    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        lifecycle_policy_module.lifecycle_incident_service,
+        "record_lifecycle_incident",
+        AsyncMock(),
+    )
+
+    assert (
+        await attempt_auto_recovery(
+            db,
+            device,  # type: ignore[arg-type]
+            source="device_checks",
+            reason="reconnected",
+        )
+        is False
+    )
+
+    assert device.state["last_action"] == "recovery_failed"
+    assert device.state["recovery_suppressed_reason"] == "Automatic restart failed"
+    assert lifecycle_policy_module.lifecycle_incident_service.record_lifecycle_incident.await_count == 2
+    db.commit.assert_awaited()
+
+
+async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeDb:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.commits = 0
+
+        def add(self, item: object) -> None:
+            self.added.append(item)
+
+        async def flush(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+        async def refresh(self, _item: object) -> None:
+            return None
+
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        recovery_allowed=True,
+        recovery_blocked_reason=None,
+        lifecycle_policy_state={},
+        operational_state=DeviceOperationalState.offline,
+        hold=None,
+        auto_manage=True,
+        host_id=uuid.uuid4(),
+        appium_node=None,
+    )
+    db = FakeDb()
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "write_state",
+        lambda target, state: setattr(target, "lifecycle_policy_state", dict(state)),
+    )
+    monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "get_device_reservation_with_entry",
+        AsyncMock(return_value=(None, None)),
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module.run_reservation_service,
+        "reservation_entry_is_excluded",
+        lambda _entry: False,
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
+    monkeypatch.setattr(lifecycle_policy_module.settings_service, "get", lambda _key: "http://grid:4444")
+    monkeypatch.setattr(lifecycle_policy_module, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module, "register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "ready_operational_state",
+        AsyncMock(return_value=DeviceOperationalState.available),
+    )
+    monkeypatch.setattr(lifecycle_policy_module._MACHINE, "transition", AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
+    monkeypatch.setattr(
+        lifecycle_policy_module.session_viability,
+        "run_session_viability_probe",
+        AsyncMock(return_value={"status": "passed"}),
+    )
+
+    assert await attempt_auto_recovery(db, device, source="device_checks", reason="reconnected") is True  # type: ignore[arg-type]
+    assert db.added
+    lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
+    lifecycle_policy_module._MACHINE.transition.assert_awaited()
+
+    failing = SimpleNamespace(**device.__dict__)
+    failing.id = uuid.uuid4()
+    failing.lifecycle_policy_state = {}
+    failing.appium_node = SimpleNamespace(observed_running=True)
+    db2 = FakeDb()
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=failing))
+    monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=failing))
+    monkeypatch.setattr(
+        lifecycle_policy_module.session_viability,
+        "run_session_viability_probe",
+        AsyncMock(return_value={"status": "failed", "error": "probe failed"}),
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "complete_auto_stop", AsyncMock())
+    monkeypatch.setattr(lifecycle_policy_module, "_set_backoff", lambda state: "2026-05-13T12:00:00+00:00")
+
+    assert await attempt_auto_recovery(db2, failing, source="device_checks", reason="still bad") is False  # type: ignore[arg-type]
+    assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+    lifecycle_policy_module.complete_auto_stop.assert_awaited_once()

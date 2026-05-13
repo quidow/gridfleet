@@ -1,26 +1,28 @@
 """Verify the driver-pack tables migration creates every required table.
 
-The alembic env reads ``settings.database_url`` at module import time, so we
-spin up a throw-away Postgres database, point ``settings.database_url`` at it
-for the duration of the upgrade, and then drop the database once we've
-inspected the schema. This actually exercises ``upgrade()`` rather than
-relying on ``Base.metadata.create_all`` (which the rest of the suite uses).
+Run Alembic against a throw-away schema in the worker's test database. This
+actually exercises ``upgrade()`` rather than relying on ``Base.metadata.create_all``
+(which the rest of the suite uses), without creating and dropping an entire
+database while xdist workers are busy.
 """
 
 from __future__ import annotations
 
-import asyncio
+import os
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from alembic.config import Config
 from sqlalchemy import NullPool, inspect, text
-from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
 from app.config import settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
@@ -41,84 +43,48 @@ def _quote_identifier(name: str) -> str:
     return f'"{escaped}"'
 
 
-async def _create_database(database_name: str) -> str:
-    """Create a fresh Postgres database for the migration run, return its URL."""
-    base_url = make_url(settings.database_url)
-    admin_url = base_url.set(database="postgres")
-    target_url = base_url.set(database=database_name)
-
-    admin_engine = create_async_engine(
-        admin_url.render_as_string(hide_password=False),
-        poolclass=NullPool,
-        isolation_level="AUTOCOMMIT",
-    )
-    try:
-        async with admin_engine.connect() as conn:
-            await conn.execute(text(f"CREATE DATABASE {_quote_identifier(database_name)}"))
-    finally:
-        await admin_engine.dispose()
-    return target_url.render_as_string(hide_password=False)
-
-
-async def _drop_database(database_name: str) -> None:
-    base_url = make_url(settings.database_url)
-    admin_url = base_url.set(database="postgres")
-    admin_engine = create_async_engine(
-        admin_url.render_as_string(hide_password=False),
-        poolclass=NullPool,
-        isolation_level="AUTOCOMMIT",
-    )
-    try:
-        async with admin_engine.connect() as conn:
-            # Terminate any lingering connections before dropping.
-            await conn.execute(
-                text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = :database_name AND pid <> pg_backend_pid()"
-                ),
-                {"database_name": database_name},
-            )
-            await conn.execute(text(f"DROP DATABASE IF EXISTS {_quote_identifier(database_name)}"))
-    finally:
-        await admin_engine.dispose()
-
-
-async def _inspect_tables(database_url: str) -> set[str]:
-    engine = create_async_engine(database_url, poolclass=NullPool)
-    try:
-        async with engine.connect() as conn:
-
-            def _collect(sync_conn: Connection) -> set[str]:
-                insp = inspect(sync_conn)
-                return set(insp.get_table_names())
-
-            return await conn.run_sync(_collect)
-    finally:
-        await engine.dispose()
+def _test_database_url(base_database_url: str) -> str:
+    database_name = "gridfleet_test"
+    worker_id = os.getenv("PYTEST_XDIST_WORKER")
+    if worker_id and worker_id != "master":
+        safe_worker_id = "".join(char if char.isalnum() else "_" for char in worker_id)
+        database_name = f"{database_name}_{safe_worker_id}"
+    return base_database_url.rsplit("/", 1)[0] + f"/{database_name}"
 
 
 @pytest.mark.asyncio
-async def test_driver_pack_tables_exist(monkeypatch: pytest.MonkeyPatch) -> None:
-    database_name = f"gridfleet_migration_{uuid.uuid4().hex}"
-    database_url = await _create_database(database_name)
+async def test_driver_pack_tables_exist(ensure_test_database: None) -> None:
+    _ = ensure_test_database
+    schema_name = f"migration_{uuid.uuid4().hex}"
+    database_url = _test_database_url(settings.database_url)
+    engine = create_async_engine(database_url, poolclass=NullPool)
 
     try:
-        # ``alembic/env.py`` pulls the URL from ``settings.database_url`` each time
-        # migrations run. Patch it for the duration of the upgrade so the command
-        # targets our throw-away database.
-        monkeypatch.setattr(settings, "database_url", database_url)
+        async with engine.begin() as conn:
+            await conn.execute(text(f"CREATE SCHEMA {_quote_identifier(schema_name)}"))
 
         config = Config(str(ALEMBIC_INI))
         config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
         config.set_main_option("sqlalchemy.url", database_url)
 
-        # ``command.upgrade`` is synchronous; run it off the event loop so the
-        # async engine alembic creates internally isn't stepping on ours.
-        await asyncio.to_thread(command.upgrade, config, "head")
+        def _upgrade(sync_conn: Connection) -> None:
+            config.attributes["connection"] = sync_conn
+            config.attributes["target_search_path"] = schema_name
+            command.upgrade(config, "head")
 
-        tables = await _inspect_tables(database_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(_upgrade)
+
+        def _collect(sync_conn: Connection) -> set[str]:
+            insp = inspect(sync_conn)
+            return set(insp.get_table_names(schema=schema_name))
+
+        async with engine.connect() as conn:
+            tables = await conn.run_sync(_collect)
     finally:
-        await _drop_database(database_name)
+        async with engine.begin() as conn:
+            await conn.execute(text(f"DROP SCHEMA IF EXISTS {_quote_identifier(schema_name)} CASCADE"))
+        await engine.dispose()
 
     missing = EXPECTED_TABLES - tables
     assert not missing, f"missing driver-pack tables after upgrade: {sorted(missing)}"

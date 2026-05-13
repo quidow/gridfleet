@@ -40,7 +40,7 @@ async def test_reconcile_host_and_loop_tick_skip_invalid_payloads_and_hosts() ->
         host_id=host_id,
         host_ip="10.0.0.1",
         agent_port=5100,
-        db_running_rows=[],
+        db_running_rows=[{"host_id": uuid.uuid4(), "device_connection_target": "other", "node_port": 4723}],
         fetch_health=AsyncMock(return_value={"appium_processes": []}),
         appium_stop=AsyncMock(),
     )
@@ -183,6 +183,41 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
     ) == ("already_running")
     assert appium_reconciler._classify_start_failure(httpx.ConnectError("down")) == "http_error"
     assert appium_reconciler._classify_start_failure(RuntimeError("boom")) == "http_error"
+
+
+async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert appium_reconciler._session_scope(None) is appium_reconciler.async_session
+    await appium_reconciler._touch_last_observed([])
+
+    class Session:
+        async def __aenter__(self) -> "Session":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    row = _desired_row()
+
+    @asynccontextmanager
+    async def scope() -> Session:
+        yield Session()
+
+    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
+    start = appium_reconciler._make_start_agent(require_leader=False, session_scope=scope)
+    with pytest.raises(RuntimeError, match="no longer exists"):
+        await start(row=row, port=4723)
+
+    monkeypatch.setattr(
+        appium_reconciler,
+        "_load_device_for_reconciler",
+        AsyncMock(return_value=type("Device", (), {"appium_node": None})()),
+    )
+    monkeypatch.setattr(appium_reconciler, "_record_start_failure", AsyncMock())
+    with pytest.raises(RuntimeError, match="has no AppiumNode"):
+        await start(row=row, port=4723)
+
+    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
+    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=scope)
 
 
 async def test_record_and_reset_start_failure_state(

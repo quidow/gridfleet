@@ -89,6 +89,19 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     count_devices.assert_awaited_once()
     assert list_devices.await_count == 2
 
+    updated = await device_group_service.update_group(
+        db_session,
+        group.id,
+        DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
+    )
+    assert updated is not None
+    assert updated.filters == {"platform_id": "ios"}
+    with patch(
+        "app.services.device_group_service.device_service.list_devices_by_filters",
+        new=AsyncMock(return_value=[device]),
+    ):
+        assert await device_group_service.get_group_device_ids(db_session, group.id) == [device.id]
+
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
     assert device_group_service._dump_filters(None) is None

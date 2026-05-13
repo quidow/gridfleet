@@ -748,6 +748,11 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("caps")),
     )
+    monkeypatch.setattr(
+        session_viability,
+        "ready_operational_state",
+        AsyncMock(return_value=DeviceOperationalState.available),
+    )
 
     with pytest.raises(RuntimeError, match="caps"):
         await run_session_viability_probe(
@@ -757,3 +762,61 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
         )
 
     assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.offline
+
+
+async def test_run_session_viability_probe_no_node_commit_and_available_exception_restore(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    no_node = MagicMock(
+        id=uuid.uuid4(),
+        operational_state=DeviceOperationalState.available,
+        hold=None,
+        appium_node=None,
+        device_config={"session_viability": {"status": "legacy"}},
+    )
+    fake_db = AsyncMock()
+    monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
+    monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
+    monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(session_viability.settings_service, "get", lambda key: 5)
+    monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
+
+    state = await run_session_viability_probe(
+        fake_db,
+        no_node,
+        checked_by=session_viability.SessionViabilityCheckedBy.manual,
+    )
+
+    assert state["status"] == "failed"
+    assert no_node.device_config == {}
+    assert fake_db.commit.await_count >= 2
+
+    device_id = uuid.uuid4()
+    available = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
+    available.appium_node = MagicMock(observed_running=True)
+    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available)
+    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy)
+    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
+    set_state = AsyncMock()
+    monkeypatch.setattr(session_viability, "set_operational_state", set_state)
+    monkeypatch.setattr(
+        session_viability.capability_service,
+        "get_device_capabilities",
+        AsyncMock(side_effect=RuntimeError("caps")),
+    )
+    monkeypatch.setattr(
+        session_viability,
+        "ready_operational_state",
+        AsyncMock(return_value=DeviceOperationalState.available),
+    )
+
+    with pytest.raises(RuntimeError, match="caps"):
+        await run_session_viability_probe(
+            db_session,
+            available,
+            checked_by=session_viability.SessionViabilityCheckedBy.manual,
+        )
+
+    assert set_state.await_args_list[-1].args[1] != DeviceOperationalState.offline
