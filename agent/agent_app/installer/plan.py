@@ -167,12 +167,8 @@ def _find_android_home(env: Mapping[str, str], home: Path) -> str | None:
 
 
 def _operator_home(env: Mapping[str, str]) -> Path:
-    sudo_user = env.get("SUDO_USER")
-    if sudo_user:
-        try:
-            return Path(f"~{sudo_user}").expanduser()
-        except RuntimeError:
-            pass
+    """Return the home directory of the user running this process."""
+    del env  # SUDO_USER no longer consulted; install runs as operator.
     return Path.home()
 
 
