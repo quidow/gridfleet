@@ -75,6 +75,8 @@ class EventBus:
         self._handlers.append(handler)
 
     async def start(self) -> None:
+        if self._publish_socket is not None or self._subscribe_socket is not None or self._subscriber_task is not None:
+            return
         self._open_publish_socket()
         self._subscribe_socket = self._context.socket(zmq.SUB)
         self._subscribe_socket.setsockopt(zmq.SUBSCRIBE, b"")
@@ -103,6 +105,8 @@ class EventBus:
                 self._subscribe_socket = None
 
     async def publish(self, event: dict[str, Any]) -> None:
+        if self._publish_socket is None:
+            raise RuntimeError("event bus is not started")
         try:
             await self._send_multipart(encode_event_frames(event))
         except Exception:

@@ -1,21 +1,34 @@
+from __future__ import annotations
+
 import asyncio
 import os
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
+from agent_app.tool_paths import _parse_node_version, find_appium
+from agent_app.tool_utils import _find_adb, find_android_home
 from agent_app.tools_manager import (
     CommandResult,
     NodeProvider,
     _detect_fnm_provider,
     _detect_nvm_provider,
     _detect_system_provider,
+    _find_fnm_binary,
     _first_version,
+    _fnm_base_dirs,
+    _fnm_default_bin_dirs,
+    _get_go_ios_version,
     _get_node_version,
+    _is_executable,
     _prepend_process_path,
     _provider_env,
     _run_command,
     _run_optional,
     detect_node_provider,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class _FakeProc:
@@ -152,3 +165,232 @@ async def test_get_node_version_handles_provider_command() -> None:
         return_value=CommandResult(0, "v20.11.1"),
     ):
         assert await _get_node_version(provider) == "20.11.1"
+
+
+# ---------------------------------------------------------------------------
+# tool_paths coverage
+# ---------------------------------------------------------------------------
+
+
+def test_parse_node_version_invalid_returns_zero() -> None:
+    with patch("agent_app.tool_paths.logger.debug") as mock_log:
+        assert _parse_node_version("/foo/vABC.def/bin/appium") == (0,)
+    mock_log.assert_called_once()
+
+
+def test_find_appium_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with patch("agent_app.tool_paths.shutil.which", return_value="/usr/local/bin/appium"):
+        assert find_appium() == "/usr/local/bin/appium"
+
+
+def test_find_appium_with_fnm_dir_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FNM_DIR", "/custom/fnm")
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with (
+        patch("agent_app.tool_paths.shutil.which", return_value=None),
+        patch(
+            "agent_app.tool_paths.os.access",
+            side_effect=lambda p, m: p == "/custom/fnm/aliases/default/bin/appium",
+        ),
+    ):
+        assert find_appium() == "/custom/fnm/aliases/default/bin/appium"
+
+
+def test_find_appium_with_xdg_data_home_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", "/xdg")
+    with (
+        patch("agent_app.tool_paths.shutil.which", return_value=None),
+        patch(
+            "agent_app.tool_paths.os.access",
+            side_effect=lambda p, m: p == "/xdg/fnm/aliases/default/bin/appium",
+        ),
+    ):
+        assert find_appium() == "/xdg/fnm/aliases/default/bin/appium"
+
+
+def test_find_appium_prefers_nvm_when_no_fnm(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with (
+        patch("agent_app.tool_paths.shutil.which", return_value=None),
+        patch("agent_app.tool_paths.os.access", side_effect=lambda p, m: p.startswith("/home/user/.nvm")),
+        patch(
+            "agent_app.tool_paths.glob.glob",
+            return_value=["/home/user/.nvm/versions/node/v20.0.0/bin/appium"],
+        ),
+    ):
+        assert find_appium() == "/home/user/.nvm/versions/node/v20.0.0/bin/appium"
+
+
+def test_find_appium_fallback_to_usr_local_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with (
+        patch("agent_app.tool_paths.shutil.which", return_value=None),
+        patch("agent_app.tool_paths.os.access", side_effect=lambda p, m: p == "/usr/local/bin/appium"),
+        patch("agent_app.tool_paths.glob.glob", return_value=[]),
+        patch("agent_app.tool_paths.os.path.isfile", return_value=True),
+    ):
+        assert find_appium() == "/usr/local/bin/appium"
+
+
+def test_find_appium_returns_name_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with (
+        patch("agent_app.tool_paths.shutil.which", return_value=None),
+        patch("agent_app.tool_paths.os.access", return_value=False),
+        patch("agent_app.tool_paths.glob.glob", return_value=[]),
+        patch("agent_app.tool_paths.os.path.isfile", return_value=False),
+    ):
+        assert find_appium() == "appium"
+
+
+# ---------------------------------------------------------------------------
+# tool_utils coverage
+# ---------------------------------------------------------------------------
+
+
+def test_find_android_home_env_set_but_not_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANDROID_HOME", "/invalid")
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    with patch("agent_app.tool_utils.os.path.isdir", return_value=False):
+        assert find_android_home() is None
+
+
+def test_find_android_home_no_env_no_valid_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    with patch("agent_app.tool_utils.os.path.isdir", return_value=False):
+        assert find_android_home() is None
+
+
+def test_find_android_home_fallback_sdk_with_platform_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    sdk = os.path.expanduser("~/Library/Android/sdk")
+    with patch(
+        "agent_app.tool_utils.os.path.isdir",
+        side_effect=lambda p: p in {sdk, os.path.join(sdk, "platform-tools")},
+    ):
+        assert find_android_home() == sdk
+
+
+def test_find_adb_no_which_no_valid_fallback() -> None:
+    with (
+        patch("agent_app.tool_utils.shutil.which", return_value=None),
+        patch("agent_app.tool_utils.os.path.isfile", return_value=False),
+    ):
+        assert _find_adb() == "adb"
+
+
+def test_find_adb_fallback_to_valid_path() -> None:
+    adb = os.path.expanduser("~/Library/Android/sdk/platform-tools/adb")
+    with (
+        patch("agent_app.tool_utils.shutil.which", return_value=None),
+        patch("agent_app.tool_utils.os.path.isfile", side_effect=lambda p: p == adb),
+        patch("agent_app.tool_utils.os.access", side_effect=lambda p, m: p == adb),
+    ):
+        assert _find_adb() == adb
+
+
+# ---------------------------------------------------------------------------
+# tools_manager small helpers coverage
+# ---------------------------------------------------------------------------
+
+
+def test_is_executable_false() -> None:
+    with patch("agent_app.tools_manager.os.path.isfile", return_value=False):
+        assert _is_executable("/some/path") is False
+
+
+def test_find_fnm_binary_from_which() -> None:
+    with patch("agent_app.tools_manager.shutil.which", return_value="/usr/bin/fnm"):
+        assert _find_fnm_binary() == "/usr/bin/fnm"
+
+
+def test_find_fnm_binary_fallback_found() -> None:
+    with (
+        patch("agent_app.tools_manager.shutil.which", return_value=None),
+        patch(
+            "agent_app.tools_manager._is_executable",
+            side_effect=lambda p: p == "/opt/homebrew/bin/fnm",
+        ),
+    ):
+        assert _find_fnm_binary() == "/opt/homebrew/bin/fnm"
+
+
+def test_find_fnm_binary_not_found() -> None:
+    with (
+        patch("agent_app.tools_manager.shutil.which", return_value=None),
+        patch("agent_app.tools_manager._is_executable", return_value=False),
+    ):
+        assert _find_fnm_binary() is None
+
+
+def test_fnm_base_dirs_deduplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FNM_DIR", os.path.expanduser("~/.local/share/fnm"))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    dirs = _fnm_base_dirs()
+    assert dirs.count(os.path.expanduser("~/.local/share/fnm")) == 1
+
+
+def test_fnm_base_dirs_with_xdg_data_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", "/xdg")
+    dirs = _fnm_base_dirs()
+    assert "/xdg/fnm" in dirs
+
+
+def test_fnm_default_bin_dirs_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FNM_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    default_bin = os.path.expanduser("~/.local/share/fnm/aliases/default/bin")
+    with patch(
+        "agent_app.tools_manager.os.path.isdir",
+        side_effect=lambda p: p == default_bin,
+    ):
+        bins = _fnm_default_bin_dirs()
+        assert default_bin in bins
+
+
+def test_node_provider_command_npm_and_default() -> None:
+    provider = NodeProvider(name="nvm", node_path="/nvm/node", npm_path="/nvm/npm")
+    assert provider.command("npm", "--version") == ["/nvm/npm", "--version"]
+    provider2 = NodeProvider(name="system", node_path=None, npm_path=None)
+    assert provider2.command("appium") == ["appium"]
+
+
+async def test_detect_fnm_provider_none_when_fnm_not_found() -> None:
+    with patch("agent_app.tools_manager._find_fnm_binary", return_value=None):
+        assert await _detect_fnm_provider() is None
+
+
+async def test_get_go_ios_version_command_prefix_failure_then_success() -> None:
+    provider = NodeProvider(
+        name="fnm",
+        node_path="/fnm/node",
+        npm_path="/fnm/npm",
+        command_prefix=["fnm", "exec", "--using", "default"],
+    )
+    with patch(
+        "agent_app.tools_manager._run_optional",
+        new_callable=AsyncMock,
+        side_effect=[
+            CommandResult(1, "err"),  # first call fails
+            CommandResult(0, "1.0.207"),  # prefix call succeeds
+        ],
+    ):
+        assert await _get_go_ios_version(provider) == "1.0.207"
+
+
+async def test_get_go_ios_version_uses_raw_output_when_no_version_match() -> None:
+    with patch(
+        "agent_app.tools_manager._run_optional",
+        new_callable=AsyncMock,
+        return_value=CommandResult(0, "some raw output"),
+    ):
+        assert await _get_go_ios_version(None) == "some raw output"

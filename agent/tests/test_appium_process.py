@@ -1,5 +1,8 @@
 import asyncio
+import collections
+import contextlib
 import json
+import signal
 from collections import deque
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,14 +12,21 @@ import httpx
 import pytest
 
 from agent_app.appium_process import (
+    AlreadyRunningError,
     AppiumInvocation,
     AppiumLaunchSpec,
     AppiumProcessInfo,
     AppiumProcessManager,
     DeviceNotFoundError,
     InvalidStartPayloadError,
+    PortOccupiedError,
+    RuntimeMissingError,
+    RuntimeNotInstalledError,
+    StartupTimeoutError,
     _build_env,
     _find_java,
+    _has_lifecycle_action,
+    sanitize_appium_driver_capabilities,
 )
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -1177,3 +1187,633 @@ async def test_require_managed_running_port_rejects_unmanaged_port() -> None:
 
     with pytest.raises(DeviceNotFoundError, match="No managed Appium process is running on port 6553"):
         manager.require_managed_running_port(6553)
+
+
+# ---------------------------------------------------------------------------
+# Lowest-hanging-fruit coverage for helper functions / simple branches
+# ---------------------------------------------------------------------------
+
+
+def test_has_lifecycle_action_true_and_false() -> None:
+    assert _has_lifecycle_action([{"id": "boot"}, {"id": "reboot"}], "boot") is True
+    assert _has_lifecycle_action([{"id": "boot"}], "reboot") is False
+    assert _has_lifecycle_action([], "boot") is False
+
+
+def test_sanitize_appium_driver_capabilities_drops_gridfleet_and_known_keys() -> None:
+    raw = {
+        "appium:automationName": "UiAutomator2",
+        "gridfleet:run_id": "abc",
+        "appium:gridfleet:deviceId": "123",
+        "appium:deviceName": "Pixel",
+        "platformName": "Android",
+        "custom": "keep",
+    }
+    result = sanitize_appium_driver_capabilities(raw)
+    assert result == {"appium:automationName": "UiAutomator2", "platformName": "Android", "custom": "keep"}
+
+
+def test_exception_classes_exist_and_are_runtime_error() -> None:
+    excs = [RuntimeNotInstalledError, PortOccupiedError, AlreadyRunningError, StartupTimeoutError, RuntimeMissingError]
+    for exc_cls in excs:
+        with pytest.raises(RuntimeError):
+            raise exc_cls("test")
+
+
+def test_appium_invocation_dataclass_defaults() -> None:
+    inv = AppiumInvocation(binary="/bin/appium")
+    assert inv.env_extra == {}
+
+
+def test_find_java_fallback_to_java_command() -> None:
+    with (
+        patch("agent_app.appium_process.shutil.which", return_value=None),
+        patch.dict("os.environ", {}, clear=True),
+        patch("agent_app.appium_process.platform.system", return_value="Linux"),
+        patch("agent_app.appium_process.os.path.isdir", return_value=False),
+        patch("agent_app.appium_process.os.path.isfile", return_value=False),
+    ):
+        assert _find_java() == "java"
+
+
+def test_find_java_darwin_usr_bin_java_stub_no_javahome() -> None:
+    """Cover Darwin branch where /usr/bin/java is a stub and /usr/libexec/java_home fails."""
+    with (
+        patch("agent_app.appium_process.platform.system", return_value="Darwin"),
+        patch("agent_app.appium_process.shutil.which", return_value="/usr/bin/java"),
+        patch("agent_app.appium_process.os.path.realpath", return_value="/usr/bin/java"),
+        patch.dict("os.environ", {}, clear=True),
+        patch("agent_app.appium_process.subprocess.run", side_effect=FileNotFoundError),
+        patch("agent_app.appium_process.os.path.isdir", return_value=False),
+        patch("agent_app.appium_process.os.path.isfile", return_value=False),
+    ):
+        assert _find_java() == "java"
+
+
+def test_find_java_darwin_usr_bin_java_stub_with_javahome() -> None:
+    """Cover Darwin branch where /usr/libexec/java_home succeeds."""
+    result = MagicMock(returncode=0, stdout="/Library/Java/Home\n")
+    with (
+        patch("agent_app.appium_process.platform.system", return_value="Darwin"),
+        patch("agent_app.appium_process.shutil.which", return_value="/usr/bin/java"),
+        patch("agent_app.appium_process.os.path.realpath", return_value="/usr/bin/java"),
+        patch.dict("os.environ", {}, clear=True),
+        patch("agent_app.appium_process.subprocess.run", return_value=result),
+        patch("agent_app.appium_process.os.path.isfile", return_value=True),
+        patch("agent_app.appium_process.os.access", return_value=True),
+        patch("agent_app.appium_process.os.path.isdir", return_value=False),
+    ):
+        assert _find_java() == "/Library/Java/Home/bin/java"
+
+
+def test_appium_process_info_defaults() -> None:
+    info = AppiumProcessInfo(port=4723, pid=1234, connection_target="dev", platform_id="android")
+    assert info.port == 4723
+
+
+def test_running_info_for_target_excludes_port() -> None:
+    manager = AppiumProcessManager()
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._info[4724] = AppiumProcessInfo(port=4724, pid=2, connection_target="dev", platform_id="android")
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=1))
+    manager._appium_procs[4724] = cast("asyncio.subprocess.Process", FakeProcess(pid=2))
+
+    # exclude 4723
+    assert (
+        manager._running_info_for_target(connection_target="dev", platform_id="android", exclude_port=4723).port == 4724
+    )
+    # exclude 4724
+    assert (
+        manager._running_info_for_target(connection_target="dev", platform_id="android", exclude_port=4724).port == 4723
+    )
+
+
+def test_running_info_for_target_no_match() -> None:
+    manager = AppiumProcessManager()
+    assert manager._running_info_for_target(connection_target="x", platform_id="y") is None
+
+
+def test_trim_restart_attempts_with_explicit_now() -> None:
+    manager = AppiumProcessManager()
+    attempts: dict[int, collections.deque[float]] = {}
+    now = 1000.0
+    attempts[4723] = collections.deque([now - 400, now - 10])
+    history = manager._trim_restart_attempts(attempts, 4723, now=now)
+    # Only entries within 300s window kept
+    assert list(history) == [now - 10]
+
+
+def test_next_restart_delay_bounds() -> None:
+    manager = AppiumProcessManager()
+    steps: dict[int, int] = {}
+    assert manager._next_restart_delay(steps, 4723) == 1
+    steps[4723] = 99
+    assert manager._next_restart_delay(steps, 4723) == 30
+
+
+def test_advance_restart_backoff_cap() -> None:
+    manager = AppiumProcessManager()
+    steps: dict[int, int] = {4723: 99}
+    manager._advance_restart_backoff(steps, 4723)
+    assert steps[4723] == len((1, 2, 4, 8, 16, 30)) - 1
+
+
+async def test_watch_appium_process_ignores_if_not_current_process() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=100)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=101))
+    # Since _appium_procs[4723] is a different process object, watch exits early on line 503
+    proc.set_exit(0)
+    await manager._watch_appium_process(4723, cast("asyncio.subprocess.Process", proc))
+
+
+async def test_watch_appium_process_ignores_intentional_stop() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=100)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    manager._intentional_stop_ports.add(4723)
+    # Simulate process exit
+    proc.set_exit(0)
+    await manager._watch_appium_process(4723, cast("asyncio.subprocess.Process", proc))
+    assert 4723 not in manager._appium_restart_tasks
+
+
+async def test_watch_appium_process_skips_restart_if_already_restarting() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=100)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    existing_restart = asyncio.create_task(asyncio.sleep(999))
+    manager._appium_restart_tasks[4723] = existing_restart
+    proc.set_exit(1)
+    await manager._watch_appium_process(4723, cast("asyncio.subprocess.Process", proc))
+    # Should not have replaced the task
+    assert manager._appium_restart_tasks[4723] is existing_restart
+    existing_restart.cancel()
+
+
+async def test_auto_restart_returns_when_intentional_stop_during_sleep() -> None:
+    manager = AppiumProcessManager()
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._intentional_stop_ports.add(4723)
+    await manager._auto_restart_appium(4723, exit_code=1)
+    assert manager.process_snapshot()["recent_restart_events"] == []
+
+
+async def test_auto_restart_returns_when_no_launch_spec() -> None:
+    manager = AppiumProcessManager()
+    # No launch spec present; post-sleep return on line 574
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        await real_sleep(0)
+
+    with patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep):
+        await manager._auto_restart_appium(4723, exit_code=1)
+    # Should record crash_detected, then return after sleep because launch spec gone
+    events = [e["kind"] for e in manager.process_snapshot()["recent_restart_events"]]
+    assert events == ["crash_detected"]
+
+
+async def test_auto_restart_records_port_conflict_and_drops() -> None:
+    manager = AppiumProcessManager()
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=100, connection_target="dev", platform_id="android")
+
+    async def raise_port_occupied(*_args: object, **_kwargs: object) -> AppiumProcessInfo:
+        raise PortOccupiedError("taken")
+
+    with (
+        patch("agent_app.appium_process.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(manager, "_restart_from_launch_spec", side_effect=raise_port_occupied),
+    ):
+        await manager._auto_restart_appium(4723, exit_code=1)
+
+    events = [e["kind"] for e in manager.process_snapshot()["recent_restart_events"]]
+    assert events == ["crash_detected", "port_conflict"]
+    assert 4723 not in manager._info
+
+
+async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
+    manager = AppiumProcessManager()
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=100, connection_target="dev", platform_id="android")
+
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        await real_sleep(0)
+
+    call_count = 0
+
+    async def fail_once_then_cancel(*_args: object, **_kwargs: object) -> AppiumProcessInfo:
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            # cancel ourselves after a couple of iterations to avoid infinite loop
+            for task in asyncio.all_tasks():
+                if task.get_name() == "auto_restart_4723":
+                    task.cancel()
+            await real_sleep(0)
+        raise RuntimeError("boom")
+
+    with (
+        patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep),
+        patch.object(manager, "_restart_from_launch_spec", side_effect=fail_once_then_cancel),
+    ):
+        task = asyncio.create_task(manager._auto_restart_appium(4723, exit_code=1), name="auto_restart_4723")
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    # Backoff step should have advanced once
+    assert manager._appium_restart_backoff_steps.get(4723, 0) >= 1
+
+
+async def test_restart_from_launch_spec_raises_when_spec_missing() -> None:
+    manager = AppiumProcessManager()
+    with pytest.raises(RuntimeError, match="No launch spec found for port 9999"):
+        await manager._restart_from_launch_spec(9999)
+
+
+async def test_start_appium_server_raises_runtime_missing_when_binary_not_found() -> None:
+    manager = AppiumProcessManager()
+    spec = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
+        patch(
+            "agent_app.appium_process.asyncio.create_subprocess_exec",
+            side_effect=FileNotFoundError("appium"),
+        ),
+        pytest.raises(RuntimeMissingError, match="appium executable not found"),
+    ):
+        await manager._start_appium_server(spec, clear_logs_on_failure=True)
+
+
+async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true() -> None:
+    manager = AppiumProcessManager()
+    spec = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    # Pre-seed logs so we can assert they are cleared on failure
+    manager._logs[4723] = collections.deque(["old log"], maxlen=10)
+
+    proc = FakeProcess(pid=1234, stdout=_stream_with_lines("booting"))
+
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=False),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=proc),
+        patch("agent_app.appium_process.asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(StartupTimeoutError),
+    ):
+        await manager._start_appium_server(spec, clear_logs_on_failure=True)
+
+    assert 4723 not in manager._logs
+
+
+async def test_reconfigure_unknown_grid_supervisor_raises() -> None:
+    manager = AppiumProcessManager()
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    with pytest.raises(DeviceNotFoundError, match="No running grid node for Appium port 4723"):
+        await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
+
+
+async def test_reconfigure_stop_pending_with_active_session_spawns_stop_task() -> None:
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService(busy=True)
+    handle = ReconfigurableGridNodeHandle(service)
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+
+    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
+    assert 4723 in manager._stop_pending_ports
+    assert 4723 in manager._stop_pending_tasks
+    # clean up
+    manager._stop_pending_tasks[4723].cancel()
+
+
+async def test_ensure_stop_when_grid_idle_task_skips_if_already_running() -> None:
+    manager = AppiumProcessManager()
+    existing = asyncio.create_task(asyncio.sleep(999))
+    manager._stop_pending_tasks[4723] = existing
+    manager._ensure_stop_when_grid_idle_task(4723)
+    assert manager._stop_pending_tasks[4723] is existing
+    existing.cancel()
+
+
+async def test_ensure_stop_when_grid_idle_task_creates_task() -> None:
+    manager = AppiumProcessManager()
+    manager._ensure_stop_when_grid_idle_task(4723)
+    assert 4723 in manager._stop_pending_tasks
+    manager._stop_pending_tasks[4723].cancel()
+
+
+async def test_stop_when_grid_idle_stops_when_no_session() -> None:
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService(busy=False)
+    handle = ReconfigurableGridNodeHandle(service)
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=1))
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._logs[4723] = collections.deque(["line"], maxlen=10)
+    manager._log_tasks[4723] = []
+    manager._stop_pending_ports.add(4723)
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+
+    await manager._stop_when_grid_idle(4723)
+    assert 4723 not in manager._appium_procs
+
+
+async def test_stop_when_grid_idle_returns_if_not_pending() -> None:
+    manager = AppiumProcessManager()
+    await manager._stop_when_grid_idle(4723)
+
+
+async def test_stop_when_grid_idle_loops_if_session_still_active() -> None:
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService(busy=True)
+    handle = ReconfigurableGridNodeHandle(service)
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._stop_pending_ports.add(4723)
+    real_sleep = asyncio.sleep
+
+    calls = 0
+
+    async def fake_sleep(delay: float) -> None:
+        nonlocal calls
+        calls += 1
+        if calls >= 2:
+            manager._stop_pending_ports.discard(4723)
+        await real_sleep(0)
+
+    with patch("agent_app.appium_process.asyncio.sleep", side_effect=fake_sleep):
+        await manager._stop_when_grid_idle(4723)
+
+    assert calls >= 2
+
+
+async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=1)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._logs[4723] = collections.deque(["log"], maxlen=10)
+    manager._log_tasks[4723] = [asyncio.create_task(asyncio.sleep(999))]
+
+    with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("grid boom")):
+        await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
+
+    assert 4723 not in manager._appium_procs
+    assert 4723 in manager._intentional_stop_ports  # stays set per comment in source
+
+
+async def test_cleanup_started_appium_kills_when_proc_still_running() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=1, returncode=None)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+
+    await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
+    assert proc.sent_signals == [signal.SIGTERM]
+
+
+async def test_cleanup_started_appium_escalates_kill_after_timeout() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=1, returncode=None)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+
+    async def wait_always_timeout(awaitable: object, *, timeout: float) -> object:
+        del awaitable, timeout
+        raise TimeoutError
+
+    with patch("agent_app.appium_process.asyncio.wait_for", side_effect=wait_always_timeout):
+        await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
+
+    assert proc.killed is True
+
+
+async def test_drop_failed_managed_port_suppresses_grid_stop_exception() -> None:
+    manager = AppiumProcessManager()
+    with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("boom")):
+        await manager._drop_failed_managed_port(4723)
+    assert 4723 not in manager._info
+
+
+async def test_stop_pending_task_cancelled_when_stop_is_current_task() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=1)
+    handle = RecordingGridNodeHandle()
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
+    manager._grid_supervisors[4723] = handle
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._logs[4723] = collections.deque(["line"], maxlen=10)
+    manager._log_tasks[4723] = []
+
+    # Create a fake stop_pending task whose done_callback might fire during stop
+    fake_task = asyncio.create_task(asyncio.sleep(999))
+    manager._stop_pending_tasks[4723] = fake_task
+    await manager.stop(4723)
+    # Should have been cancelled (allow event loop to process)
+    await asyncio.sleep(0)
+    assert fake_task.cancelled() or fake_task.done()
+
+
+async def test_fetch_appium_status_http_error_returns_none() -> None:
+    manager = AppiumProcessManager()
+    with patch("agent_app.appium_process.httpx.AsyncClient") as client_cls:
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+        client_cls.return_value = client
+        assert await manager._fetch_appium_status(4723) is None
+
+
+async def test_fetch_appium_status_non_200_returns_none() -> None:
+    manager = AppiumProcessManager()
+    with patch("agent_app.appium_process.httpx.AsyncClient") as client_cls:
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        response = MagicMock()
+        response.status_code = 503
+        client.get = AsyncMock(return_value=response)
+        client_cls.return_value = client
+        assert await manager._fetch_appium_status(4723) is None
+
+
+async def test_fetch_appium_status_malformed_json_returns_none() -> None:
+    manager = AppiumProcessManager()
+    with patch("agent_app.appium_process.httpx.AsyncClient") as client_cls:
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = ["not", "a", "dict"]
+        client.get = AsyncMock(return_value=response)
+        client_cls.return_value = client
+        assert await manager._fetch_appium_status(4723) is None
+
+
+async def test_wait_for_readiness_returns_false_when_process_exits() -> None:
+    manager = AppiumProcessManager()
+    proc = FakeProcess(pid=1)
+    proc.set_exit(1)
+    assert await manager._wait_for_readiness(4723, cast("asyncio.subprocess.Process", proc)) is False
+
+
+async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
+    manager = AppiumProcessManager()
+    spec = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=False,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    proc = FakeProcess(pid=1234)
+    with (
+        patch("agent_app.appium_process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium_process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
+        patch("agent_app.appium_process.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+    ):
+        await manager._start_appium_server(spec, clear_logs_on_failure=False)
+    args = create_proc.await_args_list[0].args
+    assert "--use-plugins" not in args
+    await manager.shutdown()

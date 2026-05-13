@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import os
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 async def run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
     """Run a subprocess and return stripped stdout. Returns an empty string on failure."""
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -28,6 +30,11 @@ async def run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
         return ""
     except TimeoutError:
         logger.warning("command timed out: %s", " ".join(cmd))
+        if proc is not None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
         return ""
 
 

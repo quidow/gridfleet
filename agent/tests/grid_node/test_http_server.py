@@ -8,7 +8,7 @@ import pytest
 from starlette.responses import JSONResponse, Response
 from starlette.testclient import TestClient
 
-from agent_app.grid_node.http_server import build_app
+from agent_app.grid_node.http_server import _session_info_from_response, _w3c_candidate_caps, build_app
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
 
@@ -344,3 +344,294 @@ def test_cdp_websocket_route_invokes_proxy_websocket(test_app: Starlette, proxy:
 
 async def _connect_error_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
     return Response(status_code=502)
+
+
+# --- _publish_safely (lines 30, 38) ---
+
+
+class ExplodingBus:
+    async def publish(self, event: dict[str, object]) -> None:
+        raise RuntimeError("boom")
+
+
+def test_publish_safely_catches_publish_exception(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=ExplodingBus(),
+    )
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert response.status_code in (200, 502)
+
+
+# --- create_session proxy status >= 300 (lines 133-134) ---
+
+
+def test_create_session_aborts_when_proxy_returns_300_plus(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    async def bad_status_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+        return JSONResponse({"value": {}}, status_code=300)
+
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        proxy_request_func=bad_status_proxy,
+    )
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert response.status_code == 300
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+# --- delete_session proxy exception (lines 162-170) ---
+
+
+def test_delete_session_returns_502_on_proxy_exception(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=1.0)
+
+    async def broken_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
+        raise RuntimeError("boom")
+
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=bus,
+        proxy_request_func=broken_proxy,
+    )
+    response = TestClient(app, raise_server_exceptions=False).delete("/session/session-1")
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+# --- hub_create_session (lines 201-282) ---
+
+
+def test_hub_create_session_returns_400_for_malformed_json(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", content="{", headers={"content-type": "application/json"})
+    assert response.status_code == 400
+    assert response.json()["value"]["error"] == "invalid argument"
+
+
+def test_hub_create_session_returns_404_for_mismatch(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}}})
+    assert response.status_code == 404
+
+
+def test_hub_create_session_returns_503_when_no_free_slot(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    state.reserve({"platformName": "Android"})
+    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
+    assert response.status_code == 503
+
+
+def test_hub_create_session_returns_502_on_upstream_error(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(side_effect=httpx.ConnectError("nope"))
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_hub_create_session_returns_502_on_bad_json_from_upstream(
+    state: NodeState, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(return_value=httpx.Response(200, content=b"not json"))
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_hub_create_session_returns_502_on_missing_session_id(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(return_value=httpx.Response(200, json={"value": {"capabilities": {}}}))
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_hub_create_session_returns_502_on_missing_capabilities(
+    state: NodeState, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(
+            return_value=httpx.Response(200, json={"value": {"sessionId": "sid-1"}})
+        )
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 502
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_hub_create_session_returns_upstream_status_on_non_2xx(
+    state: NodeState, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(return_value=httpx.Response(500, content=b"internal error"))
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 500
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_hub_create_session_happy_path(state: NodeState, http_client: httpx.AsyncClient, bus: RecordingBus) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(
+            return_value=httpx.Response(200, json={"value": {"sessionId": "hub-sid", "capabilities": {"x": 1}}})
+        )
+        app = build_app(
+            state=state,
+            appium_upstream="http://appium",
+            http_client=http_client,
+            bus=bus,
+            node_uri="http://node:5555",
+            node_id="node-1",
+            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["value"]["sessionResponse"]["session"]["sessionId"] == "hub-sid"
+    assert data["value"]["sessionResponse"]["session"]["capabilities"] == {"x": 1}
+    assert state.snapshot().slots[0].session_id == "hub-sid"
+
+
+def test_hub_create_session_flat_capabilities_no_wrapper(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(
+            return_value=httpx.Response(200, json={"value": {"sessionId": "flat-sid", "capabilities": {}}})
+        )
+        app = build_app(
+            state=state,
+            appium_upstream="http://appium",
+            http_client=http_client,
+            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post("/se/grid/node/session", json={"capabilities": {"platformName": "Android"}})
+    assert response.status_code == 200
+
+
+def test_hub_create_session_with_first_match_caps(state: NodeState, http_client: httpx.AsyncClient) -> None:
+    import respx
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(
+            return_value=httpx.Response(200, json={"value": {"sessionId": "fm-sid", "capabilities": {}}})
+        )
+        app = build_app(
+            state=state,
+            appium_upstream="http://appium",
+            http_client=http_client,
+            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/se/grid/node/session",
+            json={"capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "Android"}]}},
+        )
+    assert response.status_code == 200
+
+
+# --- _w3c_candidate_caps (lines 333, 336, 345) ---
+
+
+def test_w3c_candidate_caps_non_dict_body_returns_match_anything() -> None:
+    assert _w3c_candidate_caps("not a dict") == [{}]
+
+
+def test_w3c_candidate_caps_capabilities_not_dict_returns_match_anything() -> None:
+    assert _w3c_candidate_caps({"capabilities": "bad"}) == [{}]
+
+
+def test_w3c_candidate_caps_first_match_entry_not_dict_skips() -> None:
+    result = _w3c_candidate_caps({"capabilities": {"alwaysMatch": {"a": 1}, "firstMatch": ["not-a-dict", {"b": 2}]}})
+    assert result == [{"a": 1, "b": 2}]
+
+
+def test_w3c_candidate_caps_no_first_match_returns_always_match() -> None:
+    result = _w3c_candidate_caps({"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
+    assert result == [{"platformName": "Android"}]
+
+
+# --- _session_info_from_response (lines 380-394) ---
+
+
+def test_session_info_from_response_attribute_error_returns_none() -> None:
+    class BadResponse:
+        pass
+
+    assert _session_info_from_response(BadResponse()) == (None, None)  # type: ignore[arg-type]
+
+
+def test_session_info_from_response_non_dict_payload_returns_none() -> None:
+    response = Response(content=b'["list"]')
+    assert _session_info_from_response(response) == (None, None)
+
+
+def test_session_info_from_response_value_not_dict_returns_top_level() -> None:
+    response = Response(content=b'{"sessionId":"sid-1","capabilities":{"x":1}}')
+    assert _session_info_from_response(response) == ("sid-1", {"x": 1})
+
+
+def test_session_info_from_response_value_present_but_session_id_not_string() -> None:
+    response = Response(content=b'{"value":{"sessionId":123,"capabilities":{}}}')
+    assert _session_info_from_response(response) == (None, None)
+
+
+def test_session_info_from_response_caps_not_dict_returns_none() -> None:
+    response = Response(content=b'{"value":{"sessionId":"sid","capabilities":"bad"}}')
+    assert _session_info_from_response(response) == ("sid", None)
+
+
+def test_session_info_from_response_top_level_caps_not_dict() -> None:
+    response = Response(content=b'{"sessionId":"sid","capabilities":"bad"}')
+    assert _session_info_from_response(response) == ("sid", None)

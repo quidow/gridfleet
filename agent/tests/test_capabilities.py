@@ -1,7 +1,11 @@
+import asyncio
+import contextlib
 from unittest.mock import AsyncMock, patch
 
 from agent_app.capabilities import (
     _get_tool_version,
+    _run_cmd,
+    capabilities_refresh_loop,
     clear_capabilities_snapshot,
     detect_capabilities,
     get_capabilities_snapshot,
@@ -21,6 +25,45 @@ async def test_get_tool_version_falls_back_to_first_line() -> None:
         version = await _get_tool_version("custom", ["--version"], r"no-match")
 
     assert version == "custom-version"
+
+
+async def test_get_tool_version_returns_none_when_run_cmd_fails() -> None:
+    with patch("agent_app.capabilities._run_cmd", new_callable=AsyncMock, return_value=None):
+        version = await _get_tool_version("adb", ["--version"], r"(\d+\.\d+\.\d+)")
+
+    assert version is None
+
+
+async def test_run_cmd_returns_none_on_filenotfound() -> None:
+    with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()):
+        result = await _run_cmd("nonexistent", "--version")
+    assert result is None
+
+
+async def test_run_cmd_returns_none_on_timeout() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(side_effect=TimeoutError())
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        result = await _run_cmd("slow", "--version")
+    assert result is None
+
+
+async def test_run_cmd_returns_none_on_nonzero_exit() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b"", b"error"))
+    proc.returncode = 1
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        result = await _run_cmd("failing", "--version")
+    assert result is None
+
+
+async def test_run_cmd_returns_stdout() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(b"stdout\n", b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        result = await _run_cmd("ok", "--version")
+    assert result == "stdout"
 
 
 async def test_detect_capabilities_infers_platforms_from_available_tools() -> None:
@@ -114,3 +157,49 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
 
     assert detect.await_count == 2
     clear_capabilities_snapshot()
+
+
+async def test_capabilities_refresh_loop_sleeps_first_when_refresh_immediately_false() -> None:
+    clear_capabilities_snapshot()
+    hit_sleep = asyncio.Event()
+    _orig_sleep = asyncio.sleep
+
+    async def fake_sleep(d: float) -> None:
+        hit_sleep.set()
+        await _orig_sleep(0.001)
+
+    with (
+        patch("agent_app.capabilities.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
+        patch("asyncio.sleep", side_effect=fake_sleep),
+    ):
+        task = asyncio.create_task(capabilities_refresh_loop(interval_sec=1, refresh_immediately=False))
+        await asyncio.wait_for(hit_sleep.wait(), timeout=2.0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    refresh.assert_not_awaited()
+
+
+async def test_capabilities_refresh_loop_exception_logged() -> None:
+    clear_capabilities_snapshot()
+    hit_sleep = asyncio.Event()
+    _orig_sleep = asyncio.sleep
+
+    async def fake_sleep(d: float) -> None:
+        hit_sleep.set()
+        await _orig_sleep(0.001)
+
+    with (
+        patch(
+            "agent_app.capabilities.refresh_capabilities_snapshot",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ) as refresh,
+        patch("asyncio.sleep", side_effect=fake_sleep),
+    ):
+        task = asyncio.create_task(capabilities_refresh_loop(interval_sec=1, refresh_immediately=True))
+        await asyncio.wait_for(hit_sleep.wait(), timeout=2.0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    refresh.assert_awaited()

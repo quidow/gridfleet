@@ -163,7 +163,7 @@ jobs:
 
       - name: Test
         working-directory: agent
-        run: uv run --locked --extra dev pytest -q
+        run: uv run --locked --extra dev pytest -q --cov=agent_app --cov-report=term-missing:skip-covered
 
       - name: Build package
         working-directory: agent

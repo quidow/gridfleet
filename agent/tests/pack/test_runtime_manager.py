@@ -1,9 +1,20 @@
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.pack.runtime import AppiumRuntimeManager, NpmRunner, RuntimeSpec
+from agent_app.pack.runtime import (
+    AppiumRuntimeManager,
+    NpmRunner,
+    RealNpmRunner,
+    RuntimeSpec,
+    _driver_install_commands,
+    _github_npm_install_spec,
+    _github_ref,
+    _plugin_install_command,
+    _versioned,
+)
 
 
 class _FakeRunner(NpmRunner):
@@ -202,3 +213,283 @@ def test_runtime_manager_default_root_is_owned_agent_dir(monkeypatch: pytest.Mon
 
     mgr = AppiumRuntimeManager()
     assert str(mgr._root) == "/opt/gridfleet-agent/runtimes"
+
+
+# ── RealNpmRunner error paths ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_appium_failure(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b"npm ERR! something"))
+        proc.returncode = 1
+        mock_exec.return_value = proc
+        with pytest.raises(RuntimeError, match="appium install failed"):
+            await runner.install_appium("appium", "2.11.5", str(tmp_path / "home"))
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_driver_failure(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"stdout", b"stderr"))
+        proc.returncode = 1
+        mock_exec.return_value = proc
+        with pytest.raises(RuntimeError, match="driver install failed"):
+            await runner.install_driver(
+                "uiautomator2",
+                "appium-uiautomator2-driver",
+                "3.6.0",
+                str(tmp_path / "home"),
+            )
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_plugin_failure(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b"plugin error"))
+        proc.returncode = 1
+        mock_exec.return_value = proc
+        with pytest.raises(RuntimeError, match="plugin error"):
+            await runner.install_plugin(
+                "images",
+                "1.0.0",
+                "npm",
+                None,
+                str(tmp_path / "home"),
+            )
+
+
+# ── RealNpmRunner success paths ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_appium_success(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    appium_home = str(tmp_path / "home")
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.returncode = 0
+        mock_exec.return_value = proc
+        result = await runner.install_appium("appium", "2.11.5", appium_home)
+        assert result == str(Path(appium_home) / "node_modules" / ".bin" / "appium")
+        assert Path(appium_home).exists()
+        mock_exec.assert_called_once()
+        args, _kwargs = mock_exec.call_args
+        assert args[0] == "npm"
+        assert "--save-exact" in args
+        assert "appium@2.11.5" in args
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_driver_github_source(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    appium_home = str(tmp_path / "home")
+    (Path(appium_home) / "node_modules" / ".bin").mkdir(parents=True)
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.returncode = 0
+        mock_exec.return_value = proc
+        await runner.install_driver(
+            "uiautomator2",
+            "appium-uiautomator2-driver",
+            "3.6.0",
+            appium_home,
+            source="github",
+            github_repo="appium/appium-uiautomator2-driver",
+        )
+        assert mock_exec.call_count == 2
+        # First call: npm install
+        first_call_args, _ = mock_exec.call_args_list[0]
+        assert first_call_args[0] == "npm"
+        assert "--save-dev" in first_call_args
+        assert "git+https://github.com/appium/appium-uiautomator2-driver.git#v3.6.0" in first_call_args
+        # Second call: appium driver list --installed
+        second_call_args, _ = mock_exec.call_args_list[1]
+        assert second_call_args[0] == str(Path(appium_home) / "node_modules" / ".bin" / "appium")
+        assert second_call_args[1:4] == ("driver", "list", "--installed")
+
+
+@pytest.mark.asyncio
+async def test_real_npm_runner_install_plugin_success(tmp_path: Path) -> None:
+    runner = RealNpmRunner()
+    appium_home = str(tmp_path / "home")
+    (Path(appium_home) / "node_modules" / ".bin").mkdir(parents=True)
+    with patch(
+        "agent_app.pack.runtime.asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    ) as mock_exec:
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.returncode = 0
+        mock_exec.return_value = proc
+        await runner.install_plugin(
+            "images",
+            "1.0.0",
+            "npm",
+            "@appium/images-plugin",
+            appium_home,
+        )
+        mock_exec.assert_called_once()
+        args, _kwargs = mock_exec.call_args
+        assert args[0] == str(Path(appium_home) / "node_modules" / ".bin" / "appium")
+        assert args[1:4] == ("plugin", "install", "images@1.0.0")
+
+
+# ── Helper function tests ───────────────────────────────────────────
+
+
+def test_versioned_already_has_at() -> None:
+    assert _versioned("pkg@1.2.3", "2.0.0") == "pkg@1.2.3"
+
+
+def test_versioned_adds_at() -> None:
+    assert _versioned("pkg", "2.0.0") == "pkg@2.0.0"
+
+
+def test_versioned_scoped_package() -> None:
+    assert _versioned("@scope/pkg", "2.0.0") == "@scope/pkg@2.0.0"
+
+
+def test_github_ref_semver() -> None:
+    assert _github_ref("1.2.3") == "v1.2.3"
+
+
+def test_github_ref_non_semver() -> None:
+    assert _github_ref("main") == "main"
+
+
+def test_github_npm_install_spec_git_prefix() -> None:
+    assert (
+        _github_npm_install_spec("git+https://github.com/user/repo", "1.0.0")
+        == "git+https://github.com/user/repo.git#v1.0.0"
+    )
+
+
+def test_github_npm_install_spec_https_prefix() -> None:
+    assert (
+        _github_npm_install_spec("https://github.com/user/repo", "1.0.0")
+        == "git+https://github.com/user/repo.git#v1.0.0"
+    )
+
+
+def test_github_npm_install_spec_bare_repo() -> None:
+    assert _github_npm_install_spec("user/repo", "2.0.0") == "git+https://github.com/user/repo.git#v2.0.0"
+
+
+def test_github_npm_install_spec_explicit_ref() -> None:
+    assert _github_npm_install_spec("user/repo#feature-x", "2.0.0") == "git+https://github.com/user/repo.git#feature-x"
+
+
+def test_github_npm_install_spec_no_ref() -> None:
+    assert _github_npm_install_spec("user/repo", "") == "git+https://github.com/user/repo.git"
+
+
+def test_driver_install_commands_github_requires_repo() -> None:
+    with pytest.raises(ValueError, match="github_repo required"):
+        _driver_install_commands("/bin/appium", "/home", "pkg", "1.0.0", "github", None)
+
+
+def test_driver_install_commands_github() -> None:
+    cmds = _driver_install_commands("/bin/appium", "/home", "pkg", "1.0.0", "github", "user/repo")
+    assert len(cmds) == 2
+    assert cmds[0][0] == "npm"
+    assert "--save-dev" in cmds[0]
+    assert "git+https://github.com/user/repo.git#v1.0.0" in cmds[0]
+    assert cmds[1] == ["/bin/appium", "driver", "list", "--installed"]
+
+
+def test_driver_install_commands_npm() -> None:
+    cmds = _driver_install_commands("/bin/appium", "/home", "pkg", "1.0.0", "npm", None)
+    assert cmds == [["/bin/appium", "driver", "install", "--source=npm", "pkg@1.0.0"]]
+
+
+def test_plugin_install_command_npm_source() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "npm:@appium/images-plugin", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "@appium/images-plugin@1.0.0",
+        "--source=npm",
+    ]
+
+
+def test_plugin_install_command_github_source() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "user/repo",
+        "--source=github",
+    ]
+
+
+def test_plugin_install_command_github_source_with_package() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "github:user/repo", "pkg-name") == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "user/repo",
+        "--source=github",
+        "--package=pkg-name",
+    ]
+
+
+def test_plugin_install_command_git_source() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "git:https://github.com/user/repo.git", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "https://github.com/user/repo.git",
+        "--source=git",
+    ]
+
+
+def test_plugin_install_command_local_source() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "local:/path/to/plugin", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "/path/to/plugin",
+        "--source=local",
+    ]
+
+
+def test_plugin_install_command_default_source() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "npm", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "images@1.0.0",
+    ]
+
+
+def test_plugin_install_command_default_source_no_version_in_name() -> None:
+    assert _plugin_install_command("/bin/appium", "images", "1.0.0", "some_source", None) == [
+        "/bin/appium",
+        "plugin",
+        "install",
+        "images@1.0.0",
+    ]
