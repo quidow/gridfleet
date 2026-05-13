@@ -80,3 +80,55 @@ async def test_excluded_windows_cannot_overlap_for_same_device(db_session: Async
     with pytest.raises(IntegrityError) as exc_info:
         await db_session.flush()
     assert "ex_device_reservations_device_excluded_window" in str(exc_info.value)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_excluded_windows_can_overlap_for_different_devices(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    first_device = await create_device(db_session, host_id=uuid.UUID(default_host_id), name="range device one")
+    second_device = await create_device(db_session, host_id=uuid.UUID(default_host_id), name="range device two")
+    run = TestRun(
+        name="range run different devices",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    now = datetime.now(UTC)
+
+    db_session.add_all(
+        [
+            DeviceReservation(
+                run_id=run.id,
+                device_id=first_device.id,
+                identity_value=first_device.identity_value,
+                connection_target=first_device.connection_target,
+                pack_id=first_device.pack_id,
+                platform_id=first_device.platform_id,
+                os_version=first_device.os_version,
+                excluded=True,
+                excluded_at=now,
+                excluded_until=now + timedelta(minutes=10),
+                released_at=now + timedelta(minutes=11),
+            ),
+            DeviceReservation(
+                run_id=run.id,
+                device_id=second_device.id,
+                identity_value=second_device.identity_value,
+                connection_target=second_device.connection_target,
+                pack_id=second_device.pack_id,
+                platform_id=second_device.platform_id,
+                os_version=second_device.os_version,
+                excluded=True,
+                excluded_at=now + timedelta(minutes=5),
+                excluded_until=now + timedelta(minutes=15),
+                released_at=now + timedelta(minutes=16),
+            ),
+        ]
+    )
+
+    await db_session.flush()

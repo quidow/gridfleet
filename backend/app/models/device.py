@@ -3,13 +3,39 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from sqlalchemy.sql.elements import ColumnElement
+
+DEVICE_SEARCH_FIELDS = (
+    "name",
+    "identity_value",
+    "connection_target",
+    "manufacturer",
+    "model",
+    "model_number",
+    "os_version",
+    "pack_id",
+    "platform_id",
+)
+DEVICE_SEARCH_VECTOR_INDEX_SQL = (
+    "to_tsvector('simple'::regconfig, (((((((((((((((COALESCE(name, ''::character varying)::text || "
+    "' '::text) || COALESCE(identity_value, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(connection_target, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(manufacturer, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(model, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(model_number, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(os_version, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(pack_id, ''::character varying)::text) || ' '::text) || "
+    "COALESCE(platform_id, ''::character varying)::text)"
+)
 
 
 class DeviceType(enum.StrEnum):
@@ -81,17 +107,7 @@ class Device(Base):
         Index("ix_devices_test_data_gin", "test_data", postgresql_using="gin"),
         Index(
             "ix_devices_search_vector_gin",
-            text(
-                "to_tsvector('simple'::regconfig, (((((((((((((((COALESCE(name, ''::character varying)::text || "
-                "' '::text) || COALESCE(identity_value, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(connection_target, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(manufacturer, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(model, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(model_number, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(os_version, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(pack_id, ''::character varying)::text) || ' '::text) || "
-                "COALESCE(platform_id, ''::character varying)::text)"
-            ),
+            text(DEVICE_SEARCH_VECTOR_INDEX_SQL),
             postgresql_using="gin",
         ),
     )
@@ -176,3 +192,10 @@ class Device(Base):
         cascade="all, delete-orphan",
     )
     events: Mapped[list[Any]] = relationship("DeviceEvent", back_populates="device", cascade="all, delete-orphan")
+
+
+def device_search_vector_expression() -> ColumnElement[object]:
+    document = cast("ColumnElement[object]", func.coalesce(getattr(Device, DEVICE_SEARCH_FIELDS[0]), ""))
+    for field in DEVICE_SEARCH_FIELDS[1:]:
+        document = document + " " + func.coalesce(getattr(Device, field), "")
+    return cast("ColumnElement[object]", func.to_tsvector("simple", document))

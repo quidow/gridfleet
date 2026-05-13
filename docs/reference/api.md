@@ -66,6 +66,8 @@ Current auth behavior:
 | `GET` | `/api/devices/{device_id}/session-outcome-heatmap` | Read recent session outcome points | `days` | `SessionOutcomeHeatmapRow[]` |
 | `POST` | `/api/devices/{device_id}/session-test` | Run a session viability probe | path `device_id` | session-test result |
 
+Device list `search` uses PostgreSQL full-text syntax over `name`, identity and connection target fields, manufacturer/model fields, OS version, pack ID, and platform ID. Punctuation in identifiers is tokenized, so `usb-pixel-8-pro` matches searches such as `pixel pro`; quoted phrases, negation, and `OR` follow PostgreSQL `websearch_to_tsquery` behavior. Results still use the requested list ordering rather than relevance ranking.
+
 ## Bulk Device Actions
 
 | Method | Path | Purpose | Main input | Primary response |

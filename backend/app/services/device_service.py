@@ -7,7 +7,6 @@ from sqlalchemy import Select, asc, case, desc, func, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.appium_node import AppiumNode
 from app.models.device import (
@@ -17,6 +16,7 @@ from app.models.device import (
     DeviceOperationalState,
     DeviceType,
     HardwareHealthStatus,
+    device_search_vector_expression,
 )
 from app.models.host import Host
 from app.observability import sanitize_log_value
@@ -56,29 +56,6 @@ logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
 DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
-
-
-def _device_search_vector() -> ColumnElement[object]:
-    document = (
-        func.coalesce(Device.name, "")
-        + " "
-        + func.coalesce(Device.identity_value, "")
-        + " "
-        + func.coalesce(Device.connection_target, "")
-        + " "
-        + func.coalesce(Device.manufacturer, "")
-        + " "
-        + func.coalesce(Device.model, "")
-        + " "
-        + func.coalesce(Device.model_number, "")
-        + " "
-        + func.coalesce(Device.os_version, "")
-        + " "
-        + func.coalesce(Device.pack_id, "")
-        + " "
-        + func.coalesce(Device.platform_id, "")
-    )
-    return cast("ColumnElement[object]", func.to_tsvector("simple", document))
 
 
 async def prepare_device_create_payload(
@@ -200,7 +177,7 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.tags.contains(filters.tags))
     if filters.search:
         query = func.websearch_to_tsquery("simple", filters.search)
-        stmt = stmt.where(_device_search_vector().op("@@")(query))
+        stmt = stmt.where(device_search_vector_expression().op("@@")(query))
     return stmt
 
 
