@@ -299,7 +299,6 @@ After=network.target
 
 [Service]
 Type=simple
-User={config.user}
 WorkingDirectory={config.agent_dir}
 EnvironmentFile={config.config_env_path}
 ExecStart={config.resolved_bin_path} serve --host 0.0.0.0 --port {config.port}
@@ -307,7 +306,7 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 """
 
 
