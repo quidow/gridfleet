@@ -133,7 +133,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_hosts_hostname"), "hosts", ["hostname"], unique=True)
     op.create_table(
         "jobs",
-        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("uuidv7()"), nullable=False),
         sa.Column("kind", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("payload", postgresql.JSON(astext_type=sa.Text()), nullable=False),
@@ -164,7 +164,7 @@ def upgrade() -> None:
     op.create_table(
         "system_events",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("event_id", sa.String(), nullable=False),
+        sa.Column("event_id", sa.String(), server_default=sa.text("(uuidv7())::text"), nullable=False),
         sa.Column("type", sa.String(), nullable=False),
         sa.Column("data", postgresql.JSON(astext_type=sa.Text()), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -376,7 +376,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "host_resource_samples",
-        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("uuidv7()"), nullable=False),
         sa.Column("host_id", sa.UUID(), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("cpu_percent", sa.Float(), nullable=True),
@@ -435,7 +435,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_host_terminal_sessions_host_id"), "host_terminal_sessions", ["host_id"], unique=False)
     op.create_table(
         "webhook_deliveries",
-        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("uuidv7()"), nullable=False),
         sa.Column("webhook_id", sa.UUID(), nullable=False),
         sa.Column("system_event_id", sa.BigInteger(), nullable=False),
         sa.Column("event_type", sa.String(), nullable=False),
@@ -538,7 +538,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_config_audit_logs_device_id"), "config_audit_logs", ["device_id"], unique=False)
     op.create_table(
         "device_events",
-        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("id", sa.UUID(), server_default=sa.text("uuidv7()"), nullable=False),
         sa.Column("device_id", sa.UUID(), nullable=False),
         sa.Column(
             "event_type",

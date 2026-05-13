@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Index, String, func
+from sqlalchemy import BigInteger, DateTime, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +19,7 @@ class SystemEvent(Base):
         String,
         nullable=False,
         unique=True,
-        default=lambda: str(uuid.uuid4()),
+        server_default=text("(uuidv7())::text"),
         index=True,
     )
     type: Mapped[str] = mapped_column(String, nullable=False, index=True)
