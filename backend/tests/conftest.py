@@ -76,6 +76,17 @@ async def _ensure_test_database_exists() -> None:
     finally:
         await admin_engine.dispose()
 
+    test_engine = create_async_engine(
+        test_url.render_as_string(hide_password=False),
+        poolclass=NullPool,
+        isolation_level="AUTOCOMMIT",
+    )
+    try:
+        async with test_engine.connect() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
+    finally:
+        await test_engine.dispose()
+
 
 async def _shutdown_control_plane_services() -> None:
     await shutdown_heartbeat_background_tasks()
