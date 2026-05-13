@@ -139,14 +139,12 @@ name = "gridfleet-testkit"
 version = "0.9.0"
 source = { editable = "." }
 dependencies = [
+    { name = "appium-python-client" },
     { name = "httpx" },
     { name = "pytest" },
 ]
 
 [package.optional-dependencies]
-appium = [
-    { name = "appium-python-client" },
-]
 dev = [
     { name = "mypy" },
     { name = "pytest" },
@@ -155,14 +153,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "appium-python-client", marker = "extra == 'appium'", specifier = ">=4.5,<6" },
+    { name = "appium-python-client", specifier = ">=4.5,<6" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20.2,<3" },
     { name = "pytest", specifier = ">=9.0.3,<10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.12,<1" },
 ]
-provides-extras = ["appium", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "h11"

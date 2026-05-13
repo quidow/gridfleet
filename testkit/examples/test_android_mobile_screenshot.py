@@ -5,15 +5,14 @@ Requires:
     - Selenium Grid hub running on localhost:4444
     - An Android mobile device registered and its Appium node running
     - The supported GridFleet testkit installed
-    - Appium-Python-Client installed (`uv pip install -e ./testkit[appium]`)
+    - Appium-Python-Client installed (`uv pip install -e ./testkit`)
 
 Run:
     cd testkit && python -m pytest examples/test_android_mobile_screenshot.py -v -s
 """
 
-from typing import Any
-
 import pytest
+from appium.webdriver.webdriver import WebDriver
 
 from examples._example_helpers import print_connection_context, save_and_assert_screenshot
 
@@ -30,7 +29,7 @@ pytest_plugins = ["gridfleet_testkit.pytest_plugin"]
     ],
     indirect=True,
 )
-def test_android_mobile_take_screenshot(appium_driver: Any) -> None:
+def test_android_mobile_take_screenshot(appium_driver: WebDriver) -> None:
     """Connect to an Android mobile device through the Grid and take a screenshot."""
     driver = appium_driver
 

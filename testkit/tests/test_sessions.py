@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import gridfleet_testkit.sessions as sessions
 
+if TYPE_CHECKING:
+    from gridfleet_testkit.types import JsonObject
+
 
 class FakeOptions:
-    def __init__(self, capabilities: dict[str, Any], platform_name: str | None = None) -> None:
+    def __init__(self, capabilities: JsonObject, platform_name: str | None = None) -> None:
         self.capabilities = capabilities
         self.platform_name = platform_name
 

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from appium import webdriver
 
 from .appium import (
     build_appium_options,
@@ -17,6 +18,12 @@ from .sessions import build_error_session_payload, resolve_device_handle_from_dr
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from appium.options.common import AppiumOptions
+    from appium.webdriver.webdriver import WebDriver
+    from pluggy import Result
+
+    from .types import JsonObject
 
 
 def __getattr__(name: str) -> str:
@@ -34,13 +41,23 @@ def _normalize_usage_error_message(message: str) -> str:
     return message
 
 
-def _build_driver_options(request: pytest.FixtureRequest, catalog_client: GridFleetClient | None = None) -> Any:
+def _request_params(request: pytest.FixtureRequest) -> dict[str, object]:
     params = getattr(request, "param", {})
+    return cast("dict[str, object]", params) if isinstance(params, dict) else {}
+
+
+def _build_driver_options(
+    request: pytest.FixtureRequest,
+    catalog_client: GridFleetClient | None = None,
+) -> AppiumOptions:
+    params = _request_params(request)
     capabilities = {key: value for key, value in params.items() if key not in {"pack_id", "platform_id"}}
+    pack_id = params.get("pack_id")
+    platform_id = params.get("platform_id")
     try:
         return build_appium_options(
-            pack_id=params.get("pack_id"),
-            platform_id=params.get("platform_id"),
+            pack_id=pack_id if isinstance(pack_id, str) else None,
+            platform_id=platform_id if isinstance(platform_id, str) else None,
             capabilities=capabilities,
             test_name=request.node.name,
             catalog_client=catalog_client or GridFleetClient(),
@@ -50,7 +67,10 @@ def _build_driver_options(request: pytest.FixtureRequest, catalog_client: GridFl
 
 
 @pytest.fixture
-def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetClient) -> Generator[Any, None, None]:
+def appium_driver(
+    request: pytest.FixtureRequest,
+    gridfleet_client: GridFleetClient,
+) -> Generator[WebDriver, None, None]:
     """
     Create an Appium Remote driver through the Selenium Grid.
 
@@ -62,9 +82,6 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
         )
     """
     options = _build_driver_options(request, gridfleet_client)
-    # appium is an optional dep (extra "appium"); imported lazily so consumers
-    # without the extra can still use the rest of testkit.
-    from appium import webdriver  # noqa: PLC0415
 
     try:
         driver = webdriver.Remote(_default_grid_url(), options=options)
@@ -72,7 +89,7 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
         # Driver creation failed before a Grid session was established (e.g.
         # SessionNotCreatedException). Register a device-less error session so the
         # failure is visible in the Dashboard Sessions view.
-        params = getattr(request, "param", {})
+        params = _request_params(request)
         pack_id = params.get("pack_id")
         platform_id = params.get("platform_id")
         payload = build_error_session_payload(
@@ -109,9 +126,9 @@ def appium_driver(request: pytest.FixtureRequest, gridfleet_client: GridFleetCli
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item) -> Generator[Any, None, None]:
+def pytest_runtest_makereport(item: pytest.Item) -> Generator[None, Result[pytest.TestReport], None]:
     """Store the test outcome on the item for fixture teardown reporting."""
-    outcome: Any = yield
+    outcome = yield
     rep = outcome.get_result()
     setattr(item, f"rep_{rep.when}", rep)
 
@@ -122,7 +139,7 @@ def gridfleet_client() -> GridFleetClient:
 
 
 @pytest.fixture
-def device_config(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict[str, Any]:
+def device_config(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
     """
     Fetch device config after the Grid assigns a runtime connection target.
 
@@ -138,7 +155,7 @@ def device_config(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict
 
 
 @pytest.fixture
-def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict[str, Any]:
+def device_test_data(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
     """Fetch operator-attached test_data after the Grid assigns a runtime connection target."""
     try:
         return get_device_test_data_for_driver(appium_driver, gridfleet_client=gridfleet_client)
@@ -148,7 +165,7 @@ def device_test_data(appium_driver: Any, gridfleet_client: GridFleetClient) -> d
 
 
 @pytest.fixture
-def device_handle(appium_driver: Any, gridfleet_client: GridFleetClient) -> dict[str, Any]:
+def device_handle(appium_driver: WebDriver, gridfleet_client: GridFleetClient) -> JsonObject:
     """Fetch the canonical manager device row after Grid assigns a runtime target."""
     try:
         return resolve_device_handle_from_driver(appium_driver, client=gridfleet_client)

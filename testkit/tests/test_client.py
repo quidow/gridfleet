@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import signal
-from typing import Any, ClassVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import httpx
 import pytest
@@ -22,13 +23,19 @@ from gridfleet_testkit.client import (
     register_run_cleanup,
 )
 
+if TYPE_CHECKING:
+    from gridfleet_testkit.types import JsonObject
+
+CleanupCallback = Callable[[], None]
+SignalCallback = Callable[[int, object], None]
+
 
 class DummyResponse:
-    def __init__(self, payload: Any, status_code: int = 200):
+    def __init__(self, payload: object, status_code: int = 200):
         self._payload = payload
         self.status_code = status_code
 
-    def json(self) -> Any:
+    def json(self) -> object:
         return self._payload
 
     def raise_for_status(self) -> None:
@@ -37,7 +44,7 @@ class DummyResponse:
 
 
 def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
-    calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
+    calls: list[tuple[str, str, JsonObject | None, int | None]] = []
     responses = iter(
         [
             DummyResponse({"id": "dev-1"}),
@@ -48,9 +55,9 @@ def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
     def fake_get(
         url: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: JsonObject | None = None,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return next(responses)
@@ -68,14 +75,14 @@ def test_get_device_config_looks_up_device_then_fetches_config(monkeypatch):
 
 
 def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
-    calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
+    calls: list[tuple[str, str, JsonObject | None, int | None]] = []
 
     def fake_get(
         url: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: JsonObject | None = None,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return DummyResponse({"appium:udid": "emulator-5554"})
@@ -92,14 +99,14 @@ def test_get_device_capabilities_fetches_device_endpoint(monkeypatch):
 
 
 def test_list_devices_sends_supported_filters_and_tag_params(monkeypatch):
-    calls: list[tuple[str, dict[str, Any] | list[tuple[str, str]], int | None]] = []
+    calls: list[tuple[str, JsonObject | list[tuple[str, str]], int | None]] = []
 
     def fake_get(
         url: str,
         *,
-        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        params: JsonObject | list[tuple[str, str]] | None = None,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append((url, params or {}, timeout))
         return DummyResponse([{"id": "dev-1", "operational_state": "available"}])
@@ -154,9 +161,9 @@ def test_list_devices_unwraps_paginated_items_when_backend_returns_page(monkeypa
     def fake_get(
         url: str,
         *,
-        params: dict[str, Any] | list[tuple[str, str]] | None = None,
+        params: JsonObject | list[tuple[str, str]] | None = None,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         return DummyResponse({"items": [{"id": "dev-1"}], "total": 1, "limit": 50, "offset": 0})
 
@@ -174,7 +181,7 @@ def test_get_device_fetches_device_detail_by_id(monkeypatch):
         url: str,
         *,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append((url, timeout))
         return DummyResponse({"id": "dev-1", "name": "Pixel 6"})
@@ -194,7 +201,7 @@ def test_get_run_fetches_run_endpoint(monkeypatch):
         url: str,
         *,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append((url, timeout))
         return DummyResponse({"id": "run-1", "name": "smoke"})
@@ -209,14 +216,14 @@ def test_get_run_fetches_run_endpoint(monkeypatch):
 
 
 def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
-    calls: list[tuple[str, str, dict[str, Any] | None, int | None]] = []
+    calls: list[tuple[str, str, JsonObject | None, int | None]] = []
 
     def fake_get(
         url: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: JsonObject | None = None,
         timeout: int | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         calls.append(("GET", url, params, timeout))
         return DummyResponse({"packs": []})
@@ -233,15 +240,15 @@ def test_get_driver_pack_catalog_fetches_catalog_endpoint(monkeypatch):
 
 
 def test_reserve_devices_posts_expected_payload(monkeypatch):
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -274,15 +281,15 @@ def test_reserve_devices_posts_expected_payload(monkeypatch):
 
 
 def test_reserve_devices_all_available_payload(monkeypatch):
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -331,7 +338,7 @@ def test_reserve_devices_all_available_payload(monkeypatch):
 def test_run_state_methods_hit_expected_endpoints(monkeypatch):
     calls: list[tuple[str, str, int | None]] = []
 
-    def fake_post(url: str, *, timeout: int, auth: Any = None) -> DummyResponse:
+    def fake_post(url: str, *, timeout: int, auth: object = None) -> DummyResponse:
         calls.append(("POST", url, timeout))
         if url.endswith("/heartbeat"):
             return DummyResponse({"state": "active"})
@@ -356,14 +363,14 @@ def test_run_state_methods_hit_expected_endpoints(monkeypatch):
 
 
 def test_report_preparation_failure_posts_expected_payload(monkeypatch):
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -387,14 +394,14 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
 
 
 def test_register_session_posts_full_payload(monkeypatch):
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -443,9 +450,9 @@ def test_register_session_warns_and_returns_none_when_suppressing_http_error(mon
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         return DummyResponse({"detail": "bad"}, status_code=500)
 
@@ -461,9 +468,9 @@ def test_register_session_warns_and_returns_none_when_json_encoding_fails(monkey
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         raise TypeError("Object of type object is not JSON serializable")
 
@@ -479,9 +486,9 @@ def test_register_session_raises_when_not_suppressing_http_error(monkeypatch):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         return DummyResponse({"detail": "bad"}, status_code=500)
 
@@ -497,9 +504,9 @@ def test_register_session_raises_json_encoding_error_when_not_suppressing(monkey
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         raise TypeError("Object of type object is not JSON serializable")
 
@@ -516,14 +523,14 @@ def test_register_session_raises_json_encoding_error_when_not_suppressing(monkey
 
 
 def test_update_session_status_patches_status(monkeypatch):
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_patch(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["json"] = json
@@ -543,9 +550,9 @@ def test_update_session_status_patches_status(monkeypatch):
 
 
 def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatch):
-    captured: dict[str, Any] = {}
+    captured: JsonObject = {}
 
-    def fake_register_session(self: GridFleetClient, **kwargs: Any) -> dict[str, Any]:
+    def fake_register_session(self: GridFleetClient, **kwargs: object) -> JsonObject:
         captured.update(kwargs)
         return {"ok": True}
 
@@ -599,8 +606,8 @@ def test_start_heartbeat_starts_thread(monkeypatch):
 
 
 def test_register_run_cleanup_default_does_not_install_signals_or_complete_run(monkeypatch):
-    registered: list[Any] = []
-    signal_handlers: list[tuple[signal.Signals, Any]] = []
+    registered: list[CleanupCallback] = []
+    signal_handlers: list[tuple[signal.Signals, object]] = []
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
     monkeypatch.setattr("gridfleet_testkit.client.signal.signal", lambda sig, fn: signal_handlers.append((sig, fn)))
@@ -609,11 +616,11 @@ def test_register_run_cleanup_default_does_not_install_signals_or_complete_run(m
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def complete_run(self, run_id: str) -> dict[str, Any]:
+        def complete_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"complete:{run_id}")
             return {"state": "completed"}
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
@@ -629,18 +636,18 @@ def test_register_run_cleanup_default_does_not_install_signals_or_complete_run(m
 
 
 def test_register_run_cleanup_can_complete_or_cancel_on_exit(monkeypatch):
-    registered: list[Any] = []
+    registered: list[CleanupCallback] = []
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
 
     class FakeClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def complete_run(self, run_id: str) -> dict[str, Any]:
+        def complete_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"complete:{run_id}")
             return {"state": "completed"}
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
@@ -656,7 +663,7 @@ def test_register_run_cleanup_can_complete_or_cancel_on_exit(monkeypatch):
 
 
 def test_register_run_cleanup_stops_and_joins_heartbeat(monkeypatch):
-    registered: list[Any] = []
+    registered: list[CleanupCallback] = []
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
 
     class FakeClient:
@@ -685,8 +692,8 @@ def test_register_run_cleanup_stops_and_joins_heartbeat(monkeypatch):
 
 
 def test_register_run_cleanup_installs_signal_handlers_only_when_requested(monkeypatch):
-    registered: list[Any] = []
-    installed: dict[signal.Signals, Any] = {}
+    registered: list[CleanupCallback] = []
+    installed: dict[signal.Signals, SignalCallback] = {}
     previous_calls: list[tuple[signal.Signals, object]] = []
 
     def previous_handler(sig: signal.Signals, frame: object) -> None:
@@ -700,11 +707,11 @@ def test_register_run_cleanup_installs_signal_handlers_only_when_requested(monke
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def complete_run(self, run_id: str) -> dict[str, Any]:
+        def complete_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"complete:{run_id}")
             return {"state": "completed"}
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
@@ -717,8 +724,8 @@ def test_register_run_cleanup_installs_signal_handlers_only_when_requested(monke
 
 
 def test_register_run_cleanup_can_skip_signal_chaining(monkeypatch):
-    registered: list[Any] = []
-    installed: dict[signal.Signals, Any] = {}
+    registered: list[CleanupCallback] = []
+    installed: dict[signal.Signals, SignalCallback] = {}
     previous_calls: list[signal.Signals] = []
 
     def previous_handler(sig: signal.Signals, frame: object) -> None:
@@ -732,7 +739,7 @@ def test_register_run_cleanup_can_skip_signal_chaining(monkeypatch):
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
@@ -745,7 +752,7 @@ def test_register_run_cleanup_can_skip_signal_chaining(monkeypatch):
 
 
 def test_register_run_cleanup_warns_when_heartbeat_does_not_join(monkeypatch, caplog):
-    registered: list[Any] = []
+    registered: list[CleanupCallback] = []
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
 
     class FakeClient:
@@ -768,8 +775,8 @@ def test_register_run_cleanup_warns_when_heartbeat_does_not_join(monkeypatch, ca
 
 
 def test_register_run_cleanup_is_idempotent(monkeypatch):
-    registered: list[Any] = []
-    installed: dict[signal.Signals, Any] = {}
+    registered: list[CleanupCallback] = []
+    installed: dict[signal.Signals, SignalCallback] = {}
     raises: list[int] = []
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
@@ -782,11 +789,11 @@ def test_register_run_cleanup_is_idempotent(monkeypatch):
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
-        def complete_run(self, run_id: str) -> dict[str, Any]:
+        def complete_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"complete:{run_id}")
             return {"state": "completed"}
 
@@ -821,7 +828,7 @@ def test_default_auth_returns_basic_auth_when_env_set(monkeypatch):
 
 
 def test_client_threads_default_auth_into_requests(monkeypatch):
-    captured: dict[str, Any] = {}
+    captured: JsonObject = {}
 
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
@@ -829,10 +836,10 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         captured["auth"] = auth
         return DummyResponse({"id": "run-1"})
@@ -846,7 +853,7 @@ def test_client_threads_default_auth_into_requests(monkeypatch):
 
 
 def test_client_explicit_auth_overrides_env_default(monkeypatch):
-    captured: dict[str, Any] = {}
+    captured: JsonObject = {}
 
     monkeypatch.setenv("GRIDFLEET_TESTKIT_USERNAME", "ci-bot")
     monkeypatch.setenv("GRIDFLEET_TESTKIT_PASSWORD", "shhh")
@@ -854,10 +861,10 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         captured["auth"] = auth
         return DummyResponse({"id": "run-1"})
@@ -872,7 +879,7 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
 
 
 def test_heartbeat_thread_passes_auth(monkeypatch):
-    captured: dict[str, Any] = {}
+    captured: JsonObject = {}
 
     explicit = httpx.BasicAuth("hb-user", "hb-pass")
     thread = HeartbeatThread("http://manager/api", "run-x", interval=0, auth=explicit)
@@ -881,7 +888,7 @@ def test_heartbeat_thread_passes_auth(monkeypatch):
         url: str,
         *,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         captured["url"] = url
         captured["auth"] = auth
@@ -938,15 +945,15 @@ def test_raise_for_status_passes_through_unrelated_422():
 
 
 def test_reserve_devices_threads_include_query_param(monkeypatch):
-    captured: dict[str, Any] = {}
+    captured: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         captured["url"] = url
         captured["params"] = params
@@ -963,7 +970,7 @@ def test_reserve_devices_threads_include_query_param(monkeypatch):
 def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypatch):
     called: list[str] = []
 
-    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+    def fake_post(*args: object, **kwargs: object) -> DummyResponse:
         called.append("post")
         return DummyResponse({})
 
@@ -979,7 +986,7 @@ def test_reserve_devices_rejects_capabilities_include_before_http_call(monkeypat
 def test_reserve_devices_rejects_string_include_before_http_call(monkeypatch):
     called: list[str] = []
 
-    def fake_post(*args: Any, **kwargs: Any) -> DummyResponse:
+    def fake_post(*args: object, **kwargs: object) -> DummyResponse:
         called.append("post")
         return DummyResponse({})
 
@@ -996,10 +1003,10 @@ def test_reserve_devices_raises_reserve_capabilities_unsupported_on_422(monkeypa
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
         params: list[tuple[str, str]] | None = None,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         return DummyResponse(
             {
@@ -1028,9 +1035,9 @@ def test_report_preparation_failure_can_suppress_errors(monkeypatch, caplog):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any],
+        json: JsonObject,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         raise httpx.ConnectError("network down")
 
@@ -1085,16 +1092,16 @@ def test_module_api_url_reads_environment_lazily(monkeypatch):
 def test_register_run_cleanup_chains_sig_dfl_by_re_raising(monkeypatch):
     """When the previous handler is SIG_DFL, chain_signals=True should restore the default
     and re-raise the signal so the kernel's default action (e.g. terminate on SIGTERM) fires."""
-    registered: list[Any] = []
-    installed: dict[signal.Signals, Any] = {}
+    registered: list[CleanupCallback] = []
+    installed: dict[signal.Signals, SignalCallback] = {}
     raises: list[int] = []
-    re_set: list[tuple[int, Any]] = []
+    re_set: list[tuple[int, object]] = []
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
     monkeypatch.setattr("gridfleet_testkit.client.signal.getsignal", lambda _sig: signal.SIG_DFL)
 
     def fake_signal(sig: signal.Signals, fn: object) -> object:
-        installed[sig] = fn
+        installed[sig] = cast("SignalCallback", fn)
         re_set.append((int(sig), fn))
         return None
 
@@ -1105,7 +1112,7 @@ def test_register_run_cleanup_chains_sig_dfl_by_re_raising(monkeypatch):
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"cancel:{run_id}")
             return {"state": "cancelled"}
 
@@ -1121,8 +1128,8 @@ def test_register_run_cleanup_chains_sig_dfl_by_re_raising(monkeypatch):
 def test_register_run_cleanup_chains_sig_ign_as_drop(monkeypatch):
     """When the previous handler is SIG_IGN, chain_signals=True should silently drop the signal
     without re-raising and without invoking raise_signal."""
-    registered: list[Any] = []
-    installed: dict[signal.Signals, Any] = {}
+    registered: list[CleanupCallback] = []
+    installed: dict[signal.Signals, SignalCallback] = {}
     raises: list[int] = []
 
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
@@ -1134,7 +1141,7 @@ def test_register_run_cleanup_chains_sig_ign_as_drop(monkeypatch):
     monkeypatch.setattr("gridfleet_testkit.client.signal.raise_signal", lambda sig: raises.append(sig))
 
     class FakeClient:
-        def cancel_run(self, run_id: str) -> dict[str, Any]:
+        def cancel_run(self, run_id: str) -> JsonObject:
             return {"state": "cancelled"}
 
     register_run_cleanup(FakeClient(), "run-ign", install_signal_handlers=True)
@@ -1149,14 +1156,14 @@ def test_register_run_cleanup_chains_sig_ign_as_drop(monkeypatch):
 def test_register_run_cleanup_idempotent_under_explicit_double_call(monkeypatch):
     """Calling the returned cleanup callable twice must invoke the policy exactly once,
     even without a signal or atexit path (regression for unsynchronized `called` flag)."""
-    registered: list[Any] = []
+    registered: list[CleanupCallback] = []
     monkeypatch.setattr("gridfleet_testkit.client.atexit.register", lambda fn: registered.append(fn))
 
     class FakeClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def complete_run(self, run_id: str) -> dict[str, Any]:
+        def complete_run(self, run_id: str) -> JsonObject:
             self.calls.append(f"complete:{run_id}")
             return {"state": "completed"}
 
@@ -1173,13 +1180,13 @@ def test_register_run_cleanup_idempotent_under_explicit_double_call(monkeypatch)
 
 def test_notify_session_finished_calls_endpoint(monkeypatch):
     """notify_session_finished posts to /api/sessions/{id}/finished."""
-    recorded: dict[str, Any] = {}
+    recorded: JsonObject = {}
 
     def fake_post(
         url: str,
         *,
         timeout: int,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         recorded["url"] = url
         recorded["timeout"] = timeout
@@ -1202,9 +1209,9 @@ def test_register_session_from_driver_wraps_quit_to_notify(monkeypatch):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any] | None = None,
+        json: JsonObject | None = None,
         timeout: int = 5,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         post_calls.append(url)
         if url.endswith("/sessions"):
@@ -1239,9 +1246,9 @@ def test_register_session_from_driver_quit_wrap_is_idempotent(monkeypatch):
     def fake_post(
         url: str,
         *,
-        json: dict[str, Any] | None = None,
+        json: JsonObject | None = None,
         timeout: int = 5,
-        auth: Any = None,
+        auth: object = None,
     ) -> DummyResponse:
         post_calls.append(url)
         if url.endswith("/sessions"):

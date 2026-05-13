@@ -8,14 +8,18 @@ import os
 import signal
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 from urllib.parse import quote
+
+import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import FrameType
 
-import httpx
+    from appium.webdriver.webdriver import WebDriver
+
+    from .types import JsonObject, JsonObjectList, QueryParamValue
 
 DEFAULT_GRID_URL = "http://localhost:4444"
 DEFAULT_GRIDFLEET_API_URL = "http://localhost:8000/api"
@@ -63,7 +67,7 @@ class ReserveCapabilitiesUnsupportedError(ValueError):
         super().__init__(message or "include=capabilities is not supported on reserve")
 
 
-def _raise_for_status(resp: Any, *, run_id: str) -> None:
+def _raise_for_status(resp: httpx.Response, *, run_id: str) -> None:
     del run_id
     if resp.status_code == 422:
         try:
@@ -83,8 +87,8 @@ def _raise_for_status(resp: Any, *, run_id: str) -> None:
     resp.raise_for_status()
 
 
-def _query_params(values: dict[str, Any]) -> list[tuple[str, str | int | float | bool | None]]:
-    params: list[tuple[str, str | int | float | bool | None]] = []
+def _query_params(values: dict[str, QueryParamValue]) -> list[tuple[str, QueryParamValue]]:
+    params: list[tuple[str, QueryParamValue]] = []
     for key, value in values.items():
         if value is None:
             continue
@@ -106,7 +110,7 @@ def _normalize_include(include: Sequence[str] | None) -> tuple[str, ...] | None:
     return tuple(include)
 
 
-def _include_param(include: tuple[str, ...] | None) -> list[tuple[str, str | int | float | bool | None]] | None:
+def _include_param(include: tuple[str, ...] | None) -> list[tuple[str, QueryParamValue]] | None:
     if include is None:
         return None
     values = [v for v in include if v]
@@ -201,7 +205,7 @@ class GridFleetClient:
         hardware_telemetry_state: str | None = None,
         needs_attention: bool | None = None,
         tags: dict[str, str] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JsonObjectList:
         """List devices with backend filter passthrough."""
         params = _query_params(
             {
@@ -231,10 +235,10 @@ class GridFleetClient:
         resp.raise_for_status()
         payload = resp.json()
         if isinstance(payload, dict) and isinstance(payload.get("items"), list):
-            return cast("list[dict[str, Any]]", payload["items"])
-        return cast("list[dict[str, Any]]", payload)
+            return cast("JsonObjectList", payload["items"])
+        return cast("JsonObjectList", payload)
 
-    def get_device(self, device_id: str) -> dict[str, Any]:
+    def get_device(self, device_id: str) -> JsonObject:
         """Fetch one device detail row by backend device id."""
         resp = httpx.get(
             f"{self.base_url}/devices/{device_id}",
@@ -242,9 +246,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def get_device_by_connection_target(self, target: str) -> dict[str, Any]:
+    def get_device_by_connection_target(self, target: str) -> JsonObject:
         """Fetch one device detail row by runtime connection target."""
         resp = httpx.get(
             f"{self.base_url}/devices/by-connection-target/{quote(target, safe='')}",
@@ -252,14 +256,14 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def resolve_device_id_by_connection_target(self, connection_target: str) -> str:
         """Look up the backend device id for a runtime connection target."""
         device = self.get_device_by_connection_target(connection_target)
         return cast("str", device["id"])
 
-    def get_device_config(self, connection_target: str) -> dict[str, Any]:
+    def get_device_config(self, connection_target: str) -> JsonObject:
         """Fetch device config by looking up the current runtime connection target."""
         device_id = self.resolve_device_id_by_connection_target(connection_target)
         config_resp = httpx.get(
@@ -268,9 +272,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         config_resp.raise_for_status()
-        return cast("dict[str, Any]", config_resp.json())
+        return cast("JsonObject", config_resp.json())
 
-    def get_device_capabilities(self, device_id: str) -> dict[str, Any]:
+    def get_device_capabilities(self, device_id: str) -> JsonObject:
         """Fetch the current Appium capabilities for a specific device."""
         resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/capabilities",
@@ -278,9 +282,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def get_device_test_data(self, device_id: str) -> dict[str, Any]:
+    def get_device_test_data(self, device_id: str) -> JsonObject:
         """Fetch operator-attached free-form test data for a specific device."""
         resp = httpx.get(
             f"{self.base_url}/devices/{device_id}/test_data",
@@ -288,9 +292,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def get_run(self, run_id: str) -> dict[str, Any]:
+    def get_run(self, run_id: str) -> JsonObject:
         """Fetch one run detail row by backend run id."""
         resp = httpx.get(
             f"{self.base_url}/runs/{run_id}",
@@ -298,9 +302,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def replace_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    def replace_device_test_data(self, device_id: str, body: JsonObject) -> JsonObject:
         """Replace device test_data with the supplied object."""
         resp = httpx.put(
             f"{self.base_url}/devices/{device_id}/test_data",
@@ -309,9 +313,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def merge_device_test_data(self, device_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    def merge_device_test_data(self, device_id: str, body: JsonObject) -> JsonObject:
         """Deep-merge into device test_data."""
         resp = httpx.patch(
             f"{self.base_url}/devices/{device_id}/test_data",
@@ -320,9 +324,9 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def get_driver_pack_catalog(self) -> dict[str, Any]:
+    def get_driver_pack_catalog(self) -> JsonObject:
         """Fetch enabled driver pack catalog data used for Appium platform selection."""
         resp = httpx.get(
             f"{self.base_url}/driver-packs/catalog",
@@ -330,18 +334,18 @@ class GridFleetClient:
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def reserve_devices(
         self,
         name: str,
-        requirements: list[dict[str, Any]],
+        requirements: JsonObjectList,
         ttl_minutes: int = 60,
         heartbeat_timeout_sec: int = 120,
         created_by: str | None = None,
         *,
         include: Sequence[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Reserve devices for a test run and return the manager response."""
         include_tuple = _normalize_include(include)
         if include_tuple is not None and "capabilities" in include_tuple:
@@ -360,34 +364,34 @@ class GridFleetClient:
             auth=self._auth,
         )
         _raise_for_status(resp, run_id="")
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def signal_ready(self, run_id: str) -> dict[str, Any]:
+    def signal_ready(self, run_id: str) -> JsonObject:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/ready",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def signal_active(self, run_id: str) -> dict[str, Any]:
+    def signal_active(self, run_id: str) -> JsonObject:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/active",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def heartbeat(self, run_id: str) -> dict[str, Any]:
+    def heartbeat(self, run_id: str) -> JsonObject:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/heartbeat",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def report_preparation_failure(
         self,
@@ -397,7 +401,7 @@ class GridFleetClient:
         source: str = "ci_preparation",
         *,
         suppress_errors: bool = False,
-    ) -> dict[str, Any] | None:
+    ) -> JsonObject | None:
         try:
             resp = httpx.post(
                 f"{self.base_url}/runs/{run_id}/devices/{device_id}/preparation-failed",
@@ -409,7 +413,7 @@ class GridFleetClient:
         except (httpx.HTTPError, TypeError, ValueError) as exc:
             _raise_or_warn("report preparation failure", suppress_errors, exc)
             return None
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def register_session(
         self,
@@ -423,12 +427,12 @@ class GridFleetClient:
         requested_platform_id: str | None = None,
         requested_device_type: str | None = None,
         requested_connection_type: str | None = None,
-        requested_capabilities: dict[str, Any] | None = None,
+        requested_capabilities: JsonObject | None = None,
         error_type: str | None = None,
         error_message: str | None = None,
         run_id: str | None = None,
         suppress_errors: bool = True,
-    ) -> dict[str, Any] | None:
+    ) -> JsonObject | None:
         """Register a Grid/Appium session with the manager."""
         try:
             resp = httpx.post(
@@ -455,7 +459,7 @@ class GridFleetClient:
         except (httpx.HTTPError, TypeError, ValueError) as exc:
             _raise_or_warn("register session", suppress_errors, exc)
             return None
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def notify_session_finished(
         self,
@@ -484,7 +488,7 @@ class GridFleetClient:
         status: str,
         *,
         suppress_errors: bool = True,
-    ) -> dict[str, Any] | None:
+    ) -> JsonObject | None:
         """Update a registered session status."""
         try:
             resp = httpx.patch(
@@ -497,23 +501,23 @@ class GridFleetClient:
         except (httpx.HTTPError, TypeError, ValueError) as exc:
             _raise_or_warn("report session status", suppress_errors, exc)
             return None
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def register_session_from_driver(
         self,
-        driver: Any,
+        driver: WebDriver,
         *,
         test_name: str | None = None,
         run_id: str | None = None,
         suppress_errors: bool = True,
-    ) -> dict[str, Any] | None:
+    ) -> JsonObject | None:
         """Extract session metadata from an Appium driver and register it.
 
         Also wraps ``driver.quit`` so that the first call after a successful
         registration fires :meth:`notify_session_finished` automatically.
         Errors from notify are suppressed — they must never break the caller.
         """
-        capabilities = getattr(driver, "capabilities", {})
+        capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
         if not isinstance(capabilities, dict):
             capabilities = {}
         session_id = getattr(driver, "session_id", None)
@@ -533,7 +537,7 @@ class GridFleetClient:
         self._wrap_quit_for_notify(driver, session_id)
         return result
 
-    def _wrap_quit_for_notify(self, driver: Any, session_id: str) -> None:
+    def _wrap_quit_for_notify(self, driver: WebDriver, session_id: str) -> None:
         """Replace ``driver.quit`` with a wrapper that also notifies the manager.
 
         The notify fires at most once per registration: after the first quit
@@ -546,33 +550,33 @@ class GridFleetClient:
         original_quit = driver.quit
         notified: dict[str, bool] = {"done": False}
 
-        def wrapped_quit(*args: Any, **kwargs: Any) -> Any:
+        def wrapped_quit() -> object:
             try:
-                return original_quit(*args, **kwargs)
+                return original_quit()
             finally:
                 if not notified["done"]:
                     notified["done"] = True
                     self.notify_session_finished(session_id, suppress_errors=True)
 
-        driver.quit = wrapped_quit
+        object.__setattr__(driver, "quit", wrapped_quit)
 
-    def complete_run(self, run_id: str) -> dict[str, Any]:
+    def complete_run(self, run_id: str) -> JsonObject:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/complete",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
-    def cancel_run(self, run_id: str) -> dict[str, Any]:
+    def cancel_run(self, run_id: str) -> JsonObject:
         resp = httpx.post(
             f"{self.base_url}/runs/{run_id}/cancel",
             timeout=10,
             auth=self._auth,
         )
         resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+        return cast("JsonObject", resp.json())
 
     def cooldown_device(
         self,
@@ -628,7 +632,7 @@ def register_run_cleanup(
 
     called_lock = threading.Lock()
     called = False
-    previous_handlers: dict[signal.Signals, Any] = {}
+    previous_handlers: dict[signal.Signals, signal.Handlers] = {}
 
     def cleanup(policy: RunCleanupPolicy = on_exit) -> None:
         nonlocal called
@@ -662,6 +666,6 @@ def register_run_cleanup(
     atexit.register(cleanup)
     if install_signal_handlers:
         for sig in (signal.SIGTERM, signal.SIGINT):
-            previous_handlers[sig] = signal.getsignal(sig)
+            previous_handlers[sig] = cast("signal.Handlers", signal.getsignal(sig))
             signal.signal(sig, signal_cleanup)
     return cleanup

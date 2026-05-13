@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-import sys
-import types
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
+import gridfleet_testkit.appium as appium_mod
 from gridfleet_testkit import (
     build_appium_options,
     create_appium_driver,
     get_connection_target_from_driver,
     get_device_config_for_driver,
 )
+
+if TYPE_CHECKING:
+    from gridfleet_testkit.types import JsonObject
 
 
 class FakeOptions:
@@ -70,25 +72,13 @@ AMBIGUOUS_CATALOG = {
 
 
 def install_fake_appium(monkeypatch: pytest.MonkeyPatch, created_drivers: list[tuple[str, dict[str, object]]]) -> None:
-    appium_module = types.ModuleType("appium")
-    webdriver_module = types.ModuleType("appium.webdriver")
-    options_module = types.ModuleType("appium.options")
-    common_module = types.ModuleType("appium.options.common")
-
     def remote(url: str, *, options: FakeOptions) -> FakeDriver:
         capabilities = {"platformName": options.platform_name, **options.capabilities}
         created_drivers.append((url, capabilities))
         return FakeDriver(capabilities)
 
-    webdriver_module.Remote = remote
-    common_module.AppiumOptions = FakeOptions
-    appium_module.webdriver = webdriver_module
-    options_module.common = common_module
-
-    monkeypatch.setitem(sys.modules, "appium", appium_module)
-    monkeypatch.setitem(sys.modules, "appium.webdriver", webdriver_module)
-    monkeypatch.setitem(sys.modules, "appium.options", options_module)
-    monkeypatch.setitem(sys.modules, "appium.options.common", common_module)
+    monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
+    monkeypatch.setattr(appium_mod.webdriver, "Remote", remote)
 
 
 def test_build_appium_options_resolves_pack_platform(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,7 +147,7 @@ def test_build_appium_options_requires_platform_or_platform_name(monkeypatch: py
 
 
 def test_create_appium_driver_uses_factory_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    created_drivers: list[tuple[str, dict[str, Any]]] = []
+    created_drivers: list[tuple[str, JsonObject]] = []
     install_fake_appium(monkeypatch, created_drivers)
 
     driver = create_appium_driver(
@@ -203,7 +193,7 @@ def test_get_device_config_for_driver_uses_runtime_connection_target() -> None:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def get_device_config(self, connection_target: str) -> dict[str, Any]:
+        def get_device_config(self, connection_target: str) -> JsonObject:
             self.calls.append(connection_target)
             return {"target": connection_target}
 

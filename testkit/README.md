@@ -47,19 +47,19 @@ The supported contract is the installable package and documented import pattern.
 From PyPI:
 
 ```bash
-pip install "gridfleet-testkit[appium]"
+pip install "gridfleet-testkit"
 ```
 
 From a local checkout:
 
 ```bash
-uv pip install -e ./testkit[appium]
+uv pip install -e ./testkit
 ```
 
 From a copied `testkit/` directory inside another repository:
 
 ```bash
-uv pip install -e ./testkit[appium]
+uv pip install -e ./testkit
 ```
 
 From a Git checkout or VCS URL that contains this package:

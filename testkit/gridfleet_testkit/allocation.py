@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from appium.webdriver.webdriver import WebDriver
+
     from .client import GridFleetClient
+    from .types import JsonObject
 
 
 @dataclass(frozen=True)
@@ -35,9 +38,9 @@ class AllocatedDevice:
     connection_type: str
     manufacturer: str | None
     model: str | None
-    config: dict[str, Any] | None
-    live_capabilities: dict[str, Any] | None
-    test_data: dict[str, Any] | None = None
+    config: JsonObject | None
+    live_capabilities: JsonObject | None
+    test_data: JsonObject | None = None
     unavailable_includes: tuple[UnavailableInclude, ...] = ()
     tags: dict[str, str] | None = None
 
@@ -72,23 +75,23 @@ class AllocatedDevice:
         return self.platform_label or self.platform_id
 
 
-def _string_value(payload: dict[str, Any], key: str, *, default: str | None = None) -> str:
+def _string_value(payload: JsonObject, key: str, *, default: str | None = None) -> str:
     value = payload.get(key, default)
     if isinstance(value, str) and value:
         return value
     raise ValueError(f"Allocated device payload is missing {key}")
 
 
-def _optional_string_value(payload: dict[str, Any], key: str) -> str | None:
+def _optional_string_value(payload: JsonObject, key: str) -> str | None:
     value = payload.get(key)
     return value if isinstance(value, str) and value else None
 
 
-def _needs_device_detail(payload: dict[str, Any]) -> bool:
+def _needs_device_detail(payload: JsonObject) -> bool:
     return any(payload.get(key) is None for key in ("name", "device_type", "connection_type", "manufacturer", "model"))
 
 
-def _merge_device_detail(payload: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+def _merge_device_detail(payload: JsonObject, detail: JsonObject) -> JsonObject:
     merged = dict(payload)
     for key in ("name", "device_type", "connection_type", "manufacturer", "model"):
         if merged.get(key) is None and detail.get(key) is not None:
@@ -98,7 +101,7 @@ def _merge_device_detail(payload: dict[str, Any], detail: dict[str, Any]) -> dic
     return merged
 
 
-def _parse_unavailable_includes(payload: dict[str, Any]) -> tuple[UnavailableInclude, ...]:
+def _parse_unavailable_includes(payload: JsonObject) -> tuple[UnavailableInclude, ...]:
     raw = payload.get("unavailable_includes")
     if not isinstance(raw, list):
         return ()
@@ -114,7 +117,7 @@ def _parse_unavailable_includes(payload: dict[str, Any]) -> tuple[UnavailableInc
 
 
 def hydrate_allocated_device(
-    device_handle: dict[str, Any],
+    device_handle: JsonObject,
     *,
     run_id: str,
     client: GridFleetClient,
@@ -134,14 +137,14 @@ def hydrate_allocated_device(
     connection_target = _optional_string_value(payload, "connection_target")
     inline_config = payload.get("config")
     if isinstance(inline_config, dict):
-        config: dict[str, Any] | None = inline_config
+        config: JsonObject | None = cast("JsonObject", inline_config)
     elif fetch_config and connection_target and "config" not in unavailable_set:
         config = client.get_device_config(connection_target)
     else:
         config = None
     inline_capabilities = payload.get("live_capabilities")
     if isinstance(inline_capabilities, dict):
-        live_capabilities: dict[str, Any] | None = inline_capabilities
+        live_capabilities: JsonObject | None = cast("JsonObject", inline_capabilities)
     elif fetch_capabilities and "capabilities" not in unavailable_set:
         live_capabilities = client.get_device_capabilities(device_id)
     else:
@@ -149,7 +152,7 @@ def hydrate_allocated_device(
 
     inline_test_data = payload.get("test_data")
     if isinstance(inline_test_data, dict):
-        test_data: dict[str, Any] | None = inline_test_data
+        test_data: JsonObject | None = cast("JsonObject", inline_test_data)
     elif fetch_test_data and "test_data" not in unavailable_set:
         test_data = client.get_device_test_data(device_id)
     else:
@@ -185,14 +188,14 @@ def hydrate_allocated_device(
 
 def hydrate_allocated_device_from_driver(
     allocated: AllocatedDevice,
-    driver: Any,
+    driver: WebDriver,
     *,
     client: GridFleetClient,
 ) -> AllocatedDevice:
     """Refresh live capabilities from a running Appium driver session."""
     capabilities = getattr(driver, "capabilities", None)
     if isinstance(capabilities, dict):
-        live_capabilities = dict(capabilities)
+        live_capabilities = cast("JsonObject", dict(capabilities))
     else:
         live_capabilities = client.get_device_capabilities(allocated.device_id)
     return replace(allocated, live_capabilities=live_capabilities)

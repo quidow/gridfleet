@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from appium.webdriver.webdriver import WebDriver
 
 SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
 ROKU_HELLO_WORLD_APP = Path(__file__).parent / "assets" / "hello-world.zip"
 
 
-def _resolved_connection_target(capabilities: dict[str, Any]) -> str:
+def _resolved_connection_target(capabilities: Mapping[str, object]) -> str:
     value = capabilities.get("appium:udid")
     if isinstance(value, str) and value:
         return value
@@ -19,7 +24,7 @@ def _resolved_connection_target(capabilities: dict[str, Any]) -> str:
     return "session"
 
 
-def print_connection_context(driver: Any) -> str:
+def print_connection_context(driver: WebDriver) -> str:
     """Print the resolved session context and return the connection target string."""
     caps = driver.capabilities
     connection_target = _resolved_connection_target(caps)
@@ -35,7 +40,7 @@ def print_connection_context(driver: Any) -> str:
     return connection_target
 
 
-def save_and_assert_screenshot(driver: Any, example_name: str) -> Path:
+def save_and_assert_screenshot(driver: WebDriver, example_name: str) -> Path:
     """Save a screenshot and assert that the written file is non-empty."""
     caps = driver.capabilities
     connection_target = _resolved_connection_target(caps).replace(":", "_")
@@ -51,7 +56,7 @@ def save_and_assert_screenshot(driver: Any, example_name: str) -> Path:
     return screenshot_path
 
 
-def install_and_activate_roku_dev_app(driver: Any) -> None:
+def install_and_activate_roku_dev_app(driver: WebDriver) -> None:
     """Install and activate the bundled Roku dev app used by screenshot examples."""
     assert ROKU_HELLO_WORLD_APP.exists(), f"App package not found: {ROKU_HELLO_WORLD_APP}"
     driver.install_app(str(ROKU_HELLO_WORLD_APP.resolve()))

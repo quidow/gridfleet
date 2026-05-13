@@ -7,15 +7,14 @@ Requires:
     - The supported GridFleet testkit installed
     - Appium with the XCUITest driver installed (`appium driver install xcuitest`)
     - tvOS real-device prerequisites already configured on the host, including WebDriverAgent/XCUITest setup
-    - Appium-Python-Client installed (`uv pip install -e ./testkit[appium]`)
+    - Appium-Python-Client installed (`uv pip install -e ./testkit`)
 
 Run:
     cd testkit && python -m pytest examples/test_tvos_screenshot.py -v -s
 """
 
-from typing import Any
-
 import pytest
+from appium.webdriver.webdriver import WebDriver
 
 from examples._example_helpers import print_connection_context, save_and_assert_screenshot
 
@@ -32,7 +31,7 @@ pytest_plugins = ["gridfleet_testkit.pytest_plugin"]
     ],
     indirect=True,
 )
-def test_tvos_take_screenshot(appium_driver: Any) -> None:
+def test_tvos_take_screenshot(appium_driver: WebDriver) -> None:
     """Connect to a tvOS real device through the Grid and take a screenshot."""
     driver = appium_driver
 

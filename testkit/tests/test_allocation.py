@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +11,9 @@ from gridfleet_testkit.allocation import (
     hydrate_allocated_device_from_driver,
 )
 
+if TYPE_CHECKING:
+    from gridfleet_testkit.types import JsonObject
+
 
 class FakeClient:
     def __init__(self) -> None:
@@ -19,15 +22,15 @@ class FakeClient:
         self.device_calls: list[str] = []
         self.test_data_calls: list[str] = []
 
-    def get_device_config(self, connection_target: str) -> dict[str, Any]:
+    def get_device_config(self, connection_target: str) -> JsonObject:
         self.config_calls.append(connection_target)
         return {"ip": "10.0.0.8", "username": "operator"}
 
-    def get_device_capabilities(self, device_id: str) -> dict[str, Any]:
+    def get_device_capabilities(self, device_id: str) -> JsonObject:
         self.capability_calls.append(device_id)
         return {"appium:udid": "SERIAL123", "appium:deviceIP": "10.0.0.9"}
 
-    def get_device(self, device_id: str) -> dict[str, Any]:
+    def get_device(self, device_id: str) -> JsonObject:
         self.device_calls.append(device_id)
         return {
             "id": device_id,
@@ -39,13 +42,13 @@ class FakeClient:
             "ip_address": "10.0.0.7",
         }
 
-    def get_device_test_data(self, device_id: str) -> dict[str, Any]:
+    def get_device_test_data(self, device_id: str) -> JsonObject:
         self.test_data_calls.append(device_id)
         return {"fetched": True}
 
 
-def device_handle(**overrides: Any) -> dict[str, Any]:
-    payload = {
+def device_handle(**overrides: object) -> JsonObject:
+    payload: JsonObject = {
         "device_id": "dev-1",
         "identity_value": "SERIAL123",
         "connection_target": "SERIAL123",

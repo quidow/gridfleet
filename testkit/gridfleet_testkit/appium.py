@@ -3,35 +3,43 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from appium import webdriver
+from appium.options.common import AppiumOptions
 
 from .client import GridFleetClient, _default_grid_url
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
-def _catalog_payload(catalog_client: Any | None) -> dict[str, Any]:
+    from appium.webdriver.webdriver import WebDriver
+
+    from .types import JsonObject
+
+
+def _catalog_payload(catalog_client: object | None) -> JsonObject:
     if catalog_client is None:
         catalog_client = GridFleetClient()
-    if hasattr(catalog_client, "get_driver_pack_catalog"):
-        payload = catalog_client.get_driver_pack_catalog()
+    catalog_getter = getattr(catalog_client, "get_driver_pack_catalog", None)
+    if callable(catalog_getter):
+        payload = catalog_getter()
     elif callable(catalog_client):
-        payload = catalog_client()
+        payload = cast("Callable[[], object]", catalog_client)()
     else:
         payload = catalog_client
     if isinstance(payload, dict):
-        return payload
+        return cast("JsonObject", payload)
     if isinstance(payload, list):
-        return {"packs": payload}
+        return cast("JsonObject", {"packs": payload})
     raise ValueError("Driver pack catalog client returned an invalid payload")
 
 
-def _enabled_platform_matches(catalog: dict[str, Any], platform_id: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+def _enabled_platform_matches(catalog: JsonObject, platform_id: str) -> list[tuple[JsonObject, JsonObject]]:
     packs = catalog.get("packs")
     if not isinstance(packs, list):
         raise ValueError("Driver pack catalog payload must include a packs list")
-    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    matches: list[tuple[JsonObject, JsonObject]] = []
     for pack in packs:
         if not isinstance(pack, dict) or pack.get("state") != "enabled":
             continue
@@ -48,8 +56,8 @@ def _resolve_pack_platform(
     *,
     pack_id: str | None,
     platform_id: str | None,
-    catalog_client: Any | None,
-) -> tuple[str, dict[str, Any]]:
+    catalog_client: object | None,
+) -> tuple[str, JsonObject]:
     resolved_pack_id = pack_id or os.getenv("GRIDFLEET_TESTKIT_PACK_ID")
     resolved_platform_id = platform_id or os.getenv("GRIDFLEET_TESTKIT_PLATFORM_ID")
     if not resolved_platform_id:
@@ -77,7 +85,7 @@ def _resolve_pack_platform(
     raise ValueError(f"Enabled driver pack platform for platform_id {resolved_platform_id!r} was not found")
 
 
-def _required_platform_string(platform: dict[str, Any], key: str) -> str:
+def _required_platform_string(platform: JsonObject, key: str) -> str:
     value = platform.get(key)
     if not isinstance(value, str) or not value:
         raise ValueError(f"Driver pack platform is missing {key}")
@@ -88,15 +96,11 @@ def build_appium_options(
     *,
     pack_id: str | None = None,
     platform_id: str | None = None,
-    capabilities: Mapping[str, Any] | None = None,
+    capabilities: Mapping[str, object] | None = None,
     test_name: str | None = None,
-    catalog_client: Any | None = None,
-) -> Any:
+    catalog_client: object | None = None,
+) -> AppiumOptions:
     """Build Appium options from driver-pack catalog platform metadata."""
-    # appium is an optional dep (extra "appium"); imported lazily so consumers
-    # without the extra can still use the rest of testkit.
-    from appium.options.common import AppiumOptions  # noqa: PLC0415
-
     params = dict(capabilities or {})
     params.setdefault("gridfleet:run_id", os.environ.get("GRIDFLEET_RUN_ID", "free"))
     explicit_platform_name = params.get("platformName")
@@ -126,16 +130,12 @@ def create_appium_driver(
     *,
     pack_id: str | None = None,
     platform_id: str | None = None,
-    capabilities: Mapping[str, Any] | None = None,
+    capabilities: Mapping[str, object] | None = None,
     test_name: str | None = None,
     grid_url: str | None = None,
-    catalog_client: Any | None = None,
-) -> Any:
+    catalog_client: object | None = None,
+) -> WebDriver:
     """Create an Appium remote driver through Selenium Grid."""
-    # appium is an optional dep (extra "appium"); imported lazily so consumers
-    # without the extra can still use the rest of testkit.
-    from appium import webdriver  # noqa: PLC0415
-
     options = build_appium_options(
         pack_id=pack_id,
         platform_id=platform_id,
@@ -146,9 +146,9 @@ def create_appium_driver(
     return webdriver.Remote(grid_url or _default_grid_url(), options=options)
 
 
-def get_connection_target_from_driver(driver: Any) -> str:
+def get_connection_target_from_driver(driver: WebDriver) -> str:
     """Return the runtime connection target from a live Appium driver."""
-    capabilities = driver.capabilities
+    capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
     connection_target = capabilities.get("appium:udid")
     if not isinstance(connection_target, str) or not connection_target:
         raise ValueError("Could not determine device connection target from session capabilities")
@@ -156,20 +156,20 @@ def get_connection_target_from_driver(driver: Any) -> str:
 
 
 def get_device_config_for_driver(
-    driver: Any,
+    driver: WebDriver,
     *,
     gridfleet_client: GridFleetClient | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Fetch device config for a live Appium driver using its runtime connection target."""
     client = gridfleet_client or GridFleetClient()
     return client.get_device_config(get_connection_target_from_driver(driver))
 
 
 def get_device_test_data_for_driver(
-    driver: Any,
+    driver: WebDriver,
     *,
     gridfleet_client: GridFleetClient | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Fetch operator-attached test_data for a live Appium driver session."""
     client = gridfleet_client or GridFleetClient()
     connection_target = get_connection_target_from_driver(driver)

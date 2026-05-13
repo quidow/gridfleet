@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from gridfleet_testkit.appium import get_device_test_data_for_driver
+
 
 def test_get_device_test_data_for_driver_resolves_then_fetches() -> None:
-    from gridfleet_testkit.appium import get_device_test_data_for_driver
-
     driver = MagicMock()
     driver.capabilities = {"appium:udid": "udid-123"}
 

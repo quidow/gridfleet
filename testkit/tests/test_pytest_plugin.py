@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sys
 import types
 from typing import ClassVar
 
 import pytest
 
+import gridfleet_testkit.appium as appium_mod
 from gridfleet_testkit import pytest_plugin
 
 # Required for the pytester fixture (sub-pytest session runner).
@@ -95,26 +95,14 @@ class RecordingClient(FakeCatalogClient):
 
 
 def install_fake_appium(monkeypatch, created_drivers):
-    appium_module = types.ModuleType("appium")
-    webdriver_module = types.ModuleType("appium.webdriver")
-    options_module = types.ModuleType("appium.options")
-    common_module = types.ModuleType("appium.options.common")
-
     def remote(url: str, *, options: FakeOptions) -> FakeDriver:
         capabilities = {"platformName": options.platform_name, **options.capabilities}
         driver = FakeDriver(capabilities)
         created_drivers.append((url, capabilities, driver))
         return driver
 
-    webdriver_module.Remote = remote
-    common_module.AppiumOptions = FakeOptions
-    appium_module.webdriver = webdriver_module
-    options_module.common = common_module
-
-    monkeypatch.setitem(sys.modules, "appium", appium_module)
-    monkeypatch.setitem(sys.modules, "appium.webdriver", webdriver_module)
-    monkeypatch.setitem(sys.modules, "appium.options", options_module)
-    monkeypatch.setitem(sys.modules, "appium.options.common", common_module)
+    monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
+    monkeypatch.setattr(pytest_plugin.webdriver, "Remote", remote)
 
 
 @pytest.mark.parametrize(
@@ -253,22 +241,12 @@ def test_build_driver_options_supports_explicit_platform_name_escape_hatch(monke
 
 def test_appium_driver_setup_failure_registers_device_less_error_session(monkeypatch):
     """When driver creation raises before a Grid session exists, the fixture registers a synthetic error session."""
-    appium_module = types.ModuleType("appium")
-    webdriver_module = types.ModuleType("appium.webdriver")
-    options_module = types.ModuleType("appium.options")
-    common_module = types.ModuleType("appium.options.common")
 
-    def remote_raises(url, *, options):
+    def remote_raises(url: str, *, options: FakeOptions) -> FakeDriver:
         raise RuntimeError("Session could not be created")
 
-    webdriver_module.Remote = remote_raises
-    common_module.AppiumOptions = FakeOptions
-    appium_module.webdriver = webdriver_module
-    options_module.common = common_module
-    monkeypatch.setitem(sys.modules, "appium", appium_module)
-    monkeypatch.setitem(sys.modules, "appium.webdriver", webdriver_module)
-    monkeypatch.setitem(sys.modules, "appium.options", options_module)
-    monkeypatch.setitem(sys.modules, "appium.options.common", common_module)
+    monkeypatch.setattr(appium_mod, "AppiumOptions", FakeOptions)
+    monkeypatch.setattr(pytest_plugin.webdriver, "Remote", remote_raises)
     RecordingClient.instances.clear()
     gridfleet_client = RecordingClient()
 

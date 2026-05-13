@@ -6,15 +6,14 @@ Requires:
     - A Roku device registered with Roku dev credentials in device config
     - Appium with the Roku driver installed (`appium driver install roku`)
     - The supported GridFleet testkit installed
-    - Appium-Python-Client installed (`uv pip install -e ./testkit[appium]`)
+    - Appium-Python-Client installed (`uv pip install -e ./testkit`)
 
 Run:
     cd testkit && python -m pytest examples/test_roku_sideload_screenshot.py -v -s
 """
 
-from typing import Any
-
 import pytest
+from appium.webdriver.webdriver import WebDriver
 
 from examples._example_helpers import (
     ROKU_HELLO_WORLD_APP,
@@ -36,7 +35,7 @@ pytest_plugins = ["gridfleet_testkit.pytest_plugin"]
     ],
     indirect=True,
 )
-def test_roku_install_app_and_take_screenshot(appium_driver: Any) -> None:
+def test_roku_install_app_and_take_screenshot(appium_driver: WebDriver) -> None:
     """Connect to a Roku device, sideload an app, and take a screenshot."""
     driver = appium_driver
 
