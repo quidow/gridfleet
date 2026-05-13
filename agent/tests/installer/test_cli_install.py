@@ -17,7 +17,7 @@ _TEST_OPERATOR = OperatorIdentity(login="testop", uid=4242, home=Path("/home/tes
 
 
 def _patch_operator(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agent_app.cli.resolve_operator_identity", lambda login=None: _TEST_OPERATOR)
+    monkeypatch.setattr("agent_app.cli.resolve_operator_identity", lambda: _TEST_OPERATOR)
 
 
 def test_install_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -172,7 +172,7 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         cli,
         "resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login=login or "gridfleet", uid=os.getuid(), home=Path("/home/gridfleet")),
+        lambda: OperatorIdentity(login="gridfleet", uid=os.getuid(), home=Path("/home/gridfleet")),
     )
 
     assert (
@@ -182,8 +182,6 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
                 "--dry-run",
                 "--manager-url",
                 "https://manager.example.com",
-                "--user",
-                "gridfleet",
                 "--manager-auth-username",
                 "machine",
                 "--manager-auth-password",
@@ -287,7 +285,7 @@ def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pyt
         return "update plan"
 
     _patch_operator(monkeypatch)
-    monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
+    monkeypatch.setattr(cli, "load_installed_config", lambda _defaults=None: loaded_config)
     monkeypatch.setattr(cli, "format_update_dry_run", fake_format_update_dry_run)
     monkeypatch.setattr(cli, "discover_uv", lambda **kw: fake_runtime)
 
@@ -302,7 +300,9 @@ def test_update_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: pyt
 def test_update_dry_run_reports_installed_config_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli, "load_installed_config", lambda: (_ for _ in ()).throw(ValueError("bad config")))
+    monkeypatch.setattr(
+        cli, "load_installed_config", lambda _defaults=None: (_ for _ in ()).throw(ValueError("bad config"))
+    )
 
     assert cli.main(["update", "--dry-run"]) == 2
 
@@ -335,7 +335,7 @@ def test_update_invokes_updater(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
         )
 
     _patch_operator(monkeypatch)
-    monkeypatch.setattr(cli, "load_installed_config", lambda: loaded_config)
+    monkeypatch.setattr(cli, "load_installed_config", lambda _defaults=None: loaded_config)
     monkeypatch.setattr(cli, "update_agent", fake_update_agent)
     monkeypatch.setattr(cli, "discover_uv", lambda **kw: fake_runtime)
 
@@ -366,34 +366,24 @@ def test_install_parser_accepts_api_auth_flags() -> None:
     assert ns.api_auth_password == "secret"
 
 
-def test_status_accepts_user_flag() -> None:
-    from agent_app.cli import _build_parser
-
-    args = _build_parser().parse_args(["status", "--user", "alice"])
-    assert args.command == "status"
-    assert args.user == "alice"
-
-
-def test_uninstall_accepts_user_flag() -> None:
-    from agent_app.cli import _build_parser
-
-    args = _build_parser().parse_args(["uninstall", "--yes", "--user", "alice"])
-    assert args.user == "alice"
-
-
-def test_update_accepts_user_and_uv_bin() -> None:
-    from agent_app.cli import _build_parser
-
-    args = _build_parser().parse_args(["update", "--user", "alice", "--uv-bin", "/opt/uv/bin/uv"])
-    assert args.user == "alice"
-    assert args.uv_bin == "/opt/uv/bin/uv"
+def test_install_cli_rejects_user_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """--user has been removed; argparse must reject it."""
+    exit_code = cli.main(
+        [
+            "install",
+            "--no-start",
+            "--manager-url",
+            "http://localhost:8000",
+            "--user",
+            "anyone",
+        ]
+    )
+    assert exit_code == 2
 
 
-def test_install_user_default_is_none_until_resolved() -> None:
-    from agent_app.cli import _build_parser
-
-    args = _build_parser().parse_args(["install", "--start", "--manager-url", "http://m"])
-    assert args.user is None
+def test_status_cli_rejects_user_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["status", "--user", "anyone"])
+    assert exit_code == 2
 
 
 def test_install_exit_zero_when_registration_pending_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -404,6 +394,7 @@ def test_install_exit_zero_when_registration_pending_only(monkeypatch: pytest.Mo
         started=True,
         health=SimpleNamespace(ok=True, message="ok", details={}),
         registration=SimpleNamespace(ok=False, message="not yet"),
+        linger_warning=None,
     )
     monkeypatch.setattr("agent_app.cli.install_with_start", lambda *a, **kw: fake_result)
     monkeypatch.setattr("agent_app.cli.discover_tools", lambda: None)
@@ -419,6 +410,7 @@ def test_install_exit_one_when_health_fails(monkeypatch: pytest.MonkeyPatch) -> 
         started=True,
         health=SimpleNamespace(ok=False, message="bad", details={}),
         registration=None,
+        linger_warning=None,
     )
     monkeypatch.setattr("agent_app.cli.install_with_start", lambda *a, **kw: fake_result)
     monkeypatch.setattr("agent_app.cli.discover_tools", lambda: None)

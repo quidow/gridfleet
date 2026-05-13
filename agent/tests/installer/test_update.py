@@ -396,10 +396,10 @@ def test_cli_update_invalid_uv_bin_exits_one(
         raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
 
     monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update", "--uv-bin", "/missing"])
     assert rc == 1
@@ -415,10 +415,10 @@ def test_cli_update_dry_run_invalid_uv_bin_exits_one(
         raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
 
     monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update", "--dry-run", "--uv-bin", "/missing"])
     assert rc == 1
@@ -432,14 +432,14 @@ def test_cli_update_exit_code_for_drain(monkeypatch: pytest.MonkeyPatch) -> None
         raise UpdateDrainError("busy")
 
     monkeypatch.setattr("agent_app.cli.update_agent", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.discover_uv",
         lambda **kw: UvRuntime(bin_path=Path("/x"), source="path", searched=("/x",)),
     )
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update"])
     assert rc == 1
@@ -450,14 +450,14 @@ def test_cli_update_exit_code_for_restart_failure(monkeypatch: pytest.MonkeyPatc
         raise UpdateRestartError("systemctl failed")
 
     monkeypatch.setattr("agent_app.cli.update_agent", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.discover_uv",
         lambda **kw: UvRuntime(bin_path=Path("/x"), source="path", searched=("/x",)),
     )
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update"])
     assert rc == 2
