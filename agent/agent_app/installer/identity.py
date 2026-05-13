@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import getpass
-import os
 import pwd
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,7 @@ class OperatorIdentity:
 
 
 def resolve_operator_identity(login: str | None = None) -> OperatorIdentity:
-    target_login = login or os.environ.get("SUDO_USER") or getpass.getuser()
+    target_login = login or getpass.getuser()
     try:
         record = pwd.getpwnam(target_login)
     except (KeyError, OSError) as exc:
