@@ -18,6 +18,7 @@ import httpx
 from agent_app.installer.plan import (
     InstallConfig,
     ToolDiscovery,
+    _xdg_config_home,
     render_config_env,
     render_launchd_plist,
     render_systemd_unit,
@@ -78,16 +79,6 @@ def validate_dedicated_venv(
         )
 
 
-def _operator_home_darwin() -> Path:
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
-        try:
-            return Path(f"~{sudo_user}").expanduser()
-        except (KeyError, RuntimeError):
-            pass
-    return Path.home()
-
-
 def _resolve_uid(uid: int | None = None) -> int:
     if uid is not None:
         return uid
@@ -98,14 +89,11 @@ def _resolve_uid(uid: int | None = None) -> int:
 
 
 def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
+    del operator  # SUDO_USER fallbacks gone; operator is the calling user.
     if os_name == "Linux":
-        config_dir = Path(config.config_dir)
-        if str(config_dir).startswith("/etc/"):
-            return Path("/etc/systemd/system/gridfleet-agent.service")
-        return config_dir.parent / "systemd/system/gridfleet-agent.service"
+        return _xdg_config_home() / "systemd/user/gridfleet-agent.service"
     if os_name == "Darwin":
-        home = operator.home if operator is not None else _operator_home_darwin()
-        return home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        return Path.home() / "Library/LaunchAgents/com.gridfleet.agent.plist"
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 

@@ -73,8 +73,23 @@ def test_resolve_bin_path_uses_shutil_which_for_bare_command(monkeypatch: pytest
     assert result == "/usr/local/bin/gridfleet-agent"
 
 
-def test_default_linux_service_path_is_etc_systemd() -> None:
-    assert _service_file_path(InstallConfig(), "Linux") == Path("/etc/systemd/system/gridfleet-agent.service")
+def test_default_linux_service_path_is_user_systemd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert _service_file_path(config, "Linux") == (tmp_path / "cfg/systemd/user/gridfleet-agent.service")
+
+
+def test_user_systemd_path_falls_back_to_dot_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert _service_file_path(config, "Linux") == (tmp_path / ".config/systemd/user/gridfleet-agent.service")
 
 
 def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -85,7 +100,10 @@ def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.
     )
 
 
-def test_install_no_start_writes_config_runtime_dir_and_service(tmp_path: Path) -> None:
+def test_install_no_start_writes_config_runtime_dir_and_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
@@ -101,7 +119,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(tmp_path: Path) 
 
     assert result == InstallResult(
         config_env=Path(config.config_env_path),
-        service_file=tmp_path / "etc/systemd/system/gridfleet-agent.service",
+        service_file=tmp_path / ".config/systemd/user/gridfleet-agent.service",
         started=False,
     )
     assert (Path(config.agent_dir) / "runtimes").is_dir()
@@ -114,6 +132,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(tmp_path: Path) 
 def test_install_no_start_aligns_linux_writable_paths_to_service_user(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
         config_dir=str(tmp_path / "etc/gridfleet-agent"),
@@ -135,7 +154,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
         chown=lambda path, user: ownership.append((path, user)),
     )
 
-    service_file = Path(config.config_dir).parent / "systemd/system/gridfleet-agent.service"
+    service_file = tmp_path / ".config/systemd/user/gridfleet-agent.service"
     assert ownership == [
         (Path(config.agent_dir), "gridfleet"),
         (Path(config.agent_dir) / "runtimes", "gridfleet"),
@@ -145,20 +164,11 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
     ]
 
 
-def test_macos_service_path_resolves_sudo_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SUDO_USER", "operator")
-    operator_home = tmp_path / "Users/operator"
-    original_expanduser = Path.expanduser
-
-    def mock_expanduser(self: Path) -> Path:
-        if str(self) == "~operator":
-            return operator_home
-        return original_expanduser(self)
-
-    monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+def test_macos_service_path_uses_current_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
 
     assert _service_file_path(InstallConfig(), "Darwin") == (
-        operator_home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
     )
 
 
@@ -443,7 +453,10 @@ def test_poll_agent_health_times_out_after_failed_attempts() -> None:
     assert "connection refused" in result.message
 
 
-def test_install_no_start_uses_operator_identity_for_systemd_user(tmp_path: Path) -> None:
+def test_install_no_start_uses_operator_identity_for_systemd_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     from agent_app.installer.identity import OperatorIdentity
 
     operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
@@ -462,8 +475,8 @@ def test_install_no_start_uses_operator_identity_for_systemd_user(tmp_path: Path
         chown=lambda path, login: None,
     )
     rendered = result.service_file.read_text()
-    assert "User=ops" in rendered
-    assert "User=root" not in rendered
+    # User-scope units must not contain a User= directive.
+    assert "User=" not in rendered
     assert tmp_path in result.service_file.parents
 
 
