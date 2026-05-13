@@ -173,8 +173,7 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
     if filters.hardware_health_status is not None:
         stmt = stmt.where(Device.hardware_health_status == filters.hardware_health_status)
     if filters.tags:
-        for key, value in filters.tags.items():
-            stmt = stmt.where(Device.tags[key].astext == value)
+        stmt = stmt.where(Device.tags.contains(filters.tags))
     if filters.search:
         term = f"%{filters.search}%"
         stmt = stmt.where(

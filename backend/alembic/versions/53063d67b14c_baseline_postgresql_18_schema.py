@@ -85,12 +85,13 @@ def upgrade() -> None:
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("description", sa.String(), nullable=True),
         sa.Column("group_type", sa.Enum("static", "dynamic", name="grouptype"), nullable=False),
-        sa.Column("filters", postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column("filters", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name"),
     )
+    op.create_index("ix_device_groups_filters_gin", "device_groups", ["filters"], unique=False, postgresql_using="gin")
     op.create_table(
         "driver_packs",
         sa.Column("id", sa.String(), nullable=False),
@@ -166,11 +167,12 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("event_id", sa.String(), server_default=sa.text("(uuidv7())::text"), nullable=False),
         sa.Column("type", sa.String(), nullable=False),
-        sa.Column("data", postgresql.JSON(astext_type=sa.Text()), nullable=False),
+        sa.Column("data", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_system_events_event_id"), "system_events", ["event_id"], unique=True)
+    op.create_index("ix_system_events_data_gin", "system_events", ["data"], unique=False, postgresql_using="gin")
     op.create_index(op.f("ix_system_events_type"), "system_events", ["type"], unique=False)
     op.create_index("ix_system_events_type_created_at", "system_events", ["type", "created_at"], unique=False)
     op.create_table(
@@ -232,11 +234,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("hold", sa.Enum("maintenance", "reserved", name="devicehold"), nullable=True),
-        sa.Column("tags", postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column("tags", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("manufacturer", sa.String(), nullable=True),
         sa.Column("model", sa.String(), nullable=True),
         sa.Column("model_number", sa.String(), nullable=True),
-        sa.Column("software_versions", postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column("software_versions", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("auto_manage", sa.Boolean(), server_default="true", nullable=False),
         sa.Column("device_type", sa.Enum("real_device", "emulator", "simulator", name="devicetype"), nullable=False),
         sa.Column("connection_type", sa.Enum("usb", "network", "virtual", name="connectiontype"), nullable=False),
@@ -261,9 +263,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("hardware_telemetry_reported_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("device_config", postgresql.JSON(astext_type=sa.Text()), server_default="{}", nullable=True),
-        sa.Column("test_data", postgresql.JSON(astext_type=sa.Text()), server_default="{}", nullable=False),
-        sa.Column("lifecycle_policy_state", postgresql.JSON(astext_type=sa.Text()), server_default="{}", nullable=True),
+        sa.Column("device_config", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=True),
+        sa.Column("test_data", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
+        sa.Column(
+            "lifecycle_policy_state", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=True
+        ),
         sa.Column("device_checks_healthy", sa.Boolean(), nullable=True),
         sa.Column("device_checks_summary", sa.Text(), nullable=True),
         sa.Column("device_checks_checked_at", sa.DateTime(timezone=True), nullable=True),
@@ -280,7 +284,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_devices_identity_value"), "devices", ["identity_value"], unique=False)
+    op.create_index("ix_devices_device_config_gin", "devices", ["device_config"], unique=False, postgresql_using="gin")
     op.create_index("ix_devices_pack_platform", "devices", ["pack_id", "platform_id"], unique=False)
+    op.create_index("ix_devices_tags_gin", "devices", ["tags"], unique=False, postgresql_using="gin")
+    op.create_index("ix_devices_test_data_gin", "devices", ["test_data"], unique=False, postgresql_using="gin")
     op.create_index(
         "uq_devices_host_identity_scheme_value",
         "devices",
@@ -528,8 +535,8 @@ def upgrade() -> None:
         "config_audit_logs",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("device_id", sa.UUID(), nullable=False),
-        sa.Column("previous_config", postgresql.JSON(astext_type=sa.Text()), nullable=True),
-        sa.Column("new_config", postgresql.JSON(astext_type=sa.Text()), nullable=False),
+        sa.Column("previous_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("new_config", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("changed_by", sa.String(), nullable=True),
         sa.Column("changed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
@@ -654,8 +661,8 @@ def upgrade() -> None:
         "device_test_data_audit_logs",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("device_id", sa.UUID(), nullable=False),
-        sa.Column("previous_test_data", postgresql.JSON(astext_type=sa.Text()), nullable=True),
-        sa.Column("new_test_data", postgresql.JSON(astext_type=sa.Text()), nullable=False),
+        sa.Column("previous_test_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("new_test_data", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("changed_by", sa.String(), nullable=True),
         sa.Column("changed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
@@ -827,13 +834,17 @@ def downgrade() -> None:
         table_name="devices",
         postgresql_where=sa.text("identity_scope = 'host'"),
     )
+    op.drop_index("ix_devices_test_data_gin", table_name="devices")
+    op.drop_index("ix_devices_tags_gin", table_name="devices")
     op.drop_index("ix_devices_pack_platform", table_name="devices")
+    op.drop_index("ix_devices_device_config_gin", table_name="devices")
     op.drop_index(op.f("ix_devices_identity_value"), table_name="devices")
     op.drop_table("devices")
     op.drop_table("webhooks")
     op.drop_table("test_runs")
     op.drop_index("ix_system_events_type_created_at", table_name="system_events")
     op.drop_index(op.f("ix_system_events_type"), table_name="system_events")
+    op.drop_index("ix_system_events_data_gin", table_name="system_events")
     op.drop_index(op.f("ix_system_events_event_id"), table_name="system_events")
     op.drop_table("system_events")
     op.drop_index(op.f("ix_settings_key"), table_name="settings")
@@ -846,6 +857,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_hosts_hostname"), table_name="hosts")
     op.drop_table("hosts")
     op.drop_table("driver_packs")
+    op.drop_index("ix_device_groups_filters_gin", table_name="device_groups")
     op.drop_table("device_groups")
     op.drop_index(op.f("ix_control_plane_state_entries_namespace"), table_name="control_plane_state_entries")
     op.drop_index(op.f("ix_control_plane_state_entries_key"), table_name="control_plane_state_entries")
