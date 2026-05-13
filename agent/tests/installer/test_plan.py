@@ -323,3 +323,45 @@ def test_systemd_unit_uses_explicit_user() -> None:
     config = InstallConfig(user="ops")
     rendered = render_systemd_unit(config)
     assert "User=ops" in rendered
+
+
+def test_default_install_config_linux_uses_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert config.agent_dir == str(tmp_path / "data/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / "cfg/gridfleet-agent")
+
+
+def test_default_install_config_linux_falls_back_to_dot_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert config.agent_dir == str(tmp_path / ".local/share/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / ".config/gridfleet-agent")
+
+
+def test_default_install_config_darwin_uses_application_support(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Darwin")
+
+    assert config.agent_dir == str(tmp_path / "Library/Application Support/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / "Library/Application Support/gridfleet-agent/config")
+
+
+def test_default_install_config_rejects_unknown_os() -> None:
+    from agent_app.installer.plan import default_install_config
+
+    with pytest.raises(RuntimeError, match="Unsupported OS"):
+        default_install_config("Plan9")

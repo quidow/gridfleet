@@ -16,6 +16,20 @@ if TYPE_CHECKING:
 DEFAULT_SERVICE_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 
+def _xdg_data_home() -> Path:
+    raw = os.environ.get("XDG_DATA_HOME")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".local" / "share"
+
+
+def _xdg_config_home() -> Path:
+    raw = os.environ.get("XDG_CONFIG_HOME")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".config"
+
+
 @dataclass(frozen=True)
 class InstallConfig:
     agent_dir: str = "/opt/gridfleet-agent"
@@ -61,6 +75,27 @@ class InstallConfig:
     @property
     def config_env_path(self) -> str:
         return f"{self.config_dir}/config.env"
+
+
+def default_install_config(os_name: str) -> InstallConfig:
+    """Return an InstallConfig with per-OS user-scope defaults.
+
+    Linux uses XDG base directories ($XDG_DATA_HOME / $XDG_CONFIG_HOME, with
+    ~/.local/share and ~/.config as fallbacks). Darwin uses Apple's
+    Application Support convention under the operator's home directory.
+    """
+    if os_name == "Linux":
+        return InstallConfig(
+            agent_dir=str(_xdg_data_home() / "gridfleet-agent"),
+            config_dir=str(_xdg_config_home() / "gridfleet-agent"),
+        )
+    if os_name == "Darwin":
+        agent = Path.home() / "Library" / "Application Support" / "gridfleet-agent"
+        return InstallConfig(
+            agent_dir=str(agent),
+            config_dir=str(agent / "config"),
+        )
+    raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
 @dataclass(frozen=True)
