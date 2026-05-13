@@ -39,8 +39,8 @@ def _stop_service(
     operator: OperatorIdentity,
 ) -> None:
     if os_name == "Linux":
-        run_command(["systemctl", "stop", "gridfleet-agent"], check=False)
-        run_command(["systemctl", "disable", "gridfleet-agent"], check=False)
+        run_command(["systemctl", "--user", "stop", "gridfleet-agent"], check=False)
+        run_command(["systemctl", "--user", "disable", "gridfleet-agent"], check=False)
         return
     if os_name == "Darwin":
         run_command(["launchctl", "bootout", f"gui/{operator.uid}", str(service_file)], check=False)
@@ -70,7 +70,7 @@ def uninstall(
         removed_service_file = True
 
     if resolved_os == "Linux":
-        run_command(["systemctl", "daemon-reload"], check=True)
+        run_command(["systemctl", "--user", "daemon-reload"], check=True)
 
     removed_agent_dir = False
     if remove_agent_dir and agent_dir.exists():

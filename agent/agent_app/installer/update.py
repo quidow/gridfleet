@@ -112,7 +112,6 @@ def format_update_dry_run(
     current_uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
-    resolved_uid = current_uid if current_uid is not None else os.getuid()
     package_spec = _agent_package_spec(to_version)
 
     # Resolve uv path display
@@ -128,8 +127,7 @@ def format_update_dry_run(
             uv_runtime,
             operator=operator,
             package_spec=package_spec,
-            os_name=resolved_os,
-            current_uid=resolved_uid,
+            config=config,
         )
         uv_command = " ".join(upgrade_cmd)
     except RuntimeError as exc:
@@ -230,8 +228,7 @@ def update_agent(
             uv_runtime,
             operator=operator,
             package_spec=package_spec,
-            os_name=resolved_os,
-            current_uid=current_uid if current_uid is not None else os.getuid(),
+            config=config,
         )
     except RuntimeError as exc:
         raise UvNotFoundError(str(exc)) from exc

@@ -53,8 +53,8 @@ def test_format_update_dry_run_names_uv_and_restart_commands(tmp_path: Path) -> 
     )
 
     assert "GridFleet Agent update dry run" in output
-    # build_upgrade_command returns [bin_path, "tool", "upgrade", package_spec] when uid matches
-    assert "tool upgrade gridfleet-agent==0.3.0" in output
+    assert "pip install" in output
+    assert "gridfleet-agent==0.3.0" in output
     assert "systemctl --user restart gridfleet-agent" in output
     assert "Wait for active local nodes to drain" in output
     assert "http://localhost:5200/agent/health" in output
@@ -73,7 +73,6 @@ def test_format_update_dry_run_reports_unsupported_os_without_traceback(tmp_path
 def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_linux(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # uid matches so build_upgrade_command returns [bin_path, "tool", "upgrade", ...]
     operator = _make_operator(tmp_path, uid=1001)
     commands: list[list[str]] = []
     drains: list[str] = []
@@ -100,8 +99,8 @@ def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_l
         health=HealthCheckResult(ok=True, message="healthy at http://localhost:5200/agent/health"),
     )
     assert drains == ["http://localhost:5200/agent/health"]
-    # commands[0] is the upgrade cmd: [bin_path, "tool", "upgrade", "gridfleet-agent==0.3.0"]
-    assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent==0.3.0"]
+    assert commands[0][1:4] == ["pip", "install", "--python"]
+    assert commands[0][-2:] == ["--upgrade", "gridfleet-agent==0.3.0"]
     assert commands[1] == ["systemctl", "--user", "restart", "gridfleet-agent"]
 
 
@@ -126,7 +125,8 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
     )
 
-    assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent"]
+    assert commands[0][1:4] == ["pip", "install", "--python"]
+    assert commands[0][-2:] == ["--upgrade", "gridfleet-agent"]
 
 
 def test_update_agent_restarts_launchd_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -365,7 +365,7 @@ def test_update_uv_missing_raises_typed(tmp_path: Path) -> None:
         )
 
 
-def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
+def test_update_runs_uv_pip_install_to_dedicated_venv(tmp_path: Path) -> None:
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
@@ -374,7 +374,7 @@ def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
     invoked: list[list[str]] = []
 
     update_agent(
-        InstallConfig(user="ops"),
+        InstallConfig(user="ops", agent_dir=str(tmp_path / "agent")),
         operator=operator,
         uv_runtime=runtime,
         os_name="Linux",
@@ -384,8 +384,9 @@ def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
         current_uid=0,
     )
     upgrade_cmd = invoked[0]
-    assert "ops" in upgrade_cmd
-    assert "tool" in upgrade_cmd and "upgrade" in upgrade_cmd
+    assert upgrade_cmd[0] == str(bin_path)
+    assert upgrade_cmd[1:4] == ["pip", "install", "--python"]
+    assert upgrade_cmd[-2:] == ["--upgrade", "gridfleet-agent"]
 
 
 def test_cli_update_invalid_uv_bin_exits_one(

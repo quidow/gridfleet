@@ -41,6 +41,11 @@ def _make_operator(
     return OperatorIdentity(login=login, uid=uid, home=home or Path("/tmp"))
 
 
+@pytest.fixture(autouse=True)
+def _patch_legacy_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("agent_app.installer.install._LEGACY_PATHS", (tmp_path / "nope",))
+
+
 def test_resolve_bin_path_returns_resolved_executable(tmp_path: Path) -> None:
     executable = tmp_path / "bin/gridfleet-agent"
     executable.parent.mkdir(parents=True)

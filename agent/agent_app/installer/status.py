@@ -76,8 +76,8 @@ def _service_state(
 ) -> tuple[str, str]:
     if os_name == "Linux":
         return (
-            run_command(["systemctl", "is-active", "gridfleet-agent"]).strip(),
-            run_command(["systemctl", "is-enabled", "gridfleet-agent"]).strip(),
+            run_command(["systemctl", "--user", "is-active", "gridfleet-agent"]).strip(),
+            run_command(["systemctl", "--user", "is-enabled", "gridfleet-agent"]).strip(),
         )
     if os_name == "Darwin":
         target = f"gui/{operator.uid}/com.gridfleet.agent"

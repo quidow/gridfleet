@@ -35,22 +35,23 @@ def test_parse_config_env_skips_comments_and_blank_lines(tmp_path: Path) -> None
     }
 
 
-def test_collect_status_reads_files_service_state_and_health(tmp_path: Path) -> None:
+def test_collect_status_reads_files_service_state_and_health(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     Path(config.config_dir).mkdir(parents=True)
     Path(config.config_env_path).write_text(
         "AGENT_MANAGER_URL=https://manager.example.com\nAGENT_AGENT_PORT=5200\nAGENT_MANAGER_AUTH_PASSWORD=secret\n"
     )
-    service_file = tmp_path / "etc/systemd/system/gridfleet-agent.service"
+    service_file = tmp_path / ".config/systemd/user/gridfleet-agent.service"
     service_file.parent.mkdir(parents=True)
     service_file.write_text("[Service]\n")
     commands: list[list[str]] = []
 
     def fake_command(command: list[str]) -> str:
         commands.append(command)
-        if command == ["systemctl", "is-active", "gridfleet-agent"]:
+        if command == ["systemctl", "--user", "is-active", "gridfleet-agent"]:
             return "active\n"
-        if command == ["systemctl", "is-enabled", "gridfleet-agent"]:
+        if command == ["systemctl", "--user", "is-enabled", "gridfleet-agent"]:
             return "enabled\n"
         raise AssertionError(command)
 
@@ -71,8 +72,8 @@ def test_collect_status_reads_files_service_state_and_health(tmp_path: Path) -> 
     assert status.health == HealthCheckResult(ok=True, message="healthy at http://localhost:5200/agent/health")
     assert status.env["AGENT_MANAGER_URL"] == "https://manager.example.com"
     assert commands == [
-        ["systemctl", "is-active", "gridfleet-agent"],
-        ["systemctl", "is-enabled", "gridfleet-agent"],
+        ["systemctl", "--user", "is-active", "gridfleet-agent"],
+        ["systemctl", "--user", "is-enabled", "gridfleet-agent"],
     ]
 
 
@@ -284,8 +285,9 @@ def test_status_reports_operator_and_uv(tmp_path: Path) -> None:
     assert "uv path: /home/ops/.local/bin/uv" in rendered
 
 
-def test_collect_status_uses_operator_home_for_macos_plist(tmp_path: Path) -> None:
+def test_collect_status_uses_operator_home_for_macos_plist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     operator = OperatorIdentity(login="alice", uid=2002, home=tmp_path / "Users" / "alice")
+    monkeypatch.setattr(Path, "home", lambda: operator.home)
     runtime = UvRuntime(bin_path=None, source="missing", searched=())
     config = InstallConfig(user="alice")
     status = collect_status(
