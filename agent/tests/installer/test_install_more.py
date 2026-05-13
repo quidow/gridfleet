@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Never
 
 import pytest
@@ -60,10 +61,9 @@ def test_run_command_nonzero_exit_with_stdout() -> None:
             _run_command(["false"], timeout=10)
 
 
-def test_start_service_darwin_with_uid() -> None:
+def test_start_service_darwin_with_uid(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
-    monkeypatch = pytest.MonkeyPatch()
     with monkeypatch.context() as m:
         commands: list[list[str]] = []
 
@@ -71,9 +71,10 @@ def test_start_service_darwin_with_uid() -> None:
             commands.append(command)
 
         m.setattr(subprocess, "run", fake_run)
+        m.setattr("os.getuid", lambda: 501)
         from pathlib import Path
 
-        _start_service("Darwin", Path("/tmp/com.gridfleet.agent.plist"), run_command=fake_run, uid=501)
+        _start_service("Darwin", Path("/tmp/com.gridfleet.agent.plist"), run_command=fake_run)
         assert any("launchctl" in str(cmd) and "bootstrap" in str(cmd) for cmd in commands)
 
 
@@ -153,3 +154,34 @@ def test_host_list_contains_empty_hostname() -> None:
 def test_manager_hosts_url_trailing_slash() -> None:
     config = InstallConfig(manager_url="https://manager.example.com/")
     assert _manager_hosts_url(config) == "https://manager.example.com/api/hosts"
+
+
+def test_validate_dedicated_venv_accepts_xdg_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    from agent_app.installer.install import validate_dedicated_venv
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+    venv_bin = Path(config.agent_dir) / "venv/bin/gridfleet-agent"
+    venv_bin.parent.mkdir(parents=True)
+    venv_bin.write_text("#!/bin/sh\n")
+    venv_bin.chmod(0o755)
+
+    validate_dedicated_venv(config, executable=venv_bin)  # should not raise
+
+
+def test_validate_dedicated_venv_rejects_other_path(tmp_path: Path) -> None:
+    from agent_app.installer.install import validate_dedicated_venv
+    from agent_app.installer.plan import InstallConfig
+
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "agent"),
+        config_dir=str(tmp_path / "config"),
+        bin_path=str(tmp_path / "agent/venv/bin/gridfleet-agent"),
+    )
+    other = tmp_path / "elsewhere/gridfleet-agent"
+    other.parent.mkdir(parents=True)
+    other.write_text("#!/bin/sh\n")
+
+    with pytest.raises(RuntimeError, match="must run from"):
+        validate_dedicated_venv(config, executable=other)

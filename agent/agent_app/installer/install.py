@@ -68,13 +68,13 @@ def resolve_bin_path(*, executable: Path | None = None) -> str:
 def validate_dedicated_venv(
     config: InstallConfig, *, executable: Path | None = None, command_name: str = "install"
 ) -> None:
-    expected = Path(config.venv_bin_dir) / "gridfleet-agent"
+    expected = Path(config.resolved_bin_path)
     actual = (executable or Path(sys.argv[0])).resolve()
     if actual != expected.resolve():
         raise RuntimeError(
             f"gridfleet-agent {command_name} must run from {expected}. "
-            "Create /opt/gridfleet-agent/venv first, install gridfleet-agent there, "
-            f"then run /opt/gridfleet-agent/venv/bin/gridfleet-agent {command_name}."
+            f"Create {Path(config.agent_dir)}/venv first, install gridfleet-agent there, "
+            f"then run {expected} {command_name}."
         )
 
 
