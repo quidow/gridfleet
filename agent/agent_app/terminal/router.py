@@ -9,6 +9,6 @@ from agent_app.terminal.ws import handle_terminal
 router = APIRouter(prefix="/agent", tags=["terminal"])
 
 
-@router.websocket("/terminal")
+@router.websocket("/terminal", name="agent_terminal")
 async def agent_terminal(ws: WebSocket) -> None:
     await handle_terminal(ws)

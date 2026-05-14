@@ -16,7 +16,7 @@ from agent_app.host.version_guidance import get_version_guidance
 router = APIRouter(prefix="/agent", tags=["host"])
 
 
-@router.get("/health")
+@router.get("/health", summary="Agent process health, capabilities, and version guidance")
 async def health() -> dict[str, Any]:
     capabilities = get_capabilities_snapshot()
     payload: dict[str, Any] = {
@@ -32,6 +32,6 @@ async def health() -> dict[str, Any]:
     return payload
 
 
-@router.get("/host/telemetry")
+@router.get("/host/telemetry", summary="Snapshot of host CPU/memory/disk telemetry")
 async def host_telemetry() -> dict[str, Any]:
     return await get_host_telemetry()

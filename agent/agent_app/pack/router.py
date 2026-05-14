@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, status
 
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
@@ -30,7 +30,7 @@ from agent_app.pack.schemas import (
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
 
-@router.get("/devices")
+@router.get("/devices", summary="Pack-aware enumeration of candidate devices")
 async def pack_devices(
     pack_state_loop: PackStateLoopDep,
     adapter_registry: OptionalAdapterRegistryDep,
@@ -44,7 +44,11 @@ async def pack_devices(
     )
 
 
-@router.get("/devices/{connection_target}/properties")
+@router.get(
+    "/devices/{connection_target}/properties",
+    summary="Pack-shaped device properties via adapter",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Pack device not found"}},
+)
 async def pack_device_properties_route(
     connection_target: str,
     pack_state_loop: PackStateLoopDep,
@@ -65,7 +69,11 @@ async def pack_device_properties_route(
     return data
 
 
-@router.get("/devices/{connection_target}/health")
+@router.get(
+    "/devices/{connection_target}/health",
+    summary="Pack-shaped device health check via adapter",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Unknown desired pack platform"}},
+)
 async def pack_device_health_route(
     connection_target: str,
     platform: DesiredPlatformDep,
@@ -109,7 +117,11 @@ async def pack_device_health_route(
     }
 
 
-@router.get("/devices/{connection_target}/telemetry")
+@router.get(
+    "/devices/{connection_target}/telemetry",
+    summary="Pack-shaped device telemetry via adapter",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Device not found"}},
+)
 async def pack_device_telemetry_route(
     connection_target: str,
     platform: DesiredPlatformDep,
@@ -137,7 +149,11 @@ async def pack_device_telemetry_route(
     return telemetry
 
 
-@router.post("/devices/{connection_target}/lifecycle/{action}")
+@router.post(
+    "/devices/{connection_target}/lifecycle/{action}",
+    summary="Dispatch a lifecycle action through the adapter",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Unknown desired pack platform"}},
+)
 async def pack_device_lifecycle_route(
     connection_target: str,
     action: str,
@@ -167,7 +183,11 @@ async def pack_device_lifecycle_route(
     }
 
 
-@router.post("/features/{feature_id}/actions/{action_id}")
+@router.post(
+    "/features/{feature_id}/actions/{action_id}",
+    summary="Dispatch a feature action through the adapter",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "No adapter loaded"}},
+)
 async def feature_action_route(
     feature_id: str,
     action_id: str,
@@ -187,7 +207,12 @@ async def feature_action_route(
     return {"ok": result.ok, "detail": result.detail, "data": result.data}
 
 
-@router.post("/devices/normalize", response_model=NormalizeDeviceResponse)
+@router.post(
+    "/devices/normalize",
+    response_model=NormalizeDeviceResponse,
+    summary="Normalize raw device input into pack canonical form",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "No adapter loaded"}},
+)
 async def normalize_device_route(
     req: NormalizeDeviceRequest,
     adapter_registry: OptionalAdapterRegistryDep,
