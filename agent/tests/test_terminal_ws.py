@@ -99,7 +99,7 @@ def test_terminal_ws_ignores_malformed_resize(monkeypatch: pytest.MonkeyPatch) -
 def test_terminal_ws_rejects_no_expected_token(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _make_client(monkeypatch, enable=True, token="s3cret")
     # Monkeypatch the loaded settings so expected token is None
-    monkeypatch.setattr(terminal_ws._config.agent_settings, "terminal_token", None)
+    monkeypatch.setattr(terminal_ws._config.agent_settings.terminal, "terminal_token", None)
     headers = {"x-agent-terminal-token": "s3cret"}
     with pytest.raises(Exception), client.websocket_connect("/agent/terminal", headers=headers):  # noqa: B017
         pass
@@ -158,8 +158,8 @@ async def test_terminal_ws_websocketdisconnect_on_receive(monkeypatch: pytest.Mo
     shell.wait = AsyncMock()
     shell.close = AsyncMock()
     monkeypatch.setattr("agent_app.terminal.pty.PtyShell", lambda **_: shell)
-    monkeypatch.setattr(terminal_ws._config.agent_settings, "terminal_token", "s3cret")
-    monkeypatch.setattr(terminal_ws._config.agent_settings, "enable_web_terminal", True)
+    monkeypatch.setattr(terminal_ws._config.agent_settings.terminal, "terminal_token", "s3cret")
+    monkeypatch.setattr(terminal_ws._config.agent_settings.terminal, "enable_web_terminal", True)
     await terminal_ws.handle_terminal(ws)
 
 
@@ -176,8 +176,8 @@ async def test_terminal_ws_generic_exception_on_receive(monkeypatch: pytest.Monk
     shell.wait = AsyncMock()
     shell.close = AsyncMock()
     monkeypatch.setattr("agent_app.terminal.pty.PtyShell", lambda **_: shell)
-    monkeypatch.setattr(terminal_ws._config.agent_settings, "terminal_token", "s3cret")
-    monkeypatch.setattr(terminal_ws._config.agent_settings, "enable_web_terminal", True)
+    monkeypatch.setattr(terminal_ws._config.agent_settings.terminal, "terminal_token", "s3cret")
+    monkeypatch.setattr(terminal_ws._config.agent_settings.terminal, "enable_web_terminal", True)
     await terminal_ws.handle_terminal(ws)
 
 
@@ -199,16 +199,16 @@ async def test_pump_to_ws_exception_returns() -> None:
 
 
 async def test_token_valid_no_expected() -> None:
-    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal_token=None)):
+    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal=MagicMock(terminal_token=None))):
         assert terminal_ws._token_valid("foo") is False
 
 
 async def test_token_valid_no_provided() -> None:
-    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal_token="secret")):
+    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal=MagicMock(terminal_token="secret"))):
         assert terminal_ws._token_valid(None) is False
 
 
 async def test_token_valid_match() -> None:
-    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal_token="secret")):
+    with patch.object(terminal_ws._config, "agent_settings", MagicMock(terminal=MagicMock(terminal_token="secret"))):
         assert terminal_ws._token_valid("secret") is True
         assert terminal_ws._token_valid("wrong") is False

@@ -219,7 +219,7 @@ class AppiumRuntimeManager:
         if root_dir is not None:
             self._root = root_dir
         else:
-            self._root = Path(agent_settings.runtime_root)
+            self._root = Path(agent_settings.runtime.runtime_root)
         self._refcounts: dict[str, int] = {}
         self._installed: dict[str, RuntimeEnv] = {}
         self._lock = asyncio.Lock()

@@ -22,7 +22,7 @@ _STOP: dict[str, Any] = {}
 
 
 def _token_valid(provided: str | None) -> bool:
-    expected = _config.agent_settings.terminal_token
+    expected = _config.agent_settings.terminal.terminal_token
     if not expected:
         return False
     if not provided:
@@ -31,11 +31,11 @@ def _token_valid(provided: str | None) -> bool:
 
 
 def _resolve_shell() -> str:
-    return _config.agent_settings.terminal_shell or os.environ.get("SHELL") or "/bin/sh"
+    return _config.agent_settings.terminal.terminal_shell or os.environ.get("SHELL") or "/bin/sh"
 
 
 async def handle_terminal(ws: WebSocket) -> None:
-    if not _config.agent_settings.enable_web_terminal:
+    if not _config.agent_settings.terminal.enable_web_terminal:
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     token = ws.headers.get(TOKEN_HEADER)

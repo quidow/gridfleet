@@ -1,7 +1,8 @@
 """HTTP routes for ``/grid/node/*``."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
+from agent_app.error_codes import ErrorEnvelope
 from agent_app.grid_node.dependencies import GridNodeServiceDep
 from agent_app.grid_node.schemas import (
     GridNodeReregisterRequest,
@@ -11,7 +12,12 @@ from agent_app.grid_node.schemas import (
 router = APIRouter(prefix="/grid/node", tags=["grid"])
 
 
-@router.post("/{node_id}/reregister", response_model=GridNodeReregisterResponse)
+@router.post(
+    "/{node_id}/reregister",
+    response_model=GridNodeReregisterResponse,
+    summary="Re-register a grid relay node with new run scope",
+    responses={status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"}},
+)
 async def reregister_grid_node(
     service: GridNodeServiceDep,
     payload: GridNodeReregisterRequest,

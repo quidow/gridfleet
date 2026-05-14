@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from agent_app.appium import appium_mgr
 from agent_app.appium.process import (
@@ -21,12 +21,23 @@ from agent_app.appium.schemas import (  # noqa: TC001 - FastAPI resolves these a
     AppiumStartRequest,
     AppiumStopRequest,
 )
-from agent_app.error_codes import AgentErrorCode, http_exc
+from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 
 router = APIRouter(prefix="/agent/appium", tags=["appium"])
 
 
-@router.post("/start")
+@router.post(
+    "/start",
+    summary="Start a managed Appium process for a device",
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"model": ErrorEnvelope, "description": "INVALID_PAYLOAD"},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
+        status.HTTP_409_CONFLICT: {"model": ErrorEnvelope, "description": "PORT_OCCUPIED or ALREADY_RUNNING"},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorEnvelope, "description": "INTERNAL_ERROR"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorEnvelope, "description": "RUNTIME_MISSING"},
+        status.HTTP_504_GATEWAY_TIMEOUT: {"model": ErrorEnvelope, "description": "STARTUP_TIMEOUT"},
+    },
+)
 async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
     try:
         info = await appium_mgr.start(
@@ -69,7 +80,13 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
 
 
-@router.post("/{port}/reconfigure")
+@router.post(
+    "/{port}/reconfigure",
+    summary="Toggle accepting-sessions / drain-pending / run scope",
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
+    },
+)
 async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[str, Any]:
     try:
         await appium_mgr.reconfigure(
@@ -88,18 +105,18 @@ async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[s
     }
 
 
-@router.post("/stop")
+@router.post("/stop", summary="Stop a managed Appium process by port")
 async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
     await appium_mgr.stop(req.port)
     return {"stopped": True, "port": req.port}
 
 
-@router.get("/{port}/status")
+@router.get("/{port}/status", summary="Process info for a managed Appium port")
 async def appium_status(port: int) -> dict[str, Any]:
     return await appium_mgr.status(port)
 
 
-@router.get("/{port}/logs")
+@router.get("/{port}/logs", summary="Recent stdout/stderr lines for a managed Appium")
 async def appium_logs(port: int, lines: int = 100) -> dict[str, Any]:
     log_lines = appium_mgr.get_logs(port, lines=min(lines, 5000))
     return {"port": port, "lines": log_lines, "count": len(log_lines)}

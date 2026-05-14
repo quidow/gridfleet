@@ -20,8 +20,8 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 @pytest.mark.asyncio
 async def test_pack_state_client_sends_manager_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_settings, "manager_auth_username", "machine")
-    monkeypatch.setattr(agent_settings, "manager_auth_password", "machine-secret")
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_username", "machine")
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_password", "machine-secret")
     transport = RecordingTransport()
     original_async_client = httpx.AsyncClient
 

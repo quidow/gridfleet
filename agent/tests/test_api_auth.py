@@ -10,8 +10,8 @@ import agent_app.config as _config
 
 @pytest.fixture(autouse=True)
 def _isolate_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_config.agent_settings, "api_auth_username", None)
-    monkeypatch.setattr(_config.agent_settings, "api_auth_password", None)
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_username", None)
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_password", None)
 
 
 async def _client() -> AsyncClient:
@@ -27,8 +27,8 @@ async def test_health_open_when_auth_unset() -> None:
 
 
 async def test_health_requires_credentials_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_config.agent_settings, "api_auth_username", "ops")
-    monkeypatch.setattr(_config.agent_settings, "api_auth_password", "secret")
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_username", "ops")
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_password", "secret")
 
     async with await _client() as c:
         unauth = await c.get("/agent/health")
@@ -50,8 +50,8 @@ async def test_health_requires_credentials_when_configured(monkeypatch: pytest.M
 
 async def test_health_accepts_latin1_basic_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     password = "s" + chr(0xEB) + "cret"
-    monkeypatch.setattr(_config.agent_settings, "api_auth_username", "ops")
-    monkeypatch.setattr(_config.agent_settings, "api_auth_password", password)
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_username", "ops")
+    monkeypatch.setattr(_config.agent_settings.api_auth, "api_auth_password", password)
     encoded = base64.b64encode(b"ops:s\xebcret").decode("ascii")
 
     async with await _client() as c:
