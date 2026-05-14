@@ -27,7 +27,7 @@ from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
-from agent_app.tool_utils import _find_adb, find_android_home
+from agent_app.tools.utils import _find_adb, find_android_home
 
 logger = logging.getLogger(__name__)
 

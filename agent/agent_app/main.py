@@ -51,7 +51,7 @@ from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugins.router import router as plugins_router
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
-from agent_app.tools_manager import get_tool_status
+from agent_app.tools.manager import get_tool_status
 
 configure_logging()
 logger = logging.getLogger(__name__)
