@@ -180,6 +180,14 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "service_viability",
         "viability_types",
     ),
+    "runs": (
+        "models",
+        "router",
+        "schemas",
+        "service",
+        "service_reaper",
+        "service_reservation",
+    ),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -654,6 +662,16 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "SessionViabilityCheckedBy",
         "SessionViabilityCheckedBy",
     ),
+    "app.models.test_run": ("app.runs.models", "TestRun", "TestRun"),
+    "app.routers.runs": ("app.runs.router", "router", "router"),
+    "app.schemas.run": ("app.runs.schemas", "RunCreate", "RunCreate"),
+    "app.services.run_reaper": ("app.runs.service_reaper", "run_reaper_loop", "run_reaper_loop"),
+    "app.services.run_reservation_service": (
+        "app.runs.service_reservation",
+        "get_device_reservation_with_entry",
+        "get_device_reservation_with_entry",
+    ),
+    "app.services.run_service": ("app.runs.service", "create_run", "create_run"),
 }
 
 
