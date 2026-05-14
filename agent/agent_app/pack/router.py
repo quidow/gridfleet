@@ -20,7 +20,6 @@ from agent_app.pack.dispatch import (
     adapter_normalize_device,
     adapter_telemetry,
 )
-from agent_app.pack.manifest import resolve_desired_platform
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
@@ -156,26 +155,22 @@ async def pack_device_telemetry_route(
 
 @router.post("/devices/{connection_target}/lifecycle/{action}")
 async def pack_device_lifecycle_route(
-    request: Request,
     connection_target: str,
     action: str,
+    platform: DesiredPlatformDep,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
     pack_id: str = Query(...),
     platform_id: str = Query(...),
     args: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
-    if platform_def is None:
-        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
-    adapter_registry = getattr(request.app.state, "adapter_registry", None)
-    host_identity = getattr(request.app.state, "host_identity", None)
-    host_id_value = host_identity.get() if host_identity is not None else ""
-    release = _release_for_pack(request, pack_id)
-    if adapter_registry is not None and release is not None:
+    _platform_def, release = platform
+    if adapter_registry is not None:
         payload = await adapter_lifecycle_action(
             adapter_registry=adapter_registry,
             pack_id=pack_id,
             pack_release=release,
-            host_id=host_id_value or "",
+            host_id=host_id,
             identity_value=connection_target,
             action=action,
             args=args,

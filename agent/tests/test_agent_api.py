@@ -281,7 +281,7 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
@@ -296,7 +296,7 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
 async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/unknown_action",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},

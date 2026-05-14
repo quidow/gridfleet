@@ -198,7 +198,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
