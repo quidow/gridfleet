@@ -3,6 +3,7 @@
 from typing import get_args
 
 from fastapi import Depends
+from fastapi.params import Depends as DependsParam
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import dependencies as deps
@@ -10,9 +11,11 @@ from app.database import get_db
 from app.services.auth_dependencies import require_admin
 
 
-def _unwrap(alias: object) -> tuple[type, object]:
+def _unwrap(alias: object) -> tuple[type, DependsParam]:
     args = get_args(alias)
-    return args[0], args[1]
+    typ, dep = args[0], args[1]
+    assert isinstance(dep, DependsParam)
+    return typ, dep
 
 
 def test_db_dep_wraps_get_db() -> None:
