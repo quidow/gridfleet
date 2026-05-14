@@ -25,7 +25,7 @@ async def test_require_admin_allows_authenticated() -> None:
 async def test_require_admin_rejects_when_auth_enabled_and_anonymous(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import auth as auth_module
+    from app.auth import service as auth_module
 
     monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
 

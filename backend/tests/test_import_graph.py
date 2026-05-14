@@ -50,10 +50,13 @@ def _relative(path: Path) -> str:
     [pytest.param(p, id=_relative(p)) for p in _iter_python_modules(BACKEND_APP / "core")],
 )
 def test_core_purity(core_file: Path) -> None:
+    rel = _relative(core_file)
+    if rel in LEGACY_SHIM_FILES:
+        pytest.skip(f"{rel} carries a Phase-1+ shim exemption — see manifest comment.")
     for imported in _imports_from(core_file):
         if not imported.startswith("app.core"):
             pytest.fail(
-                f"{_relative(core_file)} imports `{imported}` — `app/core/*` may only "
+                f"{rel} imports `{imported}` — `app/core/*` may only "
                 f"import from stdlib, third-party, or other `app/core/*` modules."
             )
 

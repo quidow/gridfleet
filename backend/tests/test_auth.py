@@ -7,8 +7,8 @@ from httpx import AsyncClient
 from pydantic import ValidationError
 from starlette.datastructures import Headers
 
+from app.auth import service as auth
 from app.config import Settings, settings
-from app.services import auth
 
 HOST_PAYLOAD = {
     "hostname": "auth-host-01",
