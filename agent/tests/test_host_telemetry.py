@@ -4,18 +4,18 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_app.host_telemetry import get_host_telemetry
+from agent_app.host.telemetry import get_host_telemetry
 
 
 async def test_get_host_telemetry_happy_path() -> None:
     with (
-        patch("agent_app.host_telemetry.psutil.cpu_percent", return_value=71.2),
+        patch("agent_app.host.telemetry.psutil.cpu_percent", return_value=71.2),
         patch(
-            "agent_app.host_telemetry.psutil.virtual_memory",
+            "agent_app.host.telemetry.psutil.virtual_memory",
             return_value=SimpleNamespace(used=24 * 1024 * 1024, total=32 * 1024 * 1024),
         ),
         patch(
-            "agent_app.host_telemetry.psutil.disk_usage",
+            "agent_app.host.telemetry.psutil.disk_usage",
             return_value=SimpleNamespace(
                 used=100 * 1024**3,
                 total=250 * 1024**3,
@@ -35,12 +35,12 @@ async def test_get_host_telemetry_happy_path() -> None:
 
 async def test_get_host_telemetry_returns_partial_nulls_when_disk_sampling_fails() -> None:
     with (
-        patch("agent_app.host_telemetry.psutil.cpu_percent", return_value=11.5),
+        patch("agent_app.host.telemetry.psutil.cpu_percent", return_value=11.5),
         patch(
-            "agent_app.host_telemetry.psutil.virtual_memory",
+            "agent_app.host.telemetry.psutil.virtual_memory",
             return_value=SimpleNamespace(used=8 * 1024 * 1024, total=16 * 1024 * 1024),
         ),
-        patch("agent_app.host_telemetry.psutil.disk_usage", side_effect=RuntimeError("disk unavailable")),
+        patch("agent_app.host.telemetry.psutil.disk_usage", side_effect=RuntimeError("disk unavailable")),
     ):
         payload = await get_host_telemetry()
 

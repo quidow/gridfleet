@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from agent_app.config import agent_settings
-from agent_app.main import _build_adapter_loader
+from agent_app.lifespan import _build_adapter_loader
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 from agent_app.pack.runtime import RuntimeEnv
@@ -46,7 +46,7 @@ async def test_adapter_tarball_download_uses_manager_basic_auth(
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
     loader = _build_adapter_loader("http://manager.local", AdapterRegistry())
-    with patch("agent_app.main.load_adapter", new_callable=AsyncMock) as load_adapter:
+    with patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock) as load_adapter:
         await loader(_desired_pack(hashlib.sha256(payload).hexdigest()), _runtime_env(tmp_path))
 
     assert len(seen_requests) == 1

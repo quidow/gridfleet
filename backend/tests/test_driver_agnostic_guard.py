@@ -8,7 +8,7 @@ AGENT_ROOT = Path(__file__).resolve().parent.parent.parent / "agent" / "agent_ap
 ROOT = Path(__file__).resolve().parent.parent
 
 AGENT_CORE_PATHS = [
-    ROOT.parent / "agent" / "agent_app" / "appium_process.py",
+    ROOT.parent / "agent" / "agent_app" / "appium" / "process.py",
     ROOT.parent / "agent" / "agent_app" / "pack" / "discovery.py",
     ROOT.parent / "agent" / "agent_app" / "pack" / "dispatch.py",
 ]
@@ -86,7 +86,7 @@ def test_agent_pack_core_has_no_legacy_platform_dispatch_map() -> None:
             "ios_lockdown",
             "_legacy_adb_only",
         ),
-        ROOT.parent / "agent" / "agent_app" / "appium_process.py": (
+        ROOT.parent / "agent" / "agent_app" / "appium" / "process.py": (
             "PLATFORM_TO_PROBE",
             "ios_lockdown",
             "_APPIUM_PLATFORM_MAP",
@@ -112,7 +112,7 @@ def test_agent_pack_core_has_no_legacy_platform_dispatch_map() -> None:
 
 def test_agent_pack_core_has_no_named_pack_sniffing() -> None:
     forbidden = {
-        ROOT.parent / "agent" / "agent_app" / "appium_process.py": (
+        ROOT.parent / "agent" / "agent_app" / "appium" / "process.py": (
             'pack_id == "appium-uiautomator2"',
             'pack_id == "appium-xcuitest"',
             'pack_id == "appium-roku"',

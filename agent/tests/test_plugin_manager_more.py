@@ -1,7 +1,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from agent_app.plugin_manager import (
+from agent_app.plugins.manager import (
     _install_command,
     _versioned,
     get_installed_plugins,
@@ -69,10 +69,10 @@ def test_install_command_supports_all_sources() -> None:
 
 async def test_get_installed_plugins_returns_empty_on_nonzero_status() -> None:
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
         patch(
-            "agent_app.plugin_manager.asyncio.create_subprocess_exec",
+            "agent_app.plugins.manager.asyncio.create_subprocess_exec",
             return_value=_FakeProc(1, stderr=b"boom"),
         ),
     ):
@@ -83,10 +83,10 @@ async def test_get_installed_plugins_returns_empty_on_nonzero_status() -> None:
 
 async def test_get_installed_plugins_returns_empty_on_invalid_json() -> None:
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
         patch(
-            "agent_app.plugin_manager.asyncio.create_subprocess_exec",
+            "agent_app.plugins.manager.asyncio.create_subprocess_exec",
             return_value=_FakeProc(0, stdout=b"not-json"),
         ),
     ):
@@ -102,9 +102,9 @@ async def test_get_installed_plugins_skips_uninstalled_entries() -> None:
     )
 
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=proc),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc),
     ):
         plugins = await get_installed_plugins()
 
@@ -114,11 +114,11 @@ async def test_get_installed_plugins_skips_uninstalled_entries() -> None:
 async def test_install_plugin_noops_when_requested_version_is_present() -> None:
     with (
         patch(
-            "agent_app.plugin_manager.get_installed_plugins",
+            "agent_app.plugins.manager.get_installed_plugins",
             new_callable=AsyncMock,
             return_value=[{"name": "images", "version": "1.0.0"}],
         ),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
     ):
         result = await install_plugin("images", "1.0.0", "images")
 
@@ -131,14 +131,14 @@ async def test_install_plugin_uninstalls_previous_version_before_reinstalling() 
 
     with (
         patch(
-            "agent_app.plugin_manager.get_installed_plugins",
+            "agent_app.plugins.manager.get_installed_plugins",
             new_callable=AsyncMock,
             return_value=[{"name": "images", "version": "0.9.0"}],
         ),
-        patch("agent_app.plugin_manager.uninstall_plugin", new_callable=AsyncMock) as uninstall,
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
+        patch("agent_app.plugins.manager.uninstall_plugin", new_callable=AsyncMock) as uninstall,
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
     ):
         result = await install_plugin("images", "1.0.0", "images")
 
@@ -149,19 +149,19 @@ async def test_install_plugin_uninstalls_previous_version_before_reinstalling() 
 
 async def test_install_plugin_surfaces_missing_binary_and_timeout() -> None:
     with (
-        patch("agent_app.plugin_manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", side_effect=FileNotFoundError),
+        patch("agent_app.plugins.manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", side_effect=FileNotFoundError),
     ):
         missing = await install_plugin("images", "1.0.0", "images")
 
     with (
-        patch("agent_app.plugin_manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=_FakeProc(0)),
-        patch("agent_app.plugin_manager.asyncio.wait_for", side_effect=TimeoutError),
+        patch("agent_app.plugins.manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=_FakeProc(0)),
+        patch("agent_app.plugins.manager.asyncio.wait_for", side_effect=TimeoutError),
     ):
         timed_out = await install_plugin("images", "1.0.0", "images")
 
@@ -171,11 +171,11 @@ async def test_install_plugin_surfaces_missing_binary_and_timeout() -> None:
 
 async def test_install_plugin_returns_stderr_when_install_fails() -> None:
     with (
-        patch("agent_app.plugin_manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
         patch(
-            "agent_app.plugin_manager.asyncio.create_subprocess_exec",
+            "agent_app.plugins.manager.asyncio.create_subprocess_exec",
             return_value=_FakeProc(1, stdout=b"stdout", stderr=b"stderr"),
         ),
     ):
@@ -186,25 +186,25 @@ async def test_install_plugin_returns_stderr_when_install_fails() -> None:
 
 async def test_uninstall_plugin_handles_error_paths() -> None:
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", side_effect=FileNotFoundError),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", side_effect=FileNotFoundError),
     ):
         missing = await uninstall_plugin("images")
 
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=_FakeProc(0)),
-        patch("agent_app.plugin_manager.asyncio.wait_for", side_effect=TimeoutError),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=_FakeProc(0)),
+        patch("agent_app.plugins.manager.asyncio.wait_for", side_effect=TimeoutError),
     ):
         timed_out = await uninstall_plugin("images")
 
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
         patch(
-            "agent_app.plugin_manager.asyncio.create_subprocess_exec",
+            "agent_app.plugins.manager.asyncio.create_subprocess_exec",
             return_value=_FakeProc(1, stdout=b"", stderr=b"nope"),
         ),
     ):

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_app.appium_process import AppiumLaunchSpec, AppiumProcessInfo, AppiumProcessManager
+from agent_app.appium.process import AppiumLaunchSpec, AppiumProcessInfo, AppiumProcessManager
 
 pytestmark = pytest.mark.asyncio
 

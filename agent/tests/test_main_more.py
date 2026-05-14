@@ -3,15 +3,11 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent_app.main import (
-    _latest_desired,
-    _release_for_pack,
-    _stop_grid_node_supervisors_for_shutdown,
-    app,
-    appium_mgr,
-    lifespan,
-)
+from agent_app.appium import appium_mgr
+from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
+from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.router import _latest_desired, _release_for_pack
 
 
 async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -> None:
@@ -60,10 +56,10 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
         await stop_event.wait()
 
     with (
-        patch("agent_app.main.refresh_capabilities_snapshot", new_callable=AsyncMock),
-        patch("agent_app.main.capabilities_refresh_loop", side_effect=_wait_forever),
+        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
+        patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
-        patch("agent_app.main.appium_mgr.shutdown", new_callable=AsyncMock),
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
         patch.dict("os.environ", {"AGENT_HOST_ID": "test-host-id", "AGENT_BACKEND_URL": ""}),
     ):
         async with lifespan(app):
@@ -78,10 +74,10 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
         await stop_event.wait()
 
     with (
-        patch("agent_app.main.refresh_capabilities_snapshot", new_callable=AsyncMock),
-        patch("agent_app.main.capabilities_refresh_loop", side_effect=_wait_forever),
+        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
+        patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
-        patch("agent_app.main.appium_mgr.shutdown", new_callable=AsyncMock),
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
         patch.dict("os.environ", {"AGENT_HOST_ID": "test", "AGENT_BACKEND_URL": ""}),
     ):
         async with lifespan(app):
@@ -104,11 +100,11 @@ async def test_reregister_grid_node_not_found() -> None:
 async def test_start_appium_invalid_payload_error() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    from agent_app.appium_process import InvalidStartPayloadError
+    from agent_app.appium.process import InvalidStartPayloadError
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with patch(
-            "agent_app.main.appium_mgr.start",
+            "agent_app.appium.appium_mgr.start",
             side_effect=InvalidStartPayloadError("bad payload"),
         ):
             resp = await client.post(
@@ -129,7 +125,7 @@ async def test_start_appium_generic_runtime_error() -> None:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with patch(
-            "agent_app.main.appium_mgr.start",
+            "agent_app.appium.appium_mgr.start",
             side_effect=RuntimeError("boom"),
         ):
             resp = await client.post(
@@ -150,7 +146,7 @@ async def test_start_appium_unexpected_exception() -> None:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with patch(
-            "agent_app.main.appium_mgr.start",
+            "agent_app.appium.appium_mgr.start",
             side_effect=ValueError("unexpected"),
         ):
             resp = await client.post(
@@ -216,7 +212,7 @@ async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
             )
         ],
     )
-    with patch("agent_app.main._latest_desired", return_value=[desired]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired]):
         app.state.adapter_registry = None
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(

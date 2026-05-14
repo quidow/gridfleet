@@ -11,8 +11,8 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_app.appium_process import _build_env
-from agent_app.tool_paths import _parse_node_version
+from agent_app.appium.process import _build_env
+from agent_app.tools.paths import _parse_node_version
 
 logger = logging.getLogger(__name__)
 

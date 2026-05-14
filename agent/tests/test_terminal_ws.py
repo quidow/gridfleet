@@ -7,7 +7,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
-from agent_app import terminal_ws
+from agent_app.terminal import ws as terminal_ws
 
 
 def _make_client(monkeypatch: pytest.MonkeyPatch, *, enable: bool, token: str | None) -> TestClient:
@@ -119,7 +119,7 @@ def test_terminal_ws_shell_start_oserror(monkeypatch: pytest.MonkeyPatch) -> Non
         del on_output
         raise OSError("no shell")
 
-    monkeypatch.setattr("agent_app.terminal_pty.PtyShell.start", failing_start)
+    monkeypatch.setattr("agent_app.terminal.pty.PtyShell.start", failing_start)
     with client.websocket_connect("/agent/terminal", headers=headers) as ws:
         msg = json.loads(ws.receive_text())
         assert msg["type"] == "error"
@@ -157,7 +157,7 @@ async def test_terminal_ws_websocketdisconnect_on_receive(monkeypatch: pytest.Mo
     shell.start = AsyncMock()
     shell.wait = AsyncMock()
     shell.close = AsyncMock()
-    monkeypatch.setattr("agent_app.terminal_pty.PtyShell", lambda **_: shell)
+    monkeypatch.setattr("agent_app.terminal.pty.PtyShell", lambda **_: shell)
     monkeypatch.setattr(terminal_ws._config.agent_settings, "terminal_token", "s3cret")
     monkeypatch.setattr(terminal_ws._config.agent_settings, "enable_web_terminal", True)
     await terminal_ws.handle_terminal(ws)
@@ -175,7 +175,7 @@ async def test_terminal_ws_generic_exception_on_receive(monkeypatch: pytest.Monk
     shell.start = AsyncMock()
     shell.wait = AsyncMock()
     shell.close = AsyncMock()
-    monkeypatch.setattr("agent_app.terminal_pty.PtyShell", lambda **_: shell)
+    monkeypatch.setattr("agent_app.terminal.pty.PtyShell", lambda **_: shell)
     monkeypatch.setattr(terminal_ws._config.agent_settings, "terminal_token", "s3cret")
     monkeypatch.setattr(terminal_ws._config.agent_settings, "enable_web_terminal", True)
     await terminal_ws.handle_terminal(ws)

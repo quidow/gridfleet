@@ -6,7 +6,8 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent_app.main import app, appium_mgr
+from agent_app.appium import appium_mgr
+from agent_app.main import app
 
 if TYPE_CHECKING:
     from agent_app.grid_node.supervisor import GridNodeSupervisorHandle

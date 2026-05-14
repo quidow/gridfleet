@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_app.appium_process import (
+from agent_app.appium.process import (
     AppiumInvocation,
     AppiumLaunchSpec,
     AppiumProcessManager,

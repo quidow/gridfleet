@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -27,7 +28,7 @@ from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
-from agent_app.tool_utils import _find_adb, find_android_home
+from agent_app.tools.utils import _find_adb, find_android_home
 
 logger = logging.getLogger(__name__)
 
@@ -1198,3 +1199,21 @@ class AppiumProcessManager:
                 return True
             await asyncio.sleep(READINESS_POLL_INTERVAL)
         return False
+
+
+def _get_network_devices(mgr: "AppiumProcessManager | None" = None) -> list[dict[str, Any]]:
+    """Return network devices from currently running Appium processes.
+
+    Defaults to the module-level ``appium_mgr`` singleton when ``mgr`` is
+    omitted, for parity with the previous module-level helper that lived
+    in ``main.py``.
+    """
+    from agent_app.appium import appium_mgr  # noqa: PLC0415 - local import avoids cycle
+
+    manager = mgr or appium_mgr
+    devices: list[dict[str, Any]] = []
+    for info in manager.list_running():
+        if re.match(r"\d+\.\d+\.\d+\.\d+:\d+", info.connection_target):
+            ip, _, port_str = info.connection_target.rpartition(":")
+            devices.append({"connection_target": info.connection_target, "ip_address": ip, "port": int(port_str)})
+    return devices

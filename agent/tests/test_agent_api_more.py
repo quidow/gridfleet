@@ -7,12 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent_app.main import (
-    _get_network_devices,
-    app,
-    appium_mgr,
-    lifespan,
-)
+from agent_app.appium import appium_mgr
+from agent_app.appium.process import _get_network_devices
+from agent_app.lifespan import lifespan
+from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
 
@@ -36,7 +34,7 @@ def test_get_network_devices_filters_non_network_targets() -> None:
         SimpleNamespace(connection_target="emulator-5554"),
     ]
 
-    with patch("agent_app.main.appium_mgr.list_running", return_value=infos):
+    with patch("agent_app.appium.appium_mgr.list_running", return_value=infos):
         assert _get_network_devices() == [
             {"connection_target": "192.168.1.10:5555", "ip_address": "192.168.1.10", "port": 5555}
         ]
@@ -49,10 +47,10 @@ async def test_lifespan_refreshes_and_cleans_up_background_tasks() -> None:
         await stop_event.wait()
 
     with (
-        patch("agent_app.main.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
-        patch("agent_app.main.capabilities_refresh_loop", side_effect=_wait_forever),
+        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
+        patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
-        patch("agent_app.main.appium_mgr.shutdown", new_callable=AsyncMock) as shutdown,
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock) as shutdown,
     ):
         async with lifespan(app):
             pass
@@ -119,7 +117,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/abc123/health",
             params={
@@ -134,7 +132,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert resp.status_code == 200
     assert adapter.health_calls == [("abc123", True)]
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/abc123/telemetry",
             params={
@@ -149,7 +147,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert adapter.telemetry_calls == [("abc123", "abc123")]
 
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         missing_resp = await client.get(
             "/agent/pack/devices/missing-device/telemetry",
             params={
@@ -188,7 +186,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
@@ -201,7 +199,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
 
 
 async def test_appium_logs_caps_requested_lines(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.get_logs", return_value=["line"]) as get_logs:
+    with patch("agent_app.appium.appium_mgr.get_logs", return_value=["line"]) as get_logs:
         resp = await client.get("/agent/appium/4723/logs", params={"lines": 9999})
 
     assert resp.status_code == 200

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.capabilities import (
+from agent_app.host.capabilities import (
     _resolve_tool_command,
     _run_cmd,
     _snapshot_is_stale,
@@ -37,22 +37,22 @@ def test_resolve_tool_command_and_snapshot_staleness() -> None:
 
 async def test_run_cmd_refresh_and_loop_cover_remaining_paths() -> None:
     with patch(
-        "agent_app.capabilities.asyncio.create_subprocess_exec",
+        "agent_app.host.capabilities.asyncio.create_subprocess_exec",
         return_value=_FakeProc(0, stdout=b"ok\n"),
     ):
         assert await _run_cmd("echo", "ok") == "ok"
 
     with patch(
-        "agent_app.capabilities.asyncio.create_subprocess_exec",
+        "agent_app.host.capabilities.asyncio.create_subprocess_exec",
         return_value=_FakeProc(1, stderr=b"boom"),
     ):
         assert await _run_cmd("echo", "ok") is None
 
-    with patch("agent_app.capabilities.asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+    with patch("agent_app.host.capabilities.asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
         assert await _run_cmd("echo", "ok") is None
 
     snapshot = {"platforms": ["roku"], "tools": {"appium": "3.0.0"}, "missing_prerequisites": []}
-    with patch("agent_app.capabilities.detect_capabilities", new_callable=AsyncMock, return_value=snapshot):
+    with patch("agent_app.host.capabilities.detect_capabilities", new_callable=AsyncMock, return_value=snapshot):
         assert await refresh_capabilities_snapshot() == snapshot
 
     sleep_calls = 0
@@ -63,8 +63,12 @@ async def test_run_cmd_refresh_and_loop_cover_remaining_paths() -> None:
         raise asyncio.CancelledError
 
     with (
-        patch("agent_app.capabilities.refresh_capabilities_snapshot", new_callable=AsyncMock, side_effect=RuntimeError),
-        patch("agent_app.capabilities.asyncio.sleep", side_effect=_sleep),
+        patch(
+            "agent_app.host.capabilities.refresh_capabilities_snapshot",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError,
+        ),
+        patch("agent_app.host.capabilities.asyncio.sleep", side_effect=_sleep),
         pytest.raises(asyncio.CancelledError),
     ):
         await capabilities_refresh_loop(interval_sec=1, refresh_immediately=True)

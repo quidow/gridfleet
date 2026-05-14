@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from agent_app import __version__
-from agent_app.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.config import agent_settings
 from agent_app.grid_url import get_local_ip
+from agent_app.host.capabilities import get_or_refresh_capabilities_snapshot
+from agent_app.host.version_guidance import update_version_guidance
 from agent_app.http_client import get_client as get_shared_http_client
-from agent_app.version_guidance import update_version_guidance
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

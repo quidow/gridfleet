@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent_app.main import app, appium_mgr
+from agent_app.appium import appium_mgr
+from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
     HardwareTelemetry,
@@ -35,7 +36,7 @@ async def client() -> AsyncGenerator[AsyncClient]:
 
 async def test_health(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_capabilities_snapshot",
+        "agent_app.host.router.get_capabilities_snapshot",
         return_value={"platforms": [], "tools": {}, "missing_prerequisites": []},
     ):
         resp = await client.get("/agent/health")
@@ -50,7 +51,7 @@ async def test_health(client: AsyncClient) -> None:
 
 async def test_host_telemetry(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_host_telemetry",
+        "agent_app.host.router.get_host_telemetry",
         new_callable=AsyncMock,
         return_value={
             "recorded_at": "2026-04-16T09:30:00+00:00",
@@ -103,7 +104,7 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/serial-1/health",
             params={
@@ -151,8 +152,8 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
         return {"healthy": True, "checks": []}
 
     with (
-        patch("agent_app.main._latest_desired", return_value=[desired_pack]),
-        patch("agent_app.main.adapter_health_check", new=fake_adapter_health_check),
+        patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]),
+        patch("agent_app.pack.router.adapter_health_check", new=fake_adapter_health_check),
     ):
         resp = await client.get(
             "/agent/pack/devices/abc/health",
@@ -180,7 +181,7 @@ async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/serial-1/telemetry",
             params={
@@ -198,7 +199,7 @@ async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -
 async def test_pack_device_telemetry_returns_404_when_none(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/missing/telemetry",
             params={
@@ -272,7 +273,7 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
@@ -287,7 +288,7 @@ async def test_pack_device_lifecycle_reconnect(client: AsyncClient) -> None:
 async def test_pack_device_lifecycle_unsupported_action(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/unknown_action",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},
@@ -314,7 +315,7 @@ async def test_normalize_device_no_adapter(client: AsyncClient) -> None:
 async def test_start_appium(client: AsyncClient) -> None:
     mock_info = MagicMock(pid=1234, port=4723, connection_target="abc-123")
 
-    with patch("agent_app.main.appium_mgr.start", new_callable=AsyncMock, return_value=mock_info) as start_mock:
+    with patch("agent_app.appium.appium_mgr.start", new_callable=AsyncMock, return_value=mock_info) as start_mock:
         resp = await client.post(
             "/agent/appium/start",
             json={
@@ -353,7 +354,9 @@ async def test_start_appium_requires_pack_identity(client: AsyncClient) -> None:
 
 
 async def test_start_appium_failure(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.start", new_callable=AsyncMock, side_effect=RuntimeError("appium not found")):
+    with patch(
+        "agent_app.appium.appium_mgr.start", new_callable=AsyncMock, side_effect=RuntimeError("appium not found")
+    ):
         resp = await client.post(
             "/agent/appium/start",
             json={
@@ -372,7 +375,7 @@ async def test_start_appium_failure(client: AsyncClient) -> None:
 
 
 async def test_stop_appium(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.stop", new_callable=AsyncMock):
+    with patch("agent_app.appium.appium_mgr.stop", new_callable=AsyncMock):
         resp = await client.post("/agent/appium/stop", json={"port": 4723})
 
     assert resp.status_code == 200
@@ -381,7 +384,7 @@ async def test_stop_appium(client: AsyncClient) -> None:
 
 async def test_appium_status(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.appium_mgr.status", new_callable=AsyncMock, return_value={"running": True, "port": 4723}
+        "agent_app.appium.appium_mgr.status", new_callable=AsyncMock, return_value={"running": True, "port": 4723}
     ):
         resp = await client.get("/agent/appium/4723/status")
 
@@ -390,7 +393,7 @@ async def test_appium_status(client: AsyncClient) -> None:
 
 
 async def test_appium_logs(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.get_logs", return_value=["line 1", "line 2"]) as get_logs:
+    with patch("agent_app.appium.appium_mgr.get_logs", return_value=["line 1", "line 2"]) as get_logs:
         resp = await client.get("/agent/appium/4723/logs", params={"lines": 2})
 
     assert resp.status_code == 200
@@ -406,7 +409,7 @@ async def test_probe_appium_session_route_is_not_available(client: AsyncClient) 
 
 async def test_list_plugins(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_installed_plugins",
+        "agent_app.plugins.router.get_installed_plugins",
         new_callable=AsyncMock,
         return_value=[{"name": "execute-driver", "version": "1.0.0"}],
     ):
@@ -418,7 +421,7 @@ async def test_list_plugins(client: AsyncClient) -> None:
 
 async def test_sync_plugins(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.sync_plugins",
+        "agent_app.plugins.router.sync_plugins",
         new_callable=AsyncMock,
         return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}},
     ) as sync:
@@ -451,7 +454,7 @@ async def test_sync_plugins(client: AsyncClient) -> None:
 
 async def test_agent_tools_status(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_tool_status",
+        "agent_app.tools.router.get_tool_status",
         new_callable=AsyncMock,
         return_value={
             "node": "24.14.1",
@@ -474,7 +477,7 @@ async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:
 
 
 async def test_health_includes_version_guidance(client: AsyncClient) -> None:
-    from agent_app.version_guidance import clear_version_guidance, update_version_guidance
+    from agent_app.host.version_guidance import clear_version_guidance, update_version_guidance
 
     clear_version_guidance()
     update_version_guidance(
@@ -485,7 +488,7 @@ async def test_health_includes_version_guidance(client: AsyncClient) -> None:
             "agent_update_available": True,
         }
     )
-    with patch("agent_app.main.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
+    with patch("agent_app.host.router.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
         resp = await client.get("/agent/health")
 
     assert resp.status_code == 200
