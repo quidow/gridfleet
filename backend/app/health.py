@@ -37,7 +37,7 @@ async def check_readiness(db: AsyncSession) -> tuple[dict[str, Any], int]:
     try:
         await db.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — health probe must report any DB error, not propagate it
         checks["database"] = str(exc)
         payload = {
             "status": "unhealthy",

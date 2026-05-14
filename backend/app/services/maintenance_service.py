@@ -115,7 +115,7 @@ async def exit_maintenance(
         # remains the fallback path.
         try:
             await schedule_device_recovery(db, device.id)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
             logger.warning(
                 "exit_maintenance: failed to enqueue recovery job for %s; "
                 "device_connectivity_loop will pick it up on the next tick",

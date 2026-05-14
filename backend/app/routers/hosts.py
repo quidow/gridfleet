@@ -4,11 +4,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import async_session, get_db
+from app.database import async_session
+from app.dependencies import DbDep
 from app.models.host import Host
 from app.schemas.driver_pack import HostDriverPacksOut
 from app.schemas.host import (
@@ -106,7 +106,7 @@ async def _auto_prepare_host_diagnostics(host_id: uuid.UUID) -> None:
 
 
 @router.post("/register", response_model=HostRead)
-async def register_host(data: HostRegister, response: Response, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def register_host(data: HostRegister, response: Response, db: DbDep) -> dict[str, Any]:
     try:
         host, is_new = await host_service.register_host(db, data)
     except IntegrityError:
@@ -122,7 +122,7 @@ async def register_host(data: HostRegister, response: Response, db: AsyncSession
 
 
 @router.post("/{host_id}/approve", response_model=HostRead)
-async def approve_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def approve_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     host = await host_service.approve_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
@@ -132,14 +132,14 @@ async def approve_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 
 
 @router.post("/{host_id}/reject", status_code=204)
-async def reject_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def reject_host(host_id: uuid.UUID, db: DbDep) -> None:
     rejected = await host_service.reject_host(db, host_id)
     if not rejected:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
 
 
 @router.post("", response_model=HostRead, status_code=201)
-async def create_host(data: HostCreate, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def create_host(data: HostCreate, db: DbDep) -> dict[str, Any]:
     try:
         host = await host_service.create_host(db, data)
     except IntegrityError:
@@ -148,7 +148,7 @@ async def create_host(data: HostCreate, db: AsyncSession = Depends(get_db)) -> d
 
 
 @router.get("", response_model=list[HostRead])
-async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
+async def list_hosts(db: DbDep) -> list[dict[str, Any]]:
     return [_serialize_host(host) for host in await host_service.list_hosts(db)]
 
 
@@ -158,7 +158,7 @@ async def host_capabilities() -> dict[str, bool]:
 
 
 @router.get("/{host_id}", response_model=HostDetail)
-async def get_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -180,7 +180,7 @@ async def get_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> di
 
 
 @router.get("/{host_id}/driver-packs", response_model=HostDriverPacksOut)
-async def host_driver_packs(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> HostDriverPacksOut:
+async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> HostDriverPacksOut:
     host = await db.get(Host, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="host not found")
@@ -188,7 +188,7 @@ async def host_driver_packs(host_id: uuid.UUID, db: AsyncSession = Depends(get_d
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
-async def get_host_diagnostics(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> HostDiagnosticsRead:
+async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep) -> HostDiagnosticsRead:
     payload = await host_diagnostics.get_host_diagnostics(db, host_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -198,10 +198,10 @@ async def get_host_diagnostics(host_id: uuid.UUID, db: AsyncSession = Depends(ge
 @router.get("/{host_id}/resource-telemetry", response_model=HostResourceTelemetryResponse)
 async def get_host_resource_telemetry(
     host_id: uuid.UUID,
+    db: DbDep,
     since: datetime | None = None,
     until: datetime | None = None,
     bucket_minutes: int = Query(5, ge=1, le=1440),
-    db: AsyncSession = Depends(get_db),
 ) -> HostResourceTelemetryResponse:
     window_end = until or datetime.now(UTC)
     default_window_minutes = int(settings_service.get("general.host_resource_telemetry_window_minutes"))
@@ -222,7 +222,7 @@ async def get_host_resource_telemetry(
 
 
 @router.get("/{host_id}/tools/status", response_model=HostToolStatusRead, response_model_exclude_none=True)
-async def get_host_tool_status(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_host_tool_status(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -235,7 +235,7 @@ async def get_host_tool_status(host_id: uuid.UUID, db: AsyncSession = Depends(ge
 
 
 @router.delete("/{host_id}", status_code=204)
-async def delete_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_host(host_id: uuid.UUID, db: DbDep) -> None:
     try:
         deleted = await host_service.delete_host(db, host_id)
     except ValueError as e:
@@ -245,7 +245,7 @@ async def delete_host(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("/{host_id}/discover", response_model=DiscoveryResult)
-async def discover_devices(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> DiscoveryResult:
+async def discover_devices(host_id: uuid.UUID, db: DbDep) -> DiscoveryResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -253,7 +253,7 @@ async def discover_devices(host_id: uuid.UUID, db: AsyncSession = Depends(get_db
 
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
-async def intake_candidates(host_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> list[IntakeCandidateRead]:
+async def intake_candidates(host_id: uuid.UUID, db: DbDep) -> list[IntakeCandidateRead]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -261,9 +261,7 @@ async def intake_candidates(host_id: uuid.UUID, db: AsyncSession = Depends(get_d
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
-async def confirm_discovery(
-    host_id: uuid.UUID, data: DiscoveryConfirm, db: AsyncSession = Depends(get_db)
-) -> DiscoveryConfirmResult:
+async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDep) -> DiscoveryConfirmResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")

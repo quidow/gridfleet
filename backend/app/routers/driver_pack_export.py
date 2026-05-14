@@ -13,19 +13,15 @@ Admin-only (``Depends(require_admin)``).
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
 from app.config import settings
-from app.database import get_db
-from app.services.auth_dependencies import require_admin
+from app.dependencies import AdminDep, DbDep
 from app.services.pack_export_service import export_pack
 from app.services.pack_storage_service import PackStorageService
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
@@ -41,6 +37,9 @@ def get_pack_storage() -> PackStorageService:
     return PackStorageService(root=settings.driver_pack_storage_dir)
 
 
+PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
+
+
 def _safe_filename_segment(value: str) -> str:
     """Replace characters unsafe for a Content-Disposition filename."""
     return _UNSAFE_RE.sub("_", value)
@@ -54,9 +53,9 @@ def _safe_filename_segment(value: str) -> str:
 async def export_release(
     pack_id: str,
     release: str,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
-    storage: PackStorageService = Depends(get_pack_storage),
+    _username: AdminDep,
+    session: DbDep,
+    storage: PackStorageDep,
 ) -> Response:
     """Export a driver-pack release as a ``.tar.gz`` tarball.
 

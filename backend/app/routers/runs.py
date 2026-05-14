@@ -2,12 +2,11 @@ import uuid
 from datetime import UTC, date, datetime, time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.models.device import Device
 from app.models.test_run import RunState
@@ -49,10 +48,10 @@ def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -
 @router.post("", response_model=RunCreateResponse, status_code=201)
 async def create_run(
     data: RunCreate,
+    db: DbDep,
     include: str | None = Query(
         None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
     ),
-    db: AsyncSession = Depends(get_db),
 ) -> RunCreateResponse:
     includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
     if "capabilities" in includes:
@@ -114,6 +113,7 @@ async def create_run(
 @router.get("", response_model=RunListRead)
 async def list_runs(
     request: Request,
+    db: DbDep,
     state: RunState | None = Query(None),
     created_from: str | None = Query(None),
     created_to: str | None = Query(None),
@@ -123,7 +123,6 @@ async def list_runs(
     offset: int = Query(0, ge=0),
     sort_by: Literal["name", "state", "devices", "created_by", "created_at", "duration"] = Query("created_at"),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
-    db: AsyncSession = Depends(get_db),
 ) -> RunListRead:
     try:
         parsed_created_from = _parse_run_filter_datetime(created_from)
@@ -168,7 +167,7 @@ async def list_runs(
 
 
 @router.get("/{run_id}", response_model=RunDetail)
-async def get_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunDetail:
+async def get_run(run_id: uuid.UUID, db: DbDep) -> RunDetail:
     run = await run_service.get_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -182,7 +181,7 @@ async def get_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunD
 
 
 @router.post("/{run_id}/ready", response_model=RunRead)
-async def signal_ready(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunRead:
+async def signal_ready(run_id: uuid.UUID, db: DbDep) -> RunRead:
     try:
         run = await run_service.signal_ready(db, run_id)
     except ValueError as e:
@@ -192,7 +191,7 @@ async def signal_ready(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("/{run_id}/active", response_model=RunRead)
-async def signal_active(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunRead:
+async def signal_active(run_id: uuid.UUID, db: DbDep) -> RunRead:
     try:
         run = await run_service.signal_active(db, run_id)
     except ValueError as e:
@@ -206,7 +205,7 @@ async def report_preparation_failed(
     run_id: uuid.UUID,
     device_id: uuid.UUID,
     payload: RunPreparationFailureReport,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> RunRead:
     try:
         run = await run_service.report_preparation_failure(
@@ -227,7 +226,7 @@ async def cooldown_device_endpoint(
     run_id: uuid.UUID,
     device_id: uuid.UUID,
     payload: RunCooldownRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
         excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
@@ -261,7 +260,7 @@ async def cooldown_device_endpoint(
 
 
 @router.post("/{run_id}/heartbeat", response_model=HeartbeatResponse)
-async def heartbeat(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> HeartbeatResponse:
+async def heartbeat(run_id: uuid.UUID, db: DbDep) -> HeartbeatResponse:
     try:
         run = await run_service.heartbeat(db, run_id)
     except ValueError as e:
@@ -270,7 +269,7 @@ async def heartbeat(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> He
 
 
 @router.post("/{run_id}/complete", response_model=RunRead)
-async def complete_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunRead:
+async def complete_run(run_id: uuid.UUID, db: DbDep) -> RunRead:
     try:
         run = await run_service.complete_run(db, run_id)
     except ValueError as e:
@@ -280,7 +279,7 @@ async def complete_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)
-async def cancel_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunRead:
+async def cancel_run(run_id: uuid.UUID, db: DbDep) -> RunRead:
     try:
         run = await run_service.cancel_run(db, run_id)
     except ValueError as e:
@@ -290,7 +289,7 @@ async def cancel_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> R
 
 
 @router.post("/{run_id}/force-release", response_model=RunRead)
-async def force_release(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RunRead:
+async def force_release(run_id: uuid.UUID, db: DbDep) -> RunRead:
     try:
         run = await run_service.force_release(db, run_id)
     except ValueError as e:

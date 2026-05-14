@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003 - FastAPI evaluates path parameter annotations at runtime.
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - FastAPI dependency annotation.
 
-from app.database import get_db
+from app.dependencies import AdminDep, DbDep
 from app.models.appium_node import AppiumNode
 from app.models.device_event import DeviceEventType
 from app.schemas.device import AppiumNodeRead
 from app.services import appium_node_locking, device_locking
-from app.services.auth_dependencies import require_admin
 from app.services.device_event_service import record_event
 
 router = APIRouter(prefix="/api/admin/appium-nodes", tags=["admin"])
@@ -27,8 +25,8 @@ class ClearTransitionBody(BaseModel):
 async def clear_transition(
     node_id: uuid.UUID,
     body: ClearTransitionBody,
-    db: AsyncSession = Depends(get_db),
-    username: str = Depends(require_admin),
+    db: DbDep,
+    username: AdminDep,
 ) -> AppiumNode:
     node = await db.get(AppiumNode, node_id)
     if node is None:

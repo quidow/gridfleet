@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.config import settings
-from app.database import get_db
+from app.dependencies import AdminDep, DbDep
 from app.models.driver_pack import DriverPackRelease
 from app.schemas.driver_pack import CurrentReleasePatch, PackOut, PackReleasesOut
 from app.services import pack_release_service
-from app.services.auth_dependencies import require_admin
 from app.services.pack_service import build_pack_out
 from app.services.pack_storage_service import PackStorageService
 from app.services.pack_upload_service import (
@@ -21,9 +20,6 @@ from app.services.pack_upload_service import (
     PackUploadValidationError,
     upload_pack,
 )
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -36,6 +32,9 @@ def get_pack_storage() -> PackStorageService:
     a writable ``tmp_path``-rooted instance instead of the production storage dir.
     """
     return PackStorageService(root=settings.driver_pack_storage_dir)
+
+
+PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
 
 
 async def _read_limited_upload(tarball: UploadFile) -> bytes:
@@ -58,9 +57,9 @@ async def _read_limited_upload(tarball: UploadFile) -> bytes:
 @router.post("/uploads", response_model=PackOut, status_code=status.HTTP_201_CREATED)
 async def upload(
     tarball: UploadFile,
-    username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
-    storage: PackStorageService = Depends(get_pack_storage),
+    username: AdminDep,
+    session: DbDep,
+    storage: PackStorageDep,
 ) -> PackOut:
     data = await _read_limited_upload(tarball)
     if not data:
@@ -85,7 +84,7 @@ async def upload(
 async def fetch_tarball(
     pack_id: str,
     release: str,
-    session: AsyncSession = Depends(get_db),
+    session: DbDep,
 ) -> FileResponse:
     record = (
         await session.execute(
@@ -103,7 +102,7 @@ async def fetch_tarball(
 
 
 @router.get("/{pack_id}/releases", response_model=PackReleasesOut)
-async def list_releases(pack_id: str, session: AsyncSession = Depends(get_db)) -> PackReleasesOut:
+async def list_releases(pack_id: str, session: DbDep) -> PackReleasesOut:
     result = await pack_release_service.list_releases(session, pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
@@ -114,8 +113,8 @@ async def list_releases(pack_id: str, session: AsyncSession = Depends(get_db)) -
 async def update_current_release(
     pack_id: str,
     body: CurrentReleasePatch,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    _username: AdminDep,
+    session: DbDep,
 ) -> PackOut:
     try:
         pack = await pack_release_service.set_current_release(session, pack_id, body.release)
@@ -129,8 +128,8 @@ async def update_current_release(
 async def delete_release(
     pack_id: str,
     release: str,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    _username: AdminDep,
+    session: DbDep,
 ) -> Response:
     try:
         await pack_release_service.delete_release(session, pack_id, release)

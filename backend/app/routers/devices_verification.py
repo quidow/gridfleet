@@ -4,11 +4,11 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.schemas.device import (
     DeviceVerificationCreate,
@@ -35,7 +35,7 @@ async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
 @router.post("/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)
 async def create_device_verification_job(
     data: DeviceVerificationCreate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     try:
@@ -48,7 +48,7 @@ async def create_device_verification_job(
 async def create_existing_device_verification_job(
     device_id: uuid.UUID,
     data: DeviceVerificationUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     device = await device_service.get_device(db, device_id)
     if device is None:
@@ -62,7 +62,7 @@ async def create_existing_device_verification_job(
 
 
 @router.get("/verification-jobs/{job_id}", response_model=DeviceVerificationJobRead)
-async def get_device_verification_job(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_device_verification_job(job_id: str, db: DbDep) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     job = await device_verification.get_verification_job(job_id, session_factory=session_factory)
     if job is None:
@@ -74,7 +74,7 @@ async def get_device_verification_job(job_id: str, db: AsyncSession = Depends(ge
 async def stream_device_verification_job_events(
     job_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> EventSourceResponse:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     initial_job = await device_verification.get_verification_job(job_id, session_factory=session_factory)

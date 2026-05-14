@@ -1,10 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.schemas.analytics import (
     DeviceReliabilityRow,
     DeviceUtilizationRow,
@@ -34,11 +33,11 @@ def _default_capacity_date_from() -> datetime:
 
 @router.get("/sessions/summary", response_model=list[SessionSummaryRow])
 async def session_summary(
+    db: DbDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     group_by: GroupByOption = Query(GroupByOption.day),
     export_format: str | None = Query(None, alias="format"),
-    db: AsyncSession = Depends(get_db),
 ) -> list[SessionSummaryRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -50,10 +49,10 @@ async def session_summary(
 
 @router.get("/devices/utilization", response_model=list[DeviceUtilizationRow])
 async def device_utilization(
+    db: DbDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     export_format: str | None = Query(None, alias="format"),
-    db: AsyncSession = Depends(get_db),
 ) -> list[DeviceUtilizationRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -65,10 +64,10 @@ async def device_utilization(
 
 @router.get("/devices/reliability", response_model=list[DeviceReliabilityRow])
 async def device_reliability(
+    db: DbDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     export_format: str | None = Query(None, alias="format"),
-    db: AsyncSession = Depends(get_db),
 ) -> list[DeviceReliabilityRow] | StreamingResponse:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -80,9 +79,9 @@ async def device_reliability(
 
 @router.get("/fleet/overview", response_model=FleetOverview)
 async def fleet_overview(
+    db: DbDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
-    db: AsyncSession = Depends(get_db),
 ) -> FleetOverview:
     df = date_from or _default_date_from()
     dt = date_to or _default_date_to()
@@ -91,10 +90,10 @@ async def fleet_overview(
 
 @router.get("/fleet/capacity-timeline", response_model=FleetCapacityTimeline)
 async def fleet_capacity_timeline(
+    db: DbDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     bucket_minutes: int = Query(1, ge=1, le=1440),
-    db: AsyncSession = Depends(get_db),
 ) -> FleetCapacityTimeline:
     df = date_from or _default_capacity_date_from()
     dt = date_to or _default_date_to()

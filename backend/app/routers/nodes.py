@@ -1,9 +1,9 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold
 from app.observability import get_logger
@@ -43,7 +43,7 @@ async def _assert_device_verified(db: AsyncSession, device: Device, *, action: s
 
 
 @router.post("/{device_id}/node/start", response_model=AppiumNodeRead)
-async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def start_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
@@ -59,12 +59,12 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
     try:
         return await node_manager.start_node(db, device, caller="operator_route")
-    except Exception as exc:
+    except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/node/stop", response_model=AppiumNodeRead)
-async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     node: AppiumNode | None = device.appium_node
@@ -72,12 +72,12 @@ async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
         raise HTTPException(status_code=400, detail=f"No running node for device {device.id}")
     try:
         return await node_manager.stop_node(db, device, caller="operator_route")
-    except Exception as exc:
+    except node_manager.NodeManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
-async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def restart_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
@@ -90,7 +90,7 @@ async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db))
         converged_node = await converge_device_now(device.id, db=db)
         if converged_node is not None:
             node = converged_node
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
         logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device.id))
     await db.refresh(node)
     return node

@@ -3,19 +3,17 @@ from __future__ import annotations
 import copy
 import io
 import tarfile
-from typing import TYPE_CHECKING
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database import get_db
+from app.dependencies import AdminDep, DbDep
 from app.models.driver_pack import DriverPack, DriverPackRelease
 from app.schemas.driver_pack import PackOut
-from app.services.auth_dependencies import require_admin
 from app.services.pack_ingest_service import (
     PackIngestConflictError,
     PackIngestValidationError,
@@ -24,9 +22,6 @@ from app.services.pack_ingest_service import (
 from app.services.pack_release_ordering import selected_release
 from app.services.pack_service import build_pack_out
 from app.services.pack_storage_service import PackStorageService
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
@@ -46,8 +41,8 @@ class ForkPackBody(BaseModel):
 async def fork(
     source_pack_id: str,
     body: ForkPackBody,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    _username: AdminDep,
+    session: DbDep,
 ) -> PackOut:
     existing = await session.get(DriverPack, body.new_pack_id)
     if existing is not None:

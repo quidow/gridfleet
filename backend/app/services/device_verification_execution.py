@@ -300,7 +300,7 @@ async def _stop_verification_node_if_running(
         await db.flush()
     except NodeManagerError:
         return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — catch-all in cleanup path; set failure detail and return it to caller
         node.pid = None
         node.active_connection_target = None
         await db.flush()

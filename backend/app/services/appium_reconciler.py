@@ -180,7 +180,7 @@ async def reconcile_host_orphans(
     for orphan in orphans:
         try:
             await appium_stop(host=host_ip, agent_port=agent_port, port=orphan.port)
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort orphan stop; log and continue per-orphan
             logger.warning(
                 "appium_reconciler_stop_failed",
                 exc_info=True,
@@ -227,7 +227,7 @@ async def appium_reconciler_loop_tick(
                 agent_port=agent_port,
                 db_running_rows=rows,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — background reconciliation loop; log and skip failed host
             logger.warning("appium_reconciler_host_failed", exc_info=True, host_id=str(host_id))
             continue
         total_stopped += len(stopped)

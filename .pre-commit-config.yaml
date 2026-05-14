@@ -37,3 +37,9 @@ repos:
         types: [python]
         pass_filenames: false
         files: ^agent/
+
+      - id: no-default-arg-depends
+        name: forbid default-arg Depends() in routers
+        entry: scripts/check_no_default_arg_depends.sh
+        language: script
+        pass_filenames: false

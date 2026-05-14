@@ -1,11 +1,10 @@
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.models.device import ConnectionType, DeviceType, HardwareHealthStatus
 from app.models.device import Device as DeviceModel
 from app.models.session import Session
@@ -80,12 +79,15 @@ def build_device_query_filters(
     )
 
 
+DeviceFiltersDep = Annotated[DeviceQueryFilters, Depends(build_device_query_filters)]
+
+
 @router.get("")
 async def list_devices(
-    filters: DeviceQueryFilters = Depends(build_device_query_filters),
+    filters: DeviceFiltersDep,
+    db: DbDep,
     limit: int | None = Query(None, ge=1, le=500),
     offset: int | None = Query(None, ge=0),
-    db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if limit is not None:
         effective_offset = offset if offset is not None else 0
@@ -123,7 +125,7 @@ async def list_devices(
 
 
 @router.get("/by-connection-target/{target}", response_model=DeviceRead)
-async def get_device_by_connection_target(target: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_device_by_connection_target(target: str, db: DbDep) -> dict[str, Any]:
     result = (
         await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
     ).scalar_one_or_none()
@@ -138,7 +140,7 @@ async def get_device_by_connection_target(target: str, db: AsyncSession = Depend
 
 
 @router.get("/{device_id}", response_model=DeviceDetail)
-async def get_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     platform_label = await platform_label_service.load_platform_label(
         db,
@@ -154,13 +156,13 @@ async def get_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 
 
 @router.get("/{device_id}/capabilities")
-async def device_capabilities(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def device_capabilities(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     return await capability_service.get_device_capabilities(db, device)
 
 
 @router.patch("/{device_id}", response_model=DeviceRead)
-async def update_device(device_id: uuid.UUID, data: DevicePatch, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def update_device(device_id: uuid.UUID, data: DevicePatch, db: DbDep) -> dict[str, Any]:
     try:
         device = await device_service.update_device(db, device_id, data)
     except DeviceIdentityConflictError as e:
@@ -173,7 +175,7 @@ async def update_device(device_id: uuid.UUID, data: DevicePatch, db: AsyncSessio
 
 
 @router.delete("/{device_id}", status_code=204)
-async def delete_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_device(device_id: uuid.UUID, db: DbDep) -> None:
     deleted = await device_service.delete_device(db, device_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -182,8 +184,8 @@ async def delete_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 @router.get("/{device_id}/sessions", response_model=list[SessionRead])
 async def device_sessions(
     device_id: uuid.UUID,
+    db: DbDep,
     limit: int = Query(50, le=200),
-    db: AsyncSession = Depends(get_db),
 ) -> list[Session]:
     await get_device_or_404(device_id, db)
     return await session_service.get_device_sessions(db, device_id, limit=limit)
@@ -192,8 +194,8 @@ async def device_sessions(
 @router.get("/{device_id}/session-outcome-heatmap", response_model=list[SessionOutcomeHeatmapRow])
 async def device_session_outcome_heatmap(
     device_id: uuid.UUID,
+    db: DbDep,
     days: int = Query(90, ge=1, le=90),
-    db: AsyncSession = Depends(get_db),
 ) -> list[SessionOutcomeHeatmapRow]:
     await get_device_or_404(device_id, db)
     rows = await session_service.get_device_session_outcome_heatmap_rows(db, device_id, days=days)
