@@ -10,11 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from app.services import device_health
 from app.services import lifecycle_policy as lifecycle_policy_module
+from app.services.intent_service import IntentService
+from app.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
 from app.services.lifecycle_policy import (
     DeferredStopOutcome,
     attempt_auto_recovery,
@@ -31,6 +34,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 @pytest.fixture(autouse=True)
 def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
+    monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0, raising=False)
 
 
 async def _mark_device_available(
@@ -360,6 +364,73 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     assert policy["excluded_from_run"] is False
     event_types = await _event_types_for_device(db_session, device.id)
     assert DeviceEventType.lifecycle_recovered in event_types
+
+
+@pytest.mark.db
+async def test_auto_recovery_revokes_stale_health_failure_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-recover-stale-intents",
+        connection_target="policy-recover-stale-intents",
+        name="Recovering Stale Intent Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        reason="health failure",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+            ),
+            IntentRegistration(
+                source=f"health_failure:recovery:{device.id}",
+                axis=RECOVERY,
+                payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": "Node health failure"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    with patch(
+        "app.services.session_viability.run_session_viability_probe",
+        new_callable=AsyncMock,
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        },
+    ):
+        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+
+    assert recovered is True
+    sources = set(
+        (await db_session.execute(select(DeviceIntent.source).where(DeviceIntent.source.like(f"%:{device.id}"))))
+        .scalars()
+        .all()
+    )
+    assert f"health_failure:node:{device.id}" not in sources
+    assert f"health_failure:recovery:{device.id}" not in sources
+    assert f"auto_recovery:node:{device.id}" in sources
+    assert f"auto_recovery:recovery:{device.id}" in sources
 
 
 async def test_recovery_rejoin_publishes_availability_event(
@@ -712,13 +783,14 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
             },
         ),
     ):
+        recovery_started_at = datetime.now(UTC)
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is False
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
-    assert 4 <= (backoff_until - datetime.now(UTC)).total_seconds() <= 6
+    assert 5 <= (backoff_until - recovery_started_at).total_seconds() <= 8
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -1522,16 +1594,35 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module._MACHINE, "transition", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
+    probe_order: list[str] = []
+
+    async def probe_after_wait(*_args: object, **_kwargs: object) -> dict[str, str]:
+        probe_order.append("probe")
+        return {"status": "passed"}
+
     monkeypatch.setattr(
         lifecycle_policy_module.session_viability,
         "run_session_viability_probe",
-        AsyncMock(return_value={"status": "passed"}),
+        AsyncMock(side_effect=probe_after_wait),
+    )
+
+    async def observe_node_running(*_args: object, **_kwargs: object) -> object:
+        probe_order.append("wait")
+        return SimpleNamespace(observed_running=True)
+
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "wait_for_node_running",
+        AsyncMock(side_effect=observe_node_running),
     )
 
     assert await attempt_auto_recovery(db, device, source="device_checks", reason="reconnected") is True  # type: ignore[arg-type]
     assert db.added
     lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
     lifecycle_policy_module._MACHINE.transition.assert_awaited()
+    # wait_for_node_running must fire before run_session_viability_probe; probing
+    # before agent start-up yields false negatives.
+    assert probe_order == ["wait", "probe"]
 
     failing = SimpleNamespace(**device.__dict__)
     failing.id = uuid.uuid4()

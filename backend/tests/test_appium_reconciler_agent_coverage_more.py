@@ -454,10 +454,13 @@ async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.M
     running_node = AppiumNode(
         device_id=device_id, port=4725, grid_url="http://grid", pid=2, active_connection_target="dev"
     )
+    db.refresh.reset_mock()
     db.get = AsyncMock(side_effect=[not_running, running_node])
     monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
     found = await node_agent.wait_for_node_running(db, node_id, timeout_sec=1, poll_interval_sec=0)
     assert found is running_node
+    assert db.get.await_count == 2
+    assert db.refresh.await_count == 2
 
     db.get = AsyncMock(return_value=None)
     assert await node_agent.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None

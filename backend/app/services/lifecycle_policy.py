@@ -18,6 +18,7 @@ from app.services import (
     run_reservation_service,
     session_viability,
 )
+from app.services.appium_reconciler_agent import wait_for_node_running
 from app.services.appium_reconciler_allocation import candidate_ports
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
@@ -78,6 +79,8 @@ build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy
 
 RECOVERY_PROBE_ATTEMPTS = 3
 RECOVERY_PROBE_RETRY_DELAY_SEC = 10
+RECOVERY_NODE_START_WAIT_TIMEOUT_SEC = 60
+RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 
 
 class DeferredStopOutcome(StrEnum):
@@ -461,7 +464,9 @@ async def attempt_auto_recovery(
     write_state(device, current_state)
 
     node = loaded_node(device)
+    started_node = False
     if node is None or not node.observed_running:
+        started_node = True
         try:
             if device.host_id is None:
                 raise NodeManagerError(f"Device {device.id} has no host assigned")
@@ -478,7 +483,11 @@ async def attempt_auto_recovery(
             await revoke_intents_and_reconcile(
                 db,
                 device_id=device.id,
-                sources=[f"connectivity:{device.id}"],
+                sources=[
+                    f"connectivity:{device.id}",
+                    f"health_failure:node:{device.id}",
+                    f"health_failure:recovery:{device.id}",
+                ],
                 reason=reason,
             )
             await register_intents_and_reconcile(
@@ -557,6 +566,24 @@ async def attempt_auto_recovery(
             )
             await db.commit()
             return False
+
+    # Wait for the reconciler to observe the node running before probing.
+    # The reconciler runs asynchronously; probing immediately after
+    # registering the start intent races the agent start-up.
+    if started_node and device.appium_node is not None:
+        observed = await wait_for_node_running(
+            db,
+            device.appium_node.id,
+            timeout_sec=RECOVERY_NODE_START_WAIT_TIMEOUT_SEC,
+            poll_interval_sec=RECOVERY_NODE_START_WAIT_POLL_SEC,
+        )
+        if observed is None:
+            logger.warning(
+                "Recovery: node %s for device %s did not become observed_running within timeout; "
+                "proceeding with probe anyway",
+                device.appium_node.id,
+                device.id,
+            )
 
     result: dict[str, Any] = {}
     for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):

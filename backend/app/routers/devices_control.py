@@ -44,6 +44,7 @@ from app.services.agent_operations import (
 )
 from app.services.appium_reconciler_agent import require_management_host
 from app.services.device_identity import appium_connection_target
+from app.services.intent_service import revoke_intents_and_reconcile
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.session_viability_types import SessionViabilityCheckedBy
@@ -250,7 +251,27 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         # actions (maintenance enter, delete) can preempt — see
         # `tests/test_concurrency_reconnect_restart_lock.py`. Locking at the
         # router would serialise these and break preemption.
+        #
+        # Clear stale session-viability failures so health checks can evaluate
+        # the device after the node restarts.
+        device.session_viability_status = None
+        device.session_viability_error = None
         try:
+            await db.flush()
+            await revoke_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                sources=[
+                    f"connectivity:{device.id}",
+                    f"health_failure:node:{device.id}",
+                    f"health_failure:recovery:{device.id}",
+                ],
+                reason="Operator reconnect succeeded",
+            )
+            # Intent reconciliation briefly locks the device row. Commit before
+            # the inline restart so maintenance/delete actions can still
+            # preempt while the restart talks to the agent.
+            await db.commit()
             node = device.appium_node
             if node is None or not node.observed_running:
                 if device.host_id is None:

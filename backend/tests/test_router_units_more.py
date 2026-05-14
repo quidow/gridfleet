@@ -1389,6 +1389,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
     auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
+    auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
         patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
@@ -1396,10 +1397,11 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch(
             "app.routers.devices_control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
+        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=AsyncMock()),
         patch("app.routers.devices_control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=auto_db)  # type: ignore[arg-type]
 
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -1501,6 +1503,96 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     ):
         assert await plugins_router.host_plugins(plugin_id, db=object()) == [{"status": "ok"}]
         assert await plugins_router.sync_host_plugins(plugin_id, db=object()) == {"installed": []}
+
+
+async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> None:
+    device_id = uuid.uuid4()
+    resolved = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
+    node = SimpleNamespace(observed_running=False)
+    device = _control_device(
+        id=device_id,
+        auto_manage=True,
+        appium_node=node,
+        session_viability_status="failed",
+        session_viability_error="Appium node is not running",
+        recovery_allowed=False,
+        recovery_blocked_reason="Node health failure",
+    )
+    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
+    revoke = AsyncMock()
+    start_node = AsyncMock()
+
+    with (
+        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch(
+            "app.routers.devices_control.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
+        ),
+        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=revoke),
+        patch("app.routers.devices_control.node_manager.start_node", new=start_node),
+    ):
+        reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
+
+    assert reconnect["message"] == "Reconnected"
+    assert device.session_viability_status is None
+    assert device.session_viability_error is None
+    revoke.assert_awaited_once_with(
+        db,
+        device_id=device_id,
+        sources=[
+            f"connectivity:{device_id}",
+            f"health_failure:node:{device_id}",
+            f"health_failure:recovery:{device_id}",
+        ],
+        reason="Operator reconnect succeeded",
+    )
+    assert device.recovery_allowed is False
+    assert device.recovery_blocked_reason == "Node health failure"
+    db.commit.assert_awaited_once()
+    start_node.assert_awaited_once()
+
+
+async def test_devices_control_reconnect_skips_recovery_cleanup_when_auto_manage_disabled() -> None:
+    device_id = uuid.uuid4()
+    resolved = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
+    device = _control_device(
+        id=device_id,
+        auto_manage=False,
+        appium_node=SimpleNamespace(observed_running=True),
+        session_viability_status="failed",
+        session_viability_error="Appium node is not running",
+        recovery_allowed=False,
+        recovery_blocked_reason="Node health failure",
+    )
+    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
+    revoke = AsyncMock()
+    start_node = AsyncMock()
+    restart_node = AsyncMock()
+
+    with (
+        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch(
+            "app.routers.devices_control.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
+        ),
+        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=revoke),
+        patch("app.routers.devices_control.node_manager.start_node", new=start_node),
+        patch("app.routers.devices_control.node_manager.restart_node", new=restart_node),
+    ):
+        reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
+
+    assert reconnect["message"] == "Reconnected"
+    assert device.session_viability_status == "failed"
+    assert device.session_viability_error == "Appium node is not running"
+    revoke.assert_not_awaited()
+    db.flush.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    start_node.assert_not_awaited()
+    restart_node.assert_not_awaited()
 
 
 async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
@@ -2586,6 +2678,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
+    reconnect_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     # Phase 2: inner HTTPException(400) propagates unchanged (was incorrectly wrapped as 502)
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=reconnect_device)),
@@ -2594,9 +2687,10 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         ),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(HTTPException) as exc:
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=reconnect_db)  # type: ignore[arg-type]
     assert exc.value.status_code == 400
 
     with (

@@ -567,7 +567,7 @@ async def restart_node_via_agent(
 
         node.port = started_handle.port
         node.pid = started_handle.pid
-        node.active_connection_target = started_handle.active_connection_target
+        node.active_connection_target = started_handle.active_connection_target or appium_connection_target(device)
         node.health_running = None
         node.health_state = None
         await db.flush()
