@@ -45,22 +45,9 @@ async def test_require_admin_rejects_when_auth_enabled_and_anonymous(
 async def test_require_admin_returns_username_when_auth_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When auth is enabled and scope state has auth_username, return it."""
-    from app.services import auth as auth_module
-
-    monkeypatch.setattr(auth_module, "is_auth_enabled", lambda: True)
-
-    app = FastAPI()
-
-    @app.get("/api/protected")
-    async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
-        return {"user": username}
-
-    from app.middleware import RequestContextMiddleware
-
-    wrapped_app = RequestContextMiddleware(app)
-
+    """When auth is enabled, require_any_auth sets auth_username; require_admin reads it."""
     from app.config import settings
+    from app.security.dependencies import require_any_auth
 
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "auth_username", "admin")
@@ -68,6 +55,18 @@ async def test_require_admin_returns_username_when_auth_enabled(
     monkeypatch.setattr(settings, "auth_session_secret", "session-secret-for-tests")
     monkeypatch.setattr(settings, "machine_auth_username", "machine")
     monkeypatch.setattr(settings, "machine_auth_password", "machine-secret")
+
+    # Route has both require_any_auth (sets request.state.auth_username) and
+    # require_admin (reads request.state.auth_username).
+    app = FastAPI()
+
+    @app.get("/api/protected", dependencies=[Depends(require_any_auth)])
+    async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
+        return {"user": username}
+
+    from app.middleware import RequestContextMiddleware
+
+    wrapped_app = RequestContextMiddleware(app)
 
     import base64
 

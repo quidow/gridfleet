@@ -15,7 +15,6 @@ from app.observability import (
     clear_request_context,
     generate_request_id,
 )
-from app.services import auth
 from app.shutdown import shutdown_coordinator
 
 if TYPE_CHECKING:
@@ -94,33 +93,6 @@ class RequestContextMiddleware:
             )
             await response(scope, receive, send_wrapper)
             return
-
-        if auth.is_auth_enabled() and auth.is_protected_path(path):
-            auth_result = auth.resolve_request_auth(headers)
-            scope["state"]["auth_mode"] = auth_result.mode
-            scope["state"]["auth_username"] = auth_result.username
-            if auth_result.mode == "unauthenticated":
-                response = error_response(
-                    status_code=401,
-                    code="UNAUTHORIZED",
-                    message="Authentication is required",
-                    request_id=request_id,
-                )
-                await response(scope, receive, send_wrapper)
-                return
-            if (
-                auth_result.mode == "browser"
-                and auth.requires_csrf_check(path, method)
-                and not auth.require_valid_csrf(headers, auth_result.csrf_token)
-            ):
-                response = error_response(
-                    status_code=403,
-                    code="FORBIDDEN",
-                    message="A valid CSRF token is required",
-                    request_id=request_id,
-                )
-                await response(scope, receive, send_wrapper)
-                return
 
         shutdown_coordinator.request_started()
         try:
