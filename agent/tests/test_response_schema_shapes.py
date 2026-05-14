@@ -53,7 +53,7 @@ def test_health_response_accepts_route_shape() -> None:
             "version": "0.1.0",
             "missing_prerequisites": [],
             "capabilities": {},
-            "appium_processes": [],
+            "appium_processes": {"running_nodes": [], "recent_restart_events": []},
             "version_guidance": {},
         }
     )
@@ -64,7 +64,7 @@ def test_host_telemetry_response_accepts_route_shape() -> None:
 
 
 def test_pack_devices_response_accepts_route_shape() -> None:
-    PackDevicesResponse.model_validate({"devices": []})
+    PackDevicesResponse.model_validate({"candidates": []})
 
 
 def test_pack_device_properties_response_accepts_arbitrary_dict() -> None:

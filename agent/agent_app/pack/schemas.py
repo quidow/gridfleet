@@ -47,7 +47,7 @@ class PackDeviceCandidate(BaseModel):
 class PackDevicesResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    devices: list[PackDeviceCandidate] = Field(default_factory=list)
+    candidates: list[PackDeviceCandidate] = Field(default_factory=list)
 
 
 class PackDevicePropertiesResponse(BaseModel):
