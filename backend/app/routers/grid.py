@@ -1,9 +1,8 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.schemas.grid import GridQueueRead, GridStatusRead
 from app.services import device_service, grid_service
 
@@ -11,7 +10,7 @@ router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
 @router.get("/status", response_model=GridStatusRead)
-async def grid_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def grid_status(db: DbDep) -> dict[str, Any]:
     grid_data = await grid_service.get_grid_status()
     devices = await device_service.list_devices(db)
 
