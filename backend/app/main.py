@@ -5,14 +5,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Query, Response
+from fastapi import FastAPI, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import freeze_background_loops_enabled
 from app.database import async_session as session_factory
-from app.database import engine, get_db
+from app.database import engine
+from app.dependencies import DbDep
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
@@ -278,28 +279,28 @@ async def live_health() -> dict[str, str]:
 
 
 @app.get("/health/ready", response_model=HealthStatusRead)
-async def ready_health(db: AsyncSession = Depends(get_db)) -> JSONResponse:
+async def ready_health(db: DbDep) -> JSONResponse:
     payload, status_code = await check_readiness(db)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
-async def health(db: AsyncSession = Depends(get_db)) -> JSONResponse:
+async def health(db: DbDep) -> JSONResponse:
     payload, status_code = await check_readiness(db)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/metrics")
-async def metrics(db: AsyncSession = Depends(get_db)) -> Response:
+async def metrics(db: DbDep) -> Response:
     await refresh_system_gauges(db)
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/availability")
 async def check_availability(
+    db: DbDep,
     platform_id: str = Query(...),
     count: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     available_devices = await device_service.list_devices(db, platform_id=platform_id, status="available")
     matched = 0
