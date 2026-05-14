@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect, status
 
 import agent_app.config as _config
-from agent_app.terminal_pty import PtyShell
+from agent_app.terminal.pty import PtyShell
 
 logger = logging.getLogger(__name__)
 

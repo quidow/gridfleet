@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from agent_app.terminal_pty import PtyShell
+from agent_app.terminal.pty import PtyShell
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY unsupported on Windows")
@@ -85,10 +85,10 @@ async def test_pty_write_would_block_warns(monkeypatch: pytest.MonkeyPatch) -> N
             records.append(record)
 
     cap = _Capture()
-    logging.getLogger("agent_app.terminal_pty").addHandler(cap)
+    logging.getLogger("agent_app.terminal.pty").addHandler(cap)
     try:
         await shell.write(b"x")
     finally:
-        logging.getLogger("agent_app.terminal_pty").removeHandler(cap)
+        logging.getLogger("agent_app.terminal.pty").removeHandler(cap)
     await shell.close(reason="test")
     assert any("would block" in r.getMessage() for r in records)

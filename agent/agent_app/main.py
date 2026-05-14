@@ -50,7 +50,7 @@ from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugins.router import router as plugins_router
 from agent_app.registration import registration_loop
-from agent_app.terminal_ws import handle_terminal
+from agent_app.terminal.ws import handle_terminal
 from agent_app.tools.router import router as tools_router
 
 configure_logging()

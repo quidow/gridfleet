@@ -6,7 +6,7 @@ import termios
 
 import pytest
 
-from agent_app.terminal_pty import PtyShell
+from agent_app.terminal.pty import PtyShell
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY unsupported on Windows")
