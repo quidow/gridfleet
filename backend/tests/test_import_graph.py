@@ -81,8 +81,10 @@ def test_migrated_domains_have_no_deep_external_imports() -> None:
                 f"app.{target}",
                 f"app.{target}.models",
             )
-            if imported not in allowed and not imported.startswith(f"app.{target}.models."):
+            if imported not in allowed:
                 pytest.fail(
                     f"{rel} imports `{imported}` — cross-domain imports must "
-                    f"go through `app.{target}` or `app.{target}.models`."
+                    f"go through `app.{target}` or `app.{target}.models` "
+                    f"(concrete model files like `app.{target}.models.<name>` "
+                    f"are forbidden; rely on the models package's re-exports)."
                 )
