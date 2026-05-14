@@ -1,22 +1,6 @@
-import uuid
+import sys
 
-from fastapi import HTTPException
-from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
+from app.devices.routers import helpers as _helpers
+from app.devices.routers.helpers import *  # noqa: F403
 
-from app.models.device import Device
-from app.services import device_locking, device_service
-
-
-async def get_device_or_404(device_id: uuid.UUID, db: AsyncSession) -> Device:
-    device = await device_service.get_device(db, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    return device
-
-
-async def get_device_for_update_or_404(device_id: uuid.UUID, db: AsyncSession) -> Device:
-    try:
-        return await device_locking.lock_device(db, device_id)
-    except NoResultFound as exc:
-        raise HTTPException(status_code=404, detail="Device not found") from exc
+sys.modules[__name__] = _helpers
