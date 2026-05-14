@@ -378,7 +378,7 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert ready.status_code == 202
     assert health.status_code == 202
 
-    monkeypatch.setattr(main, "refresh_system_gauges", AsyncMock())
+    monkeypatch.setattr(main, "refresh_system_gauges_legacy", AsyncMock())
     monkeypatch.setattr(main, "render_metrics", Mock(return_value=b"metrics"))
     metrics = await main.metrics(db=AsyncMock())
     assert isinstance(metrics, Response)
