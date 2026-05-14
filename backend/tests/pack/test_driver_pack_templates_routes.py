@@ -22,7 +22,7 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
     values = {
         "auth_username": "operator",
         "auth_password": "operator-secret",
-        "auth_session_secret": "session-secret-for-tests",
+        "auth_session_secret": "session-secret-for-tests-pad-to-32-bytes",
         "machine_auth_username": "machine",
         "machine_auth_password": "machine-secret",
     }

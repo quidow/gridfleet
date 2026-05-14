@@ -11,7 +11,7 @@ def _enable_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth.settings, "auth_enabled", True)
     monkeypatch.setattr(auth.settings, "auth_username", "operator")
     monkeypatch.setattr(auth.settings, "auth_password", "operator-secret")
-    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret")
+    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret-padded-to-32-bytes-min")
     monkeypatch.setattr(auth.settings, "auth_session_ttl_sec", 60)
     monkeypatch.setattr(auth.settings, "auth_cookie_secure", False)
     monkeypatch.setattr(auth.settings, "machine_auth_username", "machine")
@@ -31,7 +31,7 @@ def test_validate_process_configuration(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_session_decode_and_browser_session_reject_invalid_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_auth(monkeypatch)
-    secret = "session-secret"
+    secret = "session-secret-padded-to-32-bytes-min"
     token, _ = auth.issue_session()
     # JWT tokens are 3 base64url segments separated by dots (header.payload.signature)
     parts = token.split(".")

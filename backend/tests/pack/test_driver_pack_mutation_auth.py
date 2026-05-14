@@ -19,7 +19,7 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(process_settings, "auth_enabled", True)
     monkeypatch.setattr(process_settings, "auth_username", "operator")
     monkeypatch.setattr(process_settings, "auth_password", "operator-secret")
-    monkeypatch.setattr(process_settings, "auth_session_secret", "session-secret-for-tests")
+    monkeypatch.setattr(process_settings, "auth_session_secret", "session-secret-for-tests-pad-to-32-bytes")
     monkeypatch.setattr(process_settings, "auth_session_ttl_sec", 28_800)
     monkeypatch.setattr(process_settings, "auth_cookie_secure", False)
     monkeypatch.setattr(process_settings, "machine_auth_username", "machine")
