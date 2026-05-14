@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import platform
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,7 +12,6 @@ import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 
-from agent_app import __version__
 from agent_app.api_auth import BasicAuthMiddleware
 from agent_app.appium import appium_mgr  # re-exported for tests pending patch-target migration
 from agent_app.appium.process import AppiumProcessManager
@@ -26,11 +24,9 @@ from agent_app.error_codes import AgentErrorCode, http_exc
 from agent_app.grid_node.supervisor import GridNodeServiceProtocol, GridNodeSupervisorHandle
 from agent_app.host.capabilities import (
     capabilities_refresh_loop,
-    get_capabilities_snapshot,
     refresh_capabilities_snapshot,
 )
-from agent_app.host.telemetry import get_host_telemetry
-from agent_app.host.version_guidance import get_version_guidance
+from agent_app.host.router import router as host_router
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.observability import RequestContextMiddleware, configure_logging
@@ -257,6 +253,7 @@ app = FastAPI(title="GridFleet Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(BasicAuthMiddleware)  # inner: enforces Basic auth on /agent/*
 app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs first
 
+app.include_router(host_router)
 app.include_router(appium_router)
 
 
@@ -342,22 +339,6 @@ def _grid_node_service_for(node_id: str) -> GridNodeServiceProtocol:
     )
 
 
-@app.get("/agent/health")
-async def health() -> dict[str, Any]:
-    capabilities = get_capabilities_snapshot()
-    payload: dict[str, Any] = {
-        "status": "ok",
-        "hostname": platform.node(),
-        "os_type": platform.system().lower(),
-        "version": __version__,
-        "missing_prerequisites": capabilities.get("missing_prerequisites", []),
-        "capabilities": capabilities,
-    }
-    payload["appium_processes"] = appium_mgr.process_snapshot()
-    payload["version_guidance"] = get_version_guidance().to_payload()
-    return payload
-
-
 @app.post("/grid/node/{node_id}/reregister", response_model=GridNodeReregisterResponse)
 async def reregister_grid_node(node_id: str, payload: GridNodeReregisterRequest) -> GridNodeReregisterResponse:
     service = _grid_node_service_for(node_id)
@@ -365,11 +346,6 @@ async def reregister_grid_node(node_id: str, payload: GridNodeReregisterRequest)
     caps["gridfleet:run_id"] = str(payload.target_run_id) if payload.target_run_id is not None else "free"
     await service.reregister_with_stereotype(new_caps=caps)
     return GridNodeReregisterResponse(grid_run_id=payload.target_run_id)
-
-
-@app.get("/agent/host/telemetry")
-async def host_telemetry() -> dict[str, Any]:
-    return await get_host_telemetry()
 
 
 @app.get("/agent/pack/devices")

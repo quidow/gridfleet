@@ -35,7 +35,7 @@ async def client() -> AsyncGenerator[AsyncClient]:
 
 async def test_health(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_capabilities_snapshot",
+        "agent_app.host.router.get_capabilities_snapshot",
         return_value={"platforms": [], "tools": {}, "missing_prerequisites": []},
     ):
         resp = await client.get("/agent/health")
@@ -50,7 +50,7 @@ async def test_health(client: AsyncClient) -> None:
 
 async def test_host_telemetry(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_host_telemetry",
+        "agent_app.host.router.get_host_telemetry",
         new_callable=AsyncMock,
         return_value={
             "recorded_at": "2026-04-16T09:30:00+00:00",
@@ -485,7 +485,7 @@ async def test_health_includes_version_guidance(client: AsyncClient) -> None:
             "agent_update_available": True,
         }
     )
-    with patch("agent_app.main.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
+    with patch("agent_app.host.router.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
         resp = await client.get("/agent/health")
 
     assert resp.status_code == 200
