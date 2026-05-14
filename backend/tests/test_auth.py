@@ -501,6 +501,14 @@ def test_decode_session_payload_rejects_missing_required_claim(monkeypatch: pyte
     assert auth._decode_session_payload(no_csrf) is None
 
 
+def test_decode_session_payload_returns_none_on_missing_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", None, raising=False)
+    # Any non-empty string passes the format gate but must surface None, not raise.
+    assert auth._decode_session_payload("a.b.c") is None
+
+
 def test_auth_token_and_cookie_guard_branches(auth_settings: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     secret = auth_settings["auth_session_secret"]
     monkeypatch.setattr(auth.settings, "auth_enabled", True)

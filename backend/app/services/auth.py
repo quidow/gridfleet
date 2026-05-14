@@ -134,7 +134,7 @@ def _decode_session_payload(token: str) -> dict[str, Any] | None:
             algorithms=[_ALGORITHM],
             options={"require": ["sub", "csrf", "exp"]},
         )
-    except jwt.InvalidTokenError:
+    except (jwt.PyJWTError, TypeError):
         return None
 
 
