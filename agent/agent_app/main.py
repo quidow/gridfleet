@@ -16,17 +16,11 @@ from pydantic import BaseModel, Field
 from agent_app import __version__
 from agent_app.api_auth import BasicAuthMiddleware
 from agent_app.appium import appium_mgr  # re-exported for tests pending patch-target migration
-from agent_app.appium.process import (
-    AlreadyRunningError,
-    AppiumProcessManager,
-    DeviceNotFoundError,
-    InvalidStartPayloadError,
-    PortOccupiedError,
-    RuntimeMissingError,
-    RuntimeNotInstalledError,
-    StartupTimeoutError,
-)
-from agent_app.appium.schemas import AppiumReconfigureRequest
+from agent_app.appium.process import AppiumProcessManager
+from agent_app.appium.router import router as appium_router
+from agent_app.appium.schemas import (
+    AppiumStartRequest as AppiumStartRequest,
+)  # re-exported for tests pending patch-target migration
 from agent_app.capabilities import (
     capabilities_refresh_loop,
     get_capabilities_snapshot,
@@ -263,34 +257,7 @@ app = FastAPI(title="GridFleet Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(BasicAuthMiddleware)  # inner: enforces Basic auth on /agent/*
 app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs first
 
-
-class AppiumStartRequest(BaseModel):
-    connection_target: str
-    port: int
-    grid_url: str
-    plugins: list[str] | None = None
-    extra_caps: dict[str, Any] | None = None
-    stereotype_caps: dict[str, Any] | None = None
-    accepting_new_sessions: bool = True
-    stop_pending: bool = False
-    grid_run_id: UUID | None = None
-    allocated_caps: dict[str, Any] | None = None
-    device_type: str | None = None
-    ip_address: str | None = None
-    session_override: bool = True
-    headless: bool = True
-    pack_id: str
-    platform_id: str
-    appium_platform_name: str | None = None
-    workaround_env: dict[str, str] | None = None
-    insecure_features: list[str] = []
-    grid_slots: list[str] = ["native"]
-    lifecycle_actions: list[dict[str, Any]] = []
-    connection_behavior: dict[str, Any] = {}
-
-
-class AppiumStopRequest(BaseModel):
-    port: int
+app.include_router(appium_router)
 
 
 class PluginConfig(BaseModel):
@@ -607,87 +574,6 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
     if result is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
     return result
-
-
-@app.post("/agent/appium/start")
-async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
-    try:
-        info = await appium_mgr.start(
-            connection_target=req.connection_target,
-            platform_id=req.platform_id,
-            port=req.port,
-            grid_url=req.grid_url,
-            plugins=req.plugins,
-            extra_caps=req.extra_caps,
-            stereotype_caps=req.stereotype_caps,
-            accepting_new_sessions=req.accepting_new_sessions,
-            stop_pending=req.stop_pending,
-            grid_run_id=req.grid_run_id,
-            session_override=req.session_override,
-            device_type=req.device_type,
-            ip_address=req.ip_address,
-            headless=req.headless,
-            pack_id=req.pack_id,
-            appium_platform_name=req.appium_platform_name,
-            workaround_env=req.workaround_env,
-            insecure_features=req.insecure_features,
-            grid_slots=req.grid_slots,
-            lifecycle_actions=req.lifecycle_actions,
-            connection_behavior=req.connection_behavior,
-        )
-    except PortOccupiedError as e:
-        raise http_exc(status_code=409, code=AgentErrorCode.PORT_OCCUPIED, message=str(e)) from e
-    except AlreadyRunningError as e:
-        raise http_exc(status_code=409, code=AgentErrorCode.ALREADY_RUNNING, message=str(e)) from e
-    except StartupTimeoutError as e:
-        raise http_exc(status_code=504, code=AgentErrorCode.STARTUP_TIMEOUT, message=str(e)) from e
-    except (RuntimeMissingError, RuntimeNotInstalledError) as e:
-        raise http_exc(status_code=503, code=AgentErrorCode.RUNTIME_MISSING, message=str(e)) from e
-    except DeviceNotFoundError as e:
-        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(e)) from e
-    except InvalidStartPayloadError as e:
-        raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
-    except RuntimeError as e:
-        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
-    except Exception as e:
-        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
-    return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
-
-
-@app.post("/agent/appium/{port}/reconfigure")
-async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[str, Any]:
-    try:
-        await appium_mgr.reconfigure(
-            port,
-            accepting_new_sessions=req.accepting_new_sessions,
-            stop_pending=req.stop_pending,
-            grid_run_id=req.grid_run_id,
-        )
-    except DeviceNotFoundError as exc:
-        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
-    return {
-        "port": port,
-        "accepting_new_sessions": req.accepting_new_sessions,
-        "stop_pending": req.stop_pending,
-        "grid_run_id": str(req.grid_run_id) if req.grid_run_id else None,
-    }
-
-
-@app.post("/agent/appium/stop")
-async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
-    await appium_mgr.stop(req.port)
-    return {"stopped": True, "port": req.port}
-
-
-@app.get("/agent/appium/{port}/status")
-async def appium_status(port: int) -> dict[str, Any]:
-    return await appium_mgr.status(port)
-
-
-@app.get("/agent/appium/{port}/logs")
-async def appium_logs(port: int, lines: int = 100) -> dict[str, Any]:
-    log_lines = appium_mgr.get_logs(port, lines=min(lines, 5000))
-    return {"port": port, "lines": log_lines, "count": len(log_lines)}
 
 
 @app.get("/agent/plugins")
