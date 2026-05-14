@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.errors import AgentCallError
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DeviceVerificationCreate
 from app.services import device_readiness, device_service, device_write
 from app.services.agent_operations import normalize_pack_device, pack_device_lifecycle_action
@@ -21,7 +22,6 @@ from app.services.device_identity_conflicts import (
     ensure_device_payload_identity_available,
 )
 from app.services.device_verification_job_state import set_stage, should_keep_verified_node_running
-from app.services.pack_platform_resolver import resolve_pack_platform
 
 if TYPE_CHECKING:
     import uuid
@@ -111,7 +111,7 @@ async def _payload_needs_host_resolution(
     try:
         device_type = payload.get("device_type")
         resolved_device_type = getattr(device_type, "value", None) or (str(device_type) if device_type else None)
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             db,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -141,7 +141,7 @@ async def resolve_host_derived_payload(
 
     if db is not None and payload.get("pack_id") and payload.get("platform_id"):
         try:
-            resolved_platform = await resolve_pack_platform(
+            resolved_platform = await pack_platform_resolver.resolve_pack_platform(
                 db,
                 pack_id=str(payload["pack_id"]),
                 platform_id=str(payload["platform_id"]),

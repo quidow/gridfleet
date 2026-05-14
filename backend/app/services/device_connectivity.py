@@ -16,6 +16,8 @@ from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus
 from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.services import (
     control_plane_state_store,
     device_health,
@@ -38,8 +40,6 @@ from app.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, 
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
-from app.services.pack_platform_resolver import resolve_pack_platform
 from app.settings import settings_service
 
 logger = get_logger(__name__)
@@ -143,7 +143,7 @@ async def _get_device_health(
 
 async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
     try:
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -161,7 +161,7 @@ async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
 async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
     """Poll the agent for the pack-owned lifecycle state."""
     try:
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -169,7 +169,7 @@ async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
         )
     except LookupError:
         return None
-    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "state"):
+    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, "state"):
         return None
     host = device.host
     if host is None or device.connection_target is None:

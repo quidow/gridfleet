@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import ConnectionType, Device, DeviceType
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services.device_identity import (
     derive_pack_identity,
@@ -13,7 +14,6 @@ from app.services.device_identity import (
     looks_like_ip_port_target,
     parse_ip_from_connection_target,
 )
-from app.services.pack_platform_resolver import resolve_pack_platform
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ async def _platform_defaults_async(
     pass the behavior dict downstream without a second resolver call.
     """
     try:
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             session,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -380,7 +380,7 @@ async def prepare_device_create_payload_async(
     resolved_scheme: str | None = None
     resolved_scope: str | None = None
     try:
-        resolved_plat = await resolve_pack_platform(
+        resolved_plat = await pack_platform_resolver.resolve_pack_platform(
             session,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -502,7 +502,7 @@ async def prepare_device_update_payload_async(
     resolved_scheme: str | None = None
     try:
         requested_device_type = getattr(data, "device_type", None) or device.device_type
-        resolved_plat = await resolve_pack_platform(
+        resolved_plat = await pack_platform_resolver.resolve_pack_platform(
             session,
             pack_id=next_pack_id,
             platform_id=next_platform_id,

@@ -81,6 +81,12 @@ def test_migrated_domains_have_no_deep_external_imports() -> None:
                 f"app.{target}",
                 f"app.{target}.models",
             )
+            if target == "packs":
+                allowed = (
+                    *allowed,
+                    "app.packs.routers",
+                    "app.packs.services",
+                )
             if imported not in allowed:
                 pytest.fail(
                     f"{rel} imports `{imported}` — cross-domain imports must "

@@ -15,6 +15,8 @@ from app.errors import AgentCallError
 from app.events import event_bus, queue_event_for_session
 from app.models.appium_node import AppiumNode
 from app.models.device import Device
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.appium_reconciler_allocation import candidate_ports
@@ -29,8 +31,6 @@ from app.services.intent_types import (
 )
 from app.services.maintenance_service import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.services.node_service_types import NodeManagerError
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
-from app.services.pack_platform_resolver import resolve_pack_platform
 from app.settings import settings_service
 
 logger = logging.getLogger(__name__)
@@ -355,7 +355,7 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
         key = (device.pack_id, device.platform_id)
         if key not in lifecycle_cache:
             try:
-                resolved = await resolve_pack_platform(
+                resolved = await pack_platform_resolver.resolve_pack_platform(
                     db,
                     pack_id=device.pack_id,
                     platform_id=device.platform_id,
@@ -364,7 +364,7 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
                 lifecycle_cache[key] = resolved.lifecycle_actions
             except LookupError:
                 lifecycle_cache[key] = []
-        return platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
+        return pack_platform_catalog.platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
 
     eligible = []
     for d in devices:

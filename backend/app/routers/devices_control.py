@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Query
 from app.dependencies import DbDep
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.routers.device_route_helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -45,8 +47,6 @@ from app.services.agent_operations import (
 from app.services.appium_reconciler_agent import require_management_host
 from app.services.device_identity import appium_connection_target
 from app.services.intent_service import revoke_intents_and_reconcile
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
-from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.session_viability_types import SessionViabilityCheckedBy
 
 router = APIRouter()
@@ -212,7 +212,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
     try:
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -220,7 +220,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         )
     except LookupError as exc:
         raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
-    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
+    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
         raise HTTPException(status_code=400, detail="Reconnect is not supported for this device platform")
     if device.connection_type.value != "network":
         raise HTTPException(status_code=400, detail="Reconnect is only supported for network-connected devices")
@@ -298,7 +298,7 @@ async def device_lifecycle_action(
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        resolved = await resolve_pack_platform(
+        resolved = await pack_platform_resolver.resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -306,7 +306,7 @@ async def device_lifecycle_action(
         )
     except LookupError as exc:
         raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
-    if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
+    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, action):
         raise HTTPException(
             status_code=400,
             detail=f"Lifecycle action {action} is not supported for this device platform",

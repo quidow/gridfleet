@@ -4,6 +4,9 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import Device, DeviceType
+from app.packs.services import capability as pack_capability
+from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services import start_shim as pack_start_shim
 from app.services import (
     appium_capability_keys,
     appium_node_locking,
@@ -13,13 +16,6 @@ from app.services import (
 )
 from app.services.device_identity import appium_connection_target
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.pack_capability_service import (
-    render_default_capabilities,
-    render_device_field_capabilities,
-    render_stereotype,
-)
-from app.services.pack_platform_resolver import resolve_pack_platform
-from app.services.pack_start_shim import resolve_pack_for_device
 
 logger = logging.getLogger(__name__)
 
@@ -121,17 +117,17 @@ async def get_device_capabilities(
     appium_platform_name: str | None = None
     pack_caps: dict[str, Any] = {}
     manager_owned = appium_capability_keys.core_manager_owned_cap_keys()
-    resolved = resolve_pack_for_device(device)
+    resolved = pack_start_shim.resolve_pack_for_device(device)
     if resolved is not None:
         pack_id, platform_id = resolved
         try:
-            stereotype = await render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
+            stereotype = await pack_capability.render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
             automation_name = stereotype.get("appium:automationName")
             appium_platform_name = stereotype.get("platformName")
         except LookupError:
             logger.debug("Stereotype not found for pack=%s platform=%s", pack_id, platform_id, exc_info=True)
         try:
-            resolved_plat = await resolve_pack_platform(
+            resolved_plat = await pack_platform_resolver.resolve_pack_platform(
                 db,
                 pack_id=pack_id,
                 platform_id=platform_id,
@@ -148,8 +144,10 @@ async def get_device_capabilities(
                 "identity_value": getattr(device, "identity_value", None),
                 "os_version": device.os_version,
             }
-            pack_caps.update(render_default_capabilities(resolved_plat, device_context=device_context))
-            pack_caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
+            pack_caps.update(pack_capability.render_default_capabilities(resolved_plat, device_context=device_context))
+            pack_caps.update(
+                pack_capability.render_device_field_capabilities(resolved_plat, device.device_config or {})
+            )
         except LookupError:
             raise
     user_caps = appium_capability_keys.sanitize_appium_caps(

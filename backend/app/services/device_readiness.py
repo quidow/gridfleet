@@ -11,8 +11,8 @@ if TYPE_CHECKING:
 
     from app.models.device import Device
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.services.pack_release_ordering import selected_release
+from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.services import release_ordering as pack_release_ordering
 
 ReadinessState = Literal["setup_required", "verification_required", "verified"]
 DEVICE_FIELD_ATTRS = frozenset(
@@ -112,7 +112,7 @@ async def assess_device_async(session: AsyncSession, device: Device) -> DeviceRe
         .where(DriverPack.id == pack_id)
         .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
     )
-    release = selected_release(pack.releases, pack.current_release) if pack is not None else None
+    release = pack_release_ordering.selected_release(pack.releases, pack.current_release) if pack is not None else None
     platform = (
         next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
         if release is not None

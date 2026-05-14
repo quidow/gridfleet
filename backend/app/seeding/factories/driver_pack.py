@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.packs.manifest import Manifest
+from app.packs import manifest as pack_manifest
 from app.packs.models import (
     DriverPack,
     DriverPackFeature,
@@ -328,7 +328,7 @@ def _roku_platform() -> dict[str, Any]:
     }
 
 
-def _demo_manifests() -> tuple[Manifest, ...]:
+def _demo_manifests() -> tuple[pack_manifest.Manifest, ...]:
     raw_manifests: tuple[dict[str, Any], ...] = (
         {
             "schema_version": 1,
@@ -431,7 +431,7 @@ def _demo_manifests() -> tuple[Manifest, ...]:
             ],
         },
     )
-    return tuple(Manifest.model_validate(raw) for raw in raw_manifests)
+    return tuple(pack_manifest.Manifest.model_validate(raw) for raw in raw_manifests)
 
 
 async def seed_demo_driver_packs(session: AsyncSession) -> None:
