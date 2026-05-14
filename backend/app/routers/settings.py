@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from app.database import get_db
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+from app.dependencies import DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
 from app.schemas.setting import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
 from app.services.settings_service import settings_service
 
@@ -22,7 +19,7 @@ async def list_settings() -> list[dict[str, Any]]:
 @router.put("/bulk", response_model=list[SettingRead])
 async def bulk_update_settings(
     body: SettingsBulkUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> list[dict[str, Any]]:
     try:
         return await settings_service.bulk_update(db, body.settings)
@@ -33,7 +30,7 @@ async def bulk_update_settings(
 
 
 @router.post("/reset-all")
-async def reset_all_settings(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def reset_all_settings(db: DbDep) -> dict[str, str]:
     await settings_service.reset_all(db)
     return {"status": "all settings reset to defaults"}
 
@@ -50,7 +47,7 @@ async def get_setting(key: str) -> dict[str, Any]:
 async def update_setting(
     key: str,
     body: SettingUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     try:
         return await settings_service.update(db, key, body.value)
@@ -63,7 +60,7 @@ async def update_setting(
 @router.post("/reset/{key:path}", response_model=SettingRead)
 async def reset_setting(
     key: str,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     try:
         return await settings_service.reset(db, key)
