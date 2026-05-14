@@ -29,6 +29,7 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "reconfigure_delivery",
         "snapshot",
     ),
+    "hosts": ("models", "schemas"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -96,6 +97,15 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "app.agent_comm.models",
         "AgentReconfigureOutbox",
         "AgentReconfigureOutbox",
+    ),
+    "app.schemas.host": ("app.hosts.schemas", "HostRead", "HostRead"),
+    "app.models.host": ("app.hosts.models", "Host", "Host"),
+    "app.models.host_resource_sample": ("app.hosts.models", "HostResourceSample", "HostResourceSample"),
+    "app.models.host_terminal_session": ("app.hosts.models", "HostTerminalSession", "HostTerminalSession"),
+    "app.models.host_plugin_runtime_status": (
+        "app.hosts.models",
+        "HostPluginRuntimeStatus",
+        "HostPluginRuntimeStatus",
     ),
 }
 
