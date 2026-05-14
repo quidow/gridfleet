@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.database import async_session
+from app.grid import service as grid_service
 from app.models.device import Device, DeviceOperationalState
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
-from app.services import device_locking, grid_service, lifecycle_policy, run_service, session_service
+from app.services import device_locking, lifecycle_policy, run_service, session_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_state import ready_operational_state
 from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile

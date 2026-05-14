@@ -33,7 +33,7 @@ from app.core.metrics import (
 from app.core.metrics import (
     refresh_system_gauges as _core_refresh_system_gauges,
 )
-from app.jobs import queue as _jobs_queue  # noqa: F401 - imported to register jobs gauge refresher.
+from app.jobs.models import Job
 from app.metrics_recorders import (
     ACTIVE_SESSIONS,
     ACTIVE_SSE_CONNECTIONS,
@@ -89,6 +89,7 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
     flips the cutover to :func:`app.core.metrics.refresh_system_gauges`.
     """
     await _core_refresh_system_gauges(db)
+    pending_jobs_result = await db.execute(select(func.count()).select_from(Job).where(Job.status == "pending"))
     active_sessions_result = await db.execute(
         select(func.count())
         .select_from(Session)
@@ -97,6 +98,7 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
             Session.ended_at.is_(None),
         )
     )
+    PENDING_JOBS.set(int(pending_jobs_result.scalar_one()))
     ACTIVE_SESSIONS.set(int(active_sessions_result.scalar_one()))
     cooldown_result = await db.execute(
         select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))

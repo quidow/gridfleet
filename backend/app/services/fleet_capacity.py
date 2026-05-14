@@ -9,12 +9,12 @@ from sqlalchemy import and_, func, or_, select, text
 from app.analytics import schemas as analytics_schemas
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.database import async_session
+from app.grid import service as grid_service
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop
-from app.services import grid_service
 from app.services.session_filters import exclude_non_test_sessions
 from app.settings import settings_service
 

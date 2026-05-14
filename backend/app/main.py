@@ -15,12 +15,15 @@ from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.config import freeze_background_loops_enabled
+from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.database import async_session as session_factory
 from app.database import engine
 from app.dependencies import DbDep
 from app.errors import register_exception_handlers
 from app.events import event_bus
 from app.events import router as events
+from app.grid import router as grid
+from app.grid import service as grid_service
 from app.health import check_liveness, check_readiness
 from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
@@ -38,7 +41,6 @@ from app.routers import (
     driver_pack_templates,
     driver_pack_uploads,
     driver_packs,
-    grid,
     host_driver_pack_features,
     host_terminal,
     hosts,
@@ -48,7 +50,6 @@ from app.routers import (
     runs,
     sessions,
 )
-from app.schemas.health import HealthStatusRead, LiveHealthRead
 from app.services import device_health, device_service, host_service
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
@@ -59,7 +60,6 @@ from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
     heartbeat_loop,
@@ -235,7 +235,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await control_plane_leader.release()
         await event_bus.shutdown()
         await agent_http_pool.close()
-        await close_grid_service_client()
+        await grid_service.close()
         await close_session_viability_client()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)

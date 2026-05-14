@@ -12,8 +12,10 @@ from sqlalchemy import select
 
 from app import agent_client, database, health, metrics
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.grid import run_reaper
+from app.grid import service as grid_service
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
-from app.services import control_plane_state_store, device_identity, grid_service, run_reaper
+from app.services import control_plane_state_store, device_identity
 from app.shutdown import ShutdownCoordinator
 from app.type_defs import AsyncSessionContextManager, SessionFactory
 
@@ -259,7 +261,7 @@ async def test_grid_service_reuses_and_closes_shared_client(monkeypatch: MonkeyP
         return client
 
     await grid_service.close()
-    monkeypatch.setattr("app.services.grid_service.httpx.AsyncClient", fake_client_factory)
+    monkeypatch.setattr("app.grid.service.httpx.AsyncClient", fake_client_factory)
 
     first = grid_service._get_client()
     second = grid_service._get_client()

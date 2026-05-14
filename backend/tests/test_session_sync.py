@@ -919,7 +919,8 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import grid_service, session_sync
+    from app.grid import service as grid_service
+    from app.grid import session_sync
     from app.services.lifecycle_policy import handle_health_failure
 
     device = Device(
@@ -982,7 +983,8 @@ async def test_sweep_runs_when_grid_is_unreachable(
     sweep relies on DB state only. Audit P2 — sweep must run independent of
     Grid status.
     """
-    from app.services import grid_service, session_sync
+    from app.grid import service as grid_service
+    from app.grid import session_sync
 
     device = Device(
         pack_id="appium-uiautomator2",
