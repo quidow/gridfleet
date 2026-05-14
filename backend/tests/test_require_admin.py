@@ -52,7 +52,7 @@ async def test_require_admin_returns_username_when_auth_enabled(
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "auth_username", "admin")
     monkeypatch.setattr(settings, "auth_password", "secret")
-    monkeypatch.setattr(settings, "auth_session_secret", "session-secret-for-tests")
+    monkeypatch.setattr(settings, "auth_session_secret", "session-secret-for-tests-pad-to-32-bytes")
     monkeypatch.setattr(settings, "machine_auth_username", "machine")
     monkeypatch.setattr(settings, "machine_auth_password", "machine-secret")
 

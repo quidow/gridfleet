@@ -15,7 +15,7 @@ def _auth_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
     monkeypatch.setattr(settings, "auth_password", "pw", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "secret-padded-to-32-bytes-test-only", raising=False)
     monkeypatch.setattr(settings, "machine_auth_username", "bot", raising=False)
     monkeypatch.setattr(settings, "machine_auth_password", "shh", raising=False)
 

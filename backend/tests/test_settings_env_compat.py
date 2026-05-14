@@ -24,7 +24,7 @@ def test_auth_config_accepts_field_name_kwargs() -> None:
         auth_enabled=True,
         auth_username="operator",
         auth_password="operator-secret",
-        auth_session_secret="session-secret",
+        auth_session_secret="session-secret-padded-to-32-bytes-min",
         machine_auth_username="machine",
         machine_auth_password="machine-secret",
     )
@@ -37,7 +37,7 @@ def test_auth_config_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("GRIDFLEET_AUTH_ENABLED", "true")
     monkeypatch.setenv("GRIDFLEET_AUTH_USERNAME", "env-operator")
     monkeypatch.setenv("GRIDFLEET_AUTH_PASSWORD", "env-password")
-    monkeypatch.setenv("GRIDFLEET_AUTH_SESSION_SECRET", "env-secret")
+    monkeypatch.setenv("GRIDFLEET_AUTH_SESSION_SECRET", "env-secret-padded-to-32-bytes-min")
     monkeypatch.setenv("GRIDFLEET_MACHINE_AUTH_USERNAME", "env-machine")
     monkeypatch.setenv("GRIDFLEET_MACHINE_AUTH_PASSWORD", "env-machine-pass")
 
@@ -52,7 +52,7 @@ def test_auth_config_accepts_alias_kwargs() -> None:
         GRIDFLEET_AUTH_ENABLED=True,
         GRIDFLEET_AUTH_USERNAME="alias-operator",
         GRIDFLEET_AUTH_PASSWORD="alias-password",
-        GRIDFLEET_AUTH_SESSION_SECRET="alias-secret",
+        GRIDFLEET_AUTH_SESSION_SECRET="alias-secret-padded-to-32-bytes-min",
         GRIDFLEET_MACHINE_AUTH_USERNAME="alias-machine",
         GRIDFLEET_MACHINE_AUTH_PASSWORD="alias-machine-pass",
     )
@@ -68,6 +68,13 @@ def test_auth_config_missing_required_fields_when_enabled() -> None:
 def test_auth_config_session_ttl_must_be_positive() -> None:
     with pytest.raises(ValueError, match="GRIDFLEET_AUTH_SESSION_TTL_SEC must be at least 1 second"):
         AuthConfig(auth_session_ttl_sec=0)
+
+
+def test_auth_config_session_secret_rejects_short_value() -> None:
+    """Session secret shorter than 32 bytes fails fast at startup. PyJWT
+    warns on short HMAC keys; we promote that warning into a hard reject."""
+    with pytest.raises(ValueError, match="at least 32 characters"):
+        AuthConfig(auth_session_secret="too-short")
 
 
 def test_settings_forwards_auth_enabled_to_auth_settings() -> None:

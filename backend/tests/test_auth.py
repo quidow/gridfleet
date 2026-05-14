@@ -28,7 +28,7 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
     values = {
         "auth_username": "operator",
         "auth_password": "operator-secret",
-        "auth_session_secret": "session-secret-for-tests",
+        "auth_session_secret": "session-secret-for-tests-pad-to-32-bytes",
         "machine_auth_username": "machine",
         "machine_auth_password": "machine-secret",
     }
@@ -336,7 +336,7 @@ async def test_rotating_session_secret_invalidates_existing_session(
     )
     assert login_response.status_code == 200
 
-    monkeypatch.setattr(settings, "auth_session_secret", "rotated-session-secret")
+    monkeypatch.setattr(settings, "auth_session_secret", "rotated-session-secret-padded-32-bytes")
 
     protected_response = await client.get("/api/hosts")
     assert protected_response.status_code == 401
@@ -379,7 +379,7 @@ async def test_operator_password_rotation_keeps_stateless_session_until_secret_r
 def test_issue_session_uses_configured_username(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth.settings, "auth_username", "configured-operator")
     monkeypatch.setattr(auth.settings, "auth_password", "configured-password")
-    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret")
+    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret-padded-to-32-bytes-min")
 
     token, session = auth.issue_session()
     payload = auth._decode_session_payload(token)
@@ -394,7 +394,7 @@ def test_issue_session_uses_configured_username(monkeypatch: pytest.MonkeyPatch)
 def test_issue_session_does_not_read_operator_password(monkeypatch: pytest.MonkeyPatch) -> None:
     class PasswordRaisingSettings:
         auth_username = "operator"
-        auth_session_secret = "session-secret"
+        auth_session_secret = "session-secret-padded-to-32-bytes-min"
         auth_session_ttl_sec = 28_800
 
         @property
@@ -414,7 +414,7 @@ def test_issue_session_does_not_store_password_derived_marker_in_token(monkeypat
     monkeypatch.setattr(auth.settings, "auth_enabled", True)
     monkeypatch.setattr(auth.settings, "auth_username", "operator")
     monkeypatch.setattr(auth.settings, "auth_password", "old-password")
-    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret")
+    monkeypatch.setattr(auth.settings, "auth_session_secret", "session-secret-padded-to-32-bytes-min")
     monkeypatch.setattr(auth.settings, "auth_session_ttl_sec", 28_800)
 
     token, _ = auth.issue_session()
@@ -435,12 +435,12 @@ def test_issue_session_does_not_store_password_derived_marker_in_token(monkeypat
 def test_issue_session_token_is_jwt_hs256(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
     monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
 
     token, session = auth.issue_session()
 
-    payload = _pyjwt.decode(token, "test-secret", algorithms=["HS256"])
+    payload = _pyjwt.decode(token, "test-secret-padded-to-32-bytes-min", algorithms=["HS256"])
     assert payload["sub"] == "alice"
     assert payload["csrf"] == session.csrf_token
     assert payload["exp"] > payload["iat"]
@@ -449,7 +449,7 @@ def test_issue_session_token_is_jwt_hs256(monkeypatch: pytest.MonkeyPatch) -> No
 def test_decode_session_payload_rejects_tampered_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
     monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
 
     token, _ = auth.issue_session()
@@ -461,7 +461,7 @@ def test_decode_session_payload_rejects_tampered_signature(monkeypatch: pytest.M
 def test_decode_session_payload_rejects_alg_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
 
     forged = _pyjwt.encode({"sub": "alice", "csrf": "x", "exp": 9999999999}, key="", algorithm="none")
     assert auth._decode_session_payload(forged) is None
@@ -470,11 +470,11 @@ def test_decode_session_payload_rejects_alg_none(monkeypatch: pytest.MonkeyPatch
 def test_decode_session_payload_rejects_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
 
     expired = _pyjwt.encode(
         {"sub": "alice", "csrf": "x", "iat": 0, "exp": 1},
-        "test-secret",
+        "test-secret-padded-to-32-bytes-min",
         algorithm="HS256",
     )
     assert auth._decode_session_payload(expired) is None
@@ -483,9 +483,11 @@ def test_decode_session_payload_rejects_expired(monkeypatch: pytest.MonkeyPatch)
 def test_decode_session_payload_rejects_missing_required_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
 
-    no_csrf = _pyjwt.encode({"sub": "alice", "exp": 9999999999}, "test-secret", algorithm="HS256")
+    no_csrf = _pyjwt.encode(
+        {"sub": "alice", "exp": 9999999999}, "test-secret-padded-to-32-bytes-min", algorithm="HS256"
+    )
     assert auth._decode_session_payload(no_csrf) is None
 
 
@@ -569,7 +571,7 @@ def test_resolve_browser_session_from_token_none_returns_unauthenticated(
 ) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
     state = auth.resolve_browser_session_from_token(None)
     assert state.enabled is True
     assert state.authenticated is False
@@ -580,7 +582,7 @@ def test_resolve_browser_session_from_token_valid_returns_authenticated(
 ) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
     monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
     token, _ = auth.issue_session()
     state = auth.resolve_browser_session_from_token(token)
@@ -593,7 +595,7 @@ def test_resolve_browser_session_from_token_wrong_username_rejects(
 ) -> None:
     monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
     monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
-    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret-padded-to-32-bytes-min", raising=False)
     monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
     token, _ = auth.issue_session()
     # Rename operator mid-session.

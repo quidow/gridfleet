@@ -27,7 +27,11 @@ class AuthConfig(BaseSettings):
     auth_enabled: bool = Field(default=False, alias="GRIDFLEET_AUTH_ENABLED")
     auth_username: str | None = Field(default=None, alias="GRIDFLEET_AUTH_USERNAME")
     auth_password: str | None = Field(default=None, alias="GRIDFLEET_AUTH_PASSWORD")
-    auth_session_secret: str | None = Field(default=None, alias="GRIDFLEET_AUTH_SESSION_SECRET")
+    auth_session_secret: str | None = Field(
+        default=None,
+        alias="GRIDFLEET_AUTH_SESSION_SECRET",
+        min_length=32,
+    )
     auth_session_ttl_sec: int = Field(default=28_800, alias="GRIDFLEET_AUTH_SESSION_TTL_SEC")
     auth_cookie_secure: bool = Field(default=True, alias="GRIDFLEET_AUTH_COOKIE_SECURE")
     machine_auth_username: str | None = Field(default=None, alias="GRIDFLEET_MACHINE_AUTH_USERNAME")

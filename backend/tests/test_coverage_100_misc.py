@@ -79,7 +79,7 @@ def test_config_and_error_guard_branches() -> None:
         auth_enabled=True,
         auth_username="operator",
         auth_password="secret",
-        auth_session_secret="session-secret",
+        auth_session_secret="session-secret-padded-to-32-bytes-min",
         machine_auth_username="machine",
         machine_auth_password="machine-secret",
     )
