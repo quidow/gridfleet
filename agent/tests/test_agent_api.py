@@ -189,7 +189,7 @@ async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/serial-1/telemetry",
             params={
@@ -207,7 +207,7 @@ async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -
 async def test_pack_device_telemetry_returns_404_when_none(client: AsyncClient) -> None:
     desired_pack = _make_adb_desired_pack()
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/missing/telemetry",
             params={

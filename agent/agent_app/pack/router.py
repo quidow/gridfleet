@@ -128,19 +128,16 @@ async def pack_device_health_route(
 
 @router.get("/devices/{connection_target}/telemetry")
 async def pack_device_telemetry_route(
-    request: Request,
     connection_target: str,
+    platform: DesiredPlatformDep,
+    adapter_registry: OptionalAdapterRegistryDep,
     pack_id: str = Query(...),
     platform_id: str = Query(...),
     device_type: str = Query(...),
     connection_type: str | None = Query(None),
     ip_address: str | None = Query(None),
 ) -> dict[str, Any]:
-    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
-    if platform_def is None:
-        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
-    adapter_registry = getattr(request.app.state, "adapter_registry", None)
-    release = _release_for_pack(request, pack_id)
+    _platform_def, release = platform
     telemetry = (
         await adapter_telemetry(
             adapter_registry=adapter_registry,
@@ -149,7 +146,7 @@ async def pack_device_telemetry_route(
             identity_value=connection_target,
             connection_target=connection_target,
         )
-        if adapter_registry is not None and release is not None
+        if adapter_registry is not None
         else None
     )
     if telemetry is None:

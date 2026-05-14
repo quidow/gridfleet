@@ -144,7 +144,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert resp.status_code == 200
     assert adapter.health_calls == [("abc123", True)]
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/abc123/telemetry",
             params={
@@ -159,7 +159,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert adapter.telemetry_calls == [("abc123", "abc123")]
 
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         missing_resp = await client.get(
             "/agent/pack/devices/missing-device/telemetry",
             params={
