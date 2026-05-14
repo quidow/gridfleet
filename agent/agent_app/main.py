@@ -51,7 +51,7 @@ from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugins.router import router as plugins_router
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
-from agent_app.tools.manager import get_tool_status
+from agent_app.tools.router import router as tools_router
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -256,6 +256,7 @@ app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs fi
 app.include_router(host_router)
 app.include_router(appium_router)
 app.include_router(plugins_router)
+app.include_router(tools_router)
 
 
 class GridNodeReregisterRequest(BaseModel):
@@ -540,11 +541,6 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
     if result is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
     return result
-
-
-@app.get("/agent/tools/status")
-async def agent_tools_status() -> dict[str, Any]:
-    return await get_tool_status()
 
 
 @app.websocket("/agent/terminal")

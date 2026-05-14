@@ -451,7 +451,7 @@ async def test_sync_plugins(client: AsyncClient) -> None:
 
 async def test_agent_tools_status(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_tool_status",
+        "agent_app.tools.router.get_tool_status",
         new_callable=AsyncMock,
         return_value={
             "node": "24.14.1",
