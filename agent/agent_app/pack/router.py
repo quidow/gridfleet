@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
@@ -28,18 +28,6 @@ from agent_app.pack.schemas import (
 )
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
-
-
-def _latest_desired(request: Request) -> list[Any]:
-    loop = getattr(request.app.state, "pack_state_loop", None)
-    return list(loop.latest_desired_packs or []) if loop else []
-
-
-def _release_for_pack(request: Request, pack_id: str) -> str | None:
-    for pack in _latest_desired(request):
-        if getattr(pack, "id", None) == pack_id:
-            return str(getattr(pack, "release", ""))
-    return None
 
 
 @router.get("/devices")
