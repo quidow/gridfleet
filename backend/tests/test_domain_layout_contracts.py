@@ -31,6 +31,8 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     ),
     "hosts": (
         "models",
+        "router",
+        "router_terminal",
         "schemas",
         "service",
         "service_diagnostics",
@@ -117,6 +119,8 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "HostPluginRuntimeStatus",
         "HostPluginRuntimeStatus",
     ),
+    "app.routers.hosts": ("app.hosts.router", "router", "router"),
+    "app.routers.host_terminal": ("app.hosts.router_terminal", "router", "router"),
     "app.services.host_service": ("app.hosts.service", "get_host", "get_host"),
     "app.services.host_diagnostics": (
         "app.hosts.service_diagnostics",

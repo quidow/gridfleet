@@ -26,10 +26,14 @@ from app.events import router as events
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.health import check_liveness, check_readiness
+from app.hosts import router as hosts
+from app.hosts import router_terminal as host_terminal
+from app.hosts import service as host_service
+from app.hosts import service_hardware_telemetry, service_resource_telemetry
+from app.hosts.models import Host, HostStatus
 from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
-from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
 from app.plugins import router as plugins
 from app.routers import (
@@ -44,14 +48,12 @@ from app.routers import (
     driver_pack_uploads,
     driver_packs,
     host_driver_pack_features,
-    host_terminal,
-    hosts,
     lifecycle,
     nodes,
     runs,
     sessions,
 )
-from app.services import device_health, device_service, host_service
+from app.services import device_health, device_service
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
@@ -60,12 +62,10 @@ from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
     heartbeat_loop,
     shutdown_background_tasks,
 )
-from app.services.host_resource_telemetry import host_resource_telemetry_loop
 from app.services.intent_reconciler import device_intent_reconciler_loop
 from app.services.node_health import node_health_loop
 from app.services.pack_drain import pack_drain_loop
@@ -85,6 +85,8 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
+hardware_telemetry_loop = service_hardware_telemetry.hardware_telemetry_loop
+host_resource_telemetry_loop = service_resource_telemetry.host_resource_telemetry_loop
 
 
 def _freeze_background_loops() -> bool:
