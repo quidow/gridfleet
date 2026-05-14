@@ -406,7 +406,7 @@ async def test_probe_appium_session_route_is_not_available(client: AsyncClient) 
 
 async def test_list_plugins(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.get_installed_plugins",
+        "agent_app.plugins.router.get_installed_plugins",
         new_callable=AsyncMock,
         return_value=[{"name": "execute-driver", "version": "1.0.0"}],
     ):
@@ -418,7 +418,7 @@ async def test_list_plugins(client: AsyncClient) -> None:
 
 async def test_sync_plugins(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.sync_plugins",
+        "agent_app.plugins.router.sync_plugins",
         new_callable=AsyncMock,
         return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}},
     ) as sync:

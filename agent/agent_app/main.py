@@ -48,7 +48,7 @@ from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
-from agent_app.plugins.manager import get_installed_plugins, sync_plugins
+from agent_app.plugins.router import router as plugins_router
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import get_tool_status
@@ -255,17 +255,7 @@ app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs fi
 
 app.include_router(host_router)
 app.include_router(appium_router)
-
-
-class PluginConfig(BaseModel):
-    name: str
-    version: str
-    source: str
-    package: str | None = None
-
-
-class PluginSyncRequest(BaseModel):
-    plugins: list[PluginConfig]
+app.include_router(plugins_router)
 
 
 class GridNodeReregisterRequest(BaseModel):
@@ -550,17 +540,6 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
     if result is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
     return result
-
-
-@app.get("/agent/plugins")
-async def list_plugins() -> list[dict[str, str]]:
-    return await get_installed_plugins()
-
-
-@app.post("/agent/plugins/sync")
-async def sync_agent_plugins(req: PluginSyncRequest) -> dict[str, Any]:
-    configs = [plugin.model_dump() for plugin in req.plugins]
-    return await sync_plugins(configs)
 
 
 @app.get("/agent/tools/status")
