@@ -211,11 +211,12 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
 
 
 async def test_appium_logs_caps_requested_lines(client: AsyncClient) -> None:
-    with patch("agent_app.appium.appium_mgr.get_logs", return_value=["line"]) as get_logs:
+    # lines > 5000 is now rejected at the query boundary (Query le=5000) rather
+    # than silently truncated at runtime, so expect 422 for out-of-range values.
+    with patch("agent_app.appium.appium_mgr.get_logs", return_value=["line"]):
         resp = await client.get("/agent/appium/4723/logs", params={"lines": 9999})
 
-    assert resp.status_code == 200
-    get_logs.assert_called_once_with(4723, lines=5000)
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
