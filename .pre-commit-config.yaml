@@ -43,4 +43,3 @@ repos:
         entry: scripts/check_no_default_arg_depends.sh
         language: script
         pass_filenames: false
-        stages: [manual]   # Promoted to commit stage at end of Phase 1.
