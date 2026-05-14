@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import AdminDep, DbDep
 from app.models.driver_pack import PackState
 from app.schemas.driver_pack import (
     DriverPackHostsOut,

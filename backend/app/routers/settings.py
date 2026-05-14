@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.dependencies import DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import DbDep
 from app.schemas.setting import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
 from app.services.settings_service import settings_service
 

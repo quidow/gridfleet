@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import AdminDep, DbDep
 from app.models.driver_pack import DriverPack, DriverPackRelease
 from app.schemas.driver_pack import PackOut
 from app.services.pack_ingest_service import (

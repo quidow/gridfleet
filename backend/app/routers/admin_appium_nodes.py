@@ -7,7 +7,7 @@ import uuid  # noqa: TC003 - FastAPI evaluates path parameter annotations at run
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import AdminDep, DbDep
 from app.models.appium_node import AppiumNode
 from app.models.device_event import DeviceEventType
 from app.schemas.device import AppiumNodeRead

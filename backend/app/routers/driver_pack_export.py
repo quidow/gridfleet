@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
 from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import AdminDep, DbDep
 from app.services.pack_export_service import export_pack
 from app.services.pack_storage_service import PackStorageService
 

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
+from app.dependencies import AdminDep, DbDep
 from app.models.driver_pack import DriverPackRelease
 from app.schemas.driver_pack import CurrentReleasePatch, PackOut, PackReleasesOut
 from app.services import pack_release_service
