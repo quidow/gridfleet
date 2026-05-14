@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 from agent_app.config import AgentSettings
+from agent_app.host.version_guidance import clear_version_guidance, get_version_guidance
 from agent_app.registration import _map_os_type, get_local_ip, register_with_manager, registration_loop
-from agent_app.version_guidance import clear_version_guidance, get_version_guidance
 
 
 def test_get_local_ip_prefers_advertised_ip() -> None:

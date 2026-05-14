@@ -21,15 +21,16 @@ from agent_app.appium.router import router as appium_router
 from agent_app.appium.schemas import (
     AppiumStartRequest as AppiumStartRequest,
 )  # re-exported for tests pending patch-target migration
-from agent_app.capabilities import (
+from agent_app.config import agent_settings
+from agent_app.error_codes import AgentErrorCode, http_exc
+from agent_app.grid_node.supervisor import GridNodeServiceProtocol, GridNodeSupervisorHandle
+from agent_app.host.capabilities import (
     capabilities_refresh_loop,
     get_capabilities_snapshot,
     refresh_capabilities_snapshot,
 )
-from agent_app.config import agent_settings
-from agent_app.error_codes import AgentErrorCode, http_exc
-from agent_app.grid_node.supervisor import GridNodeServiceProtocol, GridNodeSupervisorHandle
-from agent_app.host_telemetry import get_host_telemetry
+from agent_app.host.telemetry import get_host_telemetry
+from agent_app.host.version_guidance import get_version_guidance
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.observability import RequestContextMiddleware, configure_logging
@@ -55,7 +56,6 @@ from agent_app.plugin_manager import get_installed_plugins, sync_plugins
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import get_tool_status
-from agent_app.version_guidance import get_version_guidance
 
 configure_logging()
 logger = logging.getLogger(__name__)

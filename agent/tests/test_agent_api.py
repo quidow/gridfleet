@@ -474,7 +474,7 @@ async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:
 
 
 async def test_health_includes_version_guidance(client: AsyncClient) -> None:
-    from agent_app.version_guidance import clear_version_guidance, update_version_guidance
+    from agent_app.host.version_guidance import clear_version_guidance, update_version_guidance
 
     clear_version_guidance()
     update_version_guidance(

@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 from unittest.mock import AsyncMock, patch
 
-from agent_app.capabilities import (
+from agent_app.host.capabilities import (
     _get_tool_version,
     _run_cmd,
     capabilities_refresh_loop,
@@ -14,21 +14,21 @@ from agent_app.capabilities import (
 
 
 async def test_get_tool_version_extracts_regex_match() -> None:
-    with patch("agent_app.capabilities._run_cmd", new_callable=AsyncMock, return_value="adb version 1.0.41"):
+    with patch("agent_app.host.capabilities._run_cmd", new_callable=AsyncMock, return_value="adb version 1.0.41"):
         version = await _get_tool_version("adb", ["--version"], r"(\d+\.\d+\.\d+)")
 
     assert version == "1.0.41"
 
 
 async def test_get_tool_version_falls_back_to_first_line() -> None:
-    with patch("agent_app.capabilities._run_cmd", new_callable=AsyncMock, return_value="custom-version\nignored"):
+    with patch("agent_app.host.capabilities._run_cmd", new_callable=AsyncMock, return_value="custom-version\nignored"):
         version = await _get_tool_version("custom", ["--version"], r"no-match")
 
     assert version == "custom-version"
 
 
 async def test_get_tool_version_returns_none_when_run_cmd_fails() -> None:
-    with patch("agent_app.capabilities._run_cmd", new_callable=AsyncMock, return_value=None):
+    with patch("agent_app.host.capabilities._run_cmd", new_callable=AsyncMock, return_value=None):
         version = await _get_tool_version("adb", ["--version"], r"(\d+\.\d+\.\d+)")
 
     assert version is None
@@ -68,7 +68,7 @@ async def test_run_cmd_returns_stdout() -> None:
 
 async def test_detect_capabilities_infers_platforms_from_available_tools() -> None:
     with patch(
-        "agent_app.capabilities._get_tool_version",
+        "agent_app.host.capabilities._get_tool_version",
         new_callable=AsyncMock,
         side_effect=["1.0.41", "15.0", "1.0.207"],
     ):
@@ -85,7 +85,7 @@ async def test_detect_capabilities_infers_platforms_from_available_tools() -> No
 
 async def test_detect_capabilities_reports_linux_missing_prerequisites_without_apple_tools() -> None:
     with patch(
-        "agent_app.capabilities._get_tool_version",
+        "agent_app.host.capabilities._get_tool_version",
         new_callable=AsyncMock,
         side_effect=[None, None, None],
     ):
@@ -97,7 +97,7 @@ async def test_detect_capabilities_reports_linux_missing_prerequisites_without_a
 
 async def test_detect_capabilities_does_not_require_global_appium_runtime() -> None:
     with patch(
-        "agent_app.capabilities._get_tool_version",
+        "agent_app.host.capabilities._get_tool_version",
         new_callable=AsyncMock,
         side_effect=["1.0.41", None, None],
     ):
@@ -108,7 +108,7 @@ async def test_detect_capabilities_does_not_require_global_appium_runtime() -> N
 
 async def test_detect_capabilities_does_not_report_global_appium_runtime() -> None:
     with patch(
-        "agent_app.capabilities._get_tool_version",
+        "agent_app.host.capabilities._get_tool_version",
         new_callable=AsyncMock,
         side_effect=["1.0.41", None, None],
     ):
@@ -118,7 +118,9 @@ async def test_detect_capabilities_does_not_report_global_appium_runtime() -> No
 
 
 async def test_detect_capabilities_checks_adapter_tools_by_command_name() -> None:
-    with patch("agent_app.capabilities._get_tool_version", new_callable=AsyncMock, return_value=None) as get_version:
+    with patch(
+        "agent_app.host.capabilities._get_tool_version", new_callable=AsyncMock, return_value=None
+    ) as get_version:
         await detect_capabilities()
 
     assert get_version.await_args_list[0].args[0] == "adb"
@@ -131,7 +133,7 @@ async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> 
     first_snapshot = {"platforms": ["roku"], "tools": {"adb": "1.0.41"}, "missing_prerequisites": ["java"]}
     second_snapshot = {"platforms": ["roku"], "tools": {"adb": "1.0.42"}, "missing_prerequisites": []}
     with patch(
-        "agent_app.capabilities.detect_capabilities",
+        "agent_app.host.capabilities.detect_capabilities",
         new_callable=AsyncMock,
         side_effect=[first_snapshot, second_snapshot],
     ) as detect:
@@ -169,7 +171,7 @@ async def test_capabilities_refresh_loop_sleeps_first_when_refresh_immediately_f
         await _orig_sleep(0.001)
 
     with (
-        patch("agent_app.capabilities.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
+        patch("agent_app.host.capabilities.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
         patch("asyncio.sleep", side_effect=fake_sleep),
     ):
         task = asyncio.create_task(capabilities_refresh_loop(interval_sec=1, refresh_immediately=False))
@@ -191,7 +193,7 @@ async def test_capabilities_refresh_loop_exception_logged() -> None:
 
     with (
         patch(
-            "agent_app.capabilities.refresh_capabilities_snapshot",
+            "agent_app.host.capabilities.refresh_capabilities_snapshot",
             new_callable=AsyncMock,
             side_effect=RuntimeError("boom"),
         ) as refresh,

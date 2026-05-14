@@ -94,10 +94,10 @@ async def test_reconfigure_unknown_port_returns_404() -> None:
 
 
 def test_health_capabilities_advertise_orchestration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.capabilities import get_capabilities_snapshot
+    from agent_app.host.capabilities import get_capabilities_snapshot
 
     monkeypatch.setattr(
-        "agent_app.capabilities._capabilities_snapshot",
+        "agent_app.host.capabilities._capabilities_snapshot",
         {"platforms": ["android_mobile"], "tools": {}, "missing_prerequisites": []},
     )
 

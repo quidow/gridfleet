@@ -1,4 +1,4 @@
-from agent_app.version_guidance import (
+from agent_app.host.version_guidance import (
     clear_version_guidance,
     get_version_guidance,
     update_version_guidance,
