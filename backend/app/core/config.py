@@ -1,12 +1,12 @@
 """Global process config for the GridFleet backend.
 
-Phase 1 of the backend domain-layout refactor stripped the eight
-``auth_*`` / ``machine_auth_*`` fields from this class and moved them
-into :class:`app.auth.config.AuthConfig`. ``Settings`` keeps forwarding
-``@property`` / ``@setter`` pairs for each former field so existing
-callers (``settings.auth_enabled``, ``monkeypatch.setattr(settings,
-"auth_enabled", True)``, ``Settings(auth_enabled=True)``) keep working
-during the rest of the refactor. Phase 16 deletes the forwarders.
+The backend domain-layout refactor strips domain-owned process config
+from this class and moves it into per-domain ``BaseSettings`` classes.
+``Settings`` keeps forwarding ``@property`` / ``@setter`` pairs for
+former fields so existing callers (``settings.auth_enabled``,
+``monkeypatch.setattr(settings, "auth_enabled", True)``,
+``Settings(auth_enabled=True)``) keep working during the rest of the
+refactor. Phase 16 deletes the forwarders.
 
 Importing ``app.auth`` at the top of this module is an intentional
 deviation from the "app/core never imports from a domain" rule. The
@@ -22,9 +22,10 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.agent_comm import agent_settings
+from app.agent_comm.config import AgentCommConfig
 from app.auth import auth_settings
 from app.auth.config import AuthConfig
 
@@ -40,6 +41,14 @@ _AUTH_FIELD_NAMES: frozenset[str] = frozenset(
         "machine_auth_password",
     }
 )
+_AGENT_COMM_FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "agent_auth_username",
+        "agent_auth_password",
+        "agent_terminal_token",
+        "agent_terminal_scheme",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -47,16 +56,13 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     request_timeout_sec: float = 30.0
-    agent_auth_username: str | None = None
-    agent_auth_password: str | None = None
-    agent_terminal_token: str | None = None
-    agent_terminal_scheme: Literal["ws", "wss"] = "ws"
     driver_pack_storage_dir: Path = Path("/var/lib/gridfleet/driver-packs")
 
     model_config = SettingsConfigDict(env_prefix="GRIDFLEET_", extra="ignore")
 
-    def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401  — legacy kwargs forwarded to AuthConfig
+    def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401  — legacy kwargs forwarded to domain configs
         auth_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in _AUTH_FIELD_NAMES}
+        agent_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in _AGENT_COMM_FIELD_NAMES}
         super().__init__(**kwargs)
         if auth_kwargs:
             # Validate-then-apply with a *fresh* AuthConfig (no merge
@@ -69,6 +75,10 @@ class Settings(BaseSettings):
             validated = AuthConfig(**auth_kwargs)
             for key in auth_kwargs:
                 setattr(auth_settings, key, getattr(validated, key))
+        if agent_kwargs:
+            validated_agent = AgentCommConfig(**agent_kwargs)
+            for key in agent_kwargs:
+                setattr(agent_settings, key, getattr(validated_agent, key))
 
     @property
     def auth_enabled(self) -> bool:
@@ -134,13 +144,37 @@ class Settings(BaseSettings):
     def machine_auth_password(self, value: str | None) -> None:
         auth_settings.machine_auth_password = value
 
-    @model_validator(mode="after")
-    def validate_agent_auth_pair(self) -> Settings:
-        has_username = bool(self.agent_auth_username)
-        has_password = bool(self.agent_auth_password)
-        if has_username != has_password:
-            raise ValueError("GRIDFLEET_AGENT_AUTH_USERNAME and GRIDFLEET_AGENT_AUTH_PASSWORD must be set together")
-        return self
+    @property
+    def agent_auth_username(self) -> str | None:
+        return agent_settings.agent_auth_username
+
+    @agent_auth_username.setter
+    def agent_auth_username(self, value: str | None) -> None:
+        agent_settings.agent_auth_username = value
+
+    @property
+    def agent_auth_password(self) -> str | None:
+        return agent_settings.agent_auth_password
+
+    @agent_auth_password.setter
+    def agent_auth_password(self, value: str | None) -> None:
+        agent_settings.agent_auth_password = value
+
+    @property
+    def agent_terminal_token(self) -> str | None:
+        return agent_settings.agent_terminal_token
+
+    @agent_terminal_token.setter
+    def agent_terminal_token(self, value: str | None) -> None:
+        agent_settings.agent_terminal_token = value
+
+    @property
+    def agent_terminal_scheme(self) -> Literal["ws", "wss"]:
+        return agent_settings.agent_terminal_scheme
+
+    @agent_terminal_scheme.setter
+    def agent_terminal_scheme(self, value: Literal["ws", "wss"]) -> None:
+        agent_settings.agent_terminal_scheme = value
 
 
 settings = Settings()

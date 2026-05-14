@@ -145,8 +145,10 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
 
 @pytest_asyncio.fixture(autouse=True)
 async def reset_control_plane_state() -> AsyncGenerator[None]:
+    from app.agent_comm import agent_settings
     from app.auth import auth_settings
 
+    agent_snapshot = agent_settings.model_dump()
     auth_snapshot = auth_settings.model_dump()
 
     await _shutdown_control_plane_services()
@@ -170,6 +172,8 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     # ``settings.auth_enabled = True`` (or any other auth_* field) mutate
     # this singleton. Restore the snapshot taken before yield so leaks
     # don't gate other tests' routes behind auth.
+    for key, value in agent_snapshot.items():
+        setattr(agent_settings, key, value)
     for key, value in auth_snapshot.items():
         setattr(auth_settings, key, value)
 

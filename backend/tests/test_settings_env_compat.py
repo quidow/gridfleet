@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.agent_comm.config import AgentCommConfig
 from app.auth.config import AuthConfig
 
 
@@ -77,3 +78,74 @@ def test_settings_forwards_auth_enabled_to_auth_settings() -> None:
         assert settings.auth_enabled is True
     finally:
         settings.auth_enabled = original
+
+
+def test_agent_comm_config_accepts_field_name_kwargs() -> None:
+    cfg = AgentCommConfig(
+        agent_auth_username="agent-user",
+        agent_auth_password="agent-secret",
+        agent_terminal_token="terminal-token",
+        agent_terminal_scheme="wss",
+    )
+    assert cfg.agent_auth_username == "agent-user"
+    assert cfg.agent_auth_password == "agent-secret"
+    assert cfg.agent_terminal_token == "terminal-token"
+    assert cfg.agent_terminal_scheme == "wss"
+
+
+def test_agent_comm_config_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIDFLEET_AGENT_AUTH_USERNAME", "env-agent")
+    monkeypatch.setenv("GRIDFLEET_AGENT_AUTH_PASSWORD", "env-secret")
+    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_TOKEN", "env-terminal")
+    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_SCHEME", "wss")
+
+    cfg = AgentCommConfig()
+    assert cfg.agent_auth_username == "env-agent"
+    assert cfg.agent_auth_password == "env-secret"
+    assert cfg.agent_terminal_token == "env-terminal"
+    assert cfg.agent_terminal_scheme == "wss"
+
+
+def test_agent_comm_config_accepts_alias_kwargs() -> None:
+    cfg = AgentCommConfig(
+        GRIDFLEET_AGENT_AUTH_USERNAME="alias-agent",
+        GRIDFLEET_AGENT_AUTH_PASSWORD="alias-secret",
+        GRIDFLEET_AGENT_TERMINAL_TOKEN="alias-terminal",
+        GRIDFLEET_AGENT_TERMINAL_SCHEME="wss",
+    )
+    assert cfg.agent_auth_username == "alias-agent"
+    assert cfg.agent_auth_password == "alias-secret"
+    assert cfg.agent_terminal_token == "alias-terminal"
+    assert cfg.agent_terminal_scheme == "wss"
+
+
+def test_agent_comm_config_requires_agent_auth_pair() -> None:
+    with pytest.raises(ValueError, match="GRIDFLEET_AGENT_AUTH_USERNAME and GRIDFLEET_AGENT_AUTH_PASSWORD"):
+        AgentCommConfig(agent_auth_username="agent-user")
+
+
+def test_settings_forwards_agent_auth_kwargs_to_agent_settings() -> None:
+    from app.agent_comm import agent_settings
+    from app.core.config import Settings
+
+    original = agent_settings.model_dump()
+    try:
+        Settings(agent_auth_username="agent-user", agent_auth_password="agent-secret")
+        assert agent_settings.agent_auth_username == "agent-user"
+        assert agent_settings.agent_auth_password == "agent-secret"
+    finally:
+        for key, value in original.items():
+            setattr(agent_settings, key, value)
+
+
+def test_settings_agent_terminal_setter_updates_agent_settings() -> None:
+    from app.agent_comm import agent_settings
+    from app.core.config import settings
+
+    original = agent_settings.agent_terminal_token
+    try:
+        settings.agent_terminal_token = "terminal-token"
+        assert agent_settings.agent_terminal_token == "terminal-token"
+        assert settings.agent_terminal_token == "terminal-token"
+    finally:
+        settings.agent_terminal_token = original
