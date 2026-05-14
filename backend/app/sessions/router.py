@@ -7,11 +7,17 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DbDep
-from app.devices.schemas.device import SessionCreate, SessionDetail, SessionListRead, SessionRead, SessionStatusUpdate
+from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
 from app.services.cursor_pagination import CursorPaginationError
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
+
+SessionCreate = device_schemas.SessionCreate
+SessionDetail = device_schemas.SessionDetail
+SessionListRead = device_schemas.SessionListRead
+SessionRead = device_schemas.SessionRead
+SessionStatusUpdate = device_schemas.SessionStatusUpdate
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 

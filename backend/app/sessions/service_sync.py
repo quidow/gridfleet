@@ -12,13 +12,15 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.database import async_session
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import lifecycle_policy
+from app.devices.services import intent as intent_service
+from app.devices.services import (
+    intent_types,
+    lifecycle_policy,
+    lifecycle_state_machine,
+    lifecycle_state_machine_hooks,
+    lifecycle_state_machine_types,
+)
 from app.devices.services import state as device_state
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_ACTIVE_SESSION, IntentRegistration
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.grid import service as grid_service
 from app.models.test_run import TERMINAL_STATES, RunState
 from app.observability import get_logger, observe_background_loop
@@ -32,6 +34,16 @@ logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
 RESERVED_SESSION_ID = "reserved"
 ready_operational_state = device_state.ready_operational_state
+DeviceStateMachine = lifecycle_state_machine.DeviceStateMachine
+EventLogHook = lifecycle_state_machine_hooks.EventLogHook
+IncidentHook = lifecycle_state_machine_hooks.IncidentHook
+IntentRegistration = intent_types.IntentRegistration
+NODE_PROCESS = intent_types.NODE_PROCESS
+PRIORITY_ACTIVE_SESSION = intent_types.PRIORITY_ACTIVE_SESSION
+RunExclusionHook = lifecycle_state_machine_hooks.RunExclusionHook
+TransitionEvent = lifecycle_state_machine_types.TransitionEvent
+register_intents_and_reconcile = intent_service.register_intents_and_reconcile
+revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 

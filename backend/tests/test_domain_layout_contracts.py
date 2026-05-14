@@ -170,6 +170,16 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "services.verification_runner",
         "services.write",
     ),
+    "sessions": (
+        "filters",
+        "models",
+        "probe_constants",
+        "router",
+        "service",
+        "service_sync",
+        "service_viability",
+        "viability_types",
+    ),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -623,6 +633,26 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "app.devices.services.test_data",
         "get_device_test_data",
         "get_device_test_data",
+    ),
+    "app.models.session": ("app.sessions.models", "Session", "Session"),
+    "app.routers.sessions": ("app.sessions.router", "router", "router"),
+    "app.services.session_filters": (
+        "app.sessions.filters",
+        "exclude_non_test_sessions",
+        "exclude_non_test_sessions",
+    ),
+    "app.services.session_probe_constants": ("app.sessions.probe_constants", "PROBE_TEST_NAME", "PROBE_TEST_NAME"),
+    "app.services.session_service": ("app.sessions.service", "get_session", "get_session"),
+    "app.services.session_sync": ("app.sessions.service_sync", "session_sync_loop", "session_sync_loop"),
+    "app.services.session_viability": (
+        "app.sessions.service_viability",
+        "run_session_viability_probe",
+        "run_session_viability_probe",
+    ),
+    "app.services.session_viability_types": (
+        "app.sessions.viability_types",
+        "SessionViabilityCheckedBy",
+        "SessionViabilityCheckedBy",
     ),
 }
 

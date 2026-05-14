@@ -24,6 +24,7 @@ MIGRATED_DOMAINS: frozenset[str] = frozenset(
         "packs",
         "appium_nodes",
         "devices",
+        "sessions",
     }
 )
 
@@ -229,6 +230,14 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/services/platform_label_service.py",
         "app/services/property_refresh.py",
         "app/services/test_data_service.py",
+        "app/models/session.py",
+        "app/routers/sessions.py",
+        "app/services/session_filters.py",
+        "app/services/session_probe_constants.py",
+        "app/services/session_service.py",
+        "app/services/session_sync.py",
+        "app/services/session_viability.py",
+        "app/services/session_viability_types.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the
