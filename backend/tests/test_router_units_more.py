@@ -1387,6 +1387,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             await devices_control.reconnect_device(device_id, db=object())
     assert "not supported" in str(exc.value.detail)
 
+    # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
     auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
@@ -1397,9 +1398,8 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         ),
         patch("app.routers.devices_control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(RuntimeError, match="boom"):
             await devices_control.reconnect_device(device_id, db=object())
-    assert exc.value.status_code == 502
 
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -2586,6 +2586,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
+    # Phase 2: inner HTTPException(400) propagates unchanged (was incorrectly wrapped as 502)
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=reconnect_device)),
         patch.object(
@@ -2596,7 +2597,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(device_id, db=object())
-    assert exc.value.status_code == 502
+    assert exc.value.status_code == 400
 
     with (
         patch.object(devices_control, "get_device_for_update_or_404", new=AsyncMock(return_value=device)),

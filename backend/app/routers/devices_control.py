@@ -258,7 +258,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
                 await node_manager.start_node(db, device, caller="operator_route")
             else:
                 await node_manager.restart_node(db, device, caller="operator_restart")
-        except Exception as exc:
+        except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 
     return {
