@@ -138,7 +138,7 @@ def _decode_session_payload(token: str) -> dict[str, Any] | None:
         return None
 
 
-def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
+def resolve_browser_session_from_token(token: str | None) -> SessionState:
     if not is_auth_enabled():
         return SessionState(
             enabled=False,
@@ -147,8 +147,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
             csrf_token=None,
             expires_at=None,
         )
-
-    token = _read_cookie(headers, SESSION_COOKIE_NAME)
     if not token:
         return SessionState(
             enabled=True,
@@ -157,18 +155,15 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
             csrf_token=None,
             expires_at=None,
         )
-
     payload = _decode_session_payload(token)
     if payload is None:
         return SessionState(True, False, None, None, None)
-
     try:
         username = payload["sub"]
         csrf_token = payload["csrf"]
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
     except (KeyError, TypeError, ValueError):
         return SessionState(True, False, None, None, None)
-
     if not isinstance(username, str) or not username:
         return SessionState(True, False, None, None, None)
     if not isinstance(csrf_token, str) or not csrf_token:
@@ -176,7 +171,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
     expected_username = operator_username()
     if not hmac.compare_digest(username, expected_username):
         return SessionState(True, False, None, None, None)
-
     return SessionState(
         enabled=True,
         authenticated=True,
@@ -184,6 +178,11 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
         csrf_token=csrf_token,
         expires_at=expires_at,
     )
+
+
+def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
+    token = _read_cookie(headers, SESSION_COOKIE_NAME) if is_auth_enabled() else None
+    return resolve_browser_session_from_token(token)
 
 
 def resolve_request_auth(headers: Headers) -> RequestAuthResult:

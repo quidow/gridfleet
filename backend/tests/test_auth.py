@@ -575,3 +575,41 @@ def test_check_machine_credentials_mismatch(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(settings, "machine_auth_password", "shh", raising=False)
     assert auth.check_machine_credentials("bot", "wrong") is None
     assert auth.check_machine_credentials("other", "shh") is None
+
+
+def test_resolve_browser_session_from_token_none_returns_unauthenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    state = auth.resolve_browser_session_from_token(None)
+    assert state.enabled is True
+    assert state.authenticated is False
+
+
+def test_resolve_browser_session_from_token_valid_returns_authenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
+    token, _ = auth.issue_session()
+    state = auth.resolve_browser_session_from_token(token)
+    assert state.authenticated is True
+    assert state.username == "alice"
+
+
+def test_resolve_browser_session_from_token_wrong_username_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "auth_username", "alice", raising=False)
+    monkeypatch.setattr(settings, "auth_session_secret", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "auth_session_ttl_sec", 60, raising=False)
+    token, _ = auth.issue_session()
+    # Rename operator mid-session.
+    monkeypatch.setattr(settings, "auth_username", "bob", raising=False)
+    state = auth.resolve_browser_session_from_token(token)
+    assert state.authenticated is False
