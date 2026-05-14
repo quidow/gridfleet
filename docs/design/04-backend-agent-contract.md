@@ -38,8 +38,8 @@ The CI runner / test client speaks **only** to the Selenium Grid hub for session
 The two directions are asymmetric today.
 
 - **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `_agent_basic_auth` in `backend/app/agent_client.py`. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
-- **Agent → backend.** `agent/agent_app/main.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
-- **Agent terminal WebSocket.** The agent Basic-auth middleware only covers HTTP scopes. `/agent/terminal` is guarded separately by `AGENT_TERMINAL_TOKEN` through `agent/agent_app/terminal_ws.py`.
+- **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
+- **Agent terminal WebSocket.** The agent Basic-auth middleware only covers HTTP scopes. `/agent/terminal` is guarded separately by `AGENT_TERMINAL_TOKEN` through `agent/agent_app/terminal/ws.py`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
 There is no HMAC or message signing. When the optional backend→agent Basic-auth credentials are unset, transport security relies entirely on the network boundary documented in `docs/guides/security.md`.
@@ -249,12 +249,12 @@ The Appium lifecycle endpoints return structured failure detail as `{"code": "<E
 
 | Code | Source | Meaning |
 | --- | --- | --- |
-| `PORT_OCCUPIED` | `appium_process.PortOccupiedError` | External listener already bound the requested port |
-| `ALREADY_RUNNING` | `appium_process.AlreadyRunningError` | Managed Appium already running on this port |
-| `STARTUP_TIMEOUT` | `appium_process.StartupTimeoutError` | Appium did not become ready in `appium.startup_timeout_sec` |
-| `RUNTIME_MISSING` | `appium_process.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
-| `DEVICE_NOT_FOUND` | `appium_process.DeviceNotFoundError` | Connection target not visible to the host adapter |
-| `INVALID_PAYLOAD` | `appium_process.InvalidStartPayloadError` | Start request missing required fields |
+| `PORT_OCCUPIED` | `appium.process.PortOccupiedError` | External listener already bound the requested port |
+| `ALREADY_RUNNING` | `appium.process.AlreadyRunningError` | Managed Appium already running on this port |
+| `STARTUP_TIMEOUT` | `appium.process.StartupTimeoutError` | Appium did not become ready in `appium.startup_timeout_sec` |
+| `RUNTIME_MISSING` | `appium.process.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
+| `DEVICE_NOT_FOUND` | `appium.process.DeviceNotFoundError` | Connection target not visible to the host adapter |
+| `INVALID_PAYLOAD` | `appium.process.InvalidStartPayloadError` | Start request missing required fields |
 | `INTERNAL_ERROR` | route catch-all | Agent-side state corruption or unclassified adapter failure |
 
 ## Open contract questions / known gaps
