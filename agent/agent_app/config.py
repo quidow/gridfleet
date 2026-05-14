@@ -2,7 +2,7 @@ import math
 from typing import Literal
 
 from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AgentSettings(BaseSettings):
@@ -31,7 +31,7 @@ class AgentSettings(BaseSettings):
     terminal_token: str | None = None
     terminal_shell: str | None = None
 
-    model_config = {"env_prefix": "AGENT_"}
+    model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
     @model_validator(mode="after")
     def validate_manager_auth(self) -> "AgentSettings":
