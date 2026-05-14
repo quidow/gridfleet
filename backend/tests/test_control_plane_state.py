@@ -4,23 +4,20 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.events import event_bus
-from app.jobs.models import Job
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
-from app.services.device_connectivity import (
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services.connectivity import (
     get_connectivity_control_plane_state,
     reset_connectivity_control_plane_state,
     track_previously_offline_device,
 )
-from app.services.device_state import ready_operational_state, set_operational_state
-from app.services.device_verification import (
-    clear_verification_jobs,
-    store_verification_job_for_test,
-)
-from app.services.session_viability import (
+from app.devices.services.state import ready_operational_state, set_operational_state
+from app.devices.services.verification import clear_verification_jobs, store_verification_job_for_test
+from app.events import event_bus
+from app.hosts.models import Host
+from app.jobs.models import Job
+from app.runs.models import RunState, TestRun
+from app.sessions.models import Session, SessionStatus
+from app.sessions.service_viability import (
     get_session_viability_control_plane_state,
     reset_session_viability_control_plane_state,
     set_session_viability_control_plane_entry,

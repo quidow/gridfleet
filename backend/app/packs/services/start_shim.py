@@ -13,7 +13,7 @@ from app.packs.services.release_ordering import selected_release
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.device import Device
+    from app.devices.models import Device
 
 
 class PackStartPayloadError(RuntimeError):

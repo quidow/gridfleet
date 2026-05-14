@@ -5,15 +5,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceOperationalState
-from app.services.appium_reconciler import _fetch_node_rows, reconcile_host_orphans
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.reconciler import _fetch_node_rows, reconcile_host_orphans
+from app.devices.models import DeviceOperationalState
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 

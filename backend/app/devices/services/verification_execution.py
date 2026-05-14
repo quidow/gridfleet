@@ -8,27 +8,25 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
 
+from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wait_for_node_running
+from app.core.errors import AgentCallError
+from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import capability as capability_service
+from app.devices.services import service as device_service
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.devices.services.verification_job_state import enum_value, set_stage
-from app.errors import AgentCallError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.packs.services import platform_catalog as pack_platform_catalog
-from app.services import (
-    capability_service,
-    device_locking,
-    device_service,
-    session_viability,
-)
-from app.services.agent_operations import pack_device_health as fetch_pack_device_health
-from app.services.appium_reconciler_agent import start_node, stop_node, wait_for_node_running
-from app.services.desired_state_writer import write_desired_state
-from app.services.node_service_types import NodeManagerError
-from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.sessions import service_viability as session_viability
+from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
 
 device_is_virtual = pack_platform_catalog.device_is_virtual
@@ -36,10 +34,10 @@ device_is_virtual = pack_platform_catalog.device_is_virtual
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_client import AgentClientFactory
+    from app.agent_comm.client import AgentClientFactory
+    from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
     from app.devices.services.verification_preparation import PreparedVerificationContext
-    from app.type_defs import ProbeSessionFn
 
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 logger = logging.getLogger(__name__)

@@ -3,10 +3,10 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
-from app.services import device_write
-from app.services.device_write import prepare_device_create_payload_async, prepare_device_update_payload_async
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import write as device_write
+from app.devices.services.write import prepare_device_create_payload_async, prepare_device_update_payload_async
 from tests.pack.factories import seed_test_packs
 
 

@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.appium_nodes.services.reconciler import converge_device_now
-from app.dependencies import DbDep
-from app.models.device import Device, DeviceHold
-from app.observability import get_logger
-from app.routers.device_route_helpers import get_device_for_update_or_404
-from app.schemas.device import AppiumNodeRead
-from app.services import run_service
-from app.services.device_readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
+from app.core.dependencies import DbDep
+from app.core.observability import get_logger
+from app.devices.models import Device, DeviceHold
+from app.devices.routers.helpers import get_device_for_update_or_404
+from app.devices.schemas.device import AppiumNodeRead
+from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
+from app.runs import service as run_service
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 logger = get_logger(__name__)

@@ -10,9 +10,9 @@ from sqlalchemy.dialects.postgresql import insert
 from tenacity import RetryCallState, Retrying
 from tenacity.wait import wait_exponential_jitter
 
+from app.core.metrics_recorders import record_webhook_delivery
+from app.core.observability import get_logger, observe_background_loop
 from app.events.models import SystemEvent
-from app.metrics import record_webhook_delivery
-from app.observability import get_logger, observe_background_loop
 from app.webhooks.models import Webhook, WebhookDelivery
 
 if TYPE_CHECKING:

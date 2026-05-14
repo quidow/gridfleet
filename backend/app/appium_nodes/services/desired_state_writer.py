@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import desc, select
 
-from app import metrics_recorders
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.observability import get_logger
-from app.services.device_event_service import record_event
+from app.core import metrics_recorders
+from app.core.observability import get_logger
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services.event import record_event
 
 logger = get_logger(__name__)
 

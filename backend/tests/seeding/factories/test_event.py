@@ -1,7 +1,7 @@
 import uuid
 from datetime import timedelta
 
-from app.models.device_event import DeviceEventType
+from app.devices.models import DeviceEventType
 from app.seeding.factories.event import make_device_event, make_system_event
 from tests.seeding.helpers import build_test_seed_context
 

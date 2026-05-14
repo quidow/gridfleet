@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.device_intent import DeviceIntent
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -19,7 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services.intent_types import IntentRegistration
-    from app.models.host import Host
+    from app.hosts.models import Host
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
@@ -40,8 +39,8 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     db_session.add(node)
     await db_session.commit()
 
+    from app.devices.services import lifecycle_policy as lifecycle_policy
     from app.devices.services.intent import register_intents_and_reconcile as _real_register
-    from app.services import lifecycle_policy
 
     async def _register_then_mark_running(
         db: AsyncSession,
@@ -69,7 +68,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             new=AsyncMock(return_value={"status": "passed"}),
         ),
         patch(
-            "app.services.lifecycle_policy.register_intents_and_reconcile",
+            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
             new=AsyncMock(side_effect=_register_then_mark_running),
         ),
     ):
@@ -109,7 +108,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import lifecycle_policy_actions
+    from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
 
     await lifecycle_policy_actions.handle_node_crash(
         db_session,
@@ -155,7 +154,7 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import lifecycle_policy_actions
+    from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
 
     await lifecycle_policy_actions.handle_node_crash(
         db_session,

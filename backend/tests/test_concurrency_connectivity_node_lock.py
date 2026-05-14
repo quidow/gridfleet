@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host
-from app.services import device_connectivity
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import connectivity as device_connectivity
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -62,7 +62,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
             with patch(
-                "app.services.device_connectivity.register_intents_and_reconcile",
+                "app.devices.services.connectivity.register_intents_and_reconcile",
                 fake_register_intents_and_reconcile,
             ):
                 await device_connectivity._stop_disconnected_node(session, target)

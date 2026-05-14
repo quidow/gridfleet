@@ -5,10 +5,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import async_session
-from app.observability import get_logger, observe_background_loop
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
+from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
-from app.services import run_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 

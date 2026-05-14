@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import select
 
 from app import main
-from app.config import settings as process_settings
+from app.agent_comm import agent_settings
+from app.auth import auth_settings
 from app.settings import settings_service
 from app.settings.models import Setting
 
@@ -18,8 +19,8 @@ async def test_enabling_terminal_without_token_raises_when_auth_on(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(process_settings, "auth_enabled", True)
-    monkeypatch.setattr(process_settings, "agent_terminal_token", None)
+    monkeypatch.setattr(auth_settings, "auth_enabled", True)
+    monkeypatch.setattr(agent_settings, "agent_terminal_token", None)
 
     with pytest.raises(ValueError, match="GRIDFLEET_AGENT_TERMINAL_TOKEN"):
         await settings_service.update(db_session, "agent.enable_web_terminal", True)
@@ -33,8 +34,8 @@ async def test_enabling_terminal_with_token_succeeds_when_auth_on(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(process_settings, "auth_enabled", True)
-    monkeypatch.setattr(process_settings, "agent_terminal_token", "s3cret")
+    monkeypatch.setattr(auth_settings, "auth_enabled", True)
+    monkeypatch.setattr(agent_settings, "agent_terminal_token", "s3cret")
 
     result = await settings_service.update(db_session, "agent.enable_web_terminal", True)
     assert result["value"] is True
@@ -45,8 +46,8 @@ async def test_enabling_terminal_without_token_succeeds_when_auth_off(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(process_settings, "auth_enabled", False)
-    monkeypatch.setattr(process_settings, "agent_terminal_token", None)
+    monkeypatch.setattr(auth_settings, "auth_enabled", False)
+    monkeypatch.setattr(agent_settings, "agent_terminal_token", None)
 
     result = await settings_service.update(db_session, "agent.enable_web_terminal", True)
     assert result["value"] is True
@@ -56,8 +57,8 @@ async def test_bulk_update_rejects_terminal_enable_without_token(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(process_settings, "auth_enabled", True)
-    monkeypatch.setattr(process_settings, "agent_terminal_token", None)
+    monkeypatch.setattr(auth_settings, "auth_enabled", True)
+    monkeypatch.setattr(agent_settings, "agent_terminal_token", None)
 
     with pytest.raises(ValueError, match="GRIDFLEET_AGENT_TERMINAL_TOKEN"):
         await settings_service.bulk_update(

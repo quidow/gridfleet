@@ -4,7 +4,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.models import Device as DeviceModel
 from app.devices.routers.helpers import get_device_or_404
@@ -35,11 +35,9 @@ from app.devices.services import (
 from app.devices.services import (
     service as device_service,
 )
-from app.models.session import Session
-from app.services import (
-    run_service,
-    session_service,
-)
+from app.runs import service as run_service
+from app.sessions import service as session_service
+from app.sessions.models import Session
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 

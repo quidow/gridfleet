@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.host_resource_sample import HostResourceSample
-from app.services import host_resource_telemetry
+from app.hosts import service_resource_telemetry as host_resource_telemetry
+from app.hosts.models import HostResourceSample
 from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def test_apply_host_resource_sample_persists_partial_fields(

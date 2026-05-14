@@ -4,7 +4,7 @@ import json
 import pytest
 import websockets
 
-from app.services.host_terminal_proxy import BrowserSocket, proxy_terminal_session
+from app.hosts.service_terminal_proxy import BrowserSocket, proxy_terminal_session
 
 
 class _FakeBrowser:

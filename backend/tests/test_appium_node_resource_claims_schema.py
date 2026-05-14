@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 @pytest.mark.db
@@ -51,8 +51,7 @@ async def test_appium_node_resource_claims_table_exists(db_session: AsyncSession
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_managed_claim_cascades_when_node_deleted(db_session: AsyncSession, db_host: Host) -> None:
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
-    from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="cascade-device")

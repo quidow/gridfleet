@@ -6,19 +6,17 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode
-from app.models.device import Device
-from app.models.device_intent import DeviceIntent
-from app.models.device_intent_dirty import DeviceIntentDirty
-from app.models.test_run import TestRun
-from app.services.intent_service import IntentService
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
+from app.appium_nodes.models import AppiumNode
+from app.devices.models import Device, DeviceIntent, DeviceIntentDirty
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
+from app.runs.models import TestRun
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 def test_appium_node_has_orchestration_columns() -> None:

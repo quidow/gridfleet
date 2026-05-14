@@ -6,13 +6,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host
-from app.models.test_run import RunState, TestRun
-from app.services import run_service
-from app.services.device_readiness import is_ready_for_use_async
-from app.services.device_state import set_operational_state
+from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.state import set_operational_state
+from app.hosts.models import Host
+from app.runs import service as run_service
+from app.runs.models import RunState, TestRun
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -172,7 +171,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
             assert run_obj is not None
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
-            with patch("app.services.device_state.is_ready_for_use_async", racing_is_ready):
+            with patch("app.devices.services.state.is_ready_for_use_async", racing_is_ready):
                 await run_service._release_devices(session, run_obj)
 
     async def stomper() -> None:

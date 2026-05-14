@@ -3,13 +3,12 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.models.device import Device, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.hosts.models import Host
+from app.runs.models import RunState, TestRun
 from app.seeding.context import SeedContext
 from app.seeding.scenarios.minimal import apply_minimal
+from app.sessions.models import Session, SessionStatus
 
 
 @pytest.mark.asyncio

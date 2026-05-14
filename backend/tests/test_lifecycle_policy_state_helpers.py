@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.lifecycle_policy_state import (
+from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_deferred_stop,
     default_state,

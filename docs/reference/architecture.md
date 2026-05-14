@@ -19,10 +19,10 @@ Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a prod
 Operator routes and lifecycle paths commit intent to `AppiumNode.desired_state`
 plus optional `desired_port`, `transition_token`, and `transition_deadline`,
 then return in milliseconds. The leader-elected reconciler
-(`app/services/appium_reconciler*.py`) reads intent each cycle, drives the host
-agent's Appium processes (`appium_start` / `appium_stop`), and writes observed
-columns (`pid`, `active_connection_target`, health fields). The reconciler is
-the primary writer of observed Appium-node process state.
+(`app/appium_nodes/services/reconciler*.py`) reads intent each cycle, drives the
+host agent's Appium processes (`appium_start` / `appium_stop`), and writes
+observed columns (`pid`, `active_connection_target`, health fields). The
+reconciler is the primary writer of observed Appium-node process state.
 
 The same loop is the canonical orphan reaper. For each online host, it fetches
 `/agent/health`, parses `appium_processes.running_nodes`, and stops agent-side

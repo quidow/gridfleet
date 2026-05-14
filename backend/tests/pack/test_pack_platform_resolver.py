@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import PackDisabledError, PackUnavailableError, PlatformRemovedError
-from app.models.driver_pack import DriverPack
-from app.services.pack_platform_resolver import (
+from app.core.errors import PackDisabledError, PackUnavailableError, PlatformRemovedError
+from app.packs.models import DriverPack
+from app.packs.services.platform_resolver import (
     PackPlatformNotFound,
     ResolvedPackPlatform,
     assert_runnable,

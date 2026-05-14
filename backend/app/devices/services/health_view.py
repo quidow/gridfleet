@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
-    from app.models.appium_node import AppiumNode
 
 
 def node_running_signal(node: AppiumNode) -> bool:

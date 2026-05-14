@@ -41,13 +41,12 @@ import pytest
 from sqlalchemy import select
 
 from app.events import event_bus
+from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
-from app.models.driver_pack import DriverPack, DriverPackFeature, DriverPackRelease
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.routers.driver_pack_uploads import get_pack_storage
-from app.services import pack_feature_dispatch_service
-from app.services.pack_storage_service import PackStorageService
+from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
+from app.packs.routers.uploads import get_pack_storage
+from app.packs.services import feature_dispatch as pack_feature_dispatch_service
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -55,7 +54,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_client import AgentClientFactory, AgentHttpClient
+    from app.agent_comm.client import AgentClientFactory, AgentHttpClient
 
 # ---------------------------------------------------------------------------
 # Agent availability guard (mirrors test_uploaded_pack_vertical_slice.py).
@@ -301,7 +300,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeAgentClient]:
             timeout=timeout,
         )
 
-    import app.routers.host_driver_pack_features as feature_routes
+    import app.packs.routers.host_features as feature_routes
 
     monkeypatch.setattr(feature_routes, "dispatch_feature_action", _patched)
     yield agent

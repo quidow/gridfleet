@@ -4,11 +4,7 @@ import dataclasses
 
 import pytest
 
-from app.services.heartbeat_outcomes import (
-    ClientMode,
-    HeartbeatOutcome,
-    HeartbeatPingResult,
-)
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
 
 def test_outcome_enum_values() -> None:

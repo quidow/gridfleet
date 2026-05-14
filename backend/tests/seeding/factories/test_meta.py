@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models.device_group import DeviceGroup, GroupType
+from app.devices.models import DeviceGroup, GroupType
 from app.seeding.factories.meta import make_device_group, make_setting
 from app.settings.models import Setting
 from tests.seeding.helpers import build_test_seed_context

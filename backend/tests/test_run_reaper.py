@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.test_run import RunState, TestRun
-from app.services.run_reaper import _reap_stale_runs
+from app.runs.models import RunState, TestRun
+from app.runs.service_reaper import _reap_stale_runs
 
 
 @pytest.fixture(autouse=True)
 def _skip_leader_fencing() -> Iterator[None]:
-    with patch("app.services.run_reaper.assert_current_leader"):
+    with patch("app.runs.service_reaper.assert_current_leader"):
         yield
 
 
@@ -28,7 +28,7 @@ async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSessio
     db_session.add(stale_run)
     await db_session.commit()
 
-    with patch("app.services.run_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
+    with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
         await _reap_stale_runs(db_session)
 
     expire_run.assert_awaited_once()
@@ -50,7 +50,7 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
     db_session.add(stale_run)
     await db_session.commit()
 
-    with patch("app.services.run_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
+    with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
         await _reap_stale_runs(db_session)
 
     expire_run.assert_awaited_once()
@@ -83,7 +83,7 @@ async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: Async
     db_session.add_all([completed_run, fresh_run])
     await db_session.commit()
 
-    with patch("app.services.run_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
+    with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
         await _reap_stale_runs(db_session)
 
     expire_run.assert_not_awaited()
@@ -94,9 +94,9 @@ async def test_expire_run_deletes_active_grid_session(
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.models.device import DeviceOperationalState
-    from app.models.session import Session, SessionStatus
-    from app.services import run_service
+    from app.devices.models import DeviceOperationalState
+    from app.runs import service as run_service
+    from app.sessions.models import Session, SessionStatus
     from tests.helpers import create_device_record, create_reserved_run
 
     device = await create_device_record(

@@ -6,8 +6,13 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect, select
 
+from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import DeviceIntent
 from app.devices.schemas.device import DeviceReservationRead
+from app.devices.services import attention as device_attention
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services import readiness as device_readiness
 from app.devices.services.intent_evaluator import (
     evaluate_grid_routing,
     evaluate_node_process,
@@ -15,16 +20,9 @@ from app.devices.services.intent_evaluator import (
     evaluate_reservation,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
-from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.services import (
-    device_attention,
-    device_health,
-    device_readiness,
-    hardware_telemetry,
-    lifecycle_policy,
-    run_service,
-)
+from app.runs import service as run_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
 
@@ -32,7 +30,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
-    from app.models.test_run import TestRun
+    from app.runs.models import TestRun
 
 
 def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
+from app.hosts.models import Host, HostStatus, OSType
 from app.plugins.models import AppiumPlugin
 
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 
 from app.core.metrics import register_gauge_refresher
-from app.metrics_recorders import ACTIVE_SESSIONS
+from app.core.metrics_recorders import ACTIVE_SESSIONS
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:

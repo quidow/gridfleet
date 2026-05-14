@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -76,8 +76,8 @@ async def test_admin_clear_transition_requires_admin_when_auth_enabled(
 ) -> None:
     from fastapi import HTTPException
 
+    from app.auth.dependencies import require_admin
     from app.main import app
-    from app.services.auth_dependencies import require_admin
 
     async def reject_admin() -> str:
         raise HTTPException(status_code=418, detail="admin dependency used")

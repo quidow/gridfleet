@@ -4,9 +4,9 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
-from app.config import freeze_background_loops_enabled
-from app.database import engine as default_engine
-from app.observability import get_logger, observe_background_loop
+from app.core.config import freeze_background_loops_enabled
+from app.core.database import engine as default_engine
+from app.core.observability import get_logger, observe_background_loop
 from app.services.control_plane_leader import ControlPlaneLeader, control_plane_leader
 from app.settings import settings_service
 

@@ -4,9 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceType
-from app.services import capability_service, node_service_common
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import common as node_service_common
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.services import capability as capability_service
 
 
 def _device(
@@ -162,7 +163,7 @@ async def test_active_target_from_host_snapshot_matches_port() -> None:
     )
 
     with patch(
-        "app.services.capability_service.control_plane_state_store.get_value",
+        "app.devices.services.capability.control_plane_state_store.get_value",
         new=AsyncMock(
             return_value={"running_nodes": [{"port": 4700}, {"port": 4723, "connection_target": "emulator-5554"}]}
         ),
@@ -185,7 +186,7 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
         active_connection_target="",
     )
 
-    with patch("app.services.capability_service.control_plane_state_store.get_value", new=AsyncMock(return_value=[])):
+    with patch("app.devices.services.capability.control_plane_state_store.get_value", new=AsyncMock(return_value=[])):
         assert await capability_service._active_target_from_host_snapshot(db, device) is None
 
     device.appium_node = AppiumNode(
@@ -198,7 +199,7 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
         active_connection_target="",
     )
     with patch(
-        "app.services.capability_service.control_plane_state_store.get_value",
+        "app.devices.services.capability.control_plane_state_store.get_value",
         new=AsyncMock(return_value={"running_nodes": [{"port": 9999, "connection_target": "emulator-1"}]}),
     ):
         assert await capability_service._active_target_from_host_snapshot(db, device) is None
@@ -234,12 +235,12 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
     device.appium_node.active_connection_target = None
     with (
         patch(
-            "app.services.capability_service._active_target_from_host_snapshot",
+            "app.devices.services.capability._active_target_from_host_snapshot",
             new=AsyncMock(return_value="emulator-5556"),
         ),
-        patch("app.services.device_locking.lock_device", new=AsyncMock()),
+        patch("app.devices.locking.lock_device", new=AsyncMock()),
         patch(
-            "app.services.appium_node_locking.lock_appium_node_for_device",
+            "app.appium_nodes.services.locking.lock_appium_node_for_device",
             new=AsyncMock(return_value=locked_node),
         ),
     ):
@@ -264,9 +265,9 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
         active_connection_target="",
     )
     with (
-        patch("app.services.capability_service._active_target_from_host_snapshot", new=AsyncMock(return_value=None)),
-        patch("app.services.device_locking.lock_device", new=AsyncMock()),
-        patch("app.services.appium_node_locking.lock_appium_node_for_device", new=AsyncMock(return_value=None)),
+        patch("app.devices.services.capability._active_target_from_host_snapshot", new=AsyncMock(return_value=None)),
+        patch("app.devices.locking.lock_device", new=AsyncMock()),
+        patch("app.appium_nodes.services.locking.lock_appium_node_for_device", new=AsyncMock(return_value=None)),
     ):
         assert await capability_service._get_live_active_connection_target(db, emulator) is None
 
@@ -286,19 +287,19 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
 
     with (
         patch(
-            "app.services.capability_service.render_stereotype",
+            "app.devices.services.capability.render_stereotype",
             new=AsyncMock(return_value={"appium:automationName": "UiAutomator2"}),
         ),
         patch(
-            "app.services.appium_node_resource_service.get_capabilities",
+            "app.appium_nodes.services.resource_service.get_capabilities",
             new=AsyncMock(return_value={"appium:systemPort": 8200}),
         ),
         patch(
-            "app.services.capability_service._get_live_active_connection_target",
+            "app.devices.services.capability._get_live_active_connection_target",
             new=AsyncMock(return_value="serial-1"),
         ),
         patch(
-            "app.services.capability_service.resolve_pack_platform",
+            "app.devices.services.capability.resolve_pack_platform",
             new=AsyncMock(
                 return_value=SimpleNamespace(
                     appium_platform_name="Android",
@@ -308,7 +309,7 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
                 )
             ),
         ),
-        patch("app.services.capability_service.appium_capability_keys.sanitize_appium_caps", return_value={}),
+        patch("app.devices.services.capability.appium_capability_keys.sanitize_appium_caps", return_value={}),
     ):
         caps = await capability_service.get_device_capabilities(db, device)
 
@@ -322,11 +323,11 @@ async def test_get_device_capabilities_raises_when_pack_platform_is_missing() ->
 
     with (
         patch(
-            "app.services.capability_service.render_stereotype",
+            "app.devices.services.capability.render_stereotype",
             new=AsyncMock(return_value={"appium:automationName": "UiAutomator2"}),
         ),
         patch(
-            "app.services.capability_service.resolve_pack_platform",
+            "app.devices.services.capability.resolve_pack_platform",
             new=AsyncMock(side_effect=LookupError),
         ),
     ):

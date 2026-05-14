@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode
-from app.models.test_run import RunState
-from app.schemas.run import DeviceRequirement, RunCreate
-from app.services import run_service
+from app.appium_nodes.models import AppiumNode
+from app.runs import service as run_service
+from app.runs.models import RunState
+from app.runs.schemas import DeviceRequirement, RunCreate
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 

@@ -62,8 +62,8 @@ def test_only_lifecycle_modules_use_write_state() -> None:
     formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
     assert not findings, (
         "`lifecycle_policy_state.write_state` may only be imported or called from "
-        "`app.services.lifecycle_policy`, `app.services.lifecycle_policy_actions`, or "
-        "`app.services.lifecycle_policy_state`. Move the new write behind a public "
+        "`app.devices.services.lifecycle_policy`, `app.devices.services.lifecycle_policy_actions`, or "
+        "`app.devices.services.lifecycle_policy_state`. Move the new write behind a public "
         "helper in `lifecycle_policy` / `lifecycle_policy_actions` and call that "
         "instead:\n"
         f"{formatted}"

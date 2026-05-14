@@ -7,11 +7,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.services.lifecycle_policy import attempt_auto_recovery, build_lifecycle_policy
+from app.appium_nodes.models import AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.lifecycle_policy import attempt_auto_recovery, build_lifecycle_policy
+from app.hosts.models import Host
+from app.sessions.models import Session, SessionStatus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -80,11 +80,11 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     # recovery path can complete past the stale-clear.
     with (
         patch(
-            "app.services.lifecycle_policy.register_intents_and_reconcile",
+            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
             new=AsyncMock(side_effect=_mark_device_available),
         ),
         patch(
-            "app.services.session_viability.run_session_viability_probe",
+            "app.sessions.service_viability.run_session_viability_probe",
             new_callable=AsyncMock,
             return_value={
                 "status": "passed",

@@ -7,10 +7,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.database import get_db
+from app.core.database import get_db
+from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.main import app
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio

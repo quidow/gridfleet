@@ -1,13 +1,9 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host
-from app.services import pack_discovery_service
-from app.services.pack_discovery_service import (
-    PackDiscoveredCandidate,
-    discover_pack_candidates,
-    refresh_device_properties,
-)
+from app.hosts.models import Host
+from app.packs.services import discovery as pack_discovery_service
+from app.packs.services.discovery import PackDiscoveredCandidate, discover_pack_candidates, refresh_device_properties
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 

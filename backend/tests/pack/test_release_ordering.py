@@ -1,4 +1,4 @@
-from app.services.pack_release_ordering import latest_release, parse_release_key
+from app.packs.services.release_ordering import latest_release, parse_release_key
 
 
 def test_parse_release_key_calver() -> None:

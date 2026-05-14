@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.config import settings as process_settings
+from app.auth import auth_settings as process_settings
 from app.main import app
-from app.routers.driver_pack_export import get_pack_storage
-from app.services.pack_storage_service import PackStorageService
+from app.packs.routers.export import get_pack_storage
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -116,7 +116,7 @@ async def test_export_route_returns_tarball_with_sha_header(client: AsyncClient,
     files = {"tarball": ("export-test-pack-1.0.0.tar.gz", tarball, "application/gzip")}
 
     # Reuse the upload route to create the pack with stored artifact
-    from app.routers.driver_pack_uploads import get_pack_storage as upload_get_storage
+    from app.packs.routers.uploads import get_pack_storage as upload_get_storage
 
     # Override the upload storage to use the same tmp_path
     app.dependency_overrides[upload_get_storage] = lambda: PackStorageService(root=tmp_path)

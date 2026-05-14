@@ -8,7 +8,7 @@ from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Index, Integer, 
 from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID, ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.core.database import Base
 
 
 def _cooldown_remaining_sec(excluded_until: datetime | None) -> int | None:

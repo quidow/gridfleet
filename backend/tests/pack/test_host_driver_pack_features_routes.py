@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from app.config import settings as process_settings
+from app.auth import auth_settings as process_settings
 from app.main import app
-from app.pack.adapter import FeatureActionResult
-from app.routers import host_driver_pack_features as feature_routes
+from app.packs.adapter import FeatureActionResult
+from app.packs.routers import host_features as feature_routes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

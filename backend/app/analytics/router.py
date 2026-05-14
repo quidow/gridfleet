@@ -12,9 +12,9 @@ from app.analytics.schemas import (
     GroupByOption,
     SessionSummaryRow,
 )
-from app.dependencies import DbDep
-from app.services.csv_export import to_csv_response
-from app.services.fleet_capacity import get_fleet_capacity_timeline
+from app.core.csv_export import to_csv_response
+from app.core.dependencies import DbDep
+from app.devices.services.fleet_capacity import get_fleet_capacity_timeline
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 

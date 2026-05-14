@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import DeviceType
-from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
+from app.devices.models import DeviceType
+from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
 from tests.pack.factories import seed_test_packs
 
 
@@ -144,11 +144,11 @@ async def test_pack_start_payload_wraps_platform_and_stereotype_lookup_errors(
 ) -> None:
     device = _make_device("missing", DeviceType.real_device, pack_id="missing-pack")
     device.id = __import__("uuid").uuid4()
-    monkeypatch.setattr("app.services.pack_start_shim.resolve_pack_platform", AsyncMock(side_effect=LookupError))
+    monkeypatch.setattr("app.packs.services.start_shim.resolve_pack_platform", AsyncMock(side_effect=LookupError))
     with pytest.raises(PackStartPayloadError, match="not available"):
         await build_pack_start_payload(db_session, device=device)
 
-    monkeypatch.setattr("app.services.pack_start_shim.resolve_pack_platform", AsyncMock(return_value=MagicMock()))
-    monkeypatch.setattr("app.services.pack_start_shim.render_stereotype", AsyncMock(side_effect=LookupError))
+    monkeypatch.setattr("app.packs.services.start_shim.resolve_pack_platform", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr("app.packs.services.start_shim.render_stereotype", AsyncMock(side_effect=LookupError))
     with pytest.raises(PackStartPayloadError, match="not available"):
         await build_pack_start_payload(db_session, device=device)

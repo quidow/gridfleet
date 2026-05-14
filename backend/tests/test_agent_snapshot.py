@@ -1,4 +1,4 @@
-from app.services.agent_snapshot import RunningAppiumNode, parse_running_nodes
+from app.agent_comm.snapshot import RunningAppiumNode, parse_running_nodes
 
 
 def test_parse_running_nodes_returns_typed_entries() -> None:

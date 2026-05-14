@@ -6,9 +6,9 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.session import Session, SessionStatus
-from app.services.session_viability import PROBE_TEST_NAME
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.sessions.models import Session, SessionStatus
+from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record
 
 DEVICE_PAYLOAD = {

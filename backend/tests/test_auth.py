@@ -7,8 +7,9 @@ from httpx import AsyncClient
 from pydantic import ValidationError
 from starlette.datastructures import Headers
 
+from app.auth import auth_settings as settings
 from app.auth import service as auth
-from app.config import Settings, settings
+from app.auth.config import AuthConfig
 
 HOST_PAYLOAD = {
     "hostname": "auth-host-01",
@@ -45,7 +46,7 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
 
 def test_settings_require_auth_configuration_when_enabled() -> None:
     with pytest.raises(ValidationError, match="Auth is enabled but required settings are missing"):
-        Settings(auth_enabled=True)
+        AuthConfig(auth_enabled=True)
 
 
 async def test_auth_session_reports_disabled_when_feature_off(client: AsyncClient) -> None:

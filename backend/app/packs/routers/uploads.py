@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, sta
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs import packs_settings
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
+from app.packs.services import release as pack_release_service
 from app.packs.services.service import build_pack_out
 from app.packs.services.storage import PackStorageService
 from app.packs.services.upload import (
@@ -19,7 +21,6 @@ from app.packs.services.upload import (
     PackUploadValidationError,
     upload_pack,
 )
-from app.services import pack_release_service
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -31,7 +32,7 @@ def get_pack_storage() -> PackStorageService:
     Override ``app.dependency_overrides[get_pack_storage]`` in tests to point at
     a writable ``tmp_path``-rooted instance instead of the production storage dir.
     """
-    return PackStorageService(root=settings.driver_pack_storage_dir)
+    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
 
 
 PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]

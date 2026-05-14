@@ -4,7 +4,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -48,7 +48,7 @@ async def test_grid_status(client: AsyncClient, db_session: AsyncSession, defaul
         os_version=DEVICE_PAYLOAD["os_version"],
     )
 
-    with patch("app.routers.grid.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
+    with patch("app.grid.router.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200
@@ -76,7 +76,7 @@ async def test_grid_status_hub_unreachable(client: AsyncClient, db_session: Asyn
     )
 
     with patch(
-        "app.routers.grid.grid_service.get_grid_status", return_value={"ready": False, "error": "grid_unreachable"}
+        "app.grid.router.grid_service.get_grid_status", return_value={"ready": False, "error": "grid_unreachable"}
     ):
         resp = await client.get("/api/grid/status")
 
@@ -117,7 +117,7 @@ async def test_grid_status_with_running_node(
     )
     await db_session.commit()
 
-    with patch("app.routers.grid.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
+    with patch("app.grid.router.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200

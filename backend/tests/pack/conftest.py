@@ -7,9 +7,8 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_installation import HostPackInstallation
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:

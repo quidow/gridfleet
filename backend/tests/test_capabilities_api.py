@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.services import appium_node_resource_service
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import resource_service as appium_node_resource_service
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:

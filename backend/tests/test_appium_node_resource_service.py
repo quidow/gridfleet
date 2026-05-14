@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
-from app.services import appium_node_resource_service as svc
+from app.appium_nodes.models import AppiumNodeResourceClaim
+from app.appium_nodes.services import resource_service as svc
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -198,8 +198,8 @@ async def test_reserve_same_owner_idempotent_under_contention(
 async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib.UUID:
     from sqlalchemy import select
 
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
-    from app.models.device import (
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.models import (
         ConnectionType,
         Device,
         DeviceOperationalState,
@@ -207,7 +207,7 @@ async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib
         HardwareHealthStatus,
         HardwareTelemetrySupportStatus,
     )
-    from app.models.host import Host, HostStatus, OSType
+    from app.hosts.models import Host, HostStatus, OSType
 
     host = (await db_session.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
     if host is None:

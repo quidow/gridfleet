@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentUnreachableError
+from app.core.errors import AgentUnreachableError
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {
@@ -67,7 +67,7 @@ ANDROID_AVD_PACK_RESPONSE: dict[str, Any] = {
 
 
 def _patch_pack_devices(response: dict[str, Any]) -> object:
-    return patch("app.routers.hosts.get_pack_devices", new=AsyncMock(return_value=response))
+    return patch("app.hosts.router.get_pack_devices", new=AsyncMock(return_value=response))
 
 
 async def test_discover_devices(client: AsyncClient) -> None:
@@ -426,7 +426,7 @@ async def test_discover_agent_unreachable(client: AsyncClient) -> None:
     host = (await client.post("/api/hosts", json=HOST_PAYLOAD)).json()
 
     with patch(
-        "app.routers.hosts.get_pack_devices",
+        "app.hosts.router.get_pack_devices",
         new=AsyncMock(side_effect=AgentUnreachableError(host["ip"], "Connection refused")),
     ):
         resp = await client.post(f"/api/hosts/{host['id']}/discover")

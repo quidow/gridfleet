@@ -13,45 +13,71 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.errors import AgentCallError, PackDisabledError, PackUnavailableError
-from app.models.appium_node import AppiumDesiredState
-from app.models.device import ConnectionType, DeviceHold, DeviceType
-from app.models.test_run import RunState
+from app.analytics import router as analytics
+from app.analytics.schemas import DeviceReliabilityRow, DeviceUtilizationRow, GroupByOption
+from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.routers import admin as admin_appium_nodes
+from app.appium_nodes.routers import nodes as nodes_router
+from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
+from app.core.pagination import CursorPage, CursorPaginationError
+from app.devices.models import ConnectionType, DeviceHold, DeviceType
+from app.devices.routers import (
+    bulk as bulk,
+)
+from app.devices.routers import (
+    control as devices_control,
+)
+from app.devices.routers import (
+    core as devices_core,
+)
+from app.devices.routers import (
+    groups as device_groups,
+)
+from app.devices.routers import (
+    helpers as device_route_helpers,
+)
+from app.devices.routers import (
+    lifecycle_incidents as lifecycle,
+)
+from app.devices.routers import (
+    test_data as devices_test_data,
+)
+from app.devices.routers import verification as devices_verification_router
+from app.devices.schemas.device import (
+    BulkMaintenanceEnter,
+    BulkTagsUpdate,
+    DeviceVerificationCreate,
+    DeviceVerificationUpdate,
+)
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError
+from app.events import router as events
+from app.grid import router as grid
+from app.hosts import router as hosts
+from app.hosts import router_terminal as host_terminal
+from app.packs.routers import (
+    agent_state as agent_driver_packs,
+)
+from app.packs.routers import (
+    authoring as driver_pack_authoring,
+)
+from app.packs.routers import (
+    catalog as driver_packs,
+)
+from app.packs.routers import (
+    export as driver_pack_export,
+)
+from app.packs.routers import (
+    templates as driver_pack_templates,
+)
+from app.packs.routers import (
+    uploads as driver_pack_uploads,
+)
+from app.packs.schemas import CurrentReleasePatch, RuntimePolicy
+from app.plugins import router as plugins_router
 from app.plugins.schemas import PluginCreate, PluginUpdate
-from app.routers import (
-    admin_appium_nodes,
-    agent_driver_packs,
-    analytics,
-    bulk,
-    device_groups,
-    device_route_helpers,
-    devices_control,
-    devices_core,
-    devices_test_data,
-    driver_pack_authoring,
-    driver_pack_export,
-    driver_pack_templates,
-    driver_pack_uploads,
-    driver_packs,
-    events,
-    grid,
-    host_terminal,
-    hosts,
-    lifecycle,
-    runs,
-    sessions,
-    webhooks,
-)
-from app.routers import devices_verification as devices_verification_router
-from app.routers import nodes as nodes_router
-from app.routers import plugins as plugins_router
-from app.routers import (
-    settings as settings_router,
-)
-from app.schemas.analytics import DeviceReliabilityRow, DeviceUtilizationRow, GroupByOption
-from app.schemas.device import BulkMaintenanceEnter, BulkTagsUpdate, DeviceVerificationCreate, DeviceVerificationUpdate
-from app.schemas.driver_pack import CurrentReleasePatch, RuntimePolicy
-from app.schemas.run import (
+from app.runs import router as runs
+from app.runs.models import RunState
+from app.runs.schemas import (
     ReservedDeviceInfo,
     RunCooldownRequest,
     RunCreate,
@@ -59,9 +85,10 @@ from app.schemas.run import (
     RunRead,
     SessionCounts,
 )
-from app.services.cursor_pagination import CursorPage, CursorPaginationError
-from app.services.device_identity_conflicts import DeviceIdentityConflictError
+from app.sessions import router as sessions
+from app.settings import router as settings_router
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
+from app.webhooks import router as webhooks
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -277,8 +304,8 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     pack_id = "appium-demo"
     pack = SimpleNamespace(id=pack_id)
-    with patch("app.routers.driver_packs.transition_pack_state", new=AsyncMock(return_value=pack)):
-        with patch("app.routers.driver_packs.build_pack_out", new=Mock(return_value={"id": pack_id})):
+    with patch("app.packs.routers.catalog.transition_pack_state", new=AsyncMock(return_value=pack)):
+        with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
             assert (
                 await driver_packs.update_pack(
                     pack_id,
@@ -288,8 +315,8 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
                 )
             ) == {"id": pack_id}
 
-    with patch("app.routers.driver_packs.set_runtime_policy", new=AsyncMock(return_value=pack)):
-        with patch("app.routers.driver_packs.build_pack_out", new=Mock(return_value={"id": pack_id})):
+    with patch("app.packs.routers.catalog.set_runtime_policy", new=AsyncMock(return_value=pack)):
+        with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
             assert (
                 await driver_packs.update_runtime_policy(
                     pack_id,
@@ -299,7 +326,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
                 )
             ) == {"id": pack_id}
 
-    with patch("app.routers.driver_packs.delete_pack", new=AsyncMock(side_effect=LookupError("missing"))):
+    with patch("app.packs.routers.catalog.delete_pack", new=AsyncMock(side_effect=LookupError("missing"))):
         with pytest.raises(HTTPException) as exc:
             await driver_packs.delete_driver_pack(pack_id, _username="admin", session=DummySession())
     assert exc.value.status_code == 404
@@ -644,9 +671,9 @@ async def test_admin_appium_node_clear_transition_paths() -> None:
 
     node = SimpleNamespace(device_id=device_id)
     with (
-        patch("app.routers.admin_appium_nodes.device_locking.lock_device", new=AsyncMock(return_value=object())),
+        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
         patch(
-            "app.routers.admin_appium_nodes.appium_node_locking.lock_appium_node_for_device",
+            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -662,9 +689,9 @@ async def test_admin_appium_node_clear_transition_paths() -> None:
     locked = SimpleNamespace(device_id=device_id, transition_token=None, transition_deadline=object())
     session = MutatingSession(get_result=node)
     with (
-        patch("app.routers.admin_appium_nodes.device_locking.lock_device", new=AsyncMock(return_value=object())),
+        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
         patch(
-            "app.routers.admin_appium_nodes.appium_node_locking.lock_appium_node_for_device",
+            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
             new=AsyncMock(return_value=locked),
         ),
     ):
@@ -683,12 +710,12 @@ async def test_admin_appium_node_clear_transition_paths() -> None:
     locked = SimpleNamespace(device_id=device_id, transition_token=token, transition_deadline=object())
     session = MutatingSession(get_result=node)
     with (
-        patch("app.routers.admin_appium_nodes.device_locking.lock_device", new=AsyncMock(return_value=object())),
+        patch("app.appium_nodes.routers.admin.device_locking.lock_device", new=AsyncMock(return_value=object())),
         patch(
-            "app.routers.admin_appium_nodes.appium_node_locking.lock_appium_node_for_device",
+            "app.appium_nodes.routers.admin.appium_node_locking.lock_appium_node_for_device",
             new=AsyncMock(return_value=locked),
         ),
-        patch("app.routers.admin_appium_nodes.record_event", new=AsyncMock()) as record_event,
+        patch("app.appium_nodes.routers.admin.record_event", new=AsyncMock()) as record_event,
     ):
         assert (
             await admin_appium_nodes.clear_transition(
@@ -722,7 +749,9 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
         (bulk.bulk_set_auto_manage, "bulk_set_auto_manage", auto_body),
     ):
-        with patch(f"app.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})):
+        with patch(
+            f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
+        ):
             assert await call(payload, db=object()) == {"ok": service_name}
 
 
@@ -732,18 +761,18 @@ async def test_devices_test_data_router_paths() -> None:
     payload = SimpleNamespace(root={"token": "abc"})
 
     with (
-        patch("app.routers.devices_test_data.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_test_data.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.test_data.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch(
-            "app.routers.devices_test_data.test_data_service.get_device_test_data",
+            "app.devices.routers.test_data.test_data_service.get_device_test_data",
             new=AsyncMock(return_value={"a": 1}),
         ),
         patch(
-            "app.routers.devices_test_data.test_data_service.replace_device_test_data",
+            "app.devices.routers.test_data.test_data_service.replace_device_test_data",
             new=AsyncMock(return_value={"token": "abc"}),
         ),
         patch(
-            "app.routers.devices_test_data.test_data_service.merge_device_test_data",
+            "app.devices.routers.test_data.test_data_service.merge_device_test_data",
             new=AsyncMock(return_value={"merged": True}),
         ),
     ):
@@ -759,9 +788,9 @@ async def test_devices_test_data_router_paths() -> None:
         changed_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
     with (
-        patch("app.routers.devices_test_data.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)),
         patch(
-            "app.routers.devices_test_data.test_data_service.get_test_data_history",
+            "app.devices.routers.test_data.test_data_service.get_test_data_history",
             new=AsyncMock(return_value=[audit_log]),
         ),
     ):
@@ -782,8 +811,8 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
     }
 
     with (
-        patch("app.routers.sessions.session_service.list_sessions", new=AsyncMock(return_value=([session_obj], 1))),
-        patch("app.routers.sessions._session_details_with_labels", new=AsyncMock(return_value=[detail])),
+        patch("app.sessions.router.session_service.list_sessions", new=AsyncMock(return_value=([session_obj], 1))),
+        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
     ):
         listed = await sessions.list_sessions(
             request,
@@ -807,7 +836,7 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
 
     cursor_request = SimpleNamespace(query_params={"cursor": "bad"})
     with patch(
-        "app.routers.sessions.session_service.list_sessions_cursor",
+        "app.sessions.router.session_service.list_sessions_cursor",
         new=AsyncMock(side_effect=CursorPaginationError("bad cursor")),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -832,8 +861,8 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
 
     page = CursorPage(items=[session_obj], limit=50, next_cursor="next", prev_cursor="prev")
     with (
-        patch("app.routers.sessions.session_service.list_sessions_cursor", new=AsyncMock(return_value=page)),
-        patch("app.routers.sessions._session_details_with_labels", new=AsyncMock(return_value=[detail])),
+        patch("app.sessions.router.session_service.list_sessions_cursor", new=AsyncMock(return_value=page)),
+        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
     ):
         listed = await sessions.list_sessions(
             cursor_request,
@@ -855,14 +884,14 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
     assert listed.next_cursor == "next"
     assert listed.prev_cursor == "prev"
 
-    with patch("app.routers.sessions.session_service.get_session", new=AsyncMock(return_value=None)):
+    with patch("app.sessions.router.session_service.get_session", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await sessions.get_session("missing", db=object())
     assert exc.value.status_code == 404
 
     with (
-        patch("app.routers.sessions.session_service.get_session", new=AsyncMock(return_value=session_obj)),
-        patch("app.routers.sessions._session_details_with_labels", new=AsyncMock(return_value=[detail])),
+        patch("app.sessions.router.session_service.get_session", new=AsyncMock(return_value=session_obj)),
+        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
     ):
         assert (await sessions.get_session("s1", db=object()))["session_id"] == "s1"
 
@@ -881,28 +910,28 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         error_message=None,
     )
     with patch(
-        "app.routers.sessions.session_service.register_session",
+        "app.sessions.router.session_service.register_session",
         new=AsyncMock(side_effect=ValueError("missing")),
     ):
         with pytest.raises(HTTPException) as exc:
             await sessions.register_session(create_payload, db=object())  # type: ignore[arg-type]
     assert exc.value.status_code == 404
-    with patch("app.routers.sessions.session_service.register_session", new=AsyncMock(return_value=session_obj)):
+    with patch("app.sessions.router.session_service.register_session", new=AsyncMock(return_value=session_obj)):
         assert await sessions.register_session(create_payload, db=object()) is session_obj  # type: ignore[arg-type]
 
     status_payload = SimpleNamespace(status="passed")
-    with patch("app.routers.sessions.session_service.update_session_status", new=AsyncMock(return_value=None)):
+    with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await sessions.update_session_status("missing", status_payload, db=object())  # type: ignore[arg-type]
     assert exc.value.status_code == 404
-    with patch("app.routers.sessions.session_service.update_session_status", new=AsyncMock(return_value=session_obj)):
+    with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=session_obj)):
         assert await sessions.update_session_status("s1", status_payload, db=object()) is session_obj  # type: ignore[arg-type]
 
-    with patch("app.routers.sessions.session_service.mark_session_finished", new=AsyncMock(return_value=None)):
+    with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await sessions.post_session_finished("missing", db=object())
     assert exc.value.status_code == 404
-    with patch("app.routers.sessions.session_service.mark_session_finished", new=AsyncMock(return_value=session_obj)):
+    with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=session_obj)):
         assert (await sessions.post_session_finished("s1", db=object())).status_code == 204
 
 
@@ -911,14 +940,14 @@ async def test_plugins_router_maps_service_conflicts_and_missing_resources() -> 
     body = PluginCreate(name="images", version="1.0.0", source="npm:images")
 
     with patch(
-        "app.routers.plugins.plugin_service.create_plugin",
+        "app.plugins.router.plugin_service.create_plugin",
         new=AsyncMock(side_effect=IntegrityError("insert", {}, Exception("dupe"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await plugins_router.create_plugin(body, db=object())
     assert exc.value.status_code == 409
 
-    with patch("app.routers.plugins.plugin_service.update_plugin", new=AsyncMock(return_value=None)):
+    with patch("app.plugins.router.plugin_service.update_plugin", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await plugins_router.update_plugin(plugin_id, PluginUpdate(version="2.0.0"), db=object())
     assert exc.value.status_code == 404
@@ -929,60 +958,60 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
     response = SimpleNamespace(status_code=200)
 
-    with patch("app.routers.hosts.host_service.register_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
+    with patch("app.hosts.router.host_service.register_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
         with pytest.raises(HTTPException) as exc:
             await hosts.register_host(object(), response, db=object())  # type: ignore[arg-type]
     assert exc.value.status_code == 409
 
     with (
-        patch("app.routers.hosts.host_service.register_host", new=AsyncMock(return_value=(host, True))),
-        patch("app.routers.hosts.settings_service.get", new=Mock(return_value=True)),
-        patch("app.routers.hosts._fire_and_forget", new=Mock()) as fire,
-        patch("app.routers.hosts._serialize_host", new=Mock(return_value={"id": str(host_id)})),
+        patch("app.hosts.router.host_service.register_host", new=AsyncMock(return_value=(host, True))),
+        patch("app.hosts.router.settings_service.get", new=Mock(return_value=True)),
+        patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
+        patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         assert await hosts.register_host(object(), response, db=object()) == {"id": str(host_id)}  # type: ignore[arg-type]
     assert response.status_code == 201
     assert fire.call_count == 2
 
-    with patch("app.routers.hosts.host_service.approve_host", new=AsyncMock(return_value=None)):
+    with patch("app.hosts.router.host_service.approve_host", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await hosts.approve_host(host_id, db=object())
     assert exc.value.status_code == 404
 
     with (
-        patch("app.routers.hosts.host_service.approve_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts._fire_and_forget", new=Mock()) as fire,
-        patch("app.routers.hosts._serialize_host", new=Mock(return_value={"id": str(host_id)})),
+        patch("app.hosts.router.host_service.approve_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
+        patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         assert await hosts.approve_host(host_id, db=object()) == {"id": str(host_id)}
     assert fire.call_count == 2
 
-    with patch("app.routers.hosts.host_service.reject_host", new=AsyncMock(return_value=False)):
+    with patch("app.hosts.router.host_service.reject_host", new=AsyncMock(return_value=False)):
         with pytest.raises(HTTPException) as exc:
             await hosts.reject_host(host_id, db=object())
     assert exc.value.status_code == 404
 
-    with patch("app.routers.hosts.host_service.reject_host", new=AsyncMock(return_value=True)):
+    with patch("app.hosts.router.host_service.reject_host", new=AsyncMock(return_value=True)):
         assert await hosts.reject_host(host_id, db=object()) is None
 
-    with patch("app.routers.hosts.host_service.create_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
+    with patch("app.hosts.router.host_service.create_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
         with pytest.raises(HTTPException) as exc:
             await hosts.create_host(object(), db=object())  # type: ignore[arg-type]
     assert exc.value.status_code == 409
 
     with (
-        patch("app.routers.hosts.host_service.create_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts._serialize_host", new=Mock(return_value={"id": str(host_id)})),
+        patch("app.hosts.router.host_service.create_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         assert await hosts.create_host(object(), db=object()) == {"id": str(host_id)}  # type: ignore[arg-type]
 
     with (
-        patch("app.routers.hosts.host_service.list_hosts", new=AsyncMock(return_value=[host])),
-        patch("app.routers.hosts._serialize_host", new=Mock(return_value={"id": str(host_id)})),
+        patch("app.hosts.router.host_service.list_hosts", new=AsyncMock(return_value=[host])),
+        patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         assert await hosts.list_hosts(db=object()) == [{"id": str(host_id)}]
 
-    with patch("app.routers.hosts.settings_service.get", new=Mock(return_value=True)):
+    with patch("app.hosts.router.settings_service.get", new=Mock(return_value=True)):
         assert await hosts.host_capabilities() == {"web_terminal_enabled": True}
 
 
@@ -998,7 +1027,7 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         devices=[device],
     )
 
-    with patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=None)):
+    with patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=None)):
         for call in (
             lambda: hosts.get_host(host_id, db=object()),
             lambda: hosts.get_host_tool_status(host_id, db=object()),
@@ -1013,79 +1042,77 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
             assert exc.value.status_code == 404
 
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts._serialize_host", new=Mock(return_value={"id": str(host_id)})),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
         patch(
-            "app.routers.hosts.platform_label_service.load_platform_label_map",
+            "app.hosts.router.platform_label_service.load_platform_label_map",
             new=AsyncMock(return_value={("pack", "android"): "Android"}),
         ),
-        patch(
-            "app.routers.hosts.device_presenter.serialize_device", new=AsyncMock(return_value={"id": str(device.id)})
-        ),
+        patch("app.hosts.router.device_presenter.serialize_device", new=AsyncMock(return_value={"id": str(device.id)})),
     ):
         detail = await hosts.get_host(host_id, db=object())
     assert detail["devices"] == [{"id": str(device.id)}]
 
-    with patch("app.routers.hosts.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value=None)):
+    with patch("app.hosts.router.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await hosts.get_host_diagnostics(host_id, db=object())
     assert exc.value.status_code == 404
-    with patch("app.routers.hosts.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value={"ok": True})):
+    with patch("app.hosts.router.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value={"ok": True})):
         assert await hosts.get_host_diagnostics(host_id, db=object()) == {"ok": True}
 
     with (
         patch(
-            "app.routers.hosts.host_resource_telemetry.fetch_host_resource_telemetry",
+            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
             new=AsyncMock(side_effect=ValueError("bad")),
         ),
-        patch("app.routers.hosts.settings_service.get", new=Mock(return_value=60)),
+        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
     ):
         with pytest.raises(HTTPException) as exc:
             await hosts.get_host_resource_telemetry(host_id, db=object())
     assert exc.value.status_code == 400
     with (
         patch(
-            "app.routers.hosts.host_resource_telemetry.fetch_host_resource_telemetry", new=AsyncMock(return_value=None)
+            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry", new=AsyncMock(return_value=None)
         ),
-        patch("app.routers.hosts.settings_service.get", new=Mock(return_value=60)),
+        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
     ):
         with pytest.raises(HTTPException) as exc:
             await hosts.get_host_resource_telemetry(host_id, db=object())
     assert exc.value.status_code == 404
     with (
         patch(
-            "app.routers.hosts.host_resource_telemetry.fetch_host_resource_telemetry",
+            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
             new=AsyncMock(return_value={"samples": []}),
         ),
-        patch("app.routers.hosts.settings_service.get", new=Mock(return_value=60)),
+        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
     ):
         assert await hosts.get_host_resource_telemetry(host_id, db=object()) == {"samples": []}
 
     offline = SimpleNamespace(status=SimpleNamespace(value="offline"))
-    with patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=offline)):
+    with patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=offline)):
         with pytest.raises(HTTPException) as exc:
             await hosts.get_host_tool_status(host_id, db=object())
     assert exc.value.status_code == 400
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.get_agent_tool_status", new=AsyncMock(return_value={"tools": []})),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router.get_agent_tool_status", new=AsyncMock(return_value={"tools": []})),
     ):
         assert await hosts.get_host_tool_status(host_id, db=object()) == {"tools": []}
 
     for error, status_code in ((ValueError("busy"), 409), (None, 404)):
         result = AsyncMock(side_effect=error) if error is not None else AsyncMock(return_value=False)
-        with patch("app.routers.hosts.host_service.delete_host", new=result):
+        with patch("app.hosts.router.host_service.delete_host", new=result):
             with pytest.raises(HTTPException) as exc:
                 await hosts.delete_host(host_id, db=object())
         assert exc.value.status_code == status_code
-    with patch("app.routers.hosts.host_service.delete_host", new=AsyncMock(return_value=True)):
+    with patch("app.hosts.router.host_service.delete_host", new=AsyncMock(return_value=True)):
         assert await hosts.delete_host(host_id, db=object()) is None
 
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.pack_discovery_service.discover_devices", new=AsyncMock(return_value="discovered")),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router.pack_discovery_service.discover_devices", new=AsyncMock(return_value="discovered")),
         patch(
-            "app.routers.hosts.pack_discovery_service.list_intake_candidates", new=AsyncMock(return_value=["candidate"])
+            "app.hosts.router.pack_discovery_service.list_intake_candidates", new=AsyncMock(return_value=["candidate"])
         ),
     ):
         assert await hosts.discover_devices(host_id, db=object()) == "discovered"
@@ -1093,10 +1120,10 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
 
     body = SimpleNamespace(add_identity_values=["serial"], remove_identity_values=[])
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.pack_discovery_service.discover_devices", new=AsyncMock(return_value="fresh")),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router.pack_discovery_service.discover_devices", new=AsyncMock(return_value="fresh")),
         patch(
-            "app.routers.hosts.pack_discovery_service.confirm_discovery",
+            "app.hosts.router.pack_discovery_service.confirm_discovery",
             new=AsyncMock(side_effect=DeviceIdentityConflictError("dupe")),
         ),
     ):
@@ -1105,36 +1132,36 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     assert exc.value.status_code == 409
 
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.pack_discovery_service.discover_devices", new=AsyncMock(return_value="fresh")),
-        patch("app.routers.hosts.pack_discovery_service.confirm_discovery", new=AsyncMock(return_value="confirmed")),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router.pack_discovery_service.discover_devices", new=AsyncMock(return_value="fresh")),
+        patch("app.hosts.router.pack_discovery_service.confirm_discovery", new=AsyncMock(return_value="confirmed")),
     ):
         assert await hosts.confirm_discovery(host_id, body, db=object()) == "confirmed"  # type: ignore[arg-type]
 
 
 def test_host_terminal_helpers() -> None:
     with (
-        patch("app.routers.host_terminal.settings_service.get", new=Mock(return_value="")),
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
+        patch("app.hosts.router_terminal.settings_service.get", new=Mock(return_value="")),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
     ):
         assert host_terminal._origin_allowed("https://example.test") is True
         assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) is None  # type: ignore[arg-type]
 
-    with patch("app.routers.host_terminal.settings_service.get", new=Mock(return_value="https://ok.test")):
+    with patch("app.hosts.router_terminal.settings_service.get", new=Mock(return_value="https://ok.test")):
         assert host_terminal._origin_allowed("https://ok.test") is True
         assert host_terminal._origin_allowed("https://bad.test") is False
 
     state = SimpleNamespace(authenticated=True, username="admin")
     with (
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
-        patch("app.routers.host_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
+        patch("app.hosts.router_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
     ):
         assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) == "admin"  # type: ignore[arg-type]
 
     state = SimpleNamespace(authenticated=False, username=None)
     with (
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
-        patch("app.routers.host_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
+        patch("app.hosts.router_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
     ):
         assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) is None  # type: ignore[arg-type]
 
@@ -1177,8 +1204,8 @@ async def test_host_terminal_rejects_origin_and_unauthenticated_browser() -> Non
 
     bad_origin_ws = _FakeHostTerminalWebSocket(origin="https://bad.test")
     with (
-        patch("app.routers.host_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
+        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
     ):
         await host_terminal.host_terminal(bad_origin_ws, host_id)  # type: ignore[arg-type]
     assert bad_origin_ws.close_codes == [1008]
@@ -1186,10 +1213,10 @@ async def test_host_terminal_rejects_origin_and_unauthenticated_browser() -> Non
     unauthenticated_ws = _FakeHostTerminalWebSocket(origin="https://ok.test")
     session_state = SimpleNamespace(authenticated=False, username=None)
     with (
-        patch("app.routers.host_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
+        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
         patch(
-            "app.routers.host_terminal.auth.resolve_browser_session_from_headers",
+            "app.hosts.router_terminal.auth.resolve_browser_session_from_headers",
             new=Mock(return_value=session_state),
         ),
     ):
@@ -1218,14 +1245,14 @@ async def test_host_terminal_adapter_methods_and_proxy_error_path() -> None:
 
     close_session = AsyncMock()
     with (
-        patch("app.routers.host_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.routers.host_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
-        patch("app.routers.host_terminal.async_session", new=Mock(return_value=_FakeHostTerminalSessionScope())),
-        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=AsyncMock(return_value=session_id)),
-        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
-        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
-        patch("app.routers.host_terminal.settings.agent_terminal_token", "token"),
+        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
+        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
+        patch("app.hosts.router_terminal.async_session", new=Mock(return_value=_FakeHostTerminalSessionScope())),
+        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=AsyncMock(return_value=session_id)),
+        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
+        patch("app.hosts.router_terminal.agent_settings.agent_terminal_token", "token"),
     ):
         await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
 
@@ -1266,9 +1293,9 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         (lambda: devices_control.exit_device_maintenance(device_id, db=object()), "exit_maintenance"),
     ):
         with (
-            patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+            patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
             patch(
-                f"app.routers.devices_control.maintenance_service.{service_name}",
+                f"app.devices.routers.control.maintenance_service.{service_name}",
                 new=AsyncMock(side_effect=ValueError("bad")),
             ),
         ):
@@ -1277,23 +1304,23 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         assert exc.value.status_code == 409
 
         with (
-            patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+            patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
             patch(
-                f"app.routers.devices_control.maintenance_service.{service_name}", new=AsyncMock(return_value=device)
+                f"app.devices.routers.control.maintenance_service.{service_name}", new=AsyncMock(return_value=device)
             ),
             patch(
-                "app.routers.devices_control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)
+                "app.devices.routers.control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)
             ),
         ):
             assert await call() == serialized
 
     config = {"env": {"A": "B"}}
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.config_service.get_device_config", new=AsyncMock(return_value=config)),
-        patch("app.routers.devices_control.config_service.replace_device_config", new=AsyncMock(return_value=config)),
-        patch("app.routers.devices_control.config_service.merge_device_config", new=AsyncMock(return_value=config)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.config_service.get_device_config", new=AsyncMock(return_value=config)),
+        patch("app.devices.routers.control.config_service.replace_device_config", new=AsyncMock(return_value=config)),
+        patch("app.devices.routers.control.config_service.merge_device_config", new=AsyncMock(return_value=config)),
     ):
         assert await devices_control.get_device_config(device_id, keys=" env , other ", db=object()) == config
         assert await devices_control.replace_device_config(device_id, {"env": {}}, db=object()) == config
@@ -1307,16 +1334,16 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         changed_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.config_service.get_config_history", new=AsyncMock(return_value=[audit_log])),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.config_service.get_config_history", new=AsyncMock(return_value=[audit_log])),
     ):
         history = await devices_control.get_config_history(device_id, db=object())
     assert history[0]["changed_at"] == "2026-05-01T00:00:00+00:00"
 
     with (
-        patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch(
-            "app.routers.devices_control.session_viability.run_session_viability_probe",
+            "app.devices.routers.control.session_viability.run_session_viability_probe",
             new=AsyncMock(side_effect=ValueError("busy")),
         ),
     ):
@@ -1325,25 +1352,25 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
     assert exc.value.status_code == 409
 
     with (
-        patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch(
-            "app.routers.devices_control.session_viability.run_session_viability_probe",
+            "app.devices.routers.control.session_viability.run_session_viability_probe",
             new=AsyncMock(return_value={"status": "passed"}),
         ),
     ):
         assert await devices_control.device_session_test(device_id, db=object()) == {"status": "passed"}
 
     missing_host = _control_device(host_id=None)
-    with patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=missing_host)):
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=missing_host)):
         with pytest.raises(HTTPException) as exc:
             await devices_control.refresh_device_properties(device_id, db=object())
     assert exc.value.status_code == 400
 
     db = SimpleNamespace(refresh=AsyncMock())
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.pack_discovery_service.refresh_device_properties", new=AsyncMock()),
-        patch("app.routers.devices_control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.pack_discovery_service.refresh_device_properties", new=AsyncMock()),
+        patch("app.devices.routers.control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
     ):
         assert await devices_control.refresh_device_properties(device_id, db=db) == serialized
     db.refresh.assert_awaited_once_with(device)
@@ -1356,8 +1383,8 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     device = _control_device(id=device_id)
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(device_id, db=object())
@@ -1370,18 +1397,18 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         (_control_device(connection_target=None), "no connection target"),
     ):
         with (
-            patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=bad_device)),
-            patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-            patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+            patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=bad_device)),
+            patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+            patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         ):
             with pytest.raises(HTTPException) as exc:
                 await devices_control.reconnect_device(device_id, db=object())
         assert detail in str(exc.value.detail)
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=False)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=False)),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(device_id, db=object())
@@ -1391,32 +1418,32 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
     auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.routers.devices_control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
+            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
-        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=AsyncMock()),
-        patch("app.routers.devices_control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=AsyncMock()),
+        patch("app.devices.routers.control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
         with pytest.raises(RuntimeError, match="boom"):
             await devices_control.reconnect_device(device_id, db=auto_db)  # type: ignore[arg-type]
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.routers.devices_control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
+            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
     ):
         reconnect = await devices_control.reconnect_device(device_id, db=object())
     assert reconnect["message"] == "Reconnected"
 
     with (
-        patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
+        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_lifecycle_action(device_id, "state", db=object())
@@ -1427,9 +1454,9 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         (_control_device(connection_target=None), "no connection target"),
     ):
         with (
-            patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=bad_device)),
-            patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-            patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+            patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=bad_device)),
+            patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+            patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         ):
             with pytest.raises(HTTPException) as exc:
                 await devices_control.device_lifecycle_action(device_id, "state", db=object())
@@ -1437,13 +1464,13 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     db = SimpleNamespace(commit=AsyncMock())
     with (
-        patch("app.routers.devices_control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.routers.devices_control.pack_device_lifecycle_action", new=AsyncMock(return_value={"state": "running"})
+            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"state": "running"})
         ),
-        patch("app.routers.devices_control.device_health_service.update_emulator_state", new=AsyncMock()),
+        patch("app.devices.routers.control.device_health_service.update_emulator_state", new=AsyncMock()),
     ):
         assert await devices_control.device_lifecycle_action(device_id, "state", db=db) == {"state": "running"}
     db.commit.assert_awaited_once()
@@ -1451,12 +1478,12 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     node = SimpleNamespace(port=4731, observed_running=True, health_running=None, health_state=None)
     health_device = _control_device(appium_node=node)
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=health_device)),
-        patch("app.routers.devices_control.require_management_host", new=Mock(return_value=health_device.host)),
-        patch("app.routers.devices_control.fetch_appium_status", new=AsyncMock(return_value={"running": False})),
-        patch("app.routers.devices_control.fetch_pack_device_health", new=AsyncMock(return_value={"healthy": True})),
-        patch("app.routers.devices_control.session_viability.get_session_viability", new=AsyncMock(return_value=None)),
-        patch("app.routers.devices_control.lifecycle_policy.build_lifecycle_policy", new=AsyncMock(return_value={})),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=health_device)),
+        patch("app.devices.routers.control.require_management_host", new=Mock(return_value=health_device.host)),
+        patch("app.devices.routers.control.fetch_appium_status", new=AsyncMock(return_value={"running": False})),
+        patch("app.devices.routers.control.fetch_pack_device_health", new=AsyncMock(return_value={"healthy": True})),
+        patch("app.devices.routers.control.session_viability.get_session_viability", new=AsyncMock(return_value=None)),
+        patch("app.devices.routers.control.lifecycle_policy.build_lifecycle_policy", new=AsyncMock(return_value={})),
     ):
         health = await devices_control.device_health(device_id, db=object())
     assert health["node"]["state"] == "error"
@@ -1464,42 +1491,42 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     with (
         patch(
-            "app.routers.devices_control.get_device_or_404",
+            "app.devices.routers.control.get_device_or_404",
             new=AsyncMock(return_value=_control_device(appium_node=None)),
         ),
-        patch("app.routers.devices_control.require_management_host", new=Mock(return_value=device.host)),
+        patch("app.devices.routers.control.require_management_host", new=Mock(return_value=device.host)),
     ):
         assert await devices_control.device_logs(device_id, db=object()) == {"lines": [], "count": 0}
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=health_device)),
-        patch("app.routers.devices_control.require_management_host", new=Mock(return_value=health_device.host)),
-        patch("app.routers.devices_control.appium_logs", new=AsyncMock(side_effect=httpx.HTTPError("down"))),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=health_device)),
+        patch("app.devices.routers.control.require_management_host", new=Mock(return_value=health_device.host)),
+        patch("app.devices.routers.control.appium_logs", new=AsyncMock(side_effect=httpx.HTTPError("down"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_logs(device_id, db=object())
     assert exc.value.status_code == 502
 
     plugin_id = uuid.uuid4()
-    with patch("app.routers.plugins.plugin_service.delete_plugin", new=AsyncMock(return_value=False)):
+    with patch("app.plugins.router.plugin_service.delete_plugin", new=AsyncMock(return_value=False)):
         with pytest.raises(HTTPException) as exc:
             await plugins_router.delete_plugin(plugin_id, db=object())
     assert exc.value.status_code == 404
 
-    with patch("app.routers.plugins.host_service.get_host", new=AsyncMock(return_value=None)):
+    with patch("app.plugins.router.host_service.get_host", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await plugins_router.host_plugins(plugin_id, db=object())
     assert exc.value.status_code == 404
 
     host = SimpleNamespace(id=plugin_id)
     with (
-        patch("app.routers.plugins.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.plugins.plugin_service.list_plugins", new=AsyncMock(return_value=["required"])),
+        patch("app.plugins.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.plugins.router.plugin_service.list_plugins", new=AsyncMock(return_value=["required"])),
         patch(
-            "app.routers.plugins.plugin_service.get_host_plugin_statuses",
+            "app.plugins.router.plugin_service.get_host_plugin_statuses",
             new=AsyncMock(return_value=[{"status": "ok"}]),
         ),
-        patch("app.routers.plugins.plugin_service.sync_host_plugins", new=AsyncMock(return_value={"installed": []})),
+        patch("app.plugins.router.plugin_service.sync_host_plugins", new=AsyncMock(return_value={"installed": []})),
     ):
         assert await plugins_router.host_plugins(plugin_id, db=object()) == [{"status": "ok"}]
         assert await plugins_router.sync_host_plugins(plugin_id, db=object()) == {"installed": []}
@@ -1523,15 +1550,15 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     start_node = AsyncMock()
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.routers.devices_control.pack_device_lifecycle_action",
+            "app.devices.routers.control.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=revoke),
-        patch("app.routers.devices_control.node_manager.start_node", new=start_node),
+        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
+        patch("app.devices.routers.control.node_manager.start_node", new=start_node),
     ):
         reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
 
@@ -1572,16 +1599,16 @@ async def test_devices_control_reconnect_skips_recovery_cleanup_when_auto_manage
     restart_node = AsyncMock()
 
     with (
-        patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.routers.devices_control.platform_has_lifecycle_action", new=Mock(return_value=True)),
+        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
+        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
+        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.routers.devices_control.pack_device_lifecycle_action",
+            "app.devices.routers.control.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=revoke),
-        patch("app.routers.devices_control.node_manager.start_node", new=start_node),
-        patch("app.routers.devices_control.node_manager.restart_node", new=restart_node),
+        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
+        patch("app.devices.routers.control.node_manager.start_node", new=start_node),
+        patch("app.devices.routers.control.node_manager.restart_node", new=restart_node),
     ):
         reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
 
@@ -1630,15 +1657,11 @@ async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
     ]
 
     with (
-        patch("app.routers.analytics.analytics_service.get_session_summary", new=AsyncMock(return_value=summary)),
+        patch("app.analytics.router.analytics_service.get_session_summary", new=AsyncMock(return_value=summary)),
+        patch("app.analytics.router.analytics_service.get_device_utilization", new=AsyncMock(return_value=utilization)),
+        patch("app.analytics.router.analytics_service.get_device_reliability", new=AsyncMock(return_value=reliability)),
         patch(
-            "app.routers.analytics.analytics_service.get_device_utilization", new=AsyncMock(return_value=utilization)
-        ),
-        patch(
-            "app.routers.analytics.analytics_service.get_device_reliability", new=AsyncMock(return_value=reliability)
-        ),
-        patch(
-            "app.routers.analytics.get_fleet_capacity_timeline",
+            "app.analytics.router.get_fleet_capacity_timeline",
             new=AsyncMock(side_effect=ValueError("date_to must be after date_from")),
         ),
     ):
@@ -1685,8 +1708,8 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     }
 
     with (
-        patch("app.routers.grid.grid_service.get_grid_status", new=AsyncMock(return_value=grid_data)),
-        patch("app.routers.grid.device_service.list_devices", new=AsyncMock(return_value=devices)),
+        patch("app.grid.router.grid_service.get_grid_status", new=AsyncMock(return_value=grid_data)),
+        patch("app.grid.router.device_service.list_devices", new=AsyncMock(return_value=devices)),
     ):
         status = await grid.grid_status(db=object())
         queue = await grid.grid_queue()
@@ -1704,7 +1727,7 @@ async def test_nodes_router_validation_branches() -> None:
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
 
     with patch(
-        "app.routers.nodes.run_service.get_device_reservation",
+        "app.appium_nodes.routers.nodes.run_service.get_device_reservation",
         new=AsyncMock(return_value=SimpleNamespace(name="run", id="r1")),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -1718,13 +1741,13 @@ async def test_nodes_router_validation_branches() -> None:
     device.hold = None
 
     setup_required = SimpleNamespace(readiness_state="setup_required", missing_setup_fields=["identity_value"])
-    with patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=setup_required)):
+    with patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=setup_required)):
         with pytest.raises(HTTPException) as exc:
             await nodes_router._assert_device_verified(object(), device, action="start")
     assert "identity_value" in str(exc.value.detail)
 
     unverified = SimpleNamespace(readiness_state="failed", missing_setup_fields=[])
-    with patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=unverified)):
+    with patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=unverified)):
         with pytest.raises(HTTPException) as exc:
             await nodes_router._assert_device_verified(object(), device, action="start")
     assert exc.value.status_code == 409
@@ -1732,10 +1755,10 @@ async def test_nodes_router_validation_branches() -> None:
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     device.appium_node = running_node
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
-            "app.routers.nodes.assess_device_async",
+            "app.appium_nodes.routers.nodes.assess_device_async",
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
     ):
@@ -1746,13 +1769,13 @@ async def test_nodes_router_validation_branches() -> None:
     device.appium_node = None
     device.host_id = None
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
-            "app.routers.nodes.assess_device_async",
+            "app.appium_nodes.routers.nodes.assess_device_async",
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
-        patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
+        patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
     ):
         with pytest.raises(HTTPException) as exc:
             await nodes_router.start_node(device_id, db=object())
@@ -1761,14 +1784,14 @@ async def test_nodes_router_validation_branches() -> None:
     device.host_id = uuid.uuid4()
     started_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
-            "app.routers.nodes.assess_device_async",
+            "app.appium_nodes.routers.nodes.assess_device_async",
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
-        patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
-        patch("app.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=started_node)),
+        patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
+        patch("app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=started_node)),
     ):
         assert await nodes_router.start_node(device_id, db=object()) is started_node
 
@@ -1777,8 +1800,10 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     device_id = uuid.uuid4()
     stopped_device = SimpleNamespace(id=device_id, hold=None, appium_node=None)
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=stopped_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch(
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=stopped_device)
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(HTTPException) as exc:
             await nodes_router.stop_node(device_id, db=object())
@@ -1789,14 +1814,19 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     restarted = SimpleNamespace(id=uuid.uuid4())
     fake_db = SimpleNamespace(refresh=AsyncMock())
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
-            "app.routers.nodes.assess_device_async",
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch(
+            "app.appium_nodes.routers.nodes.assess_device_async",
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
-        patch("app.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
-        patch("app.routers.nodes.converge_device_now", new=AsyncMock(side_effect=RuntimeError("converge failed"))),
+        patch("app.appium_nodes.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
+        patch(
+            "app.appium_nodes.routers.nodes.converge_device_now",
+            new=AsyncMock(side_effect=RuntimeError("converge failed")),
+        ),
     ):
         assert await nodes_router.restart_node(device_id, db=fake_db) is restarted
     fake_db.refresh.assert_awaited_once_with(restarted)
@@ -1808,11 +1838,11 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
 
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
-        patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=False)),
-        patch("app.routers.nodes.readiness_error_detail_async", new=AsyncMock(return_value="not ready")),
+        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
+        patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=False)),
+        patch("app.appium_nodes.routers.nodes.readiness_error_detail_async", new=AsyncMock(return_value="not ready")),
     ):
         with pytest.raises(HTTPException) as exc:
             await nodes_router.start_node(device_id, db=object())
@@ -1821,11 +1851,13 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
-        patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
-        patch("app.routers.nodes.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
+        patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
+        patch(
+            "app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))
+        ),
     ):
         with pytest.raises(RuntimeError, match="boom"):
             await nodes_router.start_node(device_id, db=object())
@@ -1834,17 +1866,24 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4())
     stopped_node = SimpleNamespace(desired_state=AppiumDesiredState.stopped)
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.node_manager.stop_node", new=AsyncMock(return_value=stopped_node)),
+        patch(
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.node_manager.stop_node", new=AsyncMock(return_value=stopped_node)),
     ):
         assert await nodes_router.stop_node(device_id, db=object()) is stopped_node
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.node_manager.stop_node", new=AsyncMock(side_effect=RuntimeError("stop failed"))),
+        patch(
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch(
+            "app.appium_nodes.routers.nodes.node_manager.stop_node",
+            new=AsyncMock(side_effect=RuntimeError("stop failed")),
+        ),
     ):
         with pytest.raises(RuntimeError, match="stop failed"):
             await nodes_router.stop_node(device_id, db=object())
@@ -1857,11 +1896,14 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         host_id=uuid.uuid4(),
     )
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=non_running_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
-        patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
-        patch("app.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=fallback_started)),
+        patch(
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404",
+            new=AsyncMock(return_value=non_running_device),
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
+        patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
+        patch("app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=fallback_started)),
     ):
         assert await nodes_router.restart_node(device_id, db=object()) is fallback_started
 
@@ -1869,11 +1911,13 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     converged = SimpleNamespace(id=uuid.uuid4())
     fake_db = SimpleNamespace(refresh=AsyncMock())
     with (
-        patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)),
-        patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
-        patch("app.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
-        patch("app.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
-        patch("app.routers.nodes.converge_device_now", new=AsyncMock(return_value=converged)),
+        patch(
+            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
+        ),
+        patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
+        patch("app.appium_nodes.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
+        patch("app.appium_nodes.routers.nodes.converge_device_now", new=AsyncMock(return_value=converged)),
     ):
         assert await nodes_router.restart_node(device_id, db=fake_db) is converged
     fake_db.refresh.assert_awaited_once_with(converged)
@@ -1883,14 +1927,14 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     group_id = uuid.uuid4()
     device_ids = [uuid.uuid4()]
 
-    with patch("app.routers.device_groups.device_group_service.get_group_device_ids", new=AsyncMock(return_value=[])):
+    with patch("app.devices.routers.groups.device_group_service.get_group_device_ids", new=AsyncMock(return_value=[])):
         with pytest.raises(HTTPException) as exc:
             await device_groups._group_device_ids_or_404(object(), group_id)
     assert exc.value.status_code == 404
 
     with (
         patch(
-            "app.routers.device_groups.device_group_service.get_group",
+            "app.devices.routers.groups.device_group_service.get_group",
             new=AsyncMock(return_value={"group_type": "dynamic"}),
         ),
     ):
@@ -1908,10 +1952,10 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     ) -> None:
         with (
             patch(
-                "app.routers.device_groups.device_group_service.get_group_device_ids",
+                "app.devices.routers.groups.device_group_service.get_group_device_ids",
                 new=AsyncMock(return_value=device_ids),
             ),
-            patch(f"app.routers.device_groups.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": 1})),
+            patch(f"app.devices.routers.groups.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": 1})),
         ):
             assert await call(group_id, *args, db=object()) == {"ok": 1}
 
@@ -1936,7 +1980,7 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
 async def test_driver_pack_upload_export_and_template_error_mapping() -> None:
     assert await driver_pack_uploads._read_limited_upload(ChunkUpload([b"abc", b"def"])) == b"abcdef"
 
-    with patch("app.routers.driver_pack_uploads.MAX_PACK_TARBALL_BYTES", new=3):
+    with patch("app.packs.routers.uploads.MAX_PACK_TARBALL_BYTES", new=3):
         with pytest.raises(HTTPException) as exc:
             await driver_pack_uploads._read_limited_upload(ChunkUpload([b"abcd"]))
     assert exc.value.status_code == 413
@@ -1950,24 +1994,24 @@ async def test_driver_pack_upload_export_and_template_error_mapping() -> None:
         )
     assert exc.value.status_code == 400
 
-    with patch("app.routers.driver_pack_uploads.pack_release_service.list_releases", new=AsyncMock(return_value=None)):
+    with patch("app.packs.routers.uploads.pack_release_service.list_releases", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await driver_pack_uploads.list_releases("missing", session=object())
     assert exc.value.status_code == 404
     with patch(
-        "app.routers.driver_pack_uploads.pack_release_service.list_releases",
+        "app.packs.routers.uploads.pack_release_service.list_releases",
         new=AsyncMock(return_value="releases"),
     ):
         assert await driver_pack_uploads.list_releases("pack", session=object()) == "releases"
 
-    with patch("app.routers.driver_pack_uploads.PackStorageService", new=Mock(return_value="storage")):
+    with patch("app.packs.routers.uploads.PackStorageService", new=Mock(return_value="storage")):
         assert driver_pack_uploads.get_pack_storage() == "storage"
 
     pack = SimpleNamespace(id="local/uploaded")
     session = DummySession()
     with (
-        patch("app.routers.driver_pack_uploads.upload_pack", new=AsyncMock(return_value=pack)),
-        patch("app.routers.driver_pack_uploads.build_pack_out", new=Mock(return_value={"id": pack.id})),
+        patch("app.packs.routers.uploads.upload_pack", new=AsyncMock(return_value=pack)),
+        patch("app.packs.routers.uploads.build_pack_out", new=Mock(return_value={"id": pack.id})),
     ):
         assert await driver_pack_uploads.upload(
             tarball=ChunkUpload([b"tar"]),  # type: ignore[arg-type]
@@ -1981,7 +2025,7 @@ async def test_driver_pack_upload_export_and_template_error_mapping() -> None:
         (driver_pack_uploads.PackUploadValidationError("bad manifest"), 400),
         (driver_pack_uploads.PackUploadConflictError("duplicate"), 409),
     ):
-        with patch("app.routers.driver_pack_uploads.upload_pack", new=AsyncMock(side_effect=error)):
+        with patch("app.packs.routers.uploads.upload_pack", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
                 await driver_pack_uploads.upload(
                     tarball=ChunkUpload([b"tar"]),  # type: ignore[arg-type]
@@ -2020,10 +2064,8 @@ async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) 
     pack = SimpleNamespace(id="local/uploaded")
     session = DummySession()
     with (
-        patch(
-            "app.routers.driver_pack_uploads.pack_release_service.set_current_release", new=AsyncMock(return_value=pack)
-        ),
-        patch("app.routers.driver_pack_uploads.build_pack_out", new=Mock(return_value={"id": pack.id})),
+        patch("app.packs.routers.uploads.pack_release_service.set_current_release", new=AsyncMock(return_value=pack)),
+        patch("app.packs.routers.uploads.build_pack_out", new=Mock(return_value={"id": pack.id})),
     ):
         assert await driver_pack_uploads.update_current_release(
             "pack",
@@ -2038,15 +2080,13 @@ async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) 
         (ValueError("current"), 400),
         (RuntimeError("busy"), 409),
     ):
-        with patch(
-            "app.routers.driver_pack_uploads.pack_release_service.delete_release", new=AsyncMock(side_effect=error)
-        ):
+        with patch("app.packs.routers.uploads.pack_release_service.delete_release", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
                 await driver_pack_uploads.delete_release("pack", "1.0.0", _username="admin", session=DummySession())
         assert exc.value.status_code == status_code
 
     delete_session = DummySession()
-    with patch("app.routers.driver_pack_uploads.pack_release_service.delete_release", new=AsyncMock(return_value=None)):
+    with patch("app.packs.routers.uploads.pack_release_service.delete_release", new=AsyncMock(return_value=None)):
         response = await driver_pack_uploads.delete_release("pack", "1.0.0", _username="admin", session=delete_session)
     assert response.status_code == 204
     assert delete_session.committed is True
@@ -2069,7 +2109,7 @@ async def test_driver_pack_authoring_fork_error_mapping_and_success() -> None:
     assert exc.value.status_code == 404
 
     source = SimpleNamespace(id="source", current_release="1.0.0", releases=[])
-    with patch("app.routers.driver_pack_authoring.selected_release", new=Mock(return_value=None)):
+    with patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await driver_pack_authoring.fork(
                 "source",
@@ -2083,10 +2123,10 @@ async def test_driver_pack_authoring_fork_error_mapping_and_success() -> None:
     pack = SimpleNamespace(id="local/fork")
     session = DummySession(execute_result=ScalarResult(source))
     with (
-        patch("app.routers.driver_pack_authoring.selected_release", new=Mock(return_value=release)),
-        patch("app.routers.driver_pack_authoring.PackStorageService", new=Mock(return_value=object())),
-        patch("app.routers.driver_pack_authoring.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
-        patch("app.routers.driver_pack_authoring.build_pack_out", new=Mock(return_value={"id": "local/fork"})),
+        patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=release)),
+        patch("app.packs.routers.authoring.PackStorageService", new=Mock(return_value=object())),
+        patch("app.packs.routers.authoring.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
+        patch("app.packs.routers.authoring.build_pack_out", new=Mock(return_value={"id": "local/fork"})),
     ):
         assert await driver_pack_authoring.fork("source", body, _username="admin", session=session) == {
             "id": "local/fork"
@@ -2098,9 +2138,9 @@ async def test_driver_pack_authoring_fork_error_mapping_and_success() -> None:
         (driver_pack_authoring.PackIngestValidationError("bad manifest"), 400),
     ):
         with (
-            patch("app.routers.driver_pack_authoring.selected_release", new=Mock(return_value=release)),
-            patch("app.routers.driver_pack_authoring.PackStorageService", new=Mock(return_value=object())),
-            patch("app.routers.driver_pack_authoring.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
+            patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=release)),
+            patch("app.packs.routers.authoring.PackStorageService", new=Mock(return_value=object())),
+            patch("app.packs.routers.authoring.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
         ):
             with pytest.raises(HTTPException) as exc:
                 await driver_pack_authoring.fork(
@@ -2116,11 +2156,11 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
     pack_id = "local/router-pack"
     pack_out = SimpleNamespace(id=pack_id)
     with (
-        patch("app.routers.driver_packs.list_catalog", new=AsyncMock(return_value={"packs": []})),
-        patch("app.routers.driver_packs.get_pack_detail", new=AsyncMock(side_effect=[None, pack_out, None, pack_out])),
-        patch("app.routers.driver_packs.get_platforms", new=AsyncMock(side_effect=[None, {"platforms": []}])),
+        patch("app.packs.routers.catalog.list_catalog", new=AsyncMock(return_value={"packs": []})),
+        patch("app.packs.routers.catalog.get_pack_detail", new=AsyncMock(side_effect=[None, pack_out, None, pack_out])),
+        patch("app.packs.routers.catalog.get_platforms", new=AsyncMock(side_effect=[None, {"platforms": []}])),
         patch(
-            "app.routers.driver_packs.get_driver_pack_host_status",
+            "app.packs.routers.catalog.get_driver_pack_host_status",
             new=AsyncMock(return_value={"pack_id": pack_id, "hosts": []}),
         ),
     ):
@@ -2148,7 +2188,7 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
     assert exc.value.status_code == 400
 
     for error, status_code in ((LookupError("missing"), 404), (ValueError("bad transition"), 400)):
-        with patch("app.routers.driver_packs.transition_pack_state", new=AsyncMock(side_effect=error)):
+        with patch("app.packs.routers.catalog.transition_pack_state", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
                 await driver_packs.update_pack(
                     pack_id,
@@ -2158,7 +2198,7 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
                 )
         assert exc.value.status_code == status_code
 
-    with patch("app.routers.driver_packs.set_runtime_policy", new=AsyncMock(side_effect=LookupError("missing"))):
+    with patch("app.packs.routers.catalog.set_runtime_policy", new=AsyncMock(side_effect=LookupError("missing"))):
         with pytest.raises(HTTPException) as exc:
             await driver_packs.update_runtime_policy(
                 pack_id,
@@ -2169,12 +2209,12 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
     assert exc.value.status_code == 404
 
     dummy_session = DummySession()
-    with patch("app.routers.driver_packs.delete_pack", new=AsyncMock(side_effect=RuntimeError("in use"))):
+    with patch("app.packs.routers.catalog.delete_pack", new=AsyncMock(side_effect=RuntimeError("in use"))):
         with pytest.raises(HTTPException) as exc:
             await driver_packs.delete_driver_pack(pack_id, _username="admin", session=dummy_session)
     assert exc.value.status_code == 409
 
-    with patch("app.routers.driver_packs.delete_pack", new=AsyncMock(return_value=None)):
+    with patch("app.packs.routers.catalog.delete_pack", new=AsyncMock(return_value=None)):
         response = await driver_packs.delete_driver_pack(pack_id, _username="admin", session=dummy_session)
     assert response.status_code == 204
     assert dummy_session.committed is True
@@ -2199,7 +2239,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
         updated_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
 
-    with patch("app.routers.webhooks.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
+    with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
         for call in (
             lambda: webhooks.get_webhook(webhook_id, db=object()),
             lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
@@ -2213,10 +2253,10 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
             assert exc.value.status_code == 404
 
     with (
-        patch("app.routers.webhooks.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
-        patch("app.routers.webhooks.event_bus.publish", new=AsyncMock()) as publish,
-        patch("app.routers.webhooks.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
-        patch("app.routers.webhooks.webhook_dispatcher.retry_delivery", new=AsyncMock(side_effect=[None, delivery])),
+        patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
+        patch("app.webhooks.router.event_bus.publish", new=AsyncMock()) as publish,
+        patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
+        patch("app.webhooks.router.webhook_dispatcher.retry_delivery", new=AsyncMock(side_effect=[None, delivery])),
     ):
         assert (await webhooks.test_webhook(webhook_id, db=object()))["webhook_name"] == "alerts"
         publish.assert_awaited_once()
@@ -2244,7 +2284,7 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         (PackDisabledError("disabled"), 422),
         (ValueError("none"), 409),
     ):
-        with patch("app.routers.runs.run_service.create_run", new=AsyncMock(side_effect=error)):
+        with patch("app.runs.router.run_service.create_run", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
                 await runs.create_run(payload, include=None, db=object())
         assert exc.value.status_code == status_code
@@ -2258,8 +2298,8 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         os_version="14",
     )
     with (
-        patch("app.routers.runs.run_service.create_run", new=AsyncMock(return_value=(run, [device_info]))),
-        patch("app.routers.runs.settings_service.get", new=Mock(return_value="http://grid:4444")),
+        patch("app.runs.router.run_service.create_run", new=AsyncMock(return_value=(run, [device_info]))),
+        patch("app.runs.router.settings_service.get", new=Mock(return_value="http://grid:4444")),
     ):
         created = await runs.create_run(payload, include=None, db=object())
     assert created.id == run.id
@@ -2272,12 +2312,12 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
 
     read = _run_read(run)
     with (
-        patch("app.routers.runs.run_service.list_runs", new=AsyncMock(return_value=([run], 1))),
+        patch("app.runs.router.run_service.list_runs", new=AsyncMock(return_value=([run], 1))),
         patch(
-            "app.routers.runs.run_service.fetch_session_counts",
+            "app.runs.router.run_service.fetch_session_counts",
             new=AsyncMock(return_value={run.id: read.session_counts}),
         ),
-        patch("app.routers.runs.run_service.build_run_read", new=Mock(return_value=read)),
+        patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)),
     ):
         listed = await runs.list_runs(
             request,
@@ -2297,7 +2337,7 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
 
     cursor_request = SimpleNamespace(query_params={"cursor": "bad"})
     with patch(
-        "app.routers.runs.run_service.list_runs_cursor",
+        "app.runs.router.run_service.list_runs_cursor",
         new=AsyncMock(side_effect=runs.CursorPaginationError("bad cursor")),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -2328,7 +2368,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
         service_name: str,
         *args: object,
     ) -> None:
-        with patch(f"app.routers.runs.run_service.{service_name}", new=AsyncMock(side_effect=ValueError("bad state"))):
+        with patch(f"app.runs.router.run_service.{service_name}", new=AsyncMock(side_effect=ValueError("bad state"))):
             with pytest.raises(HTTPException) as exc:
                 await call(*args, db=object())
         assert exc.value.status_code in {404, 409}
@@ -2343,7 +2383,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
         await assert_conflict(call, service_name, run_id)
 
     with (
-        patch("app.routers.runs.run_service.report_preparation_failure", new=AsyncMock(side_effect=ValueError("bad"))),
+        patch("app.runs.router.run_service.report_preparation_failure", new=AsyncMock(side_effect=ValueError("bad"))),
     ):
         with pytest.raises(HTTPException) as exc:
             await runs.report_preparation_failed(
@@ -2354,7 +2394,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             )
     assert exc.value.status_code == 409
 
-    with patch("app.routers.runs.run_service.cooldown_device", new=AsyncMock(side_effect=ValueError("Run not found"))):
+    with patch("app.runs.router.run_service.cooldown_device", new=AsyncMock(side_effect=ValueError("Run not found"))):
         with pytest.raises(HTTPException) as exc:
             await runs.cooldown_device_endpoint(
                 run_id,
@@ -2365,7 +2405,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
     assert exc.value.status_code == 404
 
     with patch(
-        "app.routers.runs.run_service.cooldown_device",
+        "app.runs.router.run_service.cooldown_device",
         new=AsyncMock(return_value=(datetime.now(UTC) + timedelta(seconds=30), 1, False, 3)),
     ):
         cooldown = await runs.cooldown_device_endpoint(
@@ -2376,18 +2416,18 @@ async def test_runs_router_state_transition_endpoints() -> None:
         )
     assert cooldown.status == "cooldown_set"
 
-    with patch("app.routers.runs.run_service.heartbeat", new=AsyncMock(return_value=run)):
+    with patch("app.runs.router.run_service.heartbeat", new=AsyncMock(return_value=run)):
         heartbeat = await runs.heartbeat(run_id, db=object())
     assert heartbeat.state == run.state
 
     for call, service_name in ((runs.signal_ready, "signal_ready"), (runs.complete_run, "complete_run")):
         with (
-            patch(f"app.routers.runs.run_service.{service_name}", new=AsyncMock(return_value=run)),
+            patch(f"app.runs.router.run_service.{service_name}", new=AsyncMock(return_value=run)),
             patch(
-                "app.routers.runs.run_service.fetch_session_counts",
+                "app.runs.router.run_service.fetch_session_counts",
                 new=AsyncMock(return_value={run.id: read.session_counts}),
             ),
-            patch("app.routers.runs.run_service.build_run_read", new=Mock(return_value=read)),
+            patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)),
         ):
             assert (await call(run_id, db=object())).id == run_id
 
@@ -2421,32 +2461,32 @@ async def test_devices_core_router_branches() -> None:
     serialized = {"id": str(device_id)}
     with (
         patch(
-            "app.routers.devices_core.device_service.list_devices_paginated", new=AsyncMock(return_value=([device], 1))
+            "app.devices.routers.core.device_service.list_devices_paginated", new=AsyncMock(return_value=([device], 1))
         ),
-        patch("app.routers.devices_core.run_service.get_device_reservation_map", new=AsyncMock(return_value={})),
-        patch("app.routers.devices_core.device_health.build_public_summary", new=Mock(return_value={"healthy": True})),
+        patch("app.devices.routers.core.run_service.get_device_reservation_map", new=AsyncMock(return_value={})),
+        patch("app.devices.routers.core.device_health.build_public_summary", new=Mock(return_value={"healthy": True})),
         patch(
-            "app.routers.devices_core.platform_label_service.load_platform_label_map",
+            "app.devices.routers.core.platform_label_service.load_platform_label_map",
             new=AsyncMock(return_value={("pack", "android"): "Android"}),
         ),
-        patch("app.routers.devices_core.run_service.get_reservation_context_for_device", new=Mock(return_value=None)),
-        patch("app.routers.devices_core.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
+        patch("app.devices.routers.core.run_service.get_reservation_context_for_device", new=Mock(return_value=None)),
+        patch("app.devices.routers.core.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
     ):
         listed = await devices_core.list_devices(filters=filters, limit=10, offset=None, db=object())
     assert listed == {"items": [serialized], "total": 1, "limit": 10, "offset": 0}
 
-    with patch("app.routers.devices_core.device_service.update_device", new=AsyncMock(return_value=None)):
+    with patch("app.devices.routers.core.device_service.update_device", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await devices_core.update_device(device_id, data=devices_core.DevicePatch(), db=object())
     assert exc.value.status_code == 404
 
-    with patch("app.routers.devices_core.device_service.delete_device", new=AsyncMock(return_value=False)):
+    with patch("app.devices.routers.core.device_service.delete_device", new=AsyncMock(return_value=False)):
         with pytest.raises(HTTPException) as exc:
             await devices_core.delete_device(device_id, db=object())
     assert exc.value.status_code == 404
 
     with patch(
-        "app.routers.driver_pack_uploads.pack_release_service.set_current_release",
+        "app.packs.routers.uploads.pack_release_service.set_current_release",
         new=AsyncMock(side_effect=LookupError("missing")),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -2458,7 +2498,7 @@ async def test_devices_core_router_branches() -> None:
             )
     assert exc.value.status_code == 404
 
-    with patch("app.routers.driver_pack_export.export_pack", new=AsyncMock(return_value=(b"data", "sha"))):
+    with patch("app.packs.routers.export.export_pack", new=AsyncMock(return_value=(b"data", "sha"))):
         response = await driver_pack_export.export_release(
             "local/pack",
             "1.0.0+meta",
@@ -2469,7 +2509,7 @@ async def test_devices_core_router_branches() -> None:
     assert response.headers["X-Pack-Sha256"] == "sha"
     assert "local_pack-1.0.0_meta.tar.gz" in response.headers["Content-Disposition"]
 
-    with patch("app.routers.driver_pack_export.export_pack", new=AsyncMock(side_effect=LookupError("missing"))):
+    with patch("app.packs.routers.export.export_pack", new=AsyncMock(side_effect=LookupError("missing"))):
         with pytest.raises(HTTPException) as exc:
             await driver_pack_export.export_release(
                 "pack", "1.0.0", _username="admin", session=object(), storage=object()
@@ -2483,7 +2523,7 @@ async def test_devices_core_router_branches() -> None:
         source_pack_id="appium-uiautomator2",
         prerequisite_host_tools=("adb",),
     )
-    with patch("app.routers.driver_pack_templates.list_templates", new=Mock(return_value=[descriptor])):
+    with patch("app.packs.routers.templates.list_templates", new=Mock(return_value=[descriptor])):
         templates = await driver_pack_templates.get_templates(_username="admin")
     assert templates.templates[0].template_id == "android-real"
 
@@ -2496,7 +2536,7 @@ async def test_devices_core_router_branches() -> None:
         )
     assert exc.value.status_code == 409
 
-    with patch("app.routers.driver_pack_templates.load_template", new=Mock(side_effect=LookupError("missing"))):
+    with patch("app.packs.routers.templates.load_template", new=Mock(side_effect=LookupError("missing"))):
         with pytest.raises(HTTPException) as exc:
             await driver_pack_templates.create_from_template(
                 "missing",
@@ -2512,10 +2552,10 @@ async def test_devices_core_router_branches() -> None:
         (driver_pack_templates.PackIngestValidationError("bad manifest"), 400),
     ):
         with (
-            patch("app.routers.driver_pack_templates.load_template", new=Mock(return_value=object())),
-            patch("app.routers.driver_pack_templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
-            patch("app.routers.driver_pack_templates.PackStorageService", new=Mock(return_value=object())),
-            patch("app.routers.driver_pack_templates.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
+            patch("app.packs.routers.templates.load_template", new=Mock(return_value=object())),
+            patch("app.packs.routers.templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
+            patch("app.packs.routers.templates.PackStorageService", new=Mock(return_value=object())),
+            patch("app.packs.routers.templates.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
         ):
             with pytest.raises(HTTPException) as exc:
                 await driver_pack_templates.create_from_template(
@@ -2529,11 +2569,11 @@ async def test_devices_core_router_branches() -> None:
     template_session = DummySession()
     pack = SimpleNamespace(id="local/new")
     with (
-        patch("app.routers.driver_pack_templates.load_template", new=Mock(return_value=object())),
-        patch("app.routers.driver_pack_templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
-        patch("app.routers.driver_pack_templates.PackStorageService", new=Mock(return_value=object())),
-        patch("app.routers.driver_pack_templates.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
-        patch("app.routers.driver_pack_templates.build_pack_out", new=Mock(return_value={"id": pack.id})),
+        patch("app.packs.routers.templates.load_template", new=Mock(return_value=object())),
+        patch("app.packs.routers.templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
+        patch("app.packs.routers.templates.PackStorageService", new=Mock(return_value=object())),
+        patch("app.packs.routers.templates.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
+        patch("app.packs.routers.templates.build_pack_out", new=Mock(return_value={"id": pack.id})),
     ):
         assert await driver_pack_templates.create_from_template(
             "android-real",

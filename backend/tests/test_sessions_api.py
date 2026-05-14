@@ -8,7 +8,7 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.events import event_bus
-from app.services.session_viability import PROBE_TEST_NAME
+from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run
 
 DEVICE_PAYLOAD = {
@@ -58,7 +58,7 @@ async def test_list_sessions_with_data(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -87,7 +87,7 @@ async def test_list_sessions_with_data(
 async def test_list_sessions_filter_by_status(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -107,7 +107,7 @@ async def test_list_sessions_filter_by_status(
 async def test_list_sessions_filter_by_device(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     d1 = await _create_device(db_session, default_host_id)
     d2 = await _create_device(
@@ -134,7 +134,7 @@ async def test_list_sessions_filter_by_device(
 async def test_list_sessions_excludes_reserved_but_includes_probe_rows(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
     now = datetime.now(UTC)
@@ -174,7 +174,7 @@ async def test_list_sessions_excludes_reserved_but_includes_probe_rows(
 async def test_list_sessions_paginates_and_sorts(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -218,7 +218,7 @@ async def test_list_sessions_paginates_and_sorts(
 async def test_list_sessions_out_of_range_offset_returns_empty_items_with_total(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
     db_session.add(Session(session_id="grid-1", device_id=device["id"], status=SessionStatus.running))
@@ -235,7 +235,7 @@ async def test_list_sessions_out_of_range_offset_returns_empty_items_with_total(
 async def test_list_sessions_cursor_navigation(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
     start = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
@@ -295,7 +295,7 @@ async def test_get_session(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -348,7 +348,7 @@ async def test_register_session_by_active_connection_target(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await _create_device(
         db_session,
@@ -504,7 +504,7 @@ async def test_list_sessions_includes_device_less_sessions(
     default_host_id: str,
 ) -> None:
     """Sessions without a device (error sessions) must appear in the list endpoint."""
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -532,7 +532,7 @@ async def test_list_sessions_filters_device_less_rows_by_requested_platform_id(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(
         db_session,
@@ -573,7 +573,7 @@ async def test_list_sessions_filters_device_less_rows_by_requested_platform_id(
 
 
 async def test_device_sessions_endpoint(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -591,7 +591,7 @@ async def test_device_sessions_endpoint(client: AsyncClient, db_session: AsyncSe
 async def test_device_sessions_endpoint_excludes_reserved_and_probe_rows(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -634,7 +634,7 @@ async def test_device_session_outcome_heatmap_validates_days(
 async def test_device_session_outcome_heatmap_filters_and_orders_rows(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
     other_device = await _create_device(
@@ -718,7 +718,7 @@ async def test_sessions_table_has_device_started_at_index(setup_database: AsyncE
 
 
 async def test_update_session_status(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -813,7 +813,7 @@ async def test_list_sessions_filter_by_run_id_offset_mode(
     default_host_id: str,
 ) -> None:
     """GET /api/sessions?run_id=<id> returns only sessions belonging to that run."""
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await create_device_record(
         db_session,
@@ -845,7 +845,7 @@ async def test_list_sessions_filter_by_run_id_cursor_mode(
     default_host_id: str,
 ) -> None:
     """GET /api/sessions?run_id=<id>&direction=older respects run_id in cursor mode."""
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await create_device_record(
         db_session,
@@ -907,7 +907,7 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     """
     from unittest.mock import AsyncMock, patch
 
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -923,7 +923,7 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     webdriver_token = session.session_id
 
     with patch(
-        "app.services.lifecycle_policy.handle_session_finished",
+        "app.devices.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
         resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
@@ -958,7 +958,7 @@ async def test_post_session_finished_is_idempotent_and_does_not_double_fire_life
     """
     from unittest.mock import AsyncMock, patch
 
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -974,7 +974,7 @@ async def test_post_session_finished_is_idempotent_and_does_not_double_fire_life
     webdriver_token = session.session_id
 
     with patch(
-        "app.services.lifecycle_policy.handle_session_finished",
+        "app.devices.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
         resp1 = await client.post(f"/api/sessions/{webdriver_token}/finished")
@@ -1000,7 +1000,7 @@ async def test_post_session_finished_real_testkit_call_shape(
     """
     from unittest.mock import AsyncMock, patch
 
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -1016,7 +1016,7 @@ async def test_post_session_finished_real_testkit_call_shape(
     await db_session.commit()
 
     with patch(
-        "app.services.lifecycle_policy.handle_session_finished",
+        "app.devices.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ):
         # POST to the string token — exactly what the testkit sends.
@@ -1056,7 +1056,7 @@ async def test_post_session_finished_ended_at_is_durable_after_request_closes(
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.models.session import Session, SessionStatus
+    from app.sessions.models import Session, SessionStatus
 
     device = await _create_device(db_session, default_host_id)
 
@@ -1074,7 +1074,7 @@ async def test_post_session_finished_ended_at_is_durable_after_request_closes(
     # Simulate the NO_PENDING path: handle_session_finished returns without
     # calling db.commit(). This is the exact path that exposed the bug.
     with patch(
-        "app.services.lifecycle_policy.handle_session_finished",
+        "app.devices.services.lifecycle_policy.handle_session_finished",
         new=AsyncMock(return_value=None),
     ):
         resp = await client.post(f"/api/sessions/{webdriver_token}/finished")

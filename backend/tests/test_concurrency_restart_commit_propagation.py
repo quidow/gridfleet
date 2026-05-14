@@ -7,10 +7,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode
-from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host
-from app.services import appium_reconciler_agent as node_service
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services import reconciler_agent as node_service
+from app.devices.models import Device, DeviceOperationalState
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -69,21 +69,21 @@ async def test_restart_mutations_visible_after_caller_commit(
         target_node = target.appium_node
 
         with (
-            patch("app.services.appium_reconciler_agent.appium_stop", stub_stop),
-            patch("app.services.appium_reconciler_agent.appium_start", stub_start),
-            patch("app.services.appium_reconciler_agent.assert_runnable", return_value=None),
-            patch("app.services.appium_reconciler_agent.build_agent_start_payload", return_value={}),
-            patch("app.services.appium_reconciler_agent._merge_appium_default_pack_caps", return_value=None),
-            patch("app.services.appium_reconciler_agent.build_pack_start_payload", return_value=None),
-            patch("app.services.appium_reconciler_agent.render_stereotype", return_value={}),
+            patch("app.appium_nodes.services.reconciler_agent.appium_stop", stub_stop),
+            patch("app.appium_nodes.services.reconciler_agent.appium_start", stub_start),
+            patch("app.appium_nodes.services.reconciler_agent.assert_runnable", return_value=None),
+            patch("app.appium_nodes.services.reconciler_agent.build_agent_start_payload", return_value={}),
+            patch("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", return_value=None),
+            patch("app.appium_nodes.services.reconciler_agent.build_pack_start_payload", return_value=None),
+            patch("app.appium_nodes.services.reconciler_agent.render_stereotype", return_value={}),
             patch(
-                "app.services.appium_reconciler_agent.resolve_pack_platform",
+                "app.appium_nodes.services.reconciler_agent.resolve_pack_platform",
                 return_value=type("ResolvedPlatform", (), {"appium_platform_name": "Android"})(),
             ),
-            patch("app.services.appium_reconciler_agent._build_session_aligned_start_caps", return_value={}),
-            patch("app.services.appium_node_resource_service.get_capabilities", return_value={}),
+            patch("app.appium_nodes.services.reconciler_agent._build_session_aligned_start_caps", return_value={}),
+            patch("app.appium_nodes.services.resource_service.get_capabilities", return_value={}),
             patch(
-                "app.services.appium_reconciler_agent.resolve_pack_for_device",
+                "app.appium_nodes.services.reconciler_agent.resolve_pack_for_device",
                 return_value=("appium-uiautomator2", "android_mobile"),
             ),
         ):

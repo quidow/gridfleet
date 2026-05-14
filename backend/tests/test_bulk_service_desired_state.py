@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.device import Device
-    from app.models.host import Host
+    from app.devices.models import Device
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -41,7 +41,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
             desired_port=4723,
         )
 
-    from app.services import bulk_service
+    from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
@@ -72,7 +72,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
             desired_port=4723,
         )
 
-    from app.services import bulk_service
+    from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())

@@ -4,9 +4,13 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
+from app.agent_comm.operations import appium_logs, get_pack_device_properties, pack_device_lifecycle_action
+from app.agent_comm.operations import appium_status as fetch_appium_status
+from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import reconciler_agent as node_manager
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
+from app.core.errors import AgentCallError
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -24,26 +28,12 @@ from app.devices.services import identity, lifecycle_policy
 from app.devices.services import intent as intent_service
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services import presenter as device_presenter
-from app.errors import AgentCallError
+from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.services import (
-    config_service,
-    pack_discovery_service,
-    session_viability,
-)
-from app.services.agent_operations import (
-    appium_logs,
-    get_pack_device_properties,
-    pack_device_lifecycle_action,
-)
-from app.services.agent_operations import (
-    appium_status as fetch_appium_status,
-)
-from app.services.agent_operations import (
-    pack_device_health as fetch_pack_device_health,
-)
-from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.sessions import service_viability as session_viability
+from app.sessions.viability_types import SessionViabilityCheckedBy
+from app.settings import service_config as config_service
 
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action

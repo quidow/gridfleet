@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from app.pack.adapter import (
+from app.packs.adapter import (
     DiscoveryCandidate,
     DiscoveryContext,
     DoctorCheckResult,

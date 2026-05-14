@@ -8,14 +8,13 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_resource_sample import HostResourceSample
-from app.routers.hosts import _auto_discover, _auto_prepare_host_diagnostics
+from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
+from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
+from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.services import control_plane_state_store
-from app.services.agent_circuit_breaker import agent_circuit_breaker
-from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {
@@ -379,7 +378,7 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
     await db_session.refresh(host)
 
     with patch(
-        "app.routers.hosts.get_agent_tool_status",
+        "app.hosts.router.get_agent_tool_status",
         new=AsyncMock(
             return_value={
                 "appium": "3.3.0",
@@ -451,7 +450,7 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
         scheduled.append((task_fn, args))
 
-    with patch("app.routers.hosts._fire_and_forget", side_effect=capture_schedule):
+    with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
         resp = await client.post(
             "/api/hosts/register",
             json={
@@ -478,7 +477,7 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
 
 
 async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
-    with patch("app.routers.hosts._fire_and_forget"):
+    with patch("app.hosts.router._fire_and_forget"):
         create_resp = await client.post(
             "/api/hosts/register",
             json={
@@ -507,7 +506,7 @@ async def test_hosts_list_and_detail_include_recommended_agent_version(client: A
 
 
 async def test_agent_update_available_false_when_current(client: AsyncClient) -> None:
-    with patch("app.routers.hosts._fire_and_forget"):
+    with patch("app.hosts.router._fire_and_forget"):
         create_resp = await client.post(
             "/api/hosts/register",
             json={
@@ -525,7 +524,7 @@ async def test_agent_update_available_false_when_current(client: AsyncClient) ->
 
 
 async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) -> None:
-    with patch("app.routers.hosts._fire_and_forget"):
+    with patch("app.hosts.router._fire_and_forget"):
         resp = await client.post(
             "/api/hosts/register",
             json={
@@ -561,7 +560,7 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
     def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
         scheduled.append((task_fn, args))
 
-    with patch("app.routers.hosts._fire_and_forget", side_effect=capture_schedule):
+    with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
         create_resp = await client.put(
             "/api/settings/agent.auto_accept_hosts",
             json={"value": False},
@@ -609,9 +608,9 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
     await db_session.refresh(host)
     sync = AsyncMock()
     with (
-        patch("app.routers.hosts.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.routers.hosts.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
-        patch("app.routers.hosts.plugin_service.auto_sync_host_plugins", sync),
+        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
+        patch("app.hosts.router.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
+        patch("app.hosts.router.plugin_service.auto_sync_host_plugins", sync),
     ):
         await _auto_prepare_host_diagnostics(host.id)
 
@@ -659,7 +658,7 @@ async def test_host_discovery_returns_pack_shaped_candidates(
             ],
         }
 
-    monkeypatch.setattr("app.routers.hosts.get_pack_devices", fake_pack_devices)
+    monkeypatch.setattr("app.hosts.router.get_pack_devices", fake_pack_devices)
 
     resp = await client.post(f"/api/hosts/{db_host.id}/discover")
     assert resp.status_code == 200

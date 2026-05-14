@@ -9,8 +9,8 @@ from sqlalchemy import select, text
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import resource_service as resource_claims
-from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-from app.models.device import Device
+from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
+from app.devices.models import Device
 from app.settings import settings_service
 
 if TYPE_CHECKING:

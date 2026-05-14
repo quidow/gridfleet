@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.core.errors import InvalidTransitionError
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.devices.services.lifecycle_state_machine_types import (
     DeviceStateModel,
@@ -9,7 +10,6 @@ from app.devices.services.lifecycle_state_machine_types import (
     TransitionHook,
 )
 from app.devices.services.state import set_hold, set_operational_state
-from app.errors import InvalidTransitionError
 
 if TYPE_CHECKING:
     from app.devices.models import Device

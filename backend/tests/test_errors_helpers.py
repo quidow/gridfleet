@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from app import errors
+from app.core import errors as errors
 
 
 def test_request_id_helpers_and_error_body() -> None:

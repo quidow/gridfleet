@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.schemas.device import AppiumNodeRead
+from app.devices.schemas.device import AppiumNodeRead
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 def _build_read(**overrides: object) -> AppiumNodeRead:
@@ -133,7 +133,7 @@ async def test_effective_state_blocked_surfaces_through_router_serialization(
 ) -> None:
     """Phase 6: lifecycle_policy_state must be plumbed into AppiumNodeRead so
     the blocked cascade branch fires end-to-end through the router."""
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="blocked-end-to-end", verified=True)

@@ -7,18 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database import async_session
+from app.agent_comm.probe_result import ProbeResult
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import capability as capability_service
 from app.devices.services import health as device_health
 from app.devices.services import readiness as device_readiness
 from app.devices.services import state as device_state
-from app.observability import get_logger, observe_background_loop
 from app.services import (
     control_plane_state_store,
 )
-from app.services.agent_probe_result import ProbeResult
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service

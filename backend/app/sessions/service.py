@@ -10,13 +10,13 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.appium_nodes.models import AppiumNode
+from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy
 from app.devices.services import state as device_state
 from app.events import queue_event_for_session
-from app.services import run_service
-from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.runs import service as run_service
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.models import Session, SessionStatus
 

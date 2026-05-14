@@ -4,9 +4,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_terminal_session import HostTerminalSession
-from app.services import host_terminal_audit
+from app.hosts import service_terminal_audit as host_terminal_audit
+from app.hosts.models import Host, HostStatus, HostTerminalSession, OSType
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ import ast
 import re
 from pathlib import Path
 
-from app.models.device_event import DeviceEventType
+from app.devices.models import DeviceEventType
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 

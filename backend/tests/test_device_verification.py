@@ -12,16 +12,16 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.verification import clear_verification_jobs
+from app.devices.services.verification_execution import _health_failure_detail
+from app.hosts.models import Host
 from app.jobs.models import Job
 from app.jobs.queue import reset_stale_running_jobs, run_pending_jobs_once
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.driver_pack import DriverPack
-from app.models.host import Host
-from app.services.device_verification import clear_verification_jobs
-from app.services.device_verification_execution import _health_failure_detail
-from app.services.node_service_types import NodeManagerError
-from app.services.session_viability import get_session_viability
+from app.packs.models import DriverPack
+from app.sessions.service_viability import get_session_viability
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -149,7 +149,7 @@ def _patch_running_node(
         return node
 
     return patch(
-        "app.services.device_verification_execution.wait_for_node_running",
+        "app.devices.services.verification_execution.wait_for_node_running",
         new=AsyncMock(side_effect=wait_for_node),
     )
 
@@ -224,10 +224,10 @@ async def test_verification_job_success_keeps_verified_node_when_auto_manage_ena
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", stop_mock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", stop_mock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -273,9 +273,9 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
 
     with (
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -309,20 +309,20 @@ async def test_retain_verified_node_acquires_row_lock(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
 
-    from app.services import device_verification_execution
+    from app.devices.services import verification_execution as device_verification_execution
 
     real_lock = device_verification_execution.device_locking.lock_device
     spy = AsyncMock(side_effect=real_lock)
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", AsyncMock()),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", AsyncMock()),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
-        patch("app.services.device_verification_execution.device_locking.lock_device", spy),
+        patch("app.devices.services.verification_execution.device_locking.lock_device", spy),
     ):
         resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
         assert resp.status_code == 202
@@ -342,9 +342,9 @@ async def test_create_verification_marks_cleanup_failed_when_restart_intent_rais
 
     with (
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -376,12 +376,12 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", new_callable=AsyncMock),
+        patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient", return_value=health_http_client
+            "app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client
         ) as client_factory,
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -426,10 +426,10 @@ async def test_avd_verification_probe_uses_node_resolved_serial_when_already_run
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", new_callable=AsyncMock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=health_http_client),
+        patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -479,10 +479,10 @@ async def test_avd_verification_preserves_explicit_virtual_lane_after_normalize(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", new_callable=AsyncMock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=http_client),
+        patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -528,10 +528,10 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.services.device_verification_execution.stop_node", new_callable=AsyncMock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -612,7 +612,7 @@ async def test_verification_job_health_failure_blocks_save(
         }
     )
 
-    with patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=mock_http_client):
+    with patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=mock_http_client):
         resp = await client.post(
             "/api/devices/verification-jobs",
             json=device_payload(default_host_id, identity_value="verify-health"),
@@ -636,10 +636,10 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", stop_mock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", stop_mock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(False, "Session startup failed")),
         ),
     ):
@@ -666,10 +666,10 @@ async def test_verification_job_cleanup_failure_blocks_save(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", stop_mock),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", stop_mock),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -700,7 +700,7 @@ async def test_verification_job_duplicate_identity_is_reported_during_validation
     )
 
     with patch(
-        "app.services.device_verification_preparation.normalize_pack_device",
+        "app.devices.services.verification_preparation.normalize_pack_device",
         new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
     ):
         resp = await client.post(
@@ -741,7 +741,7 @@ async def test_verification_rejects_global_scoped_duplicate_identity_across_host
 
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     with patch(
-        "app.services.device_verification_preparation.normalize_pack_device",
+        "app.devices.services.verification_preparation.normalize_pack_device",
         new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
     ):
         resp = await client.post(
@@ -772,10 +772,10 @@ async def test_verification_with_host_still_reports_node_start_failures(
     healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
     with (
         patch(
-            "app.services.device_verification_execution.start_node",
+            "app.devices.services.verification_execution.start_node",
             new=AsyncMock(side_effect=NodeManagerError("appium missing")),
         ),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",
@@ -795,13 +795,13 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
     with (
-        patch("app.services.device_verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)),
+        patch("app.devices.services.verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)),
         patch(
-            "app.services.device_verification_execution.wait_for_node_running",
+            "app.devices.services.verification_execution.wait_for_node_running",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.device_verification_execution.run_device_health",
+            "app.devices.services.verification_execution.run_device_health",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -849,13 +849,13 @@ async def test_existing_device_verification_marks_device_verified(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -906,11 +906,11 @@ async def test_existing_running_device_verification_can_enter_verifying(
     with (
         _patch_running_node(active_connection_target=device.connection_target),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -945,15 +945,15 @@ async def test_update_verification_cleanup_failure_does_not_delete_existing_devi
     with (
         _patch_running_node(active_connection_target=device.connection_target),
         patch(
-            "app.services.device_verification_execution.stop_node",
+            "app.devices.services.verification_execution.stop_node",
             AsyncMock(side_effect=RuntimeError("stop failed")),
         ),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -992,11 +992,11 @@ async def test_update_verification_probe_failure_stops_persisted_node(
     with (
         _patch_running_node(active_connection_target=device.connection_target),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(False, "Session startup failed")),
         ),
     ):
@@ -1048,7 +1048,7 @@ async def test_existing_device_verification_requires_missing_setup_fields(
     await db_session.commit()
     await db_session.refresh(device)
 
-    with patch("app.services.device_verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)):
+    with patch("app.devices.services.verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)):
         resp = await client.post(
             f"/api/devices/{device.id}/verification-jobs",
             json={"host_id": default_host_id},
@@ -1087,13 +1087,13 @@ async def test_existing_device_verification_can_replace_device_config(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True, "ecp_reachable": {"reachable": True}}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1143,15 +1143,15 @@ async def test_existing_device_verification_config_replace_writes_verbatim(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(
                 payload={"healthy": True, "checks": [{"check_id": "ecp_reachable", "ok": True, "message": ""}]}
             ),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1244,19 +1244,19 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
 
     with (
         patch(
-            "app.services.device_verification_execution._stop_managed_node_for_verification",
+            "app.devices.services.verification_execution._stop_managed_node_for_verification",
             new=AsyncMock(side_effect=stop_running_node),
         ),
         patch(
-            "app.services.device_verification_execution.wait_for_node_running",
+            "app.devices.services.verification_execution.wait_for_node_running",
             new=AsyncMock(side_effect=wait_for_updated_node),
         ),
         patch(
-            "app.services.device_verification_runner.httpx.AsyncClient",
+            "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
         ),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1297,11 +1297,11 @@ async def test_android_network_verification_resolves_stable_identity_before_save
     )
 
     with (
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=http_client),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1353,11 +1353,11 @@ async def test_roku_verification_resolves_identity_from_ip_before_save(
         health_payload={"healthy": True, "checks": [{"check_id": "ecp_reachable", "ok": True, "message": ""}]},
     )
     with (
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=http_client),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         _patch_running_node(active_connection_target="192.168.1.50"),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1398,7 +1398,7 @@ async def test_android_network_verification_fails_when_stable_identity_cannot_be
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     http_client = _mock_resolution_http_client(resolution_status=404)
 
-    with patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=http_client):
+    with patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client):
         resp = await client.post(
             "/api/devices/verification-jobs",
             json={
@@ -1430,7 +1430,7 @@ async def test_android_network_verification_fails_when_resolution_lacks_identity
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     http_client = _mock_resolution_http_client(resolution_payload={"success": True, "state": "192.168.1.99"})
 
-    with patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=http_client):
+    with patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client):
         resp = await client.post(
             "/api/devices/verification-jobs",
             json={
@@ -1465,10 +1465,10 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
 
     with (
         _patch_running_node(),
-        patch("app.services.device_verification_execution.stop_node", new=AsyncMock()),
-        patch("app.services.device_verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
+        patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
+        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.services.device_verification_runner.session_viability.probe_session_via_grid",
+            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):

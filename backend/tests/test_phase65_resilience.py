@@ -6,14 +6,14 @@ from httpx import ASGITransport, AsyncClient
 from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
-from app.agent_client import request as agent_request
-from app.config import Settings, settings
-from app.database import build_engine
-from app.errors import AgentUnreachableError, CircuitOpenError
+from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.agent_comm.client import request as agent_request
+from app.core.config import Settings, settings
+from app.core.database import build_engine
+from app.core.errors import AgentUnreachableError, CircuitOpenError
+from app.core.middleware import RequestContextMiddleware
+from app.core.shutdown import shutdown_coordinator
 from app.main import app
-from app.middleware import RequestContextMiddleware
-from app.services.agent_circuit_breaker import agent_circuit_breaker
-from app.shutdown import shutdown_coordinator
 from tests.helpers import create_host
 
 HOST_PAYLOAD = {
@@ -35,8 +35,8 @@ async def test_agent_circuit_breaker_opens_then_recovers() -> None:
     _threshold = 5  # default agent.circuit_breaker_failure_threshold
     _cooldown = 30  # default agent.circuit_breaker_cooldown_seconds
     with (
-        patch("app.services.agent_circuit_breaker.monotonic", side_effect=fake_monotonic),
-        patch("app.services.agent_circuit_breaker.event_bus.publish", new=publish_mock),
+        patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
+        patch("app.agent_comm.circuit_breaker.event_bus.publish", new=publish_mock),
         patch.object(agent_circuit_breaker, "_failure_threshold", return_value=_threshold),
         patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=float(_cooldown)),
     ):
@@ -69,7 +69,7 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
         return current_time
 
     with (
-        patch("app.services.agent_circuit_breaker.monotonic", side_effect=fake_monotonic),
+        patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch.object(agent_circuit_breaker, "_failure_threshold", return_value=5),
         patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=30.0),
     ):
@@ -150,7 +150,7 @@ async def test_error_envelope_for_common_http_errors(client: AsyncClient) -> Non
 async def test_error_envelope_for_unhandled_exception(client: AsyncClient) -> None:
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as uncaught_client:
-        with patch("app.routers.hosts.host_service.list_hosts", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        with patch("app.hosts.router.host_service.list_hosts", new=AsyncMock(side_effect=RuntimeError("boom"))):
             response = await uncaught_client.get("/api/hosts")
 
     assert response.status_code == 500
@@ -162,7 +162,7 @@ async def test_error_envelope_for_agent_unreachable(client: AsyncClient) -> None
     host = await create_host(client, **HOST_PAYLOAD)
 
     with patch(
-        "app.routers.hosts.pack_discovery_service.discover_devices",
+        "app.hosts.router.pack_discovery_service.discover_devices",
         new=AsyncMock(side_effect=AgentUnreachableError("10.0.0.31", "Cannot reach agent host 10.0.0.31: boom")),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")
@@ -175,7 +175,7 @@ async def test_error_envelope_for_circuit_open(client: AsyncClient) -> None:
     host = await create_host(client, **HOST_PAYLOAD)
 
     with patch(
-        "app.routers.hosts.pack_discovery_service.discover_devices",
+        "app.hosts.router.pack_discovery_service.discover_devices",
         new=AsyncMock(side_effect=CircuitOpenError("10.0.0.31", retry_after_seconds=12.0)),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")

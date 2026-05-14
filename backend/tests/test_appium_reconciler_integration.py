@@ -9,26 +9,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.node_service_types import RemoteStartResult
+from app.appium_nodes.exceptions import RemoteStartResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.settings import settings_service
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
 @pytest.fixture(autouse=True)
 def disable_reconciler_fencing_for_integration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.appium_reconciler.assert_current_leader", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.assert_current_leader", AsyncMock())
     stop_response = MagicMock()
     stop_response.raise_for_status.return_value = None
-    monkeypatch.setattr("app.services.appium_reconciler.appium_stop", AsyncMock(return_value=stop_response))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.appium_stop", AsyncMock(return_value=stop_response))
 
 
 class _SharedSessionContext:
@@ -66,7 +66,7 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     start_mock = AsyncMock(
         return_value=RemoteStartResult(
@@ -111,7 +111,7 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     start_mock = AsyncMock(
         return_value=RemoteStartResult(
@@ -154,7 +154,7 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     stop_mock = AsyncMock(return_value=True)
     payload = {
@@ -201,7 +201,7 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     payload = {
         "appium_processes": {
@@ -249,7 +249,7 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     payload = {
         "appium_processes": {
@@ -309,7 +309,7 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     monkeypatch.setitem(settings_service._cache, "appium_reconciler.start_failure_threshold", 1)
     failing_start = AsyncMock(side_effect=RuntimeError("agent start failed"))
@@ -378,7 +378,7 @@ async def test_reconciler_stop_failure_preserves_restart_token(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     payload = {
         "appium_processes": {
@@ -425,7 +425,7 @@ async def test_reconciler_touches_backed_off_rows_when_host_responds(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     start_mock = AsyncMock()
     with (
@@ -460,7 +460,7 @@ async def test_reconciler_rejects_zero_port_start_result(
     db_session.add(node)
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     start_mock = AsyncMock(
         return_value=RemoteStartResult(port=0, pid=444, active_connection_target=device.identity_value)
@@ -485,7 +485,7 @@ async def test_fetch_backoff_until_coerces_naive_datetimes_to_utc(db_session: As
     device.lifecycle_policy_state = {"backoff_until": "2026-05-10T12:00:00"}
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     backoff = await appium_reconciler._fetch_backoff_until(db_session)
 
@@ -520,7 +520,7 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
     db_session.add_all([first_node, second_node])
     await db_session.commit()
 
-    from app.services import appium_reconciler
+    from app.appium_nodes.services import reconciler as appium_reconciler
 
     async def start_remote(*args: object, **kwargs: object) -> RemoteStartResult:
         device = args[1]
@@ -539,7 +539,7 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
             appium_reconciler, "agent_health", new=AsyncMock(return_value={"appium_processes": {"running_nodes": []}})
         ),
         patch.object(appium_reconciler, "async_session", new=_session_factory(db_session)),
-        patch("app.services.appium_reconciler_agent.start_remote_node", new=AsyncMock(side_effect=start_remote)),
+        patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new=AsyncMock(side_effect=start_remote)),
         patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
         await appium_reconciler.run_one_cycle_for_test()

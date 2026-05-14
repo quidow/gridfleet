@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import column, func, select, table
 
 from app.core.metrics import register_gauge_refresher
-from app.metrics_recorders import DEVICES_IN_COOLDOWN
+from app.core.metrics_recorders import DEVICES_IN_COOLDOWN
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

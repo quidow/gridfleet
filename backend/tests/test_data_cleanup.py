@@ -5,20 +5,19 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm.models import AgentReconfigureOutbox
+from app.analytics.models import AnalyticsCapacitySnapshot
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services.data_cleanup import _cleanup_old_data
 from app.events import event_bus
-from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host
-from app.models.host_resource_sample import HostResourceSample
-from app.models.session import Session, SessionStatus
-from app.services.data_cleanup import _cleanup_old_data
+from app.hosts.models import Host, HostResourceSample
+from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:
     """Create a minimal device for FK references."""
-    from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
+    from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 
     connection_target = f"test-{uuid.uuid4().hex[:8]}"
     device = Device(
@@ -216,8 +215,8 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
 
     event_bus.reset()
     with (
-        patch("app.services.data_cleanup.DELETE_BATCH_SIZE", 2),
-        patch("app.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
+        patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
+        patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
         await _cleanup_old_data(db_session)
 
@@ -269,8 +268,8 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
 
     event_bus.reset()
     with (
-        patch("app.services.data_cleanup.DELETE_BATCH_SIZE", 2),
-        patch("app.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
+        patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
+        patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
         await _cleanup_old_data(db_session)
 
@@ -313,8 +312,8 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
 
     event_bus.reset()
     with (
-        patch("app.services.data_cleanup.DELETE_BATCH_SIZE", 2),
-        patch("app.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
+        patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
+        patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
         await _cleanup_old_data(db_session)
 

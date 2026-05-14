@@ -1,12 +1,8 @@
 import uuid
 from datetime import timedelta
 
-from app.models.device import (
-    ConnectionType,
-    Device,
-    DeviceType,
-)
-from app.models.test_run import RunState
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.runs.models import RunState
 from app.seeding.factories.run import make_reservation, make_run
 from tests.seeding.helpers import build_test_seed_context
 

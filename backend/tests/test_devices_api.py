@@ -8,13 +8,13 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
-from app.models.host import Host
-from app.observability import BACKGROUND_LOOP_NAMES, build_background_loop_snapshot, set_background_loop_snapshot
-from app.schemas.device import DevicePatch, DeviceVerificationCreate
-from app.services import device_service
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.observability import BACKGROUND_LOOP_NAMES, build_background_loop_snapshot, set_background_loop_snapshot
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
+from app.devices.services import service as device_service
+from app.hosts.models import Host
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -438,7 +438,7 @@ async def test_list_devices_filter_status(
     )
     offline_id = str(offline_device.id)
 
-    from app.models.device import DeviceOperationalState
+    from app.devices.models import DeviceOperationalState
 
     offline_device.operational_state = DeviceOperationalState.offline
     online_device.operational_state = DeviceOperationalState.available
@@ -479,7 +479,7 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
         name="Verifying Reserved Device",
     )
 
-    from app.models.device import DeviceHold, DeviceOperationalState
+    from app.devices.models import DeviceHold, DeviceOperationalState
 
     busy_reserved.operational_state = DeviceOperationalState.busy
     busy_reserved.hold = DeviceHold.reserved
@@ -692,7 +692,7 @@ async def test_device_detail_surfaces_emulator_state(
     )
     device_id = str(device.id)
 
-    from app.services import device_health
+    from app.devices.services import health as device_health
 
     await device_health.update_emulator_state(db_session, device, "running")
     await db_session.commit()
@@ -753,7 +753,7 @@ async def test_refresh_device_properties_returns_serialized_device(
             }
         }
 
-    with patch("app.routers.devices_control.get_pack_device_properties", side_effect=fake_get_pack_device_properties):
+    with patch("app.devices.routers.control.get_pack_device_properties", side_effect=fake_get_pack_device_properties):
         resp = await client.post(f"/api/devices/{device_id}/refresh")
 
     assert resp.status_code == 200
@@ -788,7 +788,7 @@ async def test_update_device_acquires_row_lock(
     real_lock = device_service.device_locking.lock_device
     spy = AsyncMock(side_effect=real_lock)
 
-    with patch("app.services.device_service.device_locking.lock_device", spy):
+    with patch("app.devices.services.service.device_locking.lock_device", spy):
         resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Locked Update"})
 
     assert resp.status_code == 200
@@ -1070,7 +1070,7 @@ async def test_manual_session_test_endpoint(
     device_id = str(device.id)
 
     with patch(
-        "app.routers.devices.session_viability.run_session_viability_probe",
+        "app.devices.routers.catalog.session_viability.run_session_viability_probe",
         new_callable=AsyncMock,
         return_value={
             "status": "passed",
@@ -1099,7 +1099,7 @@ async def test_enter_device_maintenance_stops_running_node(
     assert start_resp.status_code == 200
 
     # Simulate agent having started the node so maintenance sees it as running
-    from app.models.appium_node import AppiumNode as _AppiumNode
+    from app.appium_nodes.models import AppiumNode as _AppiumNode
 
     node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
     assert node is not None
@@ -1167,9 +1167,11 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
     )
 
     with (
-        patch("app.routers.devices.device_service.get_device", new_callable=AsyncMock, return_value=fake_device),
         patch(
-            "app.routers.devices.session_viability.get_session_viability",
+            "app.devices.routers.catalog.device_service.get_device", new_callable=AsyncMock, return_value=fake_device
+        ),
+        patch(
+            "app.devices.routers.catalog.session_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value={
                 "status": "failed",
@@ -1180,7 +1182,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
             },
         ),
         patch(
-            "app.routers.devices.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.catalog.lifecycle_policy.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": "session_viability",
@@ -1200,7 +1202,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
                 "recovery_state": "eligible",
             },
         ),
-        patch("app.routers.devices.httpx.AsyncClient") as mock_client_cls,
+        patch("app.devices.routers.catalog.httpx.AsyncClient") as mock_client_cls,
     ):
         mock_client = mock_client_cls.return_value
         mock_client.__aenter__.return_value = mock_client
@@ -1243,27 +1245,27 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
 
     with (
         patch(
-            "app.routers.devices_control.get_device_or_404",
+            "app.devices.routers.control.get_device_or_404",
             new_callable=AsyncMock,
             return_value=fake_device,
         ),
         patch(
-            "app.routers.devices_control.fetch_pack_device_health",
+            "app.devices.routers.control.fetch_pack_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True, "adb_connected": {"connected": True}},
         ),
         patch(
-            "app.routers.devices_control.fetch_appium_status",
+            "app.devices.routers.control.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": False, "port": 4723},
         ),
         patch(
-            "app.routers.devices_control.session_viability.get_session_viability",
+            "app.devices.routers.control.session_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
-            "app.routers.devices_control.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": None,
@@ -1319,23 +1321,23 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
 
     with (
         patch(
-            "app.routers.devices_control.get_device_or_404",
+            "app.devices.routers.control.get_device_or_404",
             new_callable=AsyncMock,
             return_value=fake_device,
         ),
-        patch("app.routers.devices_control.fetch_pack_device_health", health_mock),
+        patch("app.devices.routers.control.fetch_pack_device_health", health_mock),
         patch(
-            "app.routers.devices_control.fetch_appium_status",
+            "app.devices.routers.control.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4723},
         ),
         patch(
-            "app.routers.devices_control.session_viability.get_session_viability",
+            "app.devices.routers.control.session_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),
         patch(
-            "app.routers.devices_control.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": None,
@@ -1376,7 +1378,7 @@ async def test_device_health_fails_fast_for_hostless_control_plane_state(client:
     )
 
     with patch(
-        "app.routers.devices_control.get_device_or_404",
+        "app.devices.routers.control.get_device_or_404",
         new_callable=AsyncMock,
         return_value=fake_device,
     ):
@@ -1395,7 +1397,7 @@ async def test_device_logs_fail_fast_for_hostless_control_plane_state(client: As
     )
 
     with patch(
-        "app.routers.devices_control.get_device_or_404",
+        "app.devices.routers.control.get_device_or_404",
         new_callable=AsyncMock,
         return_value=fake_device,
     ):
@@ -1423,7 +1425,7 @@ async def test_device_lifecycle_action_proxies_to_pack_agent(
     )
 
     with patch(
-        "app.routers.devices_control.pack_device_lifecycle_action",
+        "app.devices.routers.control.pack_device_lifecycle_action",
         new_callable=AsyncMock,
         return_value={"success": True, "state": "running"},
     ) as mock_lifecycle:
@@ -1452,7 +1454,7 @@ async def test_device_lifecycle_state_updates_emulator_state(
     )
 
     with patch(
-        "app.routers.devices_control.pack_device_lifecycle_action",
+        "app.devices.routers.control.pack_device_lifecycle_action",
         new_callable=AsyncMock,
         return_value={"success": True, "state": "running"},
     ):
@@ -1608,7 +1610,7 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.services import device_health
+    from app.devices.services import health as device_health
 
     await _create_device(
         db_session,
@@ -1790,6 +1792,6 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
 
 
 def test_backend_sanitize_log_value_strips_control_characters() -> None:
-    from app.observability import sanitize_log_value
+    from app.core.observability import sanitize_log_value
 
     assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"

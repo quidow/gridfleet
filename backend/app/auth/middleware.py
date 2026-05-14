@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth import service as _auth_service
-from app.errors import error_response, request_id_from_request
+from app.core.errors import error_response, request_id_from_request
 
 if TYPE_CHECKING:
     from starlette.middleware.base import RequestResponseEndpoint

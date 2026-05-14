@@ -4,10 +4,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import DeviceHold
-from app.models.device_reservation import DeviceReservation
-from app.models.test_run import RunState, TestRun
-from app.services import run_service
+from app.devices.models import DeviceHold, DeviceReservation
+from app.runs import service as run_service
+from app.runs.models import RunState, TestRun
 from tests.helpers import create_device_record, create_reserved_run
 
 

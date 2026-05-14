@@ -84,7 +84,7 @@ jobs:
         run: |
           set -e
           forbidden=$(git grep -nE '\bstate\s*=\s*NodeState\.(running|stopped|error)' backend/app \
-            | grep -vE 'backend/app/services/appium_reconciler|backend/app/seeding/scenarios|backend/alembic/versions' \
+            | grep -vE 'backend/app/appium_nodes/services/reconciler|backend/app/seeding/scenarios|backend/alembic/versions' \
             || true)
           if [ -n "$forbidden" ]; then
             echo "Forbidden AppiumNode.state writes remain:"
@@ -102,7 +102,7 @@ jobs:
           fi
 
           forbidden=$(git grep -nE 'mark_node_(started|stopped)\(' backend/app \
-            | grep -vE 'backend/app/services/appium_reconciler' \
+            | grep -vE 'backend/app/appium_nodes/services/reconciler' \
             || true)
           if [ -n "$forbidden" ]; then
             echo "Forbidden mark_node_started/stopped callers outside reconciler:"
@@ -111,7 +111,7 @@ jobs:
           fi
 
           forbidden=$(git grep -nE 'start_remote_temporary_node|stop_remote_temporary_node|restart_node_via_agent|_wait_for_remote_appium_ready' backend/app \
-            | grep -vE 'backend/app/services/appium_reconciler' \
+            | grep -vE 'backend/app/appium_nodes/services/reconciler' \
             || true)
           if [ -n "$forbidden" ]; then
             echo "Forbidden temporary-helper references outside reconciler:"

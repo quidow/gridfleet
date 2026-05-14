@@ -5,13 +5,14 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, DeviceHold, DeviceOperationalState, DeviceType, HardwareHealthStatus
-from app.models.session import Session, SessionStatus
-from app.models.test_run import TestRun
-from app.schemas.device import HardwareTelemetryState
-from app.schemas.device_filters import DeviceQueryFilters
-from app.services import device_service, session_service
-from app.services.cursor_pagination import encode_cursor
+from app.core.pagination import encode_cursor
+from app.devices.models import ConnectionType, DeviceHold, DeviceOperationalState, DeviceType, HardwareHealthStatus
+from app.devices.schemas.device import HardwareTelemetryState
+from app.devices.schemas.filters import DeviceQueryFilters
+from app.devices.services import service as device_service
+from app.runs.models import TestRun
+from app.sessions import service as session_service
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -168,7 +169,7 @@ async def test_register_and_finish_session_guard_paths(
     db_session.add(live)
     await db_session.commit()
     monkeypatch.setattr(
-        "app.services.session_service.lifecycle_policy.handle_session_finished",
+        "app.sessions.service.lifecycle_policy.handle_session_finished",
         AsyncMock(),
     )
     finished = await session_service.mark_session_finished(db_session, "finish-device")
@@ -176,18 +177,18 @@ async def test_register_and_finish_session_guard_paths(
     assert finished.ended_at is not None
 
     monkeypatch.setattr(
-        "app.services.session_service.lifecycle_policy.complete_deferred_stop_if_session_ended",
+        "app.sessions.service.lifecycle_policy.complete_deferred_stop_if_session_ended",
         AsyncMock(),
     )
     run = TestRun(name="terminal reservation", requirements=[])
     db_session.add(run)
     await db_session.flush()
     monkeypatch.setattr(
-        "app.services.session_service.run_service.get_device_reservation_with_entry",
+        "app.sessions.service.run_service.get_device_reservation_with_entry",
         AsyncMock(return_value=(run, SimpleNamespace(excluded=False))),
     )
     monkeypatch.setattr(
-        "app.services.session_service.run_service.reservation_entry_is_excluded",
+        "app.sessions.service.run_service.reservation_entry_is_excluded",
         lambda _entry: False,
     )
     terminal_with_run = await session_service.register_session(
@@ -344,29 +345,29 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     )
 
     monkeypatch.setattr(
-        "app.services.device_service.run_service.get_device_reservation_map", AsyncMock(return_value={})
+        "app.devices.services.service.run_service.get_device_reservation_map", AsyncMock(return_value={})
     )
     monkeypatch.setattr(
-        "app.services.device_service.device_readiness.assess_device_async",
+        "app.devices.services.service.device_readiness.assess_device_async",
         AsyncMock(return_value=SimpleNamespace(readiness_state="ready")),
     )
     monkeypatch.setattr(
-        "app.services.device_service.lifecycle_policy.build_lifecycle_policy",
+        "app.devices.services.service.lifecycle_policy.build_lifecycle_policy",
         AsyncMock(return_value=object()),
     )
     monkeypatch.setattr(
-        "app.services.device_service.lifecycle_policy.build_lifecycle_policy_summary",
+        "app.devices.services.service.lifecycle_policy.build_lifecycle_policy_summary",
         lambda _policy: {"state": "healthy"},
     )
     monkeypatch.setattr(
-        "app.services.device_service.device_health.build_public_summary",
+        "app.devices.services.service.device_health.build_public_summary",
         lambda _device: {"healthy": True},
     )
     monkeypatch.setattr(
-        "app.services.device_service.hardware_telemetry.current_hardware_health_status", lambda _device: None
+        "app.devices.services.service.hardware_telemetry.current_hardware_health_status", lambda _device: None
     )
     monkeypatch.setattr(
-        "app.services.device_service.device_attention.compute_needs_attention",
+        "app.devices.services.service.device_attention.compute_needs_attention",
         lambda *_args, **_kwargs: False,
     )
 
@@ -389,7 +390,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
 
     telemetry_filters = DeviceQueryFilters(hardware_telemetry_state=HardwareTelemetryState.fresh)
     monkeypatch.setattr(
-        "app.services.device_service.hardware_telemetry.hardware_telemetry_state_for_device",
+        "app.devices.services.service.hardware_telemetry.hardware_telemetry_state_for_device",
         lambda device: HardwareTelemetryState.fresh if device.id == available.id else HardwareTelemetryState.stale,
     )
     telemetry_devices = await device_service.list_devices_by_filters(db_session, telemetry_filters)
@@ -452,12 +453,12 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     )
 
     assert await device_service.delete_device(db_session, __import__("uuid").uuid4()) is False
-    monkeypatch.setattr("app.services.device_service._stop_node", AsyncMock(side_effect=RuntimeError("stop failed")))
-    monkeypatch.setattr("app.services.device_service._lock_device_for_delete", AsyncMock(return_value=maintenance))
+    monkeypatch.setattr("app.devices.services.service._stop_node", AsyncMock(side_effect=RuntimeError("stop failed")))
+    monkeypatch.setattr("app.devices.services.service._lock_device_for_delete", AsyncMock(return_value=maintenance))
     fake_running = SimpleNamespace(id=maintenance.id, appium_node=SimpleNamespace(observed_running=True))
     relocked = await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id)
     assert relocked is not None
 
-    monkeypatch.setattr("app.services.device_service._stop_node", AsyncMock())
-    monkeypatch.setattr("app.services.device_service._lock_device_for_delete", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.devices.services.service._stop_node", AsyncMock())
+    monkeypatch.setattr("app.devices.services.service._lock_device_for_delete", AsyncMock(return_value=None))
     assert await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id) is None

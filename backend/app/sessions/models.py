@@ -9,8 +9,8 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
-from app.models.device import ConnectionType, DeviceType
+from app.core.database import Base
+from app.devices.models import ConnectionType, DeviceType
 
 
 class SessionStatus(enum.StrEnum):

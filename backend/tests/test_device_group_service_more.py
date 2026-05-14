@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-from app.models.device_group import DeviceGroup, GroupType
-from app.schemas.device_filters import DeviceGroupFilters
-from app.schemas.device_group import DeviceGroupCreate, DeviceGroupUpdate
-from app.services import device_group_service
+from app.devices.models import DeviceGroup, GroupType
+from app.devices.schemas.filters import DeviceGroupFilters
+from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+from app.devices.services import groups as device_group_service
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 
 if TYPE_CHECKING:
@@ -67,11 +67,11 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
 
     with (
         patch(
-            "app.services.device_group_service.device_service.count_devices_by_filters",
+            "app.devices.services.groups.device_service.count_devices_by_filters",
             new=AsyncMock(return_value=5),
         ) as count_devices,
         patch(
-            "app.services.device_group_service.device_service.list_devices_by_filters",
+            "app.devices.services.groups.device_service.list_devices_by_filters",
             new=AsyncMock(return_value=[device]),
         ) as list_devices,
     ):
@@ -97,7 +97,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     assert updated is not None
     assert updated.filters == {"platform_id": "ios"}
     with patch(
-        "app.services.device_group_service.device_service.list_devices_by_filters",
+        "app.devices.services.groups.device_service.list_devices_by_filters",
         new=AsyncMock(return_value=[device]),
     ):
         assert await device_group_service.get_group_device_ids(db_session, group.id) == [device.id]

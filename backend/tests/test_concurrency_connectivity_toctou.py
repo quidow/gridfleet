@@ -7,9 +7,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host, HostStatus
-from app.services import device_connectivity, device_locking
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import connectivity as device_connectivity
+from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -47,13 +48,13 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
 
     async def runner() -> None:
         with (
-            patch("app.services.device_connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
-            patch("app.services.device_connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
-            patch("app.services.device_connectivity._uses_endpoint_health", new=AsyncMock(return_value=False)),
-            patch("app.services.device_connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
-            patch("app.services.device_connectivity.device_health.update_device_checks", new=AsyncMock()),
-            patch("app.services.device_connectivity.device_locking.lock_device", side_effect=gated_lock),
-            patch("app.services.device_connectivity.assert_current_leader"),
+            patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
+            patch("app.devices.services.connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity._uses_endpoint_health", new=AsyncMock(return_value=False)),
+            patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity.device_health.update_device_checks", new=AsyncMock()),
+            patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
+            patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(session)
@@ -110,17 +111,17 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
 
     async def runner() -> None:
         with (
-            patch("app.services.device_connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
-            patch("app.services.device_connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
-            patch("app.services.device_connectivity._uses_endpoint_health", new=AsyncMock(return_value=False)),
-            patch("app.services.device_connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
-            patch("app.services.device_connectivity.device_health.update_device_checks", new=AsyncMock()),
+            patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
+            patch("app.devices.services.connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity._uses_endpoint_health", new=AsyncMock(return_value=False)),
+            patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity.device_health.update_device_checks", new=AsyncMock()),
             patch(
-                "app.services.device_connectivity.lifecycle_policy.note_connectivity_loss",
+                "app.devices.services.connectivity.lifecycle_policy.note_connectivity_loss",
                 new=note_connectivity_loss,
             ),
-            patch("app.services.device_connectivity.device_locking.lock_device", side_effect=gated_lock),
-            patch("app.services.device_connectivity.assert_current_leader"),
+            patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
+            patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(session)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.pack_storage_service import PackStorageError, PackStorageService
+from app.packs.services.storage import PackStorageError, PackStorageService
 
 
 def test_store_writes_tarball_and_returns_sha(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.devices.schemas.device import (
     BulkMaintenanceEnter,
     BulkOperationResult,

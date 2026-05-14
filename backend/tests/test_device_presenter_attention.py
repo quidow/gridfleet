@@ -5,11 +5,10 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.device_intent import DeviceIntent
-from app.models.host import Host
-from app.services import device_presenter
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
+from app.devices.services import presenter as device_presenter
+from app.hosts.models import Host
 
 
 async def test_serialize_device_includes_needs_attention(db_session: AsyncSession, db_host: Host) -> None:

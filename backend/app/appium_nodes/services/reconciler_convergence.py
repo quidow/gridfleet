@@ -6,11 +6,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from app.metrics_recorders import (
-    APPIUM_RECONCILER_CONVERGENCE_ACTIONS,
-    APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED,
-)
-from app.observability import get_logger
+from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS, APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED
+from app.core.observability import get_logger
 
 logger = get_logger(__name__)
 

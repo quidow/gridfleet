@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request  # noqa: TC002 - FastAPI handler registrati
 from fastapi.responses import JSONResponse  # noqa: TC002 - FastAPI handler registration inspects annotations.
 
 from app.appium_nodes.exceptions import NodeManagerError
-from app.errors import error_response, request_id_from_request
+from app.core.errors import error_response, request_id_from_request
 
 
 def register(app: FastAPI) -> None:

@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -35,6 +35,6 @@ async def test_appium_node_desired_state_defaults_to_stopped(
 
 
 async def test_device_event_type_includes_desired_state_changed() -> None:
-    from app.models.device_event import DeviceEventType
+    from app.devices.models import DeviceEventType
 
     assert DeviceEventType.desired_state_changed.value == "desired_state_changed"

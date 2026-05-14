@@ -4,8 +4,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from app.appium_nodes.services import locking as appium_node_locking
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.intent_types import (
@@ -22,6 +25,7 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
+    record_manual_recovered,
     set_action,
     write_state,
 )
@@ -30,14 +34,9 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.events import queue_device_crashed_event
-from app.models.session import Session, SessionStatus
-from app.models.test_run import TERMINAL_STATES
-from app.services import (
-    appium_node_locking,
-    device_locking,
-    lifecycle_incident_service,
-    run_reservation_service,
-)
+from app.runs import service_reservation as run_reservation_service
+from app.runs.models import TERMINAL_STATES
+from app.sessions.models import Session, SessionStatus
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
-    from app.models.test_run import TestRun
+    from app.runs.models import TestRun
 
 
 async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
@@ -106,6 +105,19 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
     fresh["backoff_until"] = None
     if fresh != original:
         write_state(device, fresh)
+
+
+def clear_manual_recovery_suppression_state(device: Device) -> bool:
+    fresh = policy_state(device)
+    if (
+        fresh.get("recovery_suppressed_reason") is None
+        and fresh.get("last_failure_reason") is None
+        and fresh.get("backoff_until") is None
+    ):
+        return False
+    record_manual_recovered(fresh)
+    write_state(device, fresh)
+    return True
 
 
 def auto_stopped_summary_state(

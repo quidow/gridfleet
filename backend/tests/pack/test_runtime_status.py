@@ -14,9 +14,9 @@ import pytest
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_runtime_installation import HostRuntimeInstallation
-from app.services.pack_status_service import get_host_driver_pack_status
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import HostRuntimeInstallation
+from app.packs.services.status import get_host_driver_pack_status
 
 
 @pytest.mark.asyncio

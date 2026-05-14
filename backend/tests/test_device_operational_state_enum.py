@@ -1,4 +1,4 @@
-from app.models.device import DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 
 
 def test_verifying_is_a_valid_operational_state() -> None:

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import func, select, text
 
-from app.database import Base
+from app.core.database import Base
 from app.seeding.context import SeedContext
 
 if TYPE_CHECKING:

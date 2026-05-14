@@ -4,10 +4,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.schemas.run import RunCreate
-from app.services import device_locking, run_service
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.runs import service as run_service
+from app.runs.schemas import RunCreate
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]

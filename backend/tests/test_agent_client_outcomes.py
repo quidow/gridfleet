@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.agent_client import request as agent_request
-from app.errors import AgentUnreachableError, CircuitOpenError
+from app.agent_comm.client import request as agent_request
+from app.core.errors import AgentUnreachableError, CircuitOpenError
 
 
 def _factory_raising(exc: BaseException) -> MagicMock:
@@ -89,7 +89,7 @@ async def test_dns_error_musl_pattern_classified_as_dns() -> None:
 @pytest.mark.asyncio
 async def test_circuit_open_path_unaffected() -> None:
     with (
-        patch("app.agent_client.agent_circuit_breaker.before_request", new=AsyncMock(return_value=10.0)),
+        patch("app.agent_comm.client.agent_circuit_breaker.before_request", new=AsyncMock(return_value=10.0)),
         pytest.raises(CircuitOpenError),
     ):
         await agent_request(
@@ -111,7 +111,7 @@ async def test_empty_message_readtimeout_records_breaker_error_with_class_name()
     factory = _factory_raising(httpx.ReadTimeout(""))
     with (
         patch(
-            "app.agent_client.agent_circuit_breaker.record_failure",
+            "app.agent_comm.client.agent_circuit_breaker.record_failure",
             new=AsyncMock(),
         ) as record_failure,
         pytest.raises(AgentUnreachableError),
@@ -137,7 +137,7 @@ async def test_nonempty_readtimeout_records_breaker_error_with_class_and_message
     factory = _factory_raising(httpx.ReadTimeout("read timeout after 10s"))
     with (
         patch(
-            "app.agent_client.agent_circuit_breaker.record_failure",
+            "app.agent_comm.client.agent_circuit_breaker.record_failure",
             new=AsyncMock(),
         ) as record_failure,
         pytest.raises(AgentUnreachableError),

@@ -18,8 +18,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
-from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs import packs_settings
 from app.packs.services.export import export_pack
 from app.packs.services.storage import PackStorageService
 
@@ -34,7 +35,7 @@ def get_pack_storage() -> PackStorageService:
     Override ``app.dependency_overrides[get_pack_storage]`` in tests to point
     at a writable ``tmp_path``-rooted instance instead of the production dir.
     """
-    return PackStorageService(root=settings.driver_pack_storage_dir)
+    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
 
 
 PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]

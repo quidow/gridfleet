@@ -55,15 +55,15 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.device import Device, DeviceOperationalState
-from app.services import lifecycle_policy
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import lifecycle_policy as lifecycle_policy
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.models.host import Host
-    from app.models.test_run import TestRun
+    from app.hosts.models import Host
+    from app.runs.models import TestRun
 
 pytestmark = pytest.mark.asyncio
 
@@ -183,7 +183,7 @@ async def test_concurrent_health_failure_stale_overwrite(
     barrier_entered = False
 
     # Import at point-of-use so we can patch correctly.
-    from app.services import lifecycle_policy_actions as lpa
+    from app.devices.services import lifecycle_policy_actions as lpa
 
     # We need to pause writer A between its current_state construction and its
     # write_state call.  The most natural injection point is to wrap

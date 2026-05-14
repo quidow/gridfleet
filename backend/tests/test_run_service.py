@@ -4,19 +4,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services.lifecycle_policy import handle_health_failure
 from app.grid import service as grid_service
-from app.models.device import (
-    ConnectionType,
-    Device,
-    DeviceOperationalState,
-    DeviceType,
-)
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
-from app.services import run_service
-from app.services.lifecycle_policy import handle_health_failure
+from app.hosts.models import Host
+from app.runs import service as run_service
+from app.runs.models import RunState, TestRun
+from app.sessions.models import Session, SessionStatus
 
 
 async def test_force_release_clears_stop_pending(

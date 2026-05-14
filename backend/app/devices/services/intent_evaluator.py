@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
-from app import metrics_recorders
-from app.models.appium_node import AppiumDesiredState
-from app.observability import get_logger
+from app.appium_nodes.models import AppiumDesiredState
+from app.core import metrics_recorders
+from app.core.observability import get_logger
 
 if TYPE_CHECKING:
     from app.devices.models import DeviceIntent

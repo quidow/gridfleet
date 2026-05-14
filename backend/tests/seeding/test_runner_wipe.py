@@ -3,8 +3,8 @@
 import pytest
 from sqlalchemy import select
 
-from app.database import Base
-from app.models.host import Host, OSType
+from app.core.database import Base
+from app.hosts.models import Host, OSType
 from app.seeding.runner import wipe_all_tables
 
 

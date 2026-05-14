@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.test_data import TEST_DATA_MAX_BYTES, TestDataAuditEntryRead, TestDataPayload, TestDataRead
+from app.devices.schemas.test_data import TEST_DATA_MAX_BYTES, TestDataAuditEntryRead, TestDataPayload, TestDataRead
 
 
 def test_root_must_be_object() -> None:

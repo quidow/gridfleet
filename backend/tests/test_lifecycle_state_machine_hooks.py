@@ -2,12 +2,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import Device, DeviceOperationalState
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host
-from app.services.lifecycle_state_machine import DeviceStateMachine
-from app.services.lifecycle_state_machine_hooks import EventLogHook
-from app.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
+from app.devices.models import Device, DeviceEvent, DeviceEventType, DeviceOperationalState
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_hooks import EventLogHook
+from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
+from app.hosts.models import Host
 
 pytestmark = [pytest.mark.db]
 

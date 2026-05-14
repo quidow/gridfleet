@@ -352,7 +352,7 @@ async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSe
         ],
     )
 
-    with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client):
         start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
         assert start_resp.status_code == 200
 
@@ -405,7 +405,7 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
     )
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 
-    with patch("app.services.bulk_service.httpx.AsyncClient") as mock_client_cls:
+    with patch("app.devices.services.bulk.httpx.AsyncClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = False

@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceType
-from app.models.host import Host
-from app.services import capability_service
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import Device, DeviceType
+from app.devices.services import capability as capability_service
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -63,7 +63,7 @@ async def test_get_live_active_connection_target_locks_device_and_node(
             )
             target = (await session.execute(stmt)).scalar_one()
             with patch(
-                "app.services.capability_service._active_target_from_host_snapshot",
+                "app.devices.services.capability._active_target_from_host_snapshot",
                 racing_active_target,
             ):
                 await capability_service._get_live_active_connection_target(session, target)

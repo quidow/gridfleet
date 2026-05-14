@@ -1,13 +1,13 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.pack_capability_service import (
+from app.packs.services.capability import (
     render_default_capabilities,
     render_device_field_capabilities,
     render_stereotype,
     resolve_workaround_env,
 )
-from app.services.pack_platform_resolver import resolve_pack_platform
+from app.packs.services.platform_resolver import resolve_pack_platform
 from tests.pack.factories import seed_test_packs
 
 

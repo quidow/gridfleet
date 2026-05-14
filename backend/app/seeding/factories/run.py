@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.device_reservation import DeviceReservation
-from app.models.test_run import RunState, TestRun
+from app.devices.models import DeviceReservation
+from app.runs.models import RunState, TestRun
 
 if TYPE_CHECKING:
-    from app.models.device import Device
+    from app.devices.models import Device
     from app.seeding.context import SeedContext
 
 

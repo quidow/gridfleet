@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus, OSType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.connectivity import _check_connectivity
+from app.hosts.models import Host, HostStatus, OSType
 from app.services.control_plane_leader import LeadershipLost
-from app.services.device_connectivity import _check_connectivity
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,11 +35,11 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new=AsyncMock(return_value=set()),
         ),
         patch(
-            "app.services.device_connectivity.assert_current_leader",
+            "app.devices.services.connectivity.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
@@ -82,17 +82,17 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
             return_value={"conn-b-001"},
         ),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
-            "app.services.device_connectivity.assert_current_leader",
+            "app.devices.services.connectivity.assert_current_leader",
             side_effect=[None, None, LeadershipLost("site b")],
         ),
         pytest.raises(LeadershipLost),
@@ -142,21 +142,21 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
             return_value=set(),
         ),
         patch(
-            "app.services.device_connectivity._uses_endpoint_health",
+            "app.devices.services.connectivity._uses_endpoint_health",
             new_callable=AsyncMock,
             return_value=False,
         ),
         patch(
-            "app.services.device_connectivity._stop_disconnected_node",
+            "app.devices.services.connectivity._stop_disconnected_node",
             new=stop_called,
         ),
         patch(
-            "app.services.device_connectivity.assert_current_leader",
+            "app.devices.services.connectivity.assert_current_leader",
             side_effect=[None, None, LeadershipLost("site stop")],
         ),
         pytest.raises(LeadershipLost),
@@ -203,22 +203,22 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
             return_value=set(),
         ),
         patch(
-            "app.services.device_connectivity._uses_endpoint_health",
+            "app.devices.services.connectivity._uses_endpoint_health",
             new_callable=AsyncMock,
             return_value=True,
         ),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
-            "app.services.device_connectivity.assert_current_leader",
+            "app.devices.services.connectivity.assert_current_leader",
             side_effect=[None, None, LeadershipLost("site c")],
         ),
         pytest.raises(LeadershipLost),

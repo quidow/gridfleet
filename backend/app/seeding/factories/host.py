@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.host import Host, HostStatus, OSType
+from app.hosts.models import Host, HostStatus, OSType
 
 if TYPE_CHECKING:
     from app.seeding.context import SeedContext

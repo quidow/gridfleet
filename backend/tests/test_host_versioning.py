@@ -1,5 +1,5 @@
-from app.services import host_versioning
-from app.services.host_versioning import AgentVersionStatus, get_agent_version_status
+from app.hosts import service_versioning as host_versioning
+from app.hosts.service_versioning import AgentVersionStatus, get_agent_version_status
 
 
 def test_agent_version_status_disabled_when_min_version_empty() -> None:

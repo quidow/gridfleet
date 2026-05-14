@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
+from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationJobRead,
@@ -17,7 +18,6 @@ from app.devices.schemas.device import (
 from app.devices.services import service as device_service
 from app.devices.services import verification as device_verification
 from app.devices.services.verification_job_state import public_snapshot
-from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.events import Event, event_bus
 
 router = APIRouter()

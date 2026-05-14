@@ -4,9 +4,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_installation import HostPackInstallation
-from app.models.host_runtime_installation import HostRuntimeInstallation
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import HostPackInstallation, HostRuntimeInstallation
 from tests.pack.factories import seed_test_packs
 
 

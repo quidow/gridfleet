@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.schemas.host import HostRegister
-from app.services import host_service
+from app.hosts import service as host_service
+from app.hosts.schemas import HostRegister
 from app.settings import service_config as config_service
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 

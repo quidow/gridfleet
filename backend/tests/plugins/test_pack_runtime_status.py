@@ -15,9 +15,8 @@ from sqlalchemy import select, text
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.services.pack_status_service import upsert_plugin_status
+from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
+from app.packs.services.status import upsert_plugin_status
 
 
 @pytest.mark.asyncio

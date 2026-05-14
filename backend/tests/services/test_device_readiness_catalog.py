@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
-from app.services.device_readiness import assess_device_async
+from app.devices.services.readiness import assess_device_async
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from tests.pack.factories import seed_test_packs
 
 

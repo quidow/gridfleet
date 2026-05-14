@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.schemas.device_group import DeviceGroupCreate, DeviceGroupUpdate
-from app.services import device_group_service
+from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+from app.devices.services import groups as device_group_service
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from app.models.device import Device
+    from app.devices.models import Device
 
 
 _VIRTUAL_DEVICE_TYPES = frozenset({"emulator", "simulator"})

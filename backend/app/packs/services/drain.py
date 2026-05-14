@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.database import async_session
-from app.observability import get_logger, observe_background_loop
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.packs.models import DriverPack, PackState
 from app.packs.services.lifecycle import try_complete_drain
 

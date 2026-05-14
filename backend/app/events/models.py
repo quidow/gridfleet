@@ -7,7 +7,7 @@ from sqlalchemy import BigInteger, DateTime, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.core.database import Base
 
 
 class SystemEvent(Base):

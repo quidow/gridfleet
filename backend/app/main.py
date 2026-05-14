@@ -18,28 +18,29 @@ from app.appium_nodes import services as appium_node_services
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
-from app.config import freeze_background_loops_enabled
-from app.core.metrics import refresh_system_gauges
+from app.auth.middleware import StaticPathsAuthMiddleware
+from app.core.config import freeze_background_loops_enabled
+from app.core.database import async_session as session_factory
+from app.core.database import engine
+from app.core.dependencies import DbDep
+from app.core.errors import register_exception_handlers
+from app.core.health import check_liveness, check_readiness
+from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
+from app.core.middleware import RequestContextMiddleware
+from app.core.observability import configure_logging, get_logger
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
-from app.database import async_session as session_factory
-from app.database import engine
-from app.dependencies import DbDep
+from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
-from app.errors import register_exception_handlers
 from app.events import event_bus
 from app.events import router as events
 from app.grid import router as grid
 from app.grid import service as grid_service
-from app.health import check_liveness, check_readiness
 from app.hosts import router as hosts
 from app.hosts import router_terminal as host_terminal
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.jobs import queue as job_queue
-from app.metrics import CONTENT_TYPE_LATEST, render_metrics
-from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
-from app.observability import configure_logging, get_logger
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
@@ -53,7 +54,6 @@ from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
-from app.shutdown import shutdown_coordinator
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
 

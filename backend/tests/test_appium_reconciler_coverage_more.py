@@ -7,11 +7,11 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceOperationalState
-from app.models.host import Host, HostStatus
-from app.services import appium_reconciler
-from app.services.appium_reconciler_convergence import DesiredRow
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.reconciler_convergence import DesiredRow
+from app.devices.models import DeviceOperationalState
+from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device
 
 
@@ -134,9 +134,9 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     }
     touch = AsyncMock()
     converge = AsyncMock()
-    monkeypatch.setattr("app.services.appium_reconciler._touch_last_observed", touch)
-    monkeypatch.setattr("app.services.appium_reconciler.converge_host_rows", converge)
-    monkeypatch.setattr("app.services.appium_reconciler.settings_service.get", lambda _key: 2)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.converge_host_rows", converge)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.settings_service.get", lambda _key: 2)
 
     await appium_reconciler._drive_convergence(
         [
@@ -161,12 +161,12 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
     assert await stop_agent(row=row, port=None) is None
     assert await stop_agent(row=row, port=0) is None
 
-    monkeypatch.setattr("app.services.appium_reconciler.stop_remote_node", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(return_value=False))
     with pytest.raises(RuntimeError, match="did not acknowledge"):
         await stop_agent(row=row, port=4723)
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler.stop_remote_node", AsyncMock(side_effect=httpx.ConnectError("down"))
+        "app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(side_effect=httpx.ConnectError("down"))
     )
     with pytest.raises(httpx.ConnectError):
         await stop_agent(row=row, port=4723)
@@ -239,7 +239,7 @@ async def test_record_and_reset_start_failure_state(
         yield db_session
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler.settings_service.get",
+        "app.appium_nodes.services.reconciler.settings_service.get",
         lambda key: {"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}[key],
     )
 
@@ -258,7 +258,9 @@ async def test_record_and_reset_start_failure_state(
     assert device.lifecycle_policy_state.get("last_failure_source") is None
     assert device.lifecycle_policy_state.get("last_failure_reason") is None
 
-    monkeypatch.setattr("app.services.appium_reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None)
+    )
     await appium_reconciler._record_start_failure(
         _desired_row(device_id=uuid.uuid4()),
         reason="timeout",
@@ -336,7 +338,7 @@ async def test_clear_transition_token_and_touch_noop(
 ) -> None:
     await appium_reconciler._touch_last_observed([])
     with monkeypatch.context() as ctx:
-        ctx.setattr("app.services.appium_reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
+        ctx.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
         await appium_reconciler._clear_transition_token(db_session, _desired_row(device_id=uuid.uuid4()))
 
     device = await create_device(

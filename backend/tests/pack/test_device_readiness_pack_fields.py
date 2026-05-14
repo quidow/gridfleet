@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.host import Host
-from app.services.device_readiness import assess_device_from_required_fields
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.services.readiness import assess_device_from_required_fields
+from app.hosts.models import Host
 
 
 def test_assess_device_from_required_fields_reports_missing_session_field(db_host: Host) -> None:

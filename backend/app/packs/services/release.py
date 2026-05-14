@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.models.device import Device
+from app.devices.models import Device
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import PackReleaseOut, PackReleasesOut
 from app.packs.services.release_ordering import parse_release_key, selected_release

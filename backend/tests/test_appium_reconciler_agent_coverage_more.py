@@ -7,13 +7,13 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentCallError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host, OSType
-from app.services import appium_reconciler_agent as node_agent
-from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.services.pack_start_shim import PackStartPayloadError
+from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import reconciler_agent as node_agent
+from app.core.errors import AgentCallError
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.hosts.models import Host, OSType
+from app.packs.services.start_shim import PackStartPayloadError
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -53,7 +53,7 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
         name=identity,
         operational_state=DeviceOperationalState.available,
     )
-    from app.services import device_service
+    from app.devices.services import service as device_service
 
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
@@ -81,9 +81,11 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
     fake_db = MagicMock()
     fake_db.flush = AsyncMock()
-    monkeypatch.setattr("app.services.appium_reconciler_agent._hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_node_locking.lock_appium_node_for_device",
+        "app.appium_nodes.services.reconciler_agent._hold_device_row_lock", AsyncMock(return_value=device)
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.appium_node_locking.lock_appium_node_for_device",
         AsyncMock(return_value=node),
     )
 
@@ -104,17 +106,17 @@ async def test_start_remote_node_error_and_override_paths(
 ) -> None:
     device = await _loaded_device(db_session, db_host, "start-remote-branches")
     fake_platform = SimpleNamespace(appium_platform_name="Android")
-    monkeypatch.setattr("app.services.appium_reconciler_agent.assert_runnable", AsyncMock())
-    monkeypatch.setattr("app.services.appium_reconciler_agent.render_stereotype", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.assert_runnable", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.render_stereotype", AsyncMock(return_value={}))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_platform", AsyncMock(return_value=fake_platform)
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_platform", AsyncMock(return_value=fake_platform)
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent._build_session_aligned_start_caps", AsyncMock(return_value={})
+        "app.appium_nodes.services.reconciler_agent._build_session_aligned_start_caps", AsyncMock(return_value={})
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.resolve_pack_for_device", lambda _device: None)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.resolve_pack_for_device", lambda _device: None)
     with pytest.raises(NodeManagerError, match="no driver pack platform"):
         await node_agent.start_remote_node(
             db_session,
@@ -126,11 +128,11 @@ async def test_start_remote_node_error_and_override_paths(
         )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_for_device",
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_for_device",
         lambda _device: ("appium-uiautomator2", "android_mobile"),
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.build_pack_start_payload",
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
         AsyncMock(side_effect=PackStartPayloadError("bad manifest")),
     )
     with pytest.raises(NodeManagerError, match="bad manifest"):
@@ -144,7 +146,7 @@ async def test_start_remote_node_error_and_override_paths(
         )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.build_pack_start_payload",
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
         AsyncMock(
             return_value={
                 "pack_id": "appium-uiautomator2",
@@ -160,7 +162,7 @@ async def test_start_remote_node_error_and_override_paths(
         ),
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_start",
+        "app.appium_nodes.services.reconciler_agent.appium_start",
         AsyncMock(return_value=_FakeResponse({"pid": 4321, "connection_target": "live-target"})),
     )
 
@@ -196,22 +198,24 @@ async def test_start_remote_node_propagates_agent_call_errors(
     expected: type[Exception],
 ) -> None:
     device = await _loaded_device(db_session, db_host, f"start-error-{expected.__name__}")
-    monkeypatch.setattr("app.services.appium_reconciler_agent.assert_runnable", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.assert_runnable", AsyncMock())
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_for_device",
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_for_device",
         lambda _device: ("appium-uiautomator2", "android_mobile"),
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent.render_stereotype", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.render_stereotype", AsyncMock(return_value={}))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_platform",
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_platform",
         AsyncMock(return_value=SimpleNamespace(appium_platform_name="Android")),
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent._build_session_aligned_start_caps", AsyncMock(return_value={})
+        "app.appium_nodes.services.reconciler_agent._build_session_aligned_start_caps", AsyncMock(return_value={})
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
-    monkeypatch.setattr("app.services.appium_reconciler_agent.build_pack_start_payload", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.services.appium_reconciler_agent.appium_start", AsyncMock(side_effect=exception))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", AsyncMock(side_effect=exception))
 
     with pytest.raises(expected):
         await node_agent.start_remote_node(
@@ -230,25 +234,27 @@ async def test_start_remote_node_maps_agent_http_status_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _loaded_device(db_session, db_host, "start-http-status-branches")
-    monkeypatch.setattr("app.services.appium_reconciler_agent.assert_runnable", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.assert_runnable", AsyncMock())
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_for_device",
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_for_device",
         lambda _device: ("appium-uiautomator2", "android_mobile"),
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent.render_stereotype", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.render_stereotype", AsyncMock(return_value={}))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.resolve_pack_platform",
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_platform",
         AsyncMock(return_value=SimpleNamespace(appium_platform_name="Android")),
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent._build_session_aligned_start_caps",
+        "app.appium_nodes.services.reconciler_agent._build_session_aligned_start_caps",
         AsyncMock(return_value={}),
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
-    monkeypatch.setattr("app.services.appium_reconciler_agent.build_pack_start_payload", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload", AsyncMock(return_value=None)
+    )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_start",
+        "app.appium_nodes.services.reconciler_agent.appium_start",
         AsyncMock(return_value=_ErrorResponse(409, {"detail": {"code": "PORT_OCCUPIED", "message": "busy"}})),
     )
     with pytest.raises(NodePortConflictError, match="busy"):
@@ -262,7 +268,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
         )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_start",
+        "app.appium_nodes.services.reconciler_agent.appium_start",
         AsyncMock(return_value=_ErrorResponse(500, {"detail": {"message": "agent failed"}})),
     )
     with pytest.raises(NodeManagerError, match="agent failed"):
@@ -304,10 +310,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     fake_db = AsyncMock()
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.device_locking.lock_device", AsyncMock(return_value=device)
+        "app.appium_nodes.services.reconciler_agent.device_locking.lock_device", AsyncMock(return_value=device)
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_node_locking.lock_appium_node_for_device",
+        "app.appium_nodes.services.reconciler_agent.appium_node_locking.lock_appium_node_for_device",
         AsyncMock(return_value=None),
     )
     assert (
@@ -335,21 +341,24 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_node_locking.lock_appium_node_for_device",
+        "app.appium_nodes.services.reconciler_agent.appium_node_locking.lock_appium_node_for_device",
         AsyncMock(return_value=node),
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.appium_node_resource_service.get_capabilities", AsyncMock(return_value={})
+        "app.appium_nodes.services.reconciler_agent.appium_node_resource_service.get_capabilities",
+        AsyncMock(return_value={}),
     )
-    monkeypatch.setattr("app.services.appium_reconciler_agent.stop_remote_node", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.stop_remote_node", AsyncMock(return_value=False))
     assert (
         await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
     )
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.stop_remote_node", AsyncMock(return_value=True))
-    monkeypatch.setattr("app.services.appium_reconciler_agent.candidate_ports", AsyncMock(return_value=[4723, 4724]))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.stop_remote_node", AsyncMock(return_value=True))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.start_remote_node",
+        "app.appium_nodes.services.reconciler_agent.candidate_ports", AsyncMock(return_value=[4723, 4724])
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.start_remote_node",
         AsyncMock(
             side_effect=[
                 NodePortConflictError("busy"),
@@ -364,7 +373,7 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     assert node.active_connection_target == "new"
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.start_remote_node",
+        "app.appium_nodes.services.reconciler_agent.start_remote_node",
         AsyncMock(side_effect=NodeManagerError("no ports")),
     )
     assert (
@@ -372,22 +381,24 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
 
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.start_remote_node",
+        "app.appium_nodes.services.reconciler_agent.start_remote_node",
         AsyncMock(side_effect=NodePortConflictError("busy")),
     )
     assert (
         await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
     )
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.candidate_ports", AsyncMock(return_value=[]))
-    monkeypatch.setattr("app.services.appium_reconciler_agent.start_remote_node", AsyncMock())
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.candidate_ports", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.start_remote_node", AsyncMock())
     assert (
         await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
     )
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.candidate_ports", AsyncMock(return_value=[4723, 4724]))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.start_remote_node",
+        "app.appium_nodes.services.reconciler_agent.candidate_ports", AsyncMock(return_value=[4723, 4724])
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.start_remote_node",
         AsyncMock(side_effect=httpx.ConnectError("agent gone")),
     )
     assert (
@@ -404,15 +415,19 @@ async def test_start_stop_restart_node_guard_paths(
     with pytest.raises(NodeManagerError, match="No running node"):
         await node_agent.stop_node(db_session, device)
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=False))
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.readiness_error_detail_async",
+        "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.readiness_error_detail_async",
         AsyncMock(return_value="not ready"),
     )
     with pytest.raises(NodeManagerError, match="not ready"):
         await node_agent.start_node(db_session, device)
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
+    )
     node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="active")
     db_session.add(node)
     await db_session.commit()
@@ -471,10 +486,12 @@ async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.M
 
     dirty_device = SimpleNamespace(id=device_id, lifecycle_policy_state={"last_failure_reason": "boom"})
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=dirty_device))
-    monkeypatch.setattr(node_agent, "record_manual_recovered", MagicMock())
-    monkeypatch.setattr(node_agent, "write_lifecycle_policy_state", MagicMock())
+    clear_suppression = MagicMock(return_value=True)
+    monkeypatch.setattr(node_agent, "clear_manual_recovery_suppression_state", clear_suppression)
+    db.commit.reset_mock()
     await node_agent._clear_manual_recovery_suppression(db, device_id)
-    node_agent.record_manual_recovered.assert_called_once()
+    clear_suppression.assert_called_once_with(dirty_device)
+    db.commit.assert_awaited_once()
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:

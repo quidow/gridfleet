@@ -72,8 +72,8 @@ async def test_handle_node_crash_queues_device_crashed(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    from app.services import device_locking
-    from app.services.lifecycle_policy_actions import handle_node_crash
+    from app.devices import locking as device_locking
+    from app.devices.services.lifecycle_policy_actions import handle_node_crash
 
     _, device = await seed_host_and_device(db_session, identity="lifecycle-crash-1")
     event_bus_capture.clear()

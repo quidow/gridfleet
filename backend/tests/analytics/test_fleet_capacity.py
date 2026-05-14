@@ -7,12 +7,10 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceHold, DeviceOperationalState
-from app.models.host import Host, HostStatus, OSType
-from app.models.session import Session, SessionStatus
-from app.services.fleet_capacity import (
+from app.analytics.models import AnalyticsCapacitySnapshot
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services.fleet_capacity import (
     _count_schedulable_capacity,
     _extract_grid_counts,
     _now,
@@ -20,6 +18,8 @@ from app.services.fleet_capacity import (
     get_fleet_capacity_timeline,
     is_unmet_demand_session,
 )
+from app.hosts.models import Host, HostStatus, OSType
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 
@@ -290,7 +290,7 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
     await db_session.commit()
 
     with patch(
-        "app.services.fleet_capacity.grid_service.get_grid_status",
+        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value=_grid_status(active_sessions=3, queued_requests=2)),
     ):
         snapshot = await collect_capacity_snapshot_once(db_session, captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC))
@@ -334,7 +334,7 @@ async def test_count_schedulable_capacity_uses_pid_not_state(
 
 async def test_capacity_snapshot_collector_skips_unreachable_grid(db_session: AsyncSession) -> None:
     with patch(
-        "app.services.fleet_capacity.grid_service.get_grid_status",
+        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value={"ready": False, "error": "connect failed"}),
     ):
         snapshot = await collect_capacity_snapshot_once(db_session)
@@ -400,7 +400,7 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
     )
 
     with patch(
-        "app.services.fleet_capacity.grid_service.get_grid_status",
+        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value=_grid_status(active_sessions=0, queued_requests=0)),
     ):
         snapshot = await collect_capacity_snapshot_once(db_session, captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC))

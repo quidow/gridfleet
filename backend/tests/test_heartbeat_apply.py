@@ -6,13 +6,9 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.host import Host
-from app.services.heartbeat import _apply_host_ping_result
-from app.services.heartbeat_outcomes import (
-    ClientMode,
-    HeartbeatOutcome,
-    HeartbeatPingResult,
-)
+from app.appium_nodes.services.heartbeat import _apply_host_ping_result
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.hosts.models import Host
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -22,7 +18,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _skip_leader_fencing() -> Iterator[None]:
-    with patch("app.services.heartbeat.assert_current_leader"):
+    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
         yield
 
 

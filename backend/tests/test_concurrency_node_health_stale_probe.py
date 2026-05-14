@@ -7,11 +7,11 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host
-from app.services import node_health
-from app.services.agent_probe_result import ProbeResult
+from app.agent_comm.probe_result import ProbeResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import node_health as node_health
+from app.devices.models import Device, DeviceOperationalState
+from app.hosts.models import Host
 from app.settings import settings_service
 from tests.helpers import create_device
 
@@ -65,13 +65,13 @@ async def _run_node_health_with_gate(
 
     with (
         patch(
-            "app.services.node_health._build_probe_capabilities_for_node",
+            "app.appium_nodes.services.node_health._build_probe_capabilities_for_node",
             new=AsyncMock(return_value=None),
         ),
-        patch("app.services.node_health._check_node_health", side_effect=unhealthy_probe),
-        patch("app.services.node_health.grid_service.get_grid_status", new=AsyncMock(return_value={})),
-        patch("app.services.node_health.grid_service.available_node_device_ids", return_value=set()),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", side_effect=unhealthy_probe),
+        patch("app.appium_nodes.services.node_health.grid_service.get_grid_status", new=AsyncMock(return_value={})),
+        patch("app.appium_nodes.services.node_health.grid_service.available_node_device_ids", return_value=set()),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
             await node_health._check_nodes(session)

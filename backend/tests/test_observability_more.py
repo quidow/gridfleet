@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-from app import observability
+from app.core import observability as observability
 
 if TYPE_CHECKING:
     import pytest
@@ -56,9 +56,11 @@ def test_parse_timestamp_and_loop_heartbeat_freshness() -> None:
 
 
 async def test_get_background_loop_snapshots_filters_non_dict_values() -> None:
+    store = AsyncMock()
+    store.get_values = AsyncMock(return_value={"heartbeat": {"ok": True}, "bad": "value"})
     with patch(
-        "app.observability.control_plane_state_store.get_values",
-        new=AsyncMock(return_value={"heartbeat": {"ok": True}, "bad": "value"}),
+        "app.core.observability._control_plane_state_store",
+        return_value=store,
     ):
         snapshots = await observability.get_background_loop_snapshots(AsyncMock())
 
@@ -66,7 +68,7 @@ async def test_get_background_loop_snapshots_filters_non_dict_values() -> None:
 
 
 async def test_schedule_background_loop_delegates_to_state_writer() -> None:
-    with patch("app.observability._write_background_loop_state", new=AsyncMock()) as writer:
+    with patch("app.core.observability._write_background_loop_state", new=AsyncMock()) as writer:
         await observability.schedule_background_loop("heartbeat", 30.0)
 
     writer.assert_awaited_once_with("heartbeat", interval_seconds=30.0)
@@ -79,13 +81,13 @@ async def test_write_background_loop_state_merges_previous_snapshot_and_truncate
     async def fake_session() -> AsyncMock:
         yield db
 
+    store = AsyncMock()
+    store.get_value = AsyncMock(return_value={"last_started_at": "old", "custom": "keep"})
+    store.set_value = AsyncMock()
+
     with (
-        patch("app.observability.async_session", fake_session),
-        patch(
-            "app.observability.control_plane_state_store.get_value",
-            new=AsyncMock(return_value={"last_started_at": "old", "custom": "keep"}),
-        ),
-        patch("app.observability.control_plane_state_store.set_value", new=AsyncMock()) as set_value,
+        patch("app.core.observability.async_session", fake_session),
+        patch("app.core.observability._control_plane_state_store", return_value=store),
     ):
         await observability._write_background_loop_state(
             "heartbeat",
@@ -97,7 +99,7 @@ async def test_write_background_loop_state_merges_previous_snapshot_and_truncate
             error="x" * 800,
         )
 
-    snapshot = set_value.await_args.args[3]
+    snapshot = store.set_value.await_args.args[3]
     assert snapshot["custom"] == "keep"
     assert snapshot["last_duration_seconds"] == 0.5
     assert len(snapshot["last_error"]) == 500
@@ -106,11 +108,11 @@ async def test_write_background_loop_state_merges_previous_snapshot_and_truncate
 
 async def test_observe_background_loop_records_success_and_errors() -> None:
     with (
-        patch("app.observability._write_background_loop_state", new=AsyncMock()) as writer,
-        patch("app.observability.record_background_loop_run") as record_run,
-        patch("app.observability.record_background_loop_error") as record_error,
-        patch("app.observability.perf_counter", side_effect=[1.0, 2.5, 10.0, 12.0]),
-        patch("app.observability._now", side_effect=[datetime.now(UTC)] * 4),
+        patch("app.core.observability._write_background_loop_state", new=AsyncMock()) as writer,
+        patch("app.core.observability.record_background_loop_run") as record_run,
+        patch("app.core.observability.record_background_loop_error") as record_error,
+        patch("app.core.observability.perf_counter", side_effect=[1.0, 2.5, 10.0, 12.0]),
+        patch("app.core.observability._now", side_effect=[datetime.now(UTC)] * 4),
     ):
         async with observability.observe_background_loop("heartbeat", 30.0).cycle():
             pass

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.device_identity import is_host_scoped_identity
+from app.devices.services.identity import is_host_scoped_identity
 
 
 def test_host_scoped() -> None:

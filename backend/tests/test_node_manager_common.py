@@ -1,7 +1,7 @@
 import uuid
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.services.node_service_common import build_extra_caps, build_grid_stereotype_caps
+from app.appium_nodes.services.common import build_extra_caps, build_grid_stereotype_caps
+from app.devices.models import ConnectionType, Device, DeviceType
 
 
 def _device(**overrides: object) -> Device:

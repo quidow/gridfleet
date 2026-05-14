@@ -2,15 +2,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_installation import HostPackInstallation
-from app.models.host_runtime_installation import HostRuntimeInstallation
-from app.services.pack_capability_service import render_stereotype
-from app.services.pack_desired_state_service import compute_desired
-from app.services.pack_discovery_service import PackDiscoveredCandidate, discover_pack_candidates
-from app.services.pack_service import list_catalog
-from app.services.pack_start_shim import build_pack_start_payload
-from app.services.pack_status_service import apply_status
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import HostPackInstallation, HostRuntimeInstallation
+from app.packs.services.capability import render_stereotype
+from app.packs.services.desired_state import compute_desired
+from app.packs.services.discovery import PackDiscoveredCandidate, discover_pack_candidates
+from app.packs.services.service import list_catalog
+from app.packs.services.start_shim import build_pack_start_payload
+from app.packs.services.status import apply_status
 from tests.pack.factories import seed_test_packs
 
 

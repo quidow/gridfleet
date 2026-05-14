@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.models.host import Host, HostStatus, OSType
-from app.services.pack_discovery_service import refresh_device_properties
-from app.services.property_refresh import _refresh_all_properties, property_refresh_loop
+from app.devices.services.property_refresh import _refresh_all_properties, property_refresh_loop
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.services.discovery import refresh_device_properties
 from tests.helpers import create_device_record
 
 
@@ -60,8 +60,10 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     with (
-        patch("app.services.property_refresh.async_session", session_factory),
-        patch("app.services.property_refresh.pack_refresh_device_properties", new_callable=AsyncMock) as refresh_device,
+        patch("app.devices.services.property_refresh.async_session", session_factory),
+        patch(
+            "app.devices.services.property_refresh.pack_refresh_device_properties", new_callable=AsyncMock
+        ) as refresh_device,
     ):
         await _refresh_all_properties()
 
@@ -105,8 +107,8 @@ async def test_property_refresh_continues_after_device_failure(
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     refresh_device = AsyncMock(side_effect=[RuntimeError("boom"), None])
     with (
-        patch("app.services.property_refresh.async_session", session_factory),
-        patch("app.services.property_refresh.pack_refresh_device_properties", refresh_device),
+        patch("app.devices.services.property_refresh.async_session", session_factory),
+        patch("app.devices.services.property_refresh.pack_refresh_device_properties", refresh_device),
     ):
         await _refresh_all_properties()
 
@@ -121,11 +123,14 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             yield None
 
     with (
-        patch("app.services.property_refresh.observe_background_loop", return_value=_Observation()),
-        patch("app.services.property_refresh._refresh_all_properties", new=AsyncMock(side_effect=RuntimeError("boom"))),
-        patch("app.services.property_refresh.settings_service.get", return_value=1),
-        patch("app.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.services.property_refresh.logger.exception") as log_exception,
+        patch("app.devices.services.property_refresh.observe_background_loop", return_value=_Observation()),
+        patch(
+            "app.devices.services.property_refresh._refresh_all_properties",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch("app.devices.services.property_refresh.settings_service.get", return_value=1),
+        patch("app.devices.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.devices.services.property_refresh.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
         await property_refresh_loop()

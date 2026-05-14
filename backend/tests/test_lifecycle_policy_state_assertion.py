@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.services.lifecycle_policy_state import write_state
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.lifecycle_policy_state import write_state
 
 
 def _transient_device() -> Device:

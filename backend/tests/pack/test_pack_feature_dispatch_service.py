@@ -24,15 +24,14 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models.driver_pack import DriverPack, DriverPackFeature, DriverPackRelease
-from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.services import pack_feature_dispatch_service
+from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
+from app.packs.services import feature_dispatch as pack_feature_dispatch_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_client import QueryParams, RequestHeaders
-    from app.models.host import Host
+    from app.agent_comm.client import QueryParams, RequestHeaders
+    from app.hosts.models import Host
 
 
 PACK_ID = "local/feature-dispatch-test"
@@ -191,7 +190,7 @@ async def test_dispatch_uses_configured_agent_auth(
     db_session: AsyncSession,
     sample_host: Host,
 ) -> None:
-    from app import agent_client
+    from app.agent_comm import client as agent_client
 
     await _seed_pack_with_feature(db_session, pack_id=PACK_ID, feature_id=FEATURE_ID)
     await db_session.commit()

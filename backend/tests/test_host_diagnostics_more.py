@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.services import host_diagnostics
-from app.services.agent_circuit_breaker import agent_circuit_breaker
+from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.hosts import service_diagnostics as host_diagnostics
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
@@ -80,7 +80,7 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     await agent_circuit_breaker.record_failure(host.ip, error="first failure")
 
     with patch(
-        "app.services.host_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=snapshot)
+        "app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=snapshot)
     ):
         diagnostics = await host_diagnostics.get_host_diagnostics(db_session, host)
 
@@ -111,7 +111,7 @@ async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(
     ]
 
     with patch(
-        "app.services.host_diagnostics.control_plane_state_store.get_value",
+        "app.hosts.service_diagnostics.control_plane_state_store.get_value",
         new=AsyncMock(side_effect=snapshots),
     ):
         first = await host_diagnostics.get_host_diagnostics(db_session, host)
@@ -163,7 +163,7 @@ async def test_get_host_diagnostics_filters_and_normalizes_recent_recovery_event
     )
     await db_session.commit()
 
-    with patch("app.services.host_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=None)):
+    with patch("app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=None)):
         diagnostics = await host_diagnostics.get_host_diagnostics(db_session, host.id)
 
     assert diagnostics is not None

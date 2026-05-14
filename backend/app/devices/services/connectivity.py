@@ -8,9 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app import metrics
-from app.database import async_session
+from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
+from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.core import metrics_recorders as metrics
+from app.core.database import async_session
+from app.core.errors import AgentCallError
+from app.core.observability import get_logger, observe_background_loop
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_reconciler import _reconcile_device, _reconcile_expired_intents
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
@@ -19,25 +26,11 @@ from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, Inc
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import legacy_label_for_audit
-from app.errors import AgentCallError
-from app.models.host import Host, HostStatus
-from app.models.test_run import RunState
-from app.observability import get_logger, observe_background_loop
+from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.services import (
-    control_plane_state_store,
-    device_health,
-    device_locking,
-    lifecycle_policy,
-)
-from app.services.agent_operations import (
-    get_pack_devices,
-    pack_device_lifecycle_action,
-)
-from app.services.agent_operations import (
-    pack_device_health as fetch_pack_device_health,
-)
+from app.runs.models import RunState
+from app.services import control_plane_state_store
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 

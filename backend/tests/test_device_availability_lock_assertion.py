@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.services.device_state import set_operational_state
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.state import set_operational_state
 
 pytestmark = pytest.mark.asyncio
 

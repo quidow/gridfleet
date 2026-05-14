@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import agent_http_pool as pool_module
-from app.services.agent_http_pool import AgentHttpPool, PoolClosedError
+from app.agent_comm import http_pool as pool_module
+from app.agent_comm.http_pool import AgentHttpPool, PoolClosedError
 
 
 @pytest.mark.asyncio

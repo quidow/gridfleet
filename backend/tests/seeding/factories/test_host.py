@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from app.models.host import HostStatus, OSType
+from app.hosts.models import HostStatus, OSType
 from app.seeding.factories.host import make_host
 from tests.seeding.helpers import build_test_seed_context
 

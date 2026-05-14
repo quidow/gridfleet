@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING, Any
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.lifecycle_policy_state import now, parse_iso, state
-from app.models.test_run import TERMINAL_STATES
-from app.services import run_reservation_service
+from app.runs import service_reservation as run_reservation_service
+from app.runs.models import TERMINAL_STATES
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import DeviceReservation
-    from app.models.test_run import TestRun
+    from app.runs.models import TestRun
 
 
 def derive_run_tracking(

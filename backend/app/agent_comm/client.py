@@ -9,9 +9,9 @@ from httpx._types import HeaderTypes, QueryParamTypes
 
 from app.agent_comm import agent_settings as _settings
 from app.agent_comm.circuit_breaker import agent_circuit_breaker
-from app.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
-from app.metrics import record_agent_call
-from app.observability import REQUEST_ID_HEADER, get_request_id
+from app.core.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
+from app.core.metrics_recorders import record_agent_call
+from app.core.observability import REQUEST_ID_HEADER, get_request_id
 
 type QueryParams = QueryParamTypes | None
 type JsonBody = object | None

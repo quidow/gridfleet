@@ -14,6 +14,9 @@ from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.agent_comm import operations as agent_operations
+from app.agent_comm.error_codes import AgentErrorCode
+from app.agent_comm.operations import appium_start, appium_stop, parse_agent_error_detail, response_json_dict
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import (
@@ -36,39 +39,23 @@ from app.appium_nodes.services.reconciler_allocation import (
     candidate_ports,
     reserve_appium_port,
 )
-from app.database import async_session
-from app.errors import AgentCallError
+from app.core.database import async_session
+from app.core.errors import AgentCallError
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import health as device_health
+from app.devices.services.identity import appium_connection_target
+from app.devices.services.lifecycle_policy_actions import (
+    clear_manual_recovery_suppression_state,
+    reset_reconciler_start_failure_state,
+)
+from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.devices.services.state import ready_operational_state, set_operational_state
 from app.events import queue_event_for_session
-from app.models.device import Device, DeviceOperationalState
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
-from app.services import (
-    agent_operations,
-    device_health,
-    device_locking,
-)
-from app.services.agent_error_codes import AgentErrorCode
-from app.services.agent_operations import (
-    appium_start,
-    appium_stop,
-    parse_agent_error_detail,
-    response_json_dict,
-)
-from app.services.device_identity import appium_connection_target
-from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
-from app.services.device_state import ready_operational_state, set_operational_state
-from app.services.lifecycle_policy_actions import reset_reconciler_start_failure_state
-from app.services.lifecycle_policy_state import (
-    record_manual_recovered,
-)
-from app.services.lifecycle_policy_state import (
-    state as lifecycle_policy_state,
-)
-from app.services.lifecycle_policy_state import (
-    write_state as write_lifecycle_policy_state,
-)
 from app.settings import settings_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
@@ -84,8 +71,8 @@ PackStartPayloadError = pack_start_shim.PackStartPayloadError
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_client import AgentClientFactory
-    from app.models.host import Host
+    from app.agent_comm.client import AgentClientFactory
+    from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
 
@@ -807,13 +794,6 @@ async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.U
     # device delete after mark_node_started commits and releases the row lock)
     # into NodeManagerError so the route returns a managed 4xx instead of 500.
     locked = await _hold_device_row_lock(db, device_id)
-    current_state = lifecycle_policy_state(locked)
-    if (
-        current_state.get("recovery_suppressed_reason") is None
-        and current_state.get("last_failure_reason") is None
-        and current_state.get("backoff_until") is None
-    ):
+    if not clear_manual_recovery_suppression_state(locked):
         return
-    record_manual_recovered(current_state)
-    write_lifecycle_policy_state(locked, current_state)
     await db.commit()

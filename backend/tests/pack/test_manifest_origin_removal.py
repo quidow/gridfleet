@@ -1,4 +1,4 @@
-from app.pack.manifest import load_manifest_yaml
+from app.packs.manifest import load_manifest_yaml
 
 MINIMAL_MANIFEST = """\
 schema_version: 1

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from app.errors import AgentCallError
-from app.models.host import Host, HostStatus, OSType
+from app.core.errors import AgentCallError
+from app.hosts.models import Host, HostStatus, OSType
 from app.plugins import service as plugin_service
 from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import PluginCreate, PluginUpdate

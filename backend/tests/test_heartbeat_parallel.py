@@ -7,11 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.heartbeat_outcomes import (
-    ClientMode,
-    HeartbeatOutcome,
-    HeartbeatPingResult,
-)
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
 if TYPE_CHECKING:
     import contextlib
@@ -26,8 +22,8 @@ async def _skip_leader_fencing(
 ) -> AsyncGenerator[None]:
     """No-op the leader fence and redirect per-host sessions to the test engine."""
     with (
-        patch("app.services.heartbeat.assert_current_leader"),
-        patch("app.services.heartbeat.async_session", db_session_maker),
+        patch("app.appium_nodes.services.heartbeat.assert_current_leader"),
+        patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker),
     ):
         yield
 
@@ -60,13 +56,13 @@ async def test_four_slow_hosts_run_in_parallel(
 ) -> None:
     """4 slow hosts each take 0.5s; sequential >= 2s, parallel (concurrency>=4) ~ 0.5s.
     Bound: < 1.8s leaves CI slack while still proving parallelism."""
-    from app.services.heartbeat import _check_hosts
+    from app.appium_nodes.services.heartbeat import _check_hosts
 
     async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
         await asyncio.sleep(0.5)
         return _slow_timeout()
 
-    with patch("app.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
+    with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
         started = time.monotonic()
         async with populated_hosts_4_slow as db:
             await _check_hosts(db)
@@ -81,7 +77,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
     """Verify the fast host's heartbeat_ping log appears BEFORE the slow host's log."""
     import structlog
 
-    from app.services.heartbeat import _check_hosts
+    from app.appium_nodes.services.heartbeat import _check_hosts
 
     async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
         if ip == "1.1.1.1":
@@ -91,7 +87,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
 
     with (
         structlog.testing.capture_logs() as cap,
-        patch("app.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)),
+        patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)),
     ):
         async with populated_hosts_one_slow_one_fast as db:
             await _check_hosts(db)

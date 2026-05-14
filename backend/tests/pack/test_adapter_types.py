@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.pack.adapter import (
+from app.packs.adapter import (
     DiscoveryCandidate,
     DoctorCheckResult,
     DriverPackAdapter,

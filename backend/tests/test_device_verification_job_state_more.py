@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.services import device_verification_job_state as job_state
+from app.devices.services import verification_job_state as job_state
 
 
 async def test_device_verification_job_state_persist_and_stage_resolution_branches() -> None:

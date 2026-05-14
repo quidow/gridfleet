@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.appium_nodes.models import AppiumNode
+from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices import schemas as device_schemas
 from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState, DeviceReservation
@@ -44,7 +45,6 @@ from app.runs.schemas import (
     SessionCounts,
     UnavailableInclude,
 )
-from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.sessions.models import Session, SessionStatus
 from app.settings import service_config as config_service
 from app.settings import settings_service

@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs import packs_settings
 from app.packs.models import DriverPack
 from app.packs.schemas import PackOut
 from app.packs.services.ingest import (
@@ -93,7 +94,7 @@ async def create_from_template(
         display_name=body.display_name,
     )
 
-    storage = PackStorageService(settings.driver_pack_storage_dir)
+    storage = PackStorageService(packs_settings.driver_pack_storage_dir)
     try:
         pack = await ingest_pack_tarball(
             session,

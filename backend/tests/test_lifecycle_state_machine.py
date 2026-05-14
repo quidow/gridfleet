@@ -1,11 +1,11 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import InvalidTransitionError
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.host import Host
-from app.services.lifecycle_state_machine import DeviceStateMachine
-from app.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
+from app.core.errors import InvalidTransitionError
+from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
+from app.hosts.models import Host
 
 pytestmark = [pytest.mark.db]
 

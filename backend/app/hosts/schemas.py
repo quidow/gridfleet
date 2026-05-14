@@ -4,10 +4,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from app.devices.models import ConnectionType, DeviceType
+from app.devices.schemas.device import DeviceRead
 from app.hosts.models import HostStatus, OSType
 from app.hosts.service_versioning import AgentVersionStatus
-from app.models.device import ConnectionType, DeviceType
-from app.schemas.device import DeviceRead
 
 
 class HostCreate(BaseModel):

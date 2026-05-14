@@ -12,10 +12,9 @@ from app.analytics.schemas import (
     GroupByOption,
     SessionSummaryRow,
 )
-from app.models.device import Device
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.session import Session, SessionStatus
-from app.services.session_filters import exclude_non_success_metric_sessions, exclude_non_test_sessions
+from app.devices.models import Device, DeviceEvent, DeviceEventType
+from app.sessions.filters import exclude_non_success_metric_sessions, exclude_non_test_sessions
+from app.sessions.models import Session, SessionStatus
 
 
 async def get_session_summary(

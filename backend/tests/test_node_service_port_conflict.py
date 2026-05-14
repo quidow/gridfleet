@@ -8,9 +8,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from app.services.agent_error_codes import AgentErrorCode
-from app.services.appium_reconciler_agent import start_remote_node
-from app.services.node_service_types import NodePortConflictError
+from app.agent_comm.error_codes import AgentErrorCode
+from app.appium_nodes.exceptions import NodePortConflictError
+from app.appium_nodes.services.reconciler_agent import start_remote_node
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.device import Device
-    from app.models.host import Host
+    from app.devices.models import Device
+    from app.hosts.models import Host
 
 
 @pytest_asyncio.fixture
@@ -27,7 +27,7 @@ async def db_with_pending_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> AsyncGenerator[tuple[AsyncSession, Device]]:
-    from app.services import device_service
+    from app.devices.services import service as device_service
     from tests.pack.factories import seed_test_packs
 
     await seed_test_packs(db_session)
@@ -71,7 +71,7 @@ async def test_port_conflict_detected_via_code(
     async def fake_appium_start(*_args: object, **_kwargs: object) -> _FakeStartResponse:
         return _FakeStartResponse()
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.appium_start", fake_appium_start)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", fake_appium_start)
 
     with pytest.raises(NodePortConflictError):
         await start_remote_node(

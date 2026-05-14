@@ -5,11 +5,11 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceOperationalState
-from app.models.host import Host
-from app.services import node_health
-from app.services.agent_probe_result import ProbeResult
+from app.agent_comm.probe_result import ProbeResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import node_health as node_health
+from app.devices.models import DeviceOperationalState
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -55,10 +55,10 @@ async def test_node_health_failure_path_locks_appium_node(
 
     async def health_runner() -> None:
         async with db_session_maker() as session:
-            from app.services import device_locking
+            from app.devices import locking as device_locking
 
             locked_device = await device_locking.lock_device(session, device_id)
-            with patch("app.services.node_health.record_event", racing_record_event):
+            with patch("app.appium_nodes.services.node_health.record_event", racing_record_event):
                 await node_health._process_node_health(
                     session,
                     locked_device.appium_node,

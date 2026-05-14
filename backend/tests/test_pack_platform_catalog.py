@@ -4,10 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services.pack_platform_catalog import (
-    device_is_virtual,
-    platform_has_lifecycle_action,
-)
+from app.packs.services.platform_catalog import device_is_virtual, platform_has_lifecycle_action
 
 
 def _make_device(*, device_type: str = "real_device", identity_scope: str = "global") -> MagicMock:

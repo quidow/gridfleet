@@ -8,15 +8,16 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.services import device_locking, session_viability
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.sessions import service_viability as session_viability
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.models.host_resource_sample import HostResourceSample
+from app.hosts.models import HostResourceSample
 from app.seeding.time_patterns import weekly_activity_multiplier
 
 if TYPE_CHECKING:

@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, or_, select
 
 from app.core.metrics import register_gauge_refresher
+from app.core.metrics_recorders import PENDING_JOBS
+from app.core.observability import get_logger, observe_background_loop
+from app.devices.services.recovery_job import run_device_recovery_job
+from app.devices.services.verification_job_state import reset_snapshot_for_retry
+from app.devices.services.verification_runner import run_persisted_verification_job
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
-from app.metrics_recorders import PENDING_JOBS
-from app.observability import get_logger, observe_background_loop
-from app.services.device_recovery_job import run_device_recovery_job
-from app.services.device_verification_job_state import reset_snapshot_for_retry
-from app.services.device_verification_runner import run_persisted_verification_job
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

@@ -9,19 +9,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host, HostStatus
-from app.services import device_health, node_health
-from app.services.agent_probe_result import ProbeResult
-from app.services.node_health import (
-    _check_node_health,
-    _check_nodes,
-    _should_probe_node_health,
-)
-from app.services.node_service_types import NodeManagerError
+from app.agent_comm.probe_result import ProbeResult
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import node_health as node_health
+from app.appium_nodes.services.node_health import _check_node_health, _check_nodes, _should_probe_node_health
+from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
+from app.devices.services import health as device_health
+from app.hosts.models import Host, HostStatus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -72,8 +68,8 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -113,8 +109,8 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -158,13 +154,13 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
-            "app.services.node_health.grid_service.get_grid_status",
+            "app.appium_nodes.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value={"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}},
         ),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -209,13 +205,13 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
-            "app.services.node_health.grid_service.get_grid_status",
+            "app.appium_nodes.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value={"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}},
         ),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -256,9 +252,9 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
     await set_node_health_failure_count(db_session, str(node.id), 1)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
         patch(
-            "app.services.node_health.grid_service.get_grid_status",
+            "app.appium_nodes.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value={
                 "value": {
@@ -278,7 +274,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
                 }
             },
         ),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -323,8 +319,8 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -374,8 +370,8 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
     await set_node_health_failure_count(db_session, str(node.id), 2)
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="refused")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -423,10 +419,10 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
 
     with (
         patch(
-            "app.services.node_health.require_management_host",
+            "app.appium_nodes.services.node_health.require_management_host",
             side_effect=NodeManagerError("Device management host invariant is broken"),
         ),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -472,17 +468,17 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
 
     with (
         patch(
-            "app.services.node_health.capability_service.get_device_capabilities",
+            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.services.node_health.probe_session_via_grid",
+            "app.appium_nodes.services.node_health.probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
         ) as probe_mock,
-        patch("app.services.node_health.fetch_appium_status", new_callable=AsyncMock) as status_mock,
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.fetch_appium_status", new_callable=AsyncMock) as status_mock,
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -527,17 +523,17 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
 
     with (
         patch(
-            "app.services.node_health.capability_service.get_device_capabilities",
+            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "iOS"},
         ) as capabilities_mock,
-        patch("app.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
+        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
         patch(
-            "app.services.node_health.fetch_appium_status",
+            "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4734},
         ) as status_mock,
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -568,7 +564,9 @@ async def test_real_apple_node_health_probe_gate_is_disabled(
         verified_at=datetime.now(UTC),
     )
 
-    with patch("app.services.node_health.is_ready_for_use_async", new_callable=AsyncMock, return_value=True):
+    with patch(
+        "app.appium_nodes.services.node_health.is_ready_for_use_async", new_callable=AsyncMock, return_value=True
+    ):
         assert await _should_probe_node_health(db_session, device) is False
 
 
@@ -604,13 +602,13 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
     await db_session.commit()
 
     with (
-        patch("app.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
+        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
         patch(
-            "app.services.node_health.fetch_appium_status",
+            "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4730},
         ) as status_mock,
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -650,13 +648,13 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
     await db_session.commit()
 
     with (
-        patch("app.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
+        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
         patch(
-            "app.services.node_health.fetch_appium_status",
+            "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4733},
         ) as status_mock,
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -739,12 +737,12 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
 
     with (
         patch(
-            "app.services.node_health.capability_service.get_device_capabilities",
+            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
-        patch("app.services.node_health._check_node_health", side_effect=fake_check_node_health),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", side_effect=fake_check_node_health),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         task = asyncio.create_task(_check_nodes(db_session))
         await asyncio.wait_for(both_started.wait(), timeout=1)
@@ -788,7 +786,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
     )
 
     with patch(
-        "app.services.node_health.fetch_appium_status",
+        "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "boom")),
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
@@ -811,7 +809,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
     )
 
     with patch(
-        "app.services.node_health.fetch_appium_status",
+        "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentResponseError(db_host.ip, "boom", http_status=503)),
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
@@ -834,7 +832,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
     )
 
     with patch(
-        "app.services.node_health.fetch_appium_status",
+        "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=CircuitOpenError(db_host.ip, retry_after_seconds=10.0)),
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
@@ -877,7 +875,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
     )
 
     with patch(
-        "app.services.node_health.fetch_appium_status",
+        "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value={"running": True}),
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
@@ -904,7 +902,7 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
     )
 
     with patch(
-        "app.services.node_health.fetch_appium_status",
+        "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value=None),
     ):
         result = await _check_node_health(node, device, probe_capabilities=None)
@@ -928,7 +926,7 @@ async def test_check_node_health_probe_path_returns_none_on_http_error(db_sessio
     )
 
     with patch(
-        "app.services.node_health.probe_session_via_grid",
+        "app.appium_nodes.services.node_health.probe_session_via_grid",
         AsyncMock(
             return_value=(False, "Session create request failed: ConnectError while calling http://hub:4444/session")
         ),
@@ -956,7 +954,10 @@ async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
         active_connection_target="target",
     )
 
-    with patch("app.services.node_health.probe_session_via_grid", AsyncMock(return_value=(False, "device offline"))):
+    with patch(
+        "app.appium_nodes.services.node_health.probe_session_via_grid",
+        AsyncMock(return_value=(False, "device offline")),
+    ):
         result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
 
     assert result.status == "refused"
@@ -977,7 +978,7 @@ async def test_check_node_health_grid_probe_path_returns_ack(db_session: AsyncSe
     )
 
     probe_mock = AsyncMock(return_value=(True, None))
-    with patch("app.services.node_health.probe_session_via_grid", probe_mock):
+    with patch("app.appium_nodes.services.node_health.probe_session_via_grid", probe_mock):
         result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
 
     assert result.status == "ack"
@@ -1029,8 +1030,10 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="indeterminate")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch(
+            "app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="indeterminate")
+        ),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -1097,8 +1100,8 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             in_flight -= 1
 
     with (
-        patch("app.services.node_health._check_node_health", side_effect=slow_probe),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", side_effect=slow_probe),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
@@ -1147,17 +1150,17 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
 
     with (
         patch(
-            "app.services.node_health._bounded_check_node_health",
+            "app.appium_nodes.services.node_health._bounded_check_node_health",
             new_callable=AsyncMock,
             return_value=ProbeResult(status="error", detail="probe failed"),
         ),
         patch(
-            "app.services.node_health.grid_service.get_grid_status",
+            "app.appium_nodes.services.node_health.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value={},
         ),
         patch(
-            "app.services.node_health.assert_current_leader",
+            "app.appium_nodes.services.node_health.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
@@ -1224,8 +1227,8 @@ async def test_node_health_recovery_clears_pending_stop(
     await db_session.commit()
 
     with (
-        patch("app.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
-        patch("app.services.node_health.assert_current_leader"),
+        patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="ack")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 

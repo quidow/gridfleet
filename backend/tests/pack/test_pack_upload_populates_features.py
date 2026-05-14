@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.driver_pack import DriverPackFeature
-from app.services.pack_storage_service import PackStorageService
-from app.services.pack_upload_service import upload_pack
+from app.packs.models import DriverPackFeature
+from app.packs.services.storage import PackStorageService
+from app.packs.services.upload import upload_pack
 
 if TYPE_CHECKING:
     from pathlib import Path

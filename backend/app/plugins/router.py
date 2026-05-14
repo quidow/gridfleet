@@ -4,7 +4,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
+from app.hosts import service as host_service
 from app.plugins import service as plugin_service
 from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import (
@@ -15,7 +16,6 @@ from app.plugins.schemas import (
     PluginSyncResult,
     PluginUpdate,
 )
-from app.services import host_service
 
 router = APIRouter(prefix="/api", tags=["plugins"])
 

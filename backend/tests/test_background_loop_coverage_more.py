@@ -8,14 +8,18 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy.exc import NoResultFound
 
-from app.services import (
-    control_plane_leader_keepalive,
-    data_cleanup,
-    device_connectivity,
-    intent_reconciler,
-    node_health,
-    run_reaper,
+from app.appium_nodes.services import node_health as node_health
+from app.devices.services import (
+    connectivity as device_connectivity,
 )
+from app.devices.services import (
+    data_cleanup as data_cleanup,
+)
+from app.devices.services import (
+    intent_reconciler as intent_reconciler,
+)
+from app.runs import service_reaper as run_reaper
+from app.services import control_plane_leader_keepalive
 from app.services.control_plane_leader import LeadershipLost
 
 if TYPE_CHECKING:

@@ -8,16 +8,15 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.device_event import DeviceEvent
-from app.services import device_locking
-from app.services.desired_state_writer import write_desired_grid_run_id
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id
+from app.devices import locking as device_locking
+from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceOperationalState, DeviceType
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def _seed_device_with_node(db_session: AsyncSession, host: Host) -> tuple[uuid.UUID, AppiumNode]:

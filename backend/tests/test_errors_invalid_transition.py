@@ -3,8 +3,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
-from app.errors import InvalidTransitionError, register_exception_handlers
-from app.services.node_service_types import NodeManagerError
+from app.appium_nodes.exceptions import NodeManagerError
+from app.core.errors import InvalidTransitionError, register_exception_handlers
 
 
 @pytest.fixture

@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceOperationalState
-from app.schemas.run import DeviceRequirement
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceOperationalState
+from app.runs.schemas import DeviceRequirement
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -38,7 +38,7 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
     )
     await db_session.commit()
 
-    from app.services import run_service
+    from app.runs import service as run_service
 
     candidates = await run_service._find_matching_devices(
         db_session,
@@ -66,7 +66,7 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
     )
     await db_session.commit()
 
-    from app.services import run_service
+    from app.runs import service as run_service
 
     candidates = await run_service._find_matching_devices(
         db_session,
@@ -94,7 +94,7 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
     )
     await db_session.commit()
 
-    from app.services import run_service
+    from app.runs import service as run_service
 
     candidates = await run_service._find_matching_devices(
         db_session,

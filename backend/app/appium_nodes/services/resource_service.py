@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.type_defs import JsonValue
+    from app.core.type_defs import JsonValue
 
 POOL_SIZE = 1000
 INTERNAL_APPIUM_PORT_CAPABILITY = "gridfleet:appiumPort"

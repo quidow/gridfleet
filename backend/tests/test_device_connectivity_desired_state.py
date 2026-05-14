@@ -7,15 +7,14 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.device_intent import DeviceIntent
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -38,7 +37,7 @@ async def test_stop_disconnected_node_registers_connectivity_intent(
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from app.services import device_connectivity
+    from app.devices.services import connectivity as device_connectivity
 
     await device_connectivity._stop_disconnected_node(db_session, device)
     await db_session.commit()

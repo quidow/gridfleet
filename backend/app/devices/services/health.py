@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
+from app.appium_nodes.services import locking as appium_node_locking
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.health_view import (
@@ -18,8 +20,6 @@ from app.devices.services.health_view import (
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import set_operational_state
 from app.events import queue_event_for_session
-from app.observability import get_logger
-from app.services import appium_node_locking
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

@@ -7,10 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host
-from app.services import device_locking, device_service
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import service as device_service
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -81,7 +82,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
                 patch.object(device_service, "get_device", new=gated_get_device),
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
-                    "app.services.device_service._stop_node",
+                    "app.devices.services.service._stop_node",
                     new=observed_stop_node,
                 ),
             ):
@@ -188,7 +189,7 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     async def deleter() -> bool:
         async with db_session_maker() as db:
             with patch(
-                "app.services.device_service._stop_node",
+                "app.devices.services.service._stop_node",
                 new=observed_stop_node,
             ):
                 return await device_service.delete_device(db, device_id)

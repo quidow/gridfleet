@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
-from app.models.device import Device
+from app.devices.models import Device
 from app.settings import settings_service
 
 DEFAULT_GRID_BROWSER_BY_PLATFORM: dict[str, str] = {}
