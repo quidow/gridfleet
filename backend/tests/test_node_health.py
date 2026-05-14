@@ -461,7 +461,7 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
     node = AppiumNode(
         device_id=device.id,
         port=4729,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         desired_state=AppiumDesiredState.running,
         desired_port=4729,
         pid=1,
@@ -490,6 +490,7 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
     probe_capabilities = probe_mock.await_args.args[0]
     assert probe_capabilities["platformName"] == "Android"
     assert probe_capabilities["gridfleet:probeSession"] is True
+    assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
     status_mock.assert_not_awaited()
 
 
@@ -975,10 +976,16 @@ async def test_check_node_health_grid_probe_path_returns_ack(db_session: AsyncSe
         active_connection_target="target",
     )
 
-    with patch("app.services.node_health.probe_session_via_grid", AsyncMock(return_value=(True, None))):
+    probe_mock = AsyncMock(return_value=(True, None))
+    with patch("app.services.node_health.probe_session_via_grid", probe_mock):
         result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
 
     assert result.status == "ack"
+    probe_mock.assert_awaited_once_with(
+        {"platformName": "Android"},
+        15,
+        grid_url="http://hub:4444",
+    )
 
 
 async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: AsyncSession, db_host: Host) -> None:

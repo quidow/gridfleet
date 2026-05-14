@@ -217,7 +217,7 @@ async def run_probe(
         device,
         active_connection_target=started_node.active_connection_target,
     )
-    ok, error = await probe_session_fn(capabilities, timeout_sec)
+    ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
     if ok:
         await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
         return started_node, None

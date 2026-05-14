@@ -38,7 +38,11 @@ from app.services.intent_service import register_intents_and_reconcile
 from app.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.services.lifecycle_incident_service import record_lifecycle_incident
 from app.services.node_service_types import NodeManagerError
-from app.services.session_viability import build_probe_capabilities, probe_session_via_grid
+from app.services.session_viability import (
+    build_probe_capabilities,
+    grid_probe_response_to_result,
+    probe_session_via_grid,
+)
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
@@ -100,22 +104,6 @@ async def _build_probe_capabilities_for_node(db: AsyncSession, device: Device) -
     return build_probe_capabilities(capabilities)
 
 
-def _from_grid_probe_session_response(result: tuple[bool, str | None]) -> ProbeResult:
-    ok, detail = result
-    if ok:
-        return ProbeResult(status="ack")
-    if detail is None:
-        return ProbeResult(status="refused")
-    infrastructure_markers = (
-        "Session create request failed:",
-        "Session created but cleanup failed:",
-        "Session created but cleanup failed (",
-    )
-    if detail.startswith(infrastructure_markers):
-        return ProbeResult(status="indeterminate", detail=detail)
-    return ProbeResult(status="refused", detail=detail)
-
-
 async def _check_node_health(
     node: AppiumNode,
     device: Device,
@@ -129,8 +117,12 @@ async def _check_node_health(
 
     try:
         if probe_capabilities is not None:
-            result = await probe_session_via_grid(probe_capabilities, NODE_HEALTH_PROBE_TIMEOUT_SEC)
-            return _from_grid_probe_session_response(result)
+            result = await probe_session_via_grid(
+                probe_capabilities,
+                NODE_HEALTH_PROBE_TIMEOUT_SEC,
+                grid_url=node.grid_url,
+            )
+            return grid_probe_response_to_result(result)
         payload = await fetch_appium_status(
             host.ip,
             host.agent_port,

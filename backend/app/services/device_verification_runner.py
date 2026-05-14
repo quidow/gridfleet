@@ -16,6 +16,19 @@ from app.type_defs import SessionFactory
 logger = logging.getLogger(__name__)
 
 
+async def _probe_session_via_gridfleet_marker(
+    capabilities: dict[str, Any],
+    timeout_sec: int,
+    *,
+    grid_url: str | None = None,
+) -> tuple[bool, str | None]:
+    return await session_viability.probe_session_via_grid(
+        session_viability.build_probe_capabilities(capabilities),
+        timeout_sec,
+        grid_url=grid_url,
+    )
+
+
 async def run_persisted_verification_job(
     job_id: str,
     request: dict[str, Any],
@@ -52,10 +65,7 @@ async def run_persisted_verification_job(
                 db,
                 context,
                 http_client_factory=httpx.AsyncClient,
-                probe_session_fn=lambda capabilities, timeout_sec: session_viability.probe_session_via_grid(
-                    session_viability.build_probe_capabilities(capabilities),
-                    timeout_sec,
-                ),
+                probe_session_fn=_probe_session_via_gridfleet_marker,
             )
             await finish_job(
                 job,

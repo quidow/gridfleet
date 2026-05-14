@@ -19,6 +19,7 @@ from app.services.session_viability import (
     _should_run_scheduled_probe,
     get_session_viability,
     get_session_viability_control_plane_state,
+    grid_probe_response_to_result,
     probe_session_via_grid,
     record_session_viability_result,
     run_session_viability_probe,
@@ -55,7 +56,7 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     node = AppiumNode(
         device_id=device.id,
         port=4729,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         desired_state=AppiumDesiredState.stopped,
         desired_port=None,
         pid=None,
@@ -228,7 +229,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     node = AppiumNode(
         device_id=device.id,
         port=4723,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         active_connection_target="emulator-5554",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
@@ -256,6 +257,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     assert capabilities["appium:udid"] == "emulator-5554"
     assert capabilities["appium:gridfleet:deviceId"] == str(device.id)
     assert capabilities["gridfleet:probeSession"] is True
+    assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
 
 
 async def test_run_session_viability_probe_rejects_non_available_device(
@@ -379,6 +381,47 @@ async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
         timeout=5,
     )
     mock_client.delete.assert_awaited_once_with("http://hub:4444/wd/hub/session/session-1", timeout=5)
+
+
+async def test_probe_session_via_grid_uses_explicit_node_grid_url() -> None:
+    create_response = MagicMock(spec=httpx.Response, status_code=200)
+    create_response.json.return_value = {"value": {"sessionId": "session-1"}}
+    delete_response = MagicMock(spec=httpx.Response, status_code=200)
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=create_response)
+    mock_client.delete = AsyncMock(return_value=delete_response)
+
+    with (
+        patch("app.services.session_viability.settings_service.get", return_value="http://global-hub:4444"),
+        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+    ):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "iOS"},
+            timeout_sec=5,
+            grid_url="http://node-hub:4444/wd/hub",
+        )
+
+    assert ok is True
+    assert error is None
+    mock_client.post.assert_awaited_once_with(
+        "http://node-hub:4444/wd/hub/session",
+        json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}},
+        timeout=5,
+    )
+    mock_client.delete.assert_awaited_once_with("http://node-hub:4444/wd/hub/session/session-1", timeout=5)
+
+
+def test_grid_probe_response_to_result_maps_all_shapes() -> None:
+    assert grid_probe_response_to_result((True, None)).status == "ack"
+    assert grid_probe_response_to_result((False, None)).status == "refused"
+
+    refused = grid_probe_response_to_result((False, "device offline"))
+    assert refused.status == "refused"
+    assert refused.detail == "device offline"
+
+    indeterminate = grid_probe_response_to_result((False, "Session create request failed: ConnectError"))
+    assert indeterminate.status == "indeterminate"
+    assert indeterminate.detail == "Session create request failed: ConnectError"
 
 
 def test_session_viability_small_helpers_cover_error_shapes() -> None:
