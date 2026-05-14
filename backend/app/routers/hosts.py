@@ -11,6 +11,7 @@ from app.database import async_session
 from app.dependencies import DbDep
 from app.events import event_bus
 from app.models.host import Host
+from app.plugins import service as plugin_service
 from app.schemas.driver_pack import HostDriverPacksOut
 from app.schemas.host import (
     DiscoveryConfirm,
@@ -33,7 +34,6 @@ from app.services import (
     host_versioning,
     pack_discovery_service,
     platform_label_service,
-    plugin_service,
 )
 from app.services.agent_operations import get_pack_devices
 from app.services.agent_operations import get_tool_status as get_agent_tool_status

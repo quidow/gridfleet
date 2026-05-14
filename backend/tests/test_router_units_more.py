@@ -17,6 +17,7 @@ from app.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.models.appium_node import AppiumDesiredState
 from app.models.device import ConnectionType, DeviceHold, DeviceType
 from app.models.test_run import RunState
+from app.plugins.schemas import PluginCreate, PluginUpdate
 from app.routers import (
     admin_appium_nodes,
     agent_driver_packs,
@@ -50,7 +51,6 @@ from app.routers import (
 from app.schemas.analytics import DeviceReliabilityRow, DeviceUtilizationRow, GroupByOption
 from app.schemas.device import BulkMaintenanceEnter, BulkTagsUpdate, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.schemas.driver_pack import CurrentReleasePatch, RuntimePolicy
-from app.schemas.plugin import PluginCreate, PluginUpdate
 from app.schemas.run import (
     ReservedDeviceInfo,
     RunCooldownRequest,

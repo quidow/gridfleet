@@ -16,6 +16,7 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "events": ("catalog", "config", "event_bus", "models", "router", "schemas", "schemas_catalog", "service_system"),
     "jobs": ("config", "kinds", "models", "queue", "statuses"),
     "grid": ("config", "router", "schemas", "service"),
+    "plugins": ("config", "models", "router", "schemas", "service"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -59,6 +60,10 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     "app.services.grid_service": ("app.grid.service", "get_grid_status", "get_grid_status"),
     "app.schemas.grid": ("app.grid.schemas", "GridStatusRead", "GridStatusRead"),
     "app.schemas.health": ("app.core.schemas_health", "HealthStatusRead", "HealthStatusRead"),
+    "app.routers.plugins": ("app.plugins.router", "router", "router"),
+    "app.services.plugin_service": ("app.plugins.service", "list_plugins", "list_plugins"),
+    "app.schemas.plugin": ("app.plugins.schemas", "PluginRead", "PluginRead"),
+    "app.models.appium_plugin": ("app.plugins.models", "AppiumPlugin", "AppiumPlugin"),
 }
 
 

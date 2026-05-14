@@ -25,13 +25,13 @@ from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
+from app.plugins import service as plugin_service
 from app.services import (
     appium_node_locking,
     control_plane_state_store,
     device_health,
     device_locking,
     host_service,
-    plugin_service,
 )
 from app.services.agent_operations import agent_health
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader

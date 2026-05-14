@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_plugin import AppiumPlugin
 from app.models.host import Host, HostStatus, OSType
+from app.plugins.models import AppiumPlugin
 
 
 async def _create_host(
@@ -80,7 +80,7 @@ async def test_sync_host_plugins_dispatches_enabled_only(
     await db_session.commit()
 
     with patch(
-        "app.services.plugin_service.sync_agent_plugins",
+        "app.plugins.service.sync_agent_plugins",
         new=AsyncMock(return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}),
     ) as sync_agent:
         resp = await client.post(f"/api/hosts/{host.id}/plugins/sync")

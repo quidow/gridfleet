@@ -30,6 +30,7 @@ from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, rende
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
+from app.plugins import router as plugins
 from app.routers import (
     admin_appium_nodes,
     agent_driver_packs,
@@ -46,7 +47,6 @@ from app.routers import (
     hosts,
     lifecycle,
     nodes,
-    plugins,
     runs,
     sessions,
 )

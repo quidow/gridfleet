@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from app.errors import AgentCallError
-from app.models.appium_plugin import AppiumPlugin
 from app.models.host import Host, HostStatus, OSType
-from app.schemas.plugin import PluginCreate, PluginUpdate
-from app.services import plugin_service
+from app.plugins import service as plugin_service
+from app.plugins.models import AppiumPlugin
+from app.plugins.schemas import PluginCreate, PluginUpdate
 from app.webhooks import service as webhook_service
 from app.webhooks.schemas import WebhookCreate, WebhookUpdate
 
@@ -69,7 +69,7 @@ async def test_host_plugin_statuses_classify_installed_versions() -> None:
     ]
 
     with patch(
-        "app.services.plugin_service.fetch_host_plugins",
+        "app.plugins.service.fetch_host_plugins",
         new=AsyncMock(
             return_value=[
                 {"name": "ok-plugin", "version": "1.0.0"},
@@ -92,7 +92,7 @@ async def test_sync_host_plugins_sends_enabled_payload_only() -> None:
     ]
 
     with patch(
-        "app.services.plugin_service.sync_agent_plugins",
+        "app.plugins.service.sync_agent_plugins",
         new=AsyncMock(return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}),
     ) as sync_agent:
         result = await plugin_service.sync_host_plugins(host, plugins)
@@ -117,7 +117,7 @@ async def test_sync_all_host_plugins_reports_synced_failed_and_skipped_hosts(db_
             raise AgentCallError(host.ip, "agent failed")
         return {"installed": [host.hostname]}
 
-    with patch("app.services.plugin_service.sync_host_plugins", new=fake_sync):
+    with patch("app.plugins.service.sync_host_plugins", new=fake_sync):
         result = await plugin_service.sync_all_host_plugins(db_session)
 
     assert result == {
@@ -138,13 +138,13 @@ async def test_auto_sync_host_plugins_handles_non_actionable_and_agent_errors() 
     )
     plugin = AppiumPlugin(name="images", version="2.0.0", source="npm:images", enabled=True)
 
-    with patch("app.services.plugin_service.sync_host_plugins", new=AsyncMock()) as sync_host:
+    with patch("app.plugins.service.sync_host_plugins", new=AsyncMock()) as sync_host:
         await plugin_service.auto_sync_host_plugins(offline, [plugin])
         await plugin_service.auto_sync_host_plugins(online, [])
     sync_host.assert_not_awaited()
 
     with patch(
-        "app.services.plugin_service.sync_host_plugins",
+        "app.plugins.service.sync_host_plugins",
         new=AsyncMock(side_effect=httpx.ConnectError("offline")),
     ) as sync_host:
         await plugin_service.auto_sync_host_plugins(online, [plugin])
