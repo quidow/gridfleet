@@ -8,7 +8,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium.process import DeviceNotFoundError
-from agent_app.main import AppiumStartRequest, app
+from agent_app.appium.schemas import AppiumStartRequest
+from agent_app.main import app
 
 
 def test_appium_start_request_accepts_orchestration_metadata() -> None:

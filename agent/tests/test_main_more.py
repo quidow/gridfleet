@@ -3,12 +3,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent_app.main import (
-    _stop_grid_node_supervisors_for_shutdown,
-    app,
-    appium_mgr,
-    lifespan,
-)
+from agent_app.appium import appium_mgr
+from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
+from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.router import _latest_desired, _release_for_pack
 

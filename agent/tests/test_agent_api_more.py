@@ -7,12 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agent_app.appium import appium_mgr
 from agent_app.appium.process import _get_network_devices
-from agent_app.main import (
-    app,
-    appium_mgr,
-    lifespan,
-)
+from agent_app.lifespan import lifespan
+from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
 

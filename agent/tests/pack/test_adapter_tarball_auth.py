@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from agent_app.config import agent_settings
-from agent_app.main import _build_adapter_loader
+from agent_app.lifespan import _build_adapter_loader
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
 from agent_app.pack.runtime import RuntimeEnv

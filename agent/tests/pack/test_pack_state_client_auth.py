@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from agent_app.config import agent_settings
-from agent_app.main import HttpPackStateClient
+from agent_app.lifespan import HttpPackStateClient
 
 
 class RecordingTransport(httpx.AsyncBaseTransport):

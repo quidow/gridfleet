@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_app.main import _stop_grid_node_supervisors_for_shutdown, app, appium_mgr, lifespan
+from agent_app.appium import appium_mgr
+from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
+from agent_app.main import app
 
 pytestmark = pytest.mark.asyncio
 
