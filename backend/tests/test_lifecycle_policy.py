@@ -1620,6 +1620,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     assert db.added
     lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
     lifecycle_policy_module._MACHINE.transition.assert_awaited()
+    # wait_for_node_running must fire before run_session_viability_probe; probing
+    # before agent start-up yields false negatives.
     assert probe_order == ["wait", "probe"]
 
     failing = SimpleNamespace(**device.__dict__)
