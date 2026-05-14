@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from agent_app import __version__
 from agent_app.api_auth import BasicAuthMiddleware
+from agent_app.appium import appium_mgr  # re-exported for tests pending patch-target migration
 from agent_app.appium.process import (
     AlreadyRunningError,
     AppiumProcessManager,
@@ -65,7 +66,6 @@ from agent_app.version_guidance import get_version_guidance
 configure_logging()
 logger = logging.getLogger(__name__)
 
-appium_mgr = AppiumProcessManager()
 GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
