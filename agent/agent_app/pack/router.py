@@ -95,7 +95,7 @@ async def pack_device_properties_route(
     status_code=status.HTTP_200_OK,
     summary="Pack-shaped device health check via adapter",
     responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "Unknown desired pack platform"},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "UNKNOWN_PLATFORM"},
     },
 )
 async def pack_device_health_route(
@@ -147,7 +147,7 @@ async def pack_device_health_route(
     status_code=status.HTTP_200_OK,
     summary="Pack-shaped device telemetry via adapter",
     responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND or UNKNOWN_PLATFORM"},
     },
 )
 async def pack_device_telemetry_route(
@@ -187,7 +187,7 @@ async def pack_device_telemetry_route(
     status_code=status.HTTP_200_OK,
     summary="Dispatch a lifecycle action through the adapter",
     responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "Unknown desired pack platform"},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "UNKNOWN_PLATFORM"},
     },
 )
 async def pack_device_lifecycle_route(

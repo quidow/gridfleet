@@ -18,6 +18,7 @@ class AgentErrorCode(enum.StrEnum):
     STARTUP_TIMEOUT = "STARTUP_TIMEOUT"
     INVALID_PAYLOAD = "INVALID_PAYLOAD"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    UNKNOWN_PLATFORM = "UNKNOWN_PLATFORM"
 
 
 class ErrorEnvelopeDetail(BaseModel):

@@ -110,7 +110,7 @@ async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[s
         "port": port,
         "accepting_new_sessions": req.accepting_new_sessions,
         "stop_pending": req.stop_pending,
-        "grid_run_id": str(req.grid_run_id) if req.grid_run_id else None,
+        "grid_run_id": req.grid_run_id,
     }
 
 
