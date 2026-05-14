@@ -7,9 +7,9 @@ def test_agent_settings_default_disables_terminal(monkeypatch: pytest.MonkeyPatc
     for key in ("AGENT_ENABLE_WEB_TERMINAL", "AGENT_TERMINAL_TOKEN", "AGENT_TERMINAL_SHELL"):
         monkeypatch.delenv(key, raising=False)
     settings = AgentSettings()
-    assert settings.enable_web_terminal is False
-    assert settings.terminal_token is None
-    assert settings.terminal_shell is None
+    assert settings.terminal.enable_web_terminal is False
+    assert settings.terminal.terminal_token is None
+    assert settings.terminal.terminal_shell is None
 
 
 def test_agent_settings_rejects_terminal_enabled_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,15 +47,15 @@ def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AGENT_API_AUTH_USERNAME", "ops")
     monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "secret")
     settings = AgentSettings()
-    assert settings.api_auth_username == "ops"
-    assert settings.api_auth_password == "secret"
+    assert settings.api_auth.api_auth_username == "ops"
+    assert settings.api_auth.api_auth_password == "secret"
 
 
 def test_grid_node_settings_defaults() -> None:
     settings = AgentSettings()
-    assert settings.grid_node_heartbeat_sec == 5.0
-    assert settings.grid_node_session_timeout_sec == 300.0
-    assert settings.grid_node_proxy_timeout_sec == 60.0
+    assert settings.grid_node.grid_node_heartbeat_sec == 5.0
+    assert settings.grid_node.grid_node_session_timeout_sec == 300.0
+    assert settings.grid_node.grid_node_proxy_timeout_sec == 60.0
 
 
 def test_grid_node_settings_reject_zero(monkeypatch: pytest.MonkeyPatch) -> None:
