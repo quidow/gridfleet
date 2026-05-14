@@ -189,9 +189,9 @@ async def _run_per_device_node_action(
                 await session.commit()
             except NoResultFound:
                 errors[str(device_id)] = "Device not found"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk ops must continue past one failure
                 errors[str(device_id)] = str(e)
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(Exception):  # best-effort rollback cleanup
                     await session.rollback()
 
     await asyncio.gather(*[_one(did) for did in existing_device_ids])
@@ -302,7 +302,7 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str
             deleted = await delete_device(db, device_id)
             if not deleted:
                 errors[str(device_id)] = "Device not found"
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
             errors[str(device_id)] = str(e)
     succeeded = len(device_ids) - len(errors)
     await event_bus.publish(
@@ -325,7 +325,7 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) 
         try:
             device = await device_locking.lock_device(db, device_id)
             await enter_maintenance(db, device, commit=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk enter_maintenance must continue past one failure
             errors[str(device_id)] = str(e)
     succeeded = len(ordered_ids) - len(errors)
     queue_event_for_session(
@@ -426,7 +426,7 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
             successful.append(device.id)
         except ValueError as e:
             errors[str(device.id)] = str(e)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk exit_maintenance must continue past one failure
             errors[str(device.id)] = str(e)
     succeeded = len(devices) - len(errors)
     queue_event_for_session(
@@ -447,7 +447,7 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
     for device_id in successful:
         try:
             await schedule_device_recovery(db, device_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
             logger.warning("bulk_exit_maintenance: failed to enqueue recovery for %s: %s", device_id, exc)
 
     return _result(len(devices), succeeded, errors)

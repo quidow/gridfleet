@@ -1727,6 +1727,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     assert exc.value.status_code == 400
     assert exc.value.detail == "not ready"
 
+    # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     with (
         patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
@@ -1734,10 +1735,8 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
         patch("app.routers.nodes.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(RuntimeError, match="boom"):
             await nodes_router.start_node(device_id, db=object())
-    assert exc.value.status_code == 400
-    assert exc.value.detail == "boom"
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4())
@@ -1749,14 +1748,14 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     ):
         assert await nodes_router.stop_node(device_id, db=object()) is stopped_node
 
+    # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     with (
         patch("app.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)),
         patch("app.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.routers.nodes.node_manager.stop_node", new=AsyncMock(side_effect=RuntimeError("stop failed"))),
     ):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(RuntimeError, match="stop failed"):
             await nodes_router.stop_node(device_id, db=object())
-    assert exc.value.detail == "stop failed"
 
     fallback_started = SimpleNamespace(desired_state=AppiumDesiredState.running)
     non_running_device = SimpleNamespace(

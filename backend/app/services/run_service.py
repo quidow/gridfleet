@@ -191,21 +191,21 @@ async def hydrate_reserved_device_info(
     if "config" in includes:
         try:
             info.config = await config_service.get_device_config(db, device, keys=None)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort include; report unavailable instead of failing the run fetch
             info.config = None
             unavailable.append(UnavailableInclude(include="config", reason=type(exc).__name__))
 
     if "capabilities" in includes:
         try:
             info.live_capabilities = await capability_service.get_device_capabilities(db, device)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort include; report unavailable instead of failing the run fetch
             info.live_capabilities = None
             unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))
 
     if "test_data" in includes:
         try:
             info.test_data = device.test_data or {}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort include; report unavailable instead of failing the run fetch
             info.test_data = None
             unavailable.append(UnavailableInclude(include="test_data", reason=type(exc).__name__))
 

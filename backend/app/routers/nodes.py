@@ -59,7 +59,7 @@ async def start_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
         raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
     try:
         return await node_manager.start_node(db, device, caller="operator_route")
-    except Exception as exc:
+    except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -72,7 +72,7 @@ async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
         raise HTTPException(status_code=400, detail=f"No running node for device {device.id}")
     try:
         return await node_manager.stop_node(db, device, caller="operator_route")
-    except Exception as exc:
+    except node_manager.NodeManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -90,7 +90,7 @@ async def restart_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
         converged_node = await converge_device_now(device.id, db=db)
         if converged_node is not None:
             node = converged_node
-    except Exception:
+    except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
         logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device.id))
     await db.refresh(node)
     return node

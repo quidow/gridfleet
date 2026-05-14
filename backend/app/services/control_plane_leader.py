@@ -199,12 +199,12 @@ class ControlPlaneLeader:
                 text("SELECT pg_advisory_unlock(:lock_id)"),
                 {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — best-effort advisory lock release; must not prevent connection close
             logger.debug("control_plane_leader_release_unlock_failed", exc_info=True)
         finally:
             try:
                 await self._connection.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — best-effort connection close in leader release path
                 logger.debug("control_plane_leader_release_close_failed", exc_info=True)
             self._connection = None
             self._holder_id = uuid.uuid4()
