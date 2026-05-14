@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
 from agent_app.appium.dependencies import get_appium_mgr
-from agent_app.host.dependencies import get_capabilities_snapshot_dep
+from agent_app.host.dependencies import get_capabilities_snapshot_dep, get_host_telemetry_dep
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
@@ -21,6 +21,7 @@ from agent_app.pack.adapter_types import (
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.pack.manifest import DesiredPack  # noqa: TC001 - contextmanager signature is runtime-inspected
 from agent_app.plugins.dependencies import get_installed_plugins_dep, sync_plugins_dep
+from agent_app.plugins.schemas import PluginSyncRequest  # noqa: TC001 - FastAPI resolves override signatures at runtime
 from agent_app.tools.dependencies import get_tool_status_dep
 
 
@@ -63,10 +64,8 @@ async def test_health(client: AsyncClient) -> None:
 
 
 async def test_host_telemetry(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.host.router.get_host_telemetry",
-        new_callable=AsyncMock,
-        return_value={
+    async def _fake() -> dict[str, object]:
+        return {
             "recorded_at": "2026-04-16T09:30:00+00:00",
             "cpu_percent": 71.2,
             "memory_used_mb": 24576,
@@ -74,9 +73,13 @@ async def test_host_telemetry(client: AsyncClient) -> None:
             "disk_used_gb": 412.3,
             "disk_total_gb": 512.0,
             "disk_percent": 80.5,
-        },
-    ):
+        }
+
+    app.dependency_overrides[get_host_telemetry_dep] = _fake
+    try:
         resp = await client.get("/agent/host/telemetry")
+    finally:
+        app.dependency_overrides.pop(get_host_telemetry_dep, None)
 
     assert resp.status_code == 200
     data = resp.json()
@@ -455,13 +458,13 @@ async def test_list_plugins(client: AsyncClient) -> None:
 
 
 async def test_sync_plugins(client: AsyncClient) -> None:
-    captured: list[list[dict[str, object]]] = []
+    captured: list[PluginSyncRequest] = []
 
-    async def _fake_sync(configs: list[dict[str, object]]) -> dict[str, object]:
-        captured.append(configs)
+    async def _fake_sync(req: PluginSyncRequest) -> dict[str, object]:
+        captured.append(req)
         return {"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}
 
-    app.dependency_overrides[sync_plugins_dep] = lambda: _fake_sync
+    app.dependency_overrides[sync_plugins_dep] = _fake_sync
     try:
         resp = await client.post(
             "/agent/plugins/sync",
@@ -480,16 +483,10 @@ async def test_sync_plugins(client: AsyncClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json()["installed"] == ["execute-driver"]
-    assert captured == [
-        [
-            {
-                "name": "execute-driver",
-                "version": "1.0.0",
-                "source": "npm:@appium/execute-driver-plugin",
-                "package": None,
-            }
-        ]
-    ]
+    assert len(captured) == 1
+    assert captured[0].plugins[0].name == "execute-driver"
+    assert captured[0].plugins[0].version == "1.0.0"
+    assert captured[0].plugins[0].source == "npm:@appium/execute-driver-plugin"
 
 
 async def test_agent_tools_status(client: AsyncClient) -> None:

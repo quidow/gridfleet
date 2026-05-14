@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.host.dependencies import (
     get_capabilities_snapshot_dep,
+    get_host_telemetry_dep,
     get_version_guidance_payload,
 )
 from agent_app.main import app
@@ -46,3 +47,21 @@ async def test_health_uses_version_guidance_override(client: AsyncClient) -> Non
         assert resp.json()["version_guidance"] == fake_guidance
     finally:
         app.dependency_overrides.pop(get_version_guidance_payload, None)
+
+
+async def test_host_telemetry_uses_override(client: AsyncClient) -> None:
+    async def _fake() -> dict[str, Any]:
+        return {"cpu_percent": 7.5, "memory_used_mb": 1024, "memory_total_mb": 8192, "disk_percent": 12.0}
+
+    app.dependency_overrides[get_host_telemetry_dep] = _fake
+    try:
+        resp = await client.get("/agent/host/telemetry")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "cpu_percent": 7.5,
+            "memory_used_mb": 1024,
+            "memory_total_mb": 8192,
+            "disk_percent": 12.0,
+        }
+    finally:
+        app.dependency_overrides.pop(get_host_telemetry_dep, None)

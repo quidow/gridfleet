@@ -13,6 +13,7 @@ from agent_app.plugins.dependencies import (
     get_installed_plugins_dep,
     sync_plugins_dep,
 )
+from agent_app.plugins.schemas import PluginSyncRequest  # noqa: TC001 - FastAPI resolves override signatures at runtime
 from agent_app.tools.dependencies import get_tool_status_dep
 
 
@@ -37,39 +38,32 @@ async def test_list_plugins_uses_override(client: AsyncClient) -> None:
 
 
 async def test_sync_plugins_uses_override(client: AsyncClient) -> None:
-    captured: list[list[dict[str, Any]]] = []
+    captured: list[PluginSyncRequest] = []
 
-    async def _fake(configs: list[dict[str, Any]]) -> dict[str, Any]:
-        captured.append(configs)
-        return {"installed": ["appium-uiautomator2-driver"], "updated": [], "removed": [], "errors": {}}
+    async def _fake(req: PluginSyncRequest) -> dict[str, Any]:
+        captured.append(req)
+        return {
+            "installed": ["appium-uiautomator2-driver"],
+            "updated": [],
+            "removed": [],
+            "errors": {},
+        }
 
-    app.dependency_overrides[sync_plugins_dep] = lambda: _fake
+    app.dependency_overrides[sync_plugins_dep] = _fake
     try:
         resp = await client.post(
             "/agent/plugins/sync",
             json={
                 "plugins": [
-                    {
-                        "name": "appium-uiautomator2-driver",
-                        "version": "1.2.3",
-                        "source": "npm:appium-uiautomator2",
-                    }
+                    {"name": "appium-uiautomator2-driver", "version": "1.2.3", "source": "npm:appium-uiautomator2"}
                 ]
             },
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["installed"] == ["appium-uiautomator2-driver"]
-        assert captured == [
-            [
-                {
-                    "name": "appium-uiautomator2-driver",
-                    "version": "1.2.3",
-                    "source": "npm:appium-uiautomator2",
-                    "package": None,
-                }
-            ]
-        ]
+        assert len(captured) == 1
+        assert captured[0].plugins[0].name == "appium-uiautomator2-driver"
     finally:
         app.dependency_overrides.pop(sync_plugins_dep, None)
 

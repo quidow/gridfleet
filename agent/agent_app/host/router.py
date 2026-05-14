@@ -9,9 +9,12 @@ from fastapi import APIRouter, status
 
 from agent_app import __version__
 from agent_app.appium.dependencies import AppiumMgrDep  # noqa: TC001 - FastAPI resolves at runtime
-from agent_app.host.dependencies import CapabilitiesDep, VersionGuidanceDep  # noqa: TC001 - FastAPI resolves at runtime
+from agent_app.host.dependencies import (  # noqa: TC001 - FastAPI resolves at runtime
+    CapabilitiesDep,
+    HostTelemetryDep,
+    VersionGuidanceDep,
+)
 from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
-from agent_app.host.telemetry import get_host_telemetry
 
 router = APIRouter(prefix="/agent", tags=["host"])
 
@@ -45,5 +48,5 @@ async def health(
     status_code=status.HTTP_200_OK,
     summary="Snapshot of host CPU/memory/disk telemetry",
 )
-async def host_telemetry() -> dict[str, Any]:
-    return await get_host_telemetry()
+async def host_telemetry(payload: HostTelemetryDep) -> dict[str, Any]:
+    return payload
