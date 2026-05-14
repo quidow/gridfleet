@@ -6,6 +6,7 @@ import enum
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import BaseModel
 
 
 class AgentErrorCode(enum.StrEnum):
@@ -16,6 +17,15 @@ class AgentErrorCode(enum.StrEnum):
     STARTUP_TIMEOUT = "STARTUP_TIMEOUT"
     INVALID_PAYLOAD = "INVALID_PAYLOAD"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class ErrorEnvelopeDetail(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorEnvelope(BaseModel):
+    detail: ErrorEnvelopeDetail
 
 
 def http_exc(
