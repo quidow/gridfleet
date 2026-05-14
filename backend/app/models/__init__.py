@@ -16,7 +16,6 @@ from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample, 
 from app.jobs.models import Job
 from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
-from app.models.session import Session
 from app.models.test_run import TestRun
 from app.packs.models import (
     DriverPack,
@@ -29,6 +28,7 @@ from app.packs.models import (
     HostRuntimeInstallation,
 )
 from app.plugins.models import AppiumPlugin
+from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog, Setting
 from app.webhooks.models import Webhook, WebhookDelivery
 
@@ -63,6 +63,7 @@ __all__ = [
     "HostTerminalSession",
     "Job",
     "Session",
+    "SessionStatus",
     "Setting",
     "SystemEvent",
     "TestRun",
