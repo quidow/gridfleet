@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.models.session import Session, SessionStatus
 from app.schemas.device import SessionCreate, SessionDetail, SessionListRead, SessionRead, SessionStatusUpdate
 from app.services import platform_label_service, session_service
@@ -36,6 +36,7 @@ async def _session_details_with_labels(db: AsyncSession, sessions: list[Session]
 @router.get("", response_model=SessionListRead)
 async def list_sessions(
     request: Request,
+    db: DbDep,
     device_id: uuid.UUID | None = Query(None),
     status: SessionStatus | None = Query(None),
     pack_id: str | None = Query(None),
@@ -51,7 +52,6 @@ async def list_sessions(
         "started_at"
     ),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
-    db: AsyncSession = Depends(get_db),
 ) -> SessionListRead:
     cursor_mode = "cursor" in request.query_params or "direction" in request.query_params
     if cursor_mode:
@@ -100,7 +100,7 @@ async def list_sessions(
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-async def get_session(session_id: str, db: AsyncSession = Depends(get_db)) -> SessionDetail:
+async def get_session(session_id: str, db: DbDep) -> SessionDetail:
     session = await session_service.get_session(db, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -111,7 +111,7 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)) -> Se
 @router.post("", response_model=SessionRead)
 async def register_session(
     data: SessionCreate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> Session:
     try:
         return await session_service.register_session(
@@ -137,7 +137,7 @@ async def register_session(
 async def update_session_status(
     session_id: str,
     data: SessionStatusUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> Session:
     session = await session_service.update_session_status(db, session_id, data.status)
     if session is None:
@@ -148,7 +148,7 @@ async def update_session_status(
 @router.post("/{session_id}/finished", status_code=204)
 async def post_session_finished(
     session_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> Response:
     result = await session_service.mark_session_finished(db, session_id)
     if result is None:
