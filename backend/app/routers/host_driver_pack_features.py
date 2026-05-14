@@ -14,12 +14,10 @@ HTTP shim.
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.services.auth_dependencies import require_admin
+from app.dependencies import AdminDep, DbDep
 from app.services.pack_feature_dispatch_service import dispatch_feature_action
 
 router = APIRouter(prefix="/api/hosts", tags=["driver-pack-feature-actions"])
@@ -50,8 +48,8 @@ async def invoke_feature_action(
     feature_id: str,
     action_id: str,
     body: FeatureActionRequest,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    _username: AdminDep,
+    session: DbDep,
 ) -> FeatureActionResultOut:
     """Dispatch a feature action to the agent owning ``host_id``.
 
