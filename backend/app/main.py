@@ -34,19 +34,14 @@ from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.observability import configure_logging, get_logger
+from app.packs import routers as pack_routers
+from app.packs import services as pack_services
 from app.plugins import router as plugins
 from app.routers import (
     admin_appium_nodes,
-    agent_driver_packs,
     bulk,
     device_groups,
     devices,
-    driver_pack_authoring,
-    driver_pack_export,
-    driver_pack_templates,
-    driver_pack_uploads,
-    driver_packs,
-    host_driver_pack_features,
     lifecycle,
     nodes,
     runs,
@@ -67,7 +62,6 @@ from app.services.heartbeat import (
 )
 from app.services.intent_reconciler import device_intent_reconciler_loop
 from app.services.node_health import node_health_loop
-from app.services.pack_drain import pack_drain_loop
 from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
@@ -104,6 +98,10 @@ async def hardware_telemetry_loop() -> None:
 async def host_resource_telemetry_loop() -> None:
     service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
     await service_resource_telemetry.host_resource_telemetry_loop()
+
+
+async def pack_drain_loop() -> None:
+    await pack_services.drain.pack_drain_loop()
 
 
 def _freeze_background_loops() -> bool:
@@ -292,13 +290,13 @@ app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.requi
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(lifecycle.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(driver_pack_authoring.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(driver_pack_templates.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(driver_pack_export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(driver_packs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(driver_pack_uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(host_driver_pack_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(agent_driver_packs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.authoring.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.templates.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.host_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(pack_routers.agent_state.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 
 
 @app.get("/health/live", response_model=LiveHealthRead)

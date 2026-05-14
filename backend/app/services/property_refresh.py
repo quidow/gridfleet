@@ -7,9 +7,11 @@ from app.database import async_session
 from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
+from app.packs.services import discovery as pack_discovery
 from app.services.agent_operations import get_pack_device_properties
-from app.services.pack_discovery_service import refresh_device_properties as pack_refresh_device_properties
 from app.settings import settings_service
+
+pack_refresh_device_properties = pack_discovery.refresh_device_properties
 
 logger = get_logger(__name__)
 LOOP_NAME = "property_refresh"

@@ -19,6 +19,10 @@ from app.errors import AgentCallError
 from app.events import queue_event_for_session
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
+from app.packs.services import capability as pack_capability
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services import start_shim as pack_start_shim
 from app.services import (
     agent_operations,
     appium_capability_keys,
@@ -59,15 +63,17 @@ from app.services.node_service_common import (
     get_default_plugins,
 )
 from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.services.pack_capability_service import (
-    render_default_capabilities,
-    render_device_field_capabilities,
-    render_stereotype,
-)
-from app.services.pack_platform_catalog import device_is_virtual
-from app.services.pack_platform_resolver import assert_runnable, resolve_pack_platform
-from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
 from app.settings import settings_service
+
+assert_runnable = pack_platform_resolver.assert_runnable
+build_pack_start_payload = pack_start_shim.build_pack_start_payload
+device_is_virtual = pack_platform_catalog.device_is_virtual
+render_default_capabilities = pack_capability.render_default_capabilities
+render_device_field_capabilities = pack_capability.render_device_field_capabilities
+render_stereotype = pack_capability.render_stereotype
+resolve_pack_for_device = pack_start_shim.resolve_pack_for_device
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+PackStartPayloadError = pack_start_shim.PackStartPayloadError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

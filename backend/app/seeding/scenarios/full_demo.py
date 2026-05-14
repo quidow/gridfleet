@@ -17,12 +17,11 @@ from app.models.device import (
 from app.models.device_event import DeviceEventType
 from app.models.device_group import DeviceGroupMembership, GroupType
 from app.models.host import HostStatus, OSType
-from app.models.host_pack_installation import HostPackDoctorResult, HostPackInstallation
 from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.models.host_runtime_installation import HostRuntimeInstallation
 from app.models.host_terminal_session import HostTerminalSession
 from app.models.session import SessionStatus
 from app.models.test_run import RunState
+from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.plugins.models import AppiumPlugin
 from app.seeding.factories.device import make_device
 from app.seeding.factories.driver_pack import seed_demo_driver_packs

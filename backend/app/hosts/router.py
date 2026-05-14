@@ -29,17 +29,19 @@ from app.hosts.schemas import (
     HostToolStatusRead,
     IntakeCandidateRead,
 )
+from app.packs import schemas as pack_schemas
+from app.packs.services import status as pack_status
 from app.plugins import service as plugin_service
-from app.schemas.driver_pack import HostDriverPacksOut
 from app.services import (
     device_presenter,
     pack_discovery_service,
     platform_label_service,
 )
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
-from app.services.pack_status_service import get_host_driver_pack_status
 from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory
+
+get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 logger = logging.getLogger(__name__)
@@ -180,12 +182,12 @@ async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     return payload
 
 
-@router.get("/{host_id}/driver-packs", response_model=HostDriverPacksOut)
-async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> HostDriverPacksOut:
+@router.get("/{host_id}/driver-packs", response_model=pack_schemas.HostDriverPacksOut)
+async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> pack_schemas.HostDriverPacksOut:
     host = await db.get(Host, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="host not found")
-    return HostDriverPacksOut.model_validate(await get_host_driver_pack_status(db, host_id))
+    return pack_schemas.HostDriverPacksOut.model_validate(await get_host_driver_pack_status(db, host_id))
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)

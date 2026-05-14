@@ -4,6 +4,9 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import Device, DeviceType
+from app.packs.services import capability as pack_capability
+from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services import start_shim as pack_start_shim
 from app.services import (
     appium_capability_keys,
     appium_node_locking,
@@ -13,13 +16,12 @@ from app.services import (
 )
 from app.services.device_identity import appium_connection_target
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.pack_capability_service import (
-    render_default_capabilities,
-    render_device_field_capabilities,
-    render_stereotype,
-)
-from app.services.pack_platform_resolver import resolve_pack_platform
-from app.services.pack_start_shim import resolve_pack_for_device
+
+render_default_capabilities = pack_capability.render_default_capabilities
+render_device_field_capabilities = pack_capability.render_device_field_capabilities
+render_stereotype = pack_capability.render_stereotype
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+resolve_pack_for_device = pack_start_shim.resolve_pack_for_device
 
 logger = logging.getLogger(__name__)
 

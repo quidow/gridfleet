@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import ConnectionType, Device, DeviceType
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services.device_identity import (
     derive_pack_identity,
@@ -13,7 +14,8 @@ from app.services.device_identity import (
     looks_like_ip_port_target,
     parse_ip_from_connection_target,
 )
-from app.services.pack_platform_resolver import resolve_pack_platform
+
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 logger = logging.getLogger(__name__)
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.errors import AgentCallError
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DeviceVerificationCreate
 from app.services import device_readiness, device_service, device_write
 from app.services.agent_operations import normalize_pack_device, pack_device_lifecycle_action
@@ -21,7 +22,8 @@ from app.services.device_identity_conflicts import (
     ensure_device_payload_identity_available,
 )
 from app.services.device_verification_job_state import set_stage, should_keep_verified_node_running
-from app.services.pack_platform_resolver import resolve_pack_platform
+
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 if TYPE_CHECKING:
     import uuid

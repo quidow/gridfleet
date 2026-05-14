@@ -147,9 +147,11 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
 async def reset_control_plane_state() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
+    from app.packs import packs_settings
 
     agent_snapshot = agent_settings.model_dump()
     auth_snapshot = auth_settings.model_dump()
+    packs_snapshot = packs_settings.model_dump()
 
     await _shutdown_control_plane_services()
     event_bus.reset()
@@ -176,6 +178,8 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
         setattr(agent_settings, key, value)
     for key, value in auth_snapshot.items():
         setattr(auth_settings, key, value)
+    for key, value in packs_snapshot.items():
+        setattr(packs_settings, key, value)
 
 
 @pytest_asyncio.fixture

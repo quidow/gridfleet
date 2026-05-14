@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState, AppiumNode
+from app.packs.services import platform_catalog as pack_platform_catalog
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services import (
     capability_service,
@@ -27,9 +28,10 @@ from app.services.device_verification_job_state import enum_value, set_stage
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service_types import NodeManagerError
-from app.services.pack_platform_catalog import device_is_virtual
 from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
+
+device_is_virtual = pack_platform_catalog.device_is_virtual
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

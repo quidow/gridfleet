@@ -19,8 +19,7 @@ this exact pattern for its own fields.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,6 +27,11 @@ from app.agent_comm import agent_settings
 from app.agent_comm.config import AgentCommConfig
 from app.auth import auth_settings
 from app.auth.config import AuthConfig
+from app.packs import packs_settings
+from app.packs.config import PacksConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _AUTH_FIELD_NAMES: frozenset[str] = frozenset(
     {
@@ -49,6 +53,7 @@ _AGENT_COMM_FIELD_NAMES: frozenset[str] = frozenset(
         "agent_terminal_scheme",
     }
 )
+_PACKS_FIELD_NAMES: frozenset[str] = frozenset({"driver_pack_storage_dir"})
 
 
 class Settings(BaseSettings):
@@ -56,13 +61,13 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     request_timeout_sec: float = 30.0
-    driver_pack_storage_dir: Path = Path("/var/lib/gridfleet/driver-packs")
 
     model_config = SettingsConfigDict(env_prefix="GRIDFLEET_", extra="ignore")
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401  — legacy kwargs forwarded to domain configs
         auth_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in _AUTH_FIELD_NAMES}
         agent_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in _AGENT_COMM_FIELD_NAMES}
+        packs_kwargs = {key: kwargs.pop(key) for key in list(kwargs) if key in _PACKS_FIELD_NAMES}
         super().__init__(**kwargs)
         if auth_kwargs:
             # Validate-then-apply with a *fresh* AuthConfig (no merge
@@ -83,6 +88,14 @@ class Settings(BaseSettings):
             validated_agent = AgentCommConfig()
             for key in _AGENT_COMM_FIELD_NAMES:
                 setattr(agent_settings, key, getattr(validated_agent, key))
+        if packs_kwargs:
+            validated_packs = PacksConfig(**packs_kwargs)
+            for key in packs_kwargs:
+                setattr(packs_settings, key, getattr(validated_packs, key))
+        else:
+            validated_packs = PacksConfig()
+            for key in _PACKS_FIELD_NAMES:
+                setattr(packs_settings, key, getattr(validated_packs, key))
 
     @property
     def auth_enabled(self) -> bool:
@@ -195,6 +208,14 @@ class Settings(BaseSettings):
     @agent_terminal_scheme.deleter
     def agent_terminal_scheme(self) -> None:
         agent_settings.agent_terminal_scheme = "ws"
+
+    @property
+    def driver_pack_storage_dir(self) -> Path:
+        return packs_settings.driver_pack_storage_dir
+
+    @driver_pack_storage_dir.setter
+    def driver_pack_storage_dir(self, value: Path) -> None:
+        packs_settings.driver_pack_storage_dir = value
 
 
 settings = Settings()

@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Query
 from app.dependencies import DbDep
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.routers.device_route_helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -45,9 +47,10 @@ from app.services.agent_operations import (
 from app.services.appium_reconciler_agent import require_management_host
 from app.services.device_identity import appium_connection_target
 from app.services.intent_service import revoke_intents_and_reconcile
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
-from app.services.pack_platform_resolver import resolve_pack_platform
 from app.services.session_viability_types import SessionViabilityCheckedBy
+
+platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 router = APIRouter()
 

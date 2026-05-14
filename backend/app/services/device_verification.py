@@ -5,14 +5,16 @@ from app.database import async_session
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services.device_verification_job_state import (
     new_job,
     public_snapshot,
 )
 from app.services.device_verification_runner import run_persisted_verification_job
-from app.services.pack_platform_resolver import assert_runnable
 from app.type_defs import SessionFactory
+
+assert_runnable = pack_platform_resolver.assert_runnable
 
 __all__ = [
     "run_persisted_verification_job",

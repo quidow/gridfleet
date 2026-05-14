@@ -17,6 +17,7 @@ from app.models.device_event import DeviceEventType
 from app.models.device_reservation import DeviceReservation
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES, RunState, TestRun
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.schemas.device import DeviceLifecyclePolicySummaryState
 from app.schemas.run import DeviceRequirement, ReservedDeviceInfo, RunCreate, RunRead, SessionCounts, UnavailableInclude
 from app.services import (
@@ -46,8 +47,9 @@ from app.services.intent_types import (
     RESERVATION,
     IntentRegistration,
 )
-from app.services.pack_platform_resolver import assert_runnable
 from app.settings import settings_service
+
+assert_runnable = pack_platform_resolver.assert_runnable
 
 logger = logging.getLogger(__name__)
 

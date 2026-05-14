@@ -16,6 +16,8 @@ from app.models.device_reservation import DeviceReservation
 from app.models.host import Host, HostStatus
 from app.models.test_run import RunState
 from app.observability import get_logger, observe_background_loop
+from app.packs.services import platform_catalog as pack_platform_catalog
+from app.packs.services import platform_resolver as pack_platform_resolver
 from app.services import (
     control_plane_state_store,
     device_health,
@@ -38,9 +40,10 @@ from app.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, 
 from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
-from app.services.pack_platform_resolver import resolve_pack_platform
 from app.settings import settings_service
+
+platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"

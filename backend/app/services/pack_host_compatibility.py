@@ -1,13 +1,9 @@
-from __future__ import annotations
+import sys
+from typing import TYPE_CHECKING
 
-from typing import Any
+from app.packs.services import host_compatibility as _host_compatibility
 
+if TYPE_CHECKING:
+    from app.packs.services.host_compatibility import *  # noqa: F403
 
-def manifest_supports_host_os(manifest: dict[str, Any], host_os: str) -> bool:
-    requires = manifest.get("requires")
-    if not isinstance(requires, dict):
-        return True
-    host_os_values = requires.get("host_os") or []
-    if not isinstance(host_os_values, list) or not host_os_values:
-        return True
-    return host_os in {value for value in host_os_values if isinstance(value, str)}
+sys.modules[__name__] = _host_compatibility

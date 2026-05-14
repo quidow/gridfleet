@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.services.pack_release_ordering import selected_release
+from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.services import release_ordering as pack_release_ordering
+
+selected_release = pack_release_ordering.selected_release
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

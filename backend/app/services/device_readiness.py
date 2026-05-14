@@ -11,8 +11,10 @@ if TYPE_CHECKING:
 
     from app.models.device import Device
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.services.pack_release_ordering import selected_release
+from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.services import release_ordering as pack_release_ordering
+
+selected_release = pack_release_ordering.selected_release
 
 ReadinessState = Literal["setup_required", "verification_required", "verified"]
 DEVICE_FIELD_ATTRS = frozenset(
