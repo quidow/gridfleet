@@ -16,14 +16,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
-from app.models.device import Device
-from app.models.host import Host, HostStatus, OSType
-from app.services import appium_node_resource_service, appium_reconciler_agent
-from app.services.appium_reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
-from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode, AppiumNodeResourceClaim
+from app.appium_nodes.services import (
+    reconciler_agent as appium_reconciler_agent,
+)
+from app.appium_nodes.services import (
+    resource_service as appium_node_resource_service,
+)
+from app.appium_nodes.services.reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
+from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
+from app.devices.models import Device
+from app.hosts.models import Host, HostStatus, OSType
 from app.settings import settings_service
 from tests.helpers import create_device_record
 
@@ -343,7 +347,7 @@ async def test_start_node_reserves_main_appium_port_and_retries_collision(
             agent_base="http://agent",
         )
     )
-    with patch("app.services.appium_reconciler_agent.start_remote_node", new=remote_start):
+    with patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new=remote_start):
         handle = await appium_reconciler_agent._start_for_node(
             db_session,
             device,

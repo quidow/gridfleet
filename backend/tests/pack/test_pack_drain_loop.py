@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.driver_pack import DriverPack, PackState
-from app.services import pack_drain
-from app.services.pack_drain import complete_draining_packs_once
+from app.packs.models import DriverPack, PackState
+from app.packs.services import drain as pack_drain
+from app.packs.services.drain import complete_draining_packs_once
 
 pytestmark = pytest.mark.asyncio
 
@@ -50,11 +50,11 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
             return None
 
     with (
-        patch("app.services.pack_drain.observe_background_loop", new=Mock(return_value=Observation())),
-        patch("app.services.pack_drain.async_session", new=Mock(return_value=SessionScope())),
-        patch("app.services.pack_drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
-        patch("app.services.pack_drain.logger.info") as info,
-        patch("app.services.pack_drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.packs.services.drain.observe_background_loop", new=Mock(return_value=Observation())),
+        patch("app.packs.services.drain.async_session", new=Mock(return_value=SessionScope())),
+        patch("app.packs.services.drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
+        patch("app.packs.services.drain.logger.info") as info,
+        patch("app.packs.services.drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         pytest.raises(asyncio.CancelledError),
     ):
         await pack_drain.pack_drain_loop()

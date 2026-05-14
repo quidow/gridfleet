@@ -15,13 +15,10 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.models.host_pack_installation import HostPackDoctorResult, HostPackInstallation
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.models.host_runtime_installation import HostRuntimeInstallation
-from app.services import pack_status_service
-from app.services.pack_status_service import apply_status, get_host_driver_pack_status
+from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
+from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
+from app.packs.services import status as pack_status_service
+from app.packs.services.status import apply_status, get_host_driver_pack_status
 from tests.pack.factories import seed_test_packs
 
 

@@ -8,10 +8,10 @@ import pytest
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.schemas.host import HostCreate, HostRegister, HostUpdate
-from app.services import host_service
+from app.devices.models import ConnectionType, DeviceType
+from app.hosts import service as host_service
+from app.hosts.models import Host, HostStatus, OSType
+from app.hosts.schemas import HostCreate, HostRegister, HostUpdate
 from tests.helpers import create_device_record
 
 CAPS_V2 = {"orchestration_contract_version": 2}
@@ -43,7 +43,7 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
 
 
 async def test_create_update_and_delete_host(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.host_service.settings_service.get", lambda key: 6200)
+    monkeypatch.setattr("app.hosts.service.settings_service.get", lambda key: 6200)
 
     host = await host_service.create_host(
         db_session,
@@ -117,7 +117,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "app.services.host_service.settings_service.get",
+        "app.hosts.service.settings_service.get",
         lambda key: {"agent.auto_accept_hosts": False, "agent.default_port": 5151}[key],
     )
     host, is_new = await host_service.register_host(
@@ -136,7 +136,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
     assert host.agent_port == 5151
 
     monkeypatch.setattr(
-        "app.services.host_service.settings_service.get",
+        "app.hosts.service.settings_service.get",
         lambda key: {"agent.auto_accept_hosts": True, "agent.default_port": 5200}[key],
     )
     online_host, _ = await host_service.register_host(

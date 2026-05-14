@@ -2,14 +2,13 @@
 import pytest
 from sqlalchemy import select
 
+from app.devices.models import Device, DeviceEvent, DeviceEventType, DeviceHold, DeviceOperationalState
+from app.hosts.models import Host, HostStatus
 from app.jobs.models import Job
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host, HostStatus
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
+from app.runs.models import RunState, TestRun
 from app.seeding.context import SeedContext
 from app.seeding.scenarios.chaos import apply_chaos
+from app.sessions.models import Session, SessionStatus
 
 
 @pytest.mark.asyncio

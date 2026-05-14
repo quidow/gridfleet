@@ -5,7 +5,7 @@ import base64
 import httpx
 import pytest
 
-from app.services import agent_operations
+from app.agent_comm import operations as agent_operations
 
 
 def _make_capturing_factory() -> tuple[type, list[str | None]]:

@@ -9,65 +9,112 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.agent_comm import reconfigure_delivery as agent_reconfigure_delivery
+from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.services import (
+    common as node_service_common,
+)
+from app.appium_nodes.services import (
+    desired_state_writer as desired_state_writer,
+)
+from app.appium_nodes.services import (
+    reconciler as appium_reconciler,
+)
+from app.appium_nodes.services import (
+    reconciler_agent as appium_reconciler_agent,
+)
+from app.core.config import Settings
+from app.core.errors import PackDrainingError, _http_error_code
+from app.core.observability import sanitize_log_value
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceHold, DeviceType
+from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState, SessionCreate
+from app.devices.schemas.test_data import TestDataPayload
+from app.devices.services import (
+    bulk as bulk_service,
+)
+from app.devices.services import (
+    capability as capability_service,
+)
+from app.devices.services import (
+    data_cleanup as data_cleanup,
+)
+from app.devices.services import (
+    groups as device_group_service,
+)
+from app.devices.services import (
+    identity_conflicts as device_identity_conflicts,
+)
+from app.devices.services import (
+    platform_label as platform_label_service,
+)
+from app.devices.services import (
+    recovery_job as device_recovery_job,
+)
+from app.devices.services import (
+    state as device_state,
+)
 from app.devices.services import test_data as test_data_service
-from app.errors import PackDrainingError, _http_error_code
-from app.models.appium_node import AppiumDesiredState
-from app.models.device import Device, DeviceHold, DeviceType
-from app.models.driver_pack import PackState
-from app.models.test_run import TestRun
-from app.observability import sanitize_log_value
-from app.pack.manifest import AppiumInstallable
-from app.schemas.device import AppiumNodeRead, DesiredNodeState, SessionCreate
-from app.schemas.driver_pack import RuntimePolicy
-from app.schemas.run import DeviceRequirement
-from app.schemas.test_data import TestDataPayload
+from app.devices.services import (
+    write as device_write,
+)
+from app.events import catalog as event_catalog
+from app.hosts import service as host_service
+from app.hosts import service_versioning as host_versioning
+from app.jobs import queue as job_queue
+from app.packs.manifest import AppiumInstallable
+from app.packs.models import PackState
+from app.packs.schemas import RuntimePolicy
+from app.packs.services import (
+    capability as pack_capability_service,
+)
+from app.packs.services import (
+    delete as pack_delete_service,
+)
+from app.packs.services import (
+    desired_state as pack_desired_state_service,
+)
+from app.packs.services import (
+    discovery as pack_discovery_service,
+)
+from app.packs.services import (
+    export as pack_export_service,
+)
+from app.packs.services import (
+    feature_dispatch as pack_feature_dispatch_service,
+)
+from app.packs.services import (
+    feature_status as pack_feature_status_service,
+)
+from app.packs.services import (
+    lifecycle as pack_lifecycle_service,
+)
+from app.packs.services import (
+    platform_resolver as pack_platform_resolver,
+)
+from app.packs.services import (
+    status as pack_status_service,
+)
+from app.packs.services import (
+    storage as pack_storage_service,
+)
+from app.packs.services import (
+    template as pack_template_service,
+)
+from app.plugins import service as plugin_service
+from app.runs import service_reservation as run_reservation_service
+from app.runs.models import TestRun
+from app.runs.schemas import DeviceRequirement
 from app.seeding import runner as seeding_runner
 from app.seeding.runner import SeedResult, wipe_all_tables
 from app.seeding.scenarios import full_demo
 from app.services import (
-    agent_reconfigure_delivery,
-    appium_reconciler,
-    appium_reconciler_agent,
-    bulk_service,
-    capability_service,
-    config_service,
-    control_plane_leader_watcher,
-    data_cleanup,
-    desired_state_writer,
-    device_group_service,
-    device_identity_conflicts,
-    device_locking,
-    device_recovery_job,
-    device_state,
-    device_write,
-    event_bus,
-    event_catalog,
-    host_service,
-    host_versioning,
-    job_queue,
-    node_service_common,
-    pack_capability_service,
-    pack_delete_service,
-    pack_desired_state_service,
-    pack_discovery_service,
-    pack_export_service,
-    pack_feature_dispatch_service,
-    pack_feature_status_service,
-    pack_lifecycle_service,
-    pack_platform_resolver,
-    pack_status_service,
-    pack_storage_service,
-    pack_template_service,
-    platform_label_service,
-    plugin_service,
-    run_reservation_service,
-    session_viability,
-    settings_registry,
-)
-from app.services import (
     control_plane_leader as control_plane_leader_module,
 )
+from app.services import control_plane_leader_watcher, event_bus
+from app.sessions import service_viability as session_viability
+from app.settings import registry as settings_registry
+from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
 
 
@@ -307,7 +354,7 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
 
 async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.services import device_verification_runner
+    from app.devices.services import verification_runner as device_verification_runner
 
     class SessionCtx:
         async def __aenter__(self) -> AsyncMock:

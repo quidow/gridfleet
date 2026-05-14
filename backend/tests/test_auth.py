@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from starlette.datastructures import Headers
 
 from app.auth import service as auth
-from app.config import Settings, settings
+from app.core.config import Settings, settings
 
 HOST_PAYLOAD = {
     "hostname": "auth-host-01",

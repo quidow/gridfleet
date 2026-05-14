@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from app.errors import AgentUnreachableError, CircuitOpenError
-from app.services import agent_operations
-from app.services.agent_circuit_breaker import agent_circuit_breaker
+from app.agent_comm import operations as agent_operations
+from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.core.errors import AgentUnreachableError, CircuitOpenError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from app.agent_client import AgentClientFactory, QueryParams, RequestHeaders
+    from app.agent_comm.client import AgentClientFactory, QueryParams, RequestHeaders
 
 
 def _response(method: str, url: str, *, status_code: int = 200, payload: object) -> httpx.Response:
@@ -108,7 +108,7 @@ async def test_agent_health_get_request_omits_json_body() -> None:
 
 async def test_agent_health_raises_response_error_on_http_500() -> None:
     """5xx must surface as AgentResponseError with http_status, not silently return None."""
-    from app.errors import AgentResponseError
+    from app.core.errors import AgentResponseError
 
     client = StrictAgentClient(
         get_response=_response(
@@ -467,7 +467,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
 
     threshold = 5  # default agent.circuit_breaker_failure_threshold
     with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr("app.services.agent_circuit_breaker.monotonic", fake_monotonic)
+        monkeypatch.setattr("app.agent_comm.circuit_breaker.monotonic", fake_monotonic)
         monkeypatch.setattr(agent_circuit_breaker, "_failure_threshold", lambda: threshold)
         monkeypatch.setattr(agent_circuit_breaker, "_cooldown_seconds", lambda: 30.0)
 
@@ -494,7 +494,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
 
 
 async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
-    from app.errors import AgentResponseError
+    from app.core.errors import AgentResponseError
 
     client = StrictAgentClient(
         get_response=_response(
@@ -517,7 +517,7 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
 
 
 async def test_agent_request_passes_auth() -> None:
-    from app.agent_client import request as agent_request
+    from app.agent_comm.client import request as agent_request
 
     client = StrictAgentClient()
     auth = httpx.BasicAuth("ops", "secret")
@@ -537,8 +537,8 @@ async def test_agent_request_passes_auth() -> None:
 
 
 async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app import agent_client
-    from app.agent_client import request as agent_request
+    from app.agent_comm import client as agent_client
+    from app.agent_comm.client import request as agent_request
 
     client = StrictAgentClient()
     monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")

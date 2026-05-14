@@ -3,13 +3,9 @@ from datetime import UTC, datetime, timedelta
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
 from app.events import event_bus
-from app.models.device import (
-    HardwareChargingState,
-    HardwareHealthStatus,
-    HardwareTelemetrySupportStatus,
-)
-from app.services import hardware_telemetry
+from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.settings import settings_service
 from tests.helpers import create_device_record, create_host
 

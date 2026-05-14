@@ -41,9 +41,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.main import app
-from app.models.driver_pack import DriverPackRelease
-from app.routers.driver_pack_uploads import get_pack_storage
-from app.services.pack_storage_service import PackStorageService
+from app.packs.models import DriverPackRelease
+from app.packs.routers.uploads import get_pack_storage
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

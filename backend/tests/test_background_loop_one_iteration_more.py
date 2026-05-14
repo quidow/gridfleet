@@ -3,17 +3,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services import (
-    appium_reconciler,
-    fleet_capacity,
-    hardware_telemetry,
-    heartbeat,
-    session_sync,
-    session_viability,
-)
+from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services import reconciler as appium_reconciler
+from app.devices.services import fleet_capacity as fleet_capacity
+from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.services import control_plane_leader_keepalive as keepalive
 from app.services import control_plane_leader_watcher as watcher
 from app.services.control_plane_leader import LeadershipLost
+from app.sessions import service_sync as session_sync
+from app.sessions import service_viability as session_viability
 
 
 class _Cycle:

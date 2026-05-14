@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models.test_run import RunState, TestRun
+from app.runs.models import RunState, TestRun
+from app.runs.service_reaper import _reap_stale_runs
 from app.services.control_plane_leader import LeadershipLost
-from app.services.run_reaper import _reap_stale_runs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,9 +37,9 @@ async def test_reaper_aborts_before_expiring_when_leadership_lost(
     expire = AsyncMock()
 
     with (
-        patch("app.services.run_reaper.run_service.expire_run", new=expire),
+        patch("app.runs.service_reaper.run_service.expire_run", new=expire),
         patch(
-            "app.services.run_reaper.assert_current_leader",
+            "app.runs.service_reaper.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
@@ -73,9 +73,9 @@ async def test_reaper_aborts_before_ttl_expiry_when_leadership_lost(
     expire = AsyncMock()
 
     with (
-        patch("app.services.run_reaper.run_service.expire_run", new=expire),
+        patch("app.runs.service_reaper.run_service.expire_run", new=expire),
         patch(
-            "app.services.run_reaper.assert_current_leader",
+            "app.runs.service_reaper.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),

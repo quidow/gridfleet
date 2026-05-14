@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import delete, select
 
-from app.models.device import Device
-from app.models.host import Host
-from app.models.test_run import TestRun
+from app.devices.models import Device
+from app.hosts.models import Host
+from app.runs.models import TestRun
 from app.seeding.context import SeedContext
 from app.seeding.scenarios.minimal import apply_minimal
 

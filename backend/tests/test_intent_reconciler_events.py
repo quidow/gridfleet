@@ -4,18 +4,18 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.services.intent_reconciler import _reconcile_device
-from app.services.intent_service import IntentService
-from app.services.intent_types import GRID_ROUTING, RECOVERY
+from app.appium_nodes.models import AppiumDesiredState
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import _reconcile_device
+from app.devices.services.intent_types import GRID_ROUTING, RECOVERY
 from tests.helpers import create_device
 from tests.test_intent_reconciler import _seed_node
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_host: Host) -> None:

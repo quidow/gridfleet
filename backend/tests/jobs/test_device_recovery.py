@@ -8,12 +8,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.appium_nodes.models import AppiumNode
+from app.devices import locking as device_locking
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import maintenance as maintenance_service
+from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
-from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host
-from app.services import device_locking, maintenance_service
 from tests.helpers import create_device, create_reserved_run
 
 pytestmark = pytest.mark.asyncio
@@ -68,7 +69,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
     )
 
     with patch(
-        "app.services.lifecycle_policy.attempt_auto_recovery",
+        "app.devices.services.lifecycle_policy.attempt_auto_recovery",
         new=AsyncMock(return_value=True),
     ) as recover:
         worked = await job_queue.run_pending_jobs_once(_session_factory(db_session))
@@ -136,11 +137,11 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
     with (
         patch(
-            "app.services.lifecycle_policy.register_intents_and_reconcile",
+            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
             new=AsyncMock(side_effect=_make_device_available),
         ),
         patch(
-            "app.services.session_viability.run_session_viability_probe",
+            "app.sessions.service_viability.run_session_viability_probe",
             new_callable=AsyncMock,
             return_value={
                 "status": "passed",

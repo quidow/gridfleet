@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.config import settings
-from app.middleware import StaticPathsAuthMiddleware
+from app.auth.middleware import StaticPathsAuthMiddleware
+from app.core.config import settings
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +81,7 @@ async def test_unrelated_subpath_with_gated_prefix_substring_is_not_gated() -> N
 async def test_static_path_401_emits_json_error_envelope() -> None:
     """The 401 must go through the standard error envelope and carry x-request-id
     (populated by RequestContextMiddleware running outside StaticPathsAuthMiddleware)."""
-    from app.middleware import RequestContextMiddleware
+    from app.core.middleware import RequestContextMiddleware
 
     app = FastAPI(title="x", openapi_url="/openapi.json", docs_url="/docs", redoc_url="/redoc")
     # Order: add StaticPaths first (becomes inner), then RequestContext (becomes outer).

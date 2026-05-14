@@ -3,15 +3,11 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.device_reservation import DeviceReservation
-from app.models.driver_pack import DriverPack, DriverPackRelease, PackState
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
-from app.services.pack_lifecycle_service import (
-    count_active_work_for_pack,
-    transition_pack_state,
-)
+from app.devices.models import ConnectionType, Device, DeviceReservation, DeviceType
+from app.packs.models import DriverPack, DriverPackRelease, PackState
+from app.packs.services.lifecycle import count_active_work_for_pack, transition_pack_state
+from app.runs.models import RunState, TestRun
+from app.sessions.models import Session, SessionStatus
 
 
 async def _seed_pack(db: AsyncSession, pack_id: str = "test-pack", state: PackState = PackState.enabled) -> DriverPack:

@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.exc import NoResultFound
 
-from app.errors import AgentCallError
-from app.models.appium_node import AppiumNode
-from app.services import bulk_service
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS
-from app.services.node_service_types import NodeManagerError
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumNode
+from app.core.errors import AgentCallError
+from app.devices.services import bulk as bulk_service
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS
 
 
 def _db() -> MagicMock:

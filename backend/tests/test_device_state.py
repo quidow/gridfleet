@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.services import device_state
+from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services import state as device_state
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ async def test_set_operational_state_writes_and_queues_event(
     def fake_queue(session: object, name: str, payload: dict[str, object]) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.services.device_state.queue_event_for_session", fake_queue)
+    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", fake_queue)
 
     changed = await device_state.set_operational_state(device, DeviceOperationalState.available, reason="test")
     assert changed is True
@@ -61,7 +61,7 @@ async def test_set_hold_writes_and_queues_event(
     device = await _persisted_device(db_session, default_host_id)
     captured: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
-        "app.services.device_state.queue_event_for_session",
+        "app.devices.services.state.queue_event_for_session",
         lambda s, n, p: captured.append((n, p)),
     )
 
@@ -105,7 +105,7 @@ async def test_ready_operational_state_returns_available_when_ready(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.available
 
 
@@ -120,7 +120,7 @@ async def test_ready_operational_state_preserves_verifying(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.verifying
 
 
@@ -134,7 +134,7 @@ async def test_ready_operational_state_returns_offline_when_not_ready(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return False
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
 
 
@@ -158,7 +158,7 @@ async def test_ready_operational_state_returns_offline_when_health_failed(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
 
 
@@ -176,7 +176,7 @@ async def test_ready_operational_state_returns_offline_when_session_viability_fa
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
 
 
@@ -193,7 +193,7 @@ async def test_ready_operational_state_returns_available_when_signals_unset(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
 
-    monkeypatch.setattr("app.services.device_state.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.available
 
 

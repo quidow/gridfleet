@@ -9,10 +9,10 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.models.driver_pack import DriverPackFeature
-from app.routers.driver_pack_uploads import get_pack_storage
-from app.services.pack_desired_state_service import compute_desired
-from app.services.pack_storage_service import PackStorageService
+from app.packs.models import DriverPackFeature
+from app.packs.routers.uploads import get_pack_storage
+from app.packs.services.desired_state import compute_desired
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from httpx import AsyncClient

@@ -8,16 +8,15 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.device_intent import DeviceIntent
-from app.services.agent_probe_result import ProbeResult
+from app.agent_comm.probe_result import ProbeResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -42,7 +41,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from app.services import node_health
+    from app.appium_nodes.services import node_health as node_health
 
     monkeypatch.setattr(node_health, "record_lifecycle_incident", AsyncMock())
     monkeypatch.setattr(node_health.lifecycle_policy, "record_control_action", AsyncMock())

@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.driver_pack import PackState
-from app.services.pack_storage_service import PackStorageService
-from app.services.pack_upload_service import (
+from app.packs.models import PackState
+from app.packs.services.storage import PackStorageService
+from app.packs.services.upload import (
     MAX_PACK_MANIFEST_BYTES,
     MAX_PACK_TARBALL_BYTES,
     MAX_PACK_TARBALL_MEMBERS,

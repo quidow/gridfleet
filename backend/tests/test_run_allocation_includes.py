@@ -11,11 +11,11 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.device import Device
-from app.models.test_run import TestRun
-from app.schemas.run import ReservedDeviceInfo, RunCreate, UnavailableInclude
-from app.services import run_service
-from app.services.run_service import _build_device_info
+from app.devices.models import Device
+from app.runs import service as run_service
+from app.runs.models import TestRun
+from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
+from app.runs.service import _build_device_info
 from tests.helpers import create_device, create_reserved_run
 
 

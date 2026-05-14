@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.appium_reconciler_convergence import (
+from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
     converge_host_rows,

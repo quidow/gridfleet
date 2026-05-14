@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import agent_circuit_breaker as breaker_module
-from app.services.agent_circuit_breaker import AgentCircuitBreaker, CircuitState
+from app.agent_comm import circuit_breaker as breaker_module
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker, CircuitState
 from app.settings import settings_service
 
 

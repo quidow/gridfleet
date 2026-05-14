@@ -7,14 +7,12 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.errors import AgentUnreachableError
-from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_intent import DeviceIntent
-from app.models.device_intent_dirty import DeviceIntentDirty
-from app.models.device_reservation import DeviceReservation
-from app.services.control_plane_leader import LeadershipLost
-from app.services.intent_reconciler import (
+from app.agent_comm.models import AgentReconfigureOutbox
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.errors import AgentUnreachableError
+from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceReservation
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import (
     _reconcile_all_devices_once,
     _reconcile_device,
     _reconcile_dirty_devices,
@@ -22,14 +20,14 @@ from app.services.intent_reconciler import (
     _stage_agent_reconfigure,
     run_device_intent_reconciler_once,
 )
-from app.services.intent_service import IntentService
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
+from app.services.control_plane_leader import LeadershipLost
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object, *, generation: int = 0) -> AppiumNode:
@@ -176,7 +174,7 @@ async def test_expired_running_metadata_change_is_delivered(
     )
     await db_session.commit()
     reconfigure = AsyncMock()
-    monkeypatch.setattr("app.services.agent_operations.agent_appium_reconfigure", reconfigure)
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
 
     await _reconcile_expired_intents(db_session)
 
@@ -220,8 +218,8 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     intent.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
     reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
-    monkeypatch.setattr("app.services.agent_operations.agent_appium_reconfigure", reconfigure)
-    monkeypatch.setattr("app.services.intent_reconciler.assert_current_leader", AsyncMock())
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
 
     await _reconcile_expired_intents(db_session)
 
@@ -341,7 +339,7 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
         row.generation += 1
         await db.flush()
 
-    monkeypatch.setattr("app.services.intent_reconciler._reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_device", fake_reconcile)
 
     await _reconcile_dirty_devices(db_session, limit=10)
     await db_session.commit()
@@ -369,8 +367,8 @@ async def test_full_scan_reconciles_each_intent_device(
     async def fake_reconcile(_db: AsyncSession, device_id: object) -> None:
         reconciled.append(device_id)
 
-    monkeypatch.setattr("app.services.intent_reconciler._reconcile_device", fake_reconcile)
-    monkeypatch.setattr("app.services.intent_reconciler.deliver_agent_reconfigures", deliver)
+    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", deliver)
 
     await _reconcile_all_devices_once(db_session)
 
@@ -383,9 +381,9 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reconcile_expired = AsyncMock()
-    monkeypatch.setattr("app.services.intent_reconciler._reconcile_expired_intents", reconcile_expired)
+    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_expired_intents", reconcile_expired)
     monkeypatch.setattr(
-        "app.services.intent_reconciler.assert_current_leader",
+        "app.devices.services.intent_reconciler.assert_current_leader",
         AsyncMock(side_effect=LeadershipLost("lost")),
     )
 

@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.models.device import DeviceOperationalState
-from app.services import device_locking
-from app.services.appium_reconciler_agent import mark_node_started, mark_node_stopped
+from app.appium_nodes.services.reconciler_agent import mark_node_started, mark_node_stopped
+from app.devices import locking as device_locking
+from app.devices.models import DeviceOperationalState
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")

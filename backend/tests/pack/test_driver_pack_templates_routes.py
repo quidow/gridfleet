@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.config import settings as process_settings
-from app.services.pack_template_service import TemplateDescriptor
+from app.core.config import settings as process_settings
+from app.packs.services.template import TemplateDescriptor
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -121,7 +121,7 @@ async def test_template_route_uses_descriptor_source_pack_id(client: AsyncClient
         prerequisite_host_tools=["adb"],
     )
 
-    with patch("app.routers.driver_pack_templates.list_templates") as mock_list:
+    with patch("app.packs.routers.templates.list_templates") as mock_list:
         mock_list.return_value = [fake_descriptor]
         response = await client.get("/api/driver-packs/templates")
     assert response.status_code == 200

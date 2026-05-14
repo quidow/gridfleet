@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app import main
-from app.config import settings as process_settings
+from app.core.config import settings as process_settings
 from app.settings import settings_service
 from app.settings.models import Setting
 

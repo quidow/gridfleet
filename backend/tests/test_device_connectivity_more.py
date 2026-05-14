@@ -12,10 +12,10 @@ import pytest
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentCallError
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.services import device_connectivity
+from app.core.errors import AgentCallError
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import connectivity as device_connectivity
+from app.hosts.models import Host, HostStatus, OSType
 from tests.helpers import create_device_record
 
 
@@ -58,7 +58,7 @@ async def test_get_device_health_returns_none_for_missing_host_or_agent_errors()
 
     device = _device()
     with patch(
-        "app.services.device_connectivity.fetch_pack_device_health",
+        "app.devices.services.connectivity.fetch_pack_device_health",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
     ):
         assert await device_connectivity._get_device_health(device) is None
@@ -69,7 +69,7 @@ async def test_get_agent_devices_returns_none_when_agent_call_fails() -> None:
     assert host is not None
 
     with patch(
-        "app.services.device_connectivity.get_pack_devices",
+        "app.devices.services.connectivity.get_pack_devices",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
     ):
         assert await device_connectivity._get_agent_devices(host) is None
@@ -82,29 +82,29 @@ async def test_get_lifecycle_state_handles_declared_actions_and_failures() -> No
 
     with (
         patch(
-            "app.services.device_connectivity.resolve_pack_platform",
+            "app.devices.services.connectivity.resolve_pack_platform",
             new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[{"id": "state"}])),
         ),
         patch(
-            "app.services.device_connectivity.pack_device_lifecycle_action",
+            "app.devices.services.connectivity.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"state": "booted"}),
         ),
     ):
         assert await device_connectivity._get_lifecycle_state(db, emulator) == "booted"
 
     with patch(
-        "app.services.device_connectivity.resolve_pack_platform",
+        "app.devices.services.connectivity.resolve_pack_platform",
         new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[])),
     ):
         assert await device_connectivity._get_lifecycle_state(db, real) is None
 
     with (
         patch(
-            "app.services.device_connectivity.resolve_pack_platform",
+            "app.devices.services.connectivity.resolve_pack_platform",
             new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[{"id": "state"}])),
         ),
         patch(
-            "app.services.device_connectivity.pack_device_lifecycle_action",
+            "app.devices.services.connectivity.pack_device_lifecycle_action",
             new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
         ),
     ):
@@ -112,7 +112,7 @@ async def test_get_lifecycle_state_handles_declared_actions_and_failures() -> No
 
     emulator.connection_target = None
     with patch(
-        "app.services.device_connectivity.resolve_pack_platform",
+        "app.devices.services.connectivity.resolve_pack_platform",
         new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[{"id": "state"}])),
     ):
         assert await device_connectivity._get_lifecycle_state(db, emulator) is None
@@ -170,18 +170,18 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new=AsyncMock(return_value={"not-ready", "manual-device"}),
         ),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new=AsyncMock(return_value={"healthy": True}),
         ),
         patch(
-            "app.services.device_connectivity.control_plane_state_store.delete_value",
+            "app.devices.services.connectivity.control_plane_state_store.delete_value",
             new=AsyncMock(),
         ) as delete_value,
-        patch("app.services.device_connectivity.assert_current_leader"),
+        patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(db_session)
 
@@ -216,14 +216,14 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
     await db_session.commit()
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new=AsyncMock(return_value={"emu-1"})),
-        patch("app.services.device_connectivity._get_lifecycle_state", new=AsyncMock(return_value="booted")),
-        patch("app.services.device_connectivity._get_device_health", new=AsyncMock(return_value={"healthy": True})),
+        patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value={"emu-1"})),
+        patch("app.devices.services.connectivity._get_lifecycle_state", new=AsyncMock(return_value="booted")),
+        patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value={"healthy": True})),
         patch(
-            "app.services.device_connectivity.device_health.update_emulator_state",
+            "app.devices.services.connectivity.device_health.update_emulator_state",
             new=AsyncMock(),
         ) as update_emulator_state,
-        patch("app.services.device_connectivity.assert_current_leader"),
+        patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(db_session)
 
@@ -241,15 +241,15 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         yield AsyncMock()
 
     with (
-        patch("app.services.device_connectivity.observe_background_loop", return_value=_Observation()),
-        patch("app.services.device_connectivity.async_session", fake_session),
+        patch("app.devices.services.connectivity.observe_background_loop", return_value=_Observation()),
+        patch("app.devices.services.connectivity.async_session", fake_session),
         patch(
-            "app.services.device_connectivity._check_connectivity",
+            "app.devices.services.connectivity._check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
-        patch("app.services.device_connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
-        patch("app.services.device_connectivity.settings_service.get", return_value=1),
-        patch("app.services.device_connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
+        patch("app.devices.services.connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
+        patch("app.devices.services.connectivity.settings_service.get", return_value=1),
+        patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
         await device_connectivity.device_connectivity_loop()

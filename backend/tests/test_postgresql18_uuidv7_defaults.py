@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
-from app.models.device_event import DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 @pytest.mark.db

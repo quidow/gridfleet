@@ -1,7 +1,7 @@
 """Tests for pack_export_service — Step 1 (TDD: failing tests first).
 
 Service under test:
-    app.services.pack_export_service.export_pack(session, storage, pack_id, release)
+    app.packs.services.export.export_pack(session, storage, pack_id, release)
         -> tuple[bytes, str]
 
 Cases:
@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from app.models.driver_pack import DriverPack, DriverPackRelease, PackState
-from app.services.pack_export_service import export_pack
-from app.services.pack_storage_service import PackStorageService
+from app.packs.models import DriverPack, DriverPackRelease, PackState
+from app.packs.services.export import export_pack
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from pathlib import Path

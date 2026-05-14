@@ -13,17 +13,17 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 import app.models as _app_models  # noqa: F401  # Ensure all ORM models are registered on Base.metadata.
-from app.config import settings
-from app.database import Base, get_db
+from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
+from app.core.config import settings
+from app.core.database import Base, get_db
+from app.core.shutdown import shutdown_coordinator
 from app.events import event_bus
 from app.events.models import SystemEvent
+from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
-from app.models.host import Host, HostStatus, OSType
-from app.services.agent_circuit_breaker import agent_circuit_breaker
-from app.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.settings import settings_service
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
-from app.shutdown import shutdown_coordinator
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
 from tests.helpers import create_host

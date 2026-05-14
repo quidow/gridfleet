@@ -2,7 +2,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.services.auth_dependencies import require_admin
+from app.auth.dependencies import require_admin
 
 
 @pytest.mark.asyncio
@@ -46,8 +46,8 @@ async def test_require_admin_returns_username_when_auth_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When auth is enabled, require_any_auth sets auth_username; require_admin reads it."""
-    from app.config import settings
-    from app.security.dependencies import require_any_auth
+    from app.auth.dependencies import require_any_auth
+    from app.core.config import settings
 
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "auth_username", "admin")
@@ -64,7 +64,7 @@ async def test_require_admin_returns_username_when_auth_enabled(
     async def protected(username: str = Depends(require_admin)) -> dict[str, str]:
         return {"user": username}
 
-    from app.middleware import RequestContextMiddleware
+    from app.core.middleware import RequestContextMiddleware
 
     wrapped_app = RequestContextMiddleware(app)
 

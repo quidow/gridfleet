@@ -9,12 +9,12 @@ from httpx import AsyncClient, HTTPStatusError, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus
-from app.services import device_locking
-from app.services.agent_error_codes import AgentErrorCode
-from app.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
+from app.agent_comm.error_codes import AgentErrorCode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
+from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -91,8 +91,8 @@ def remote_manager_client() -> Generator[AsyncMock, None, None]:
         {"running": True, "port": 4723, "appium_status": {"value": {"ready": True}}}
     )
     with (
-        patch("app.services.appium_reconciler.httpx.AsyncClient", return_value=mock_client),
-        patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client),
+        patch("app.appium_nodes.services.reconciler.httpx.AsyncClient", return_value=mock_client),
+        patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client),
     ):
         yield mock_client
 

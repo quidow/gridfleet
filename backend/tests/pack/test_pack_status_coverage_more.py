@@ -4,16 +4,15 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.models.host_pack_installation import HostPackDoctorResult, HostPackInstallation
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.models.host_runtime_installation import HostRuntimeInstallation
-from app.services import pack_status_service
+from app.hosts.models import HostPluginRuntimeStatus
+from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
+from app.packs.services import status as pack_status_service
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session: AsyncSession, db_host: Host) -> None:

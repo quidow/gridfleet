@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.device import SessionViabilityRead
-from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.devices.schemas.device import SessionViabilityRead
+from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
 def test_enum_includes_all_known_checkers() -> None:

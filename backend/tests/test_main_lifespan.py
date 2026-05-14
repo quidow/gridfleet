@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
 from app import main
-from app.models.host import Host, HostStatus
+from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -76,7 +76,7 @@ def _setting_value(key: str) -> int:
 
 
 def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
-    import app.services.agent_http_pool as agent_http_pool_module
+    import app.agent_comm.http_pool as agent_http_pool_module
 
     reopen = AsyncMock()
     close = AsyncMock()
@@ -102,7 +102,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         created_tasks.append(task)
         return task
 
-    import app.database as database_module
+    import app.core.database as database_module
     import app.settings.service as settings_service_module
 
     event_bus_module = importlib.import_module("app.events.event_bus")
@@ -190,7 +190,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     engine = SimpleNamespace(dispose=AsyncMock())
     create_task = Mock(side_effect=asyncio.create_task)
 
-    import app.database as database_module
+    import app.core.database as database_module
     import app.settings.service as settings_service_module
 
     event_bus_module = importlib.import_module("app.events.event_bus")
@@ -238,7 +238,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     create_task = Mock(side_effect=asyncio.create_task)
     try_acquire = AsyncMock(return_value=True)
 
-    import app.database as database_module
+    import app.core.database as database_module
     import app.settings.service as settings_service_module
 
     event_bus_module = importlib.import_module("app.events.event_bus")
@@ -301,7 +301,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
         sequence.append("try_acquire_returned")
         return True
 
-    import app.database as database_module
+    import app.core.database as database_module
     import app.settings.service as settings_service_module
 
     event_bus_module = importlib.import_module("app.events.event_bus")

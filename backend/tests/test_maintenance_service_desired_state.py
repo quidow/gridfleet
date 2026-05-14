@@ -8,16 +8,14 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import DeviceHold
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.device_intent import DeviceIntent
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceIntent
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -42,7 +40,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from app.services import maintenance_service
+    from app.devices.services import maintenance as maintenance_service
 
     monkeypatch.setattr(maintenance_service, "schedule_device_recovery", AsyncMock())
     await maintenance_service.exit_maintenance(db_session, device)
@@ -83,7 +81,7 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from app.services import maintenance_service
+    from app.devices.services import maintenance as maintenance_service
 
     await maintenance_service.enter_maintenance(db_session, device)
 

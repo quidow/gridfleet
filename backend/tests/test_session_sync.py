@@ -7,12 +7,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.models.test_run import RunState, TestRun
-from app.services.lifecycle_policy import handle_health_failure
-from app.services.session_sync import _sync_sessions
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services.lifecycle_policy import handle_health_failure
+from app.hosts.models import Host
+from app.runs.models import RunState, TestRun
+from app.sessions.models import Session, SessionStatus
+from app.sessions.service_sync import _sync_sessions
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 @pytest.fixture(autouse=True)
 def _skip_leader_fencing() -> Iterator[None]:
     """No-op assert_current_leader so unit tests don't need a real leader row."""
-    with patch("app.services.session_sync.assert_current_leader"):
+    with patch("app.sessions.service_sync.assert_current_leader"):
         yield
 
 
@@ -88,7 +88,7 @@ async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> 
 
     grid_data = _grid_response([_grid_session("sess-1", "dev-001", "test_login")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-1"))
@@ -127,7 +127,7 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     # Grid reports no sessions
     grid_data = _grid_response([])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     await db_session.refresh(session)
@@ -178,7 +178,7 @@ async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db
 
         grid_data = _grid_response([])
 
-        with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+        with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
             await _sync_sessions(db_session)
 
         result = await db_session.execute(select(Session).where(Session.session_id == "sess-dup"))
@@ -264,7 +264,7 @@ async def test_sync_ends_duplicate_running_sessions_across_devices(db_session: A
         db_session.add_all([dup_a, dup_b])
         await db_session.commit()
 
-        with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+        with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
             await _sync_sessions(db_session)
 
         rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-dup-multi"))).scalars().all()
@@ -318,7 +318,7 @@ async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSessi
     await db_session.commit()
     db_session.expunge_all()
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-2b"))
@@ -364,7 +364,7 @@ async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
     await db_session.commit()
 
     monkeypatch.setattr(
-        "app.services.session_sync.grid_service.get_grid_status",
+        "app.sessions.service_sync.grid_service.get_grid_status",
         AsyncMock(return_value={"value": {"ready": True, "nodes": []}}),
     )
 
@@ -381,7 +381,7 @@ async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
 async def test_sync_ignores_unknown_connection_target(db_session: AsyncSession) -> None:
     grid_data = _grid_response([_grid_session("sess-3", "unknown-device")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session))
@@ -409,7 +409,7 @@ async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: As
 
     grid_data = _grid_response([_grid_session("sess-avd", "emulator-5554", "test_login", device_id=str(device.id))])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-avd"))
@@ -447,7 +447,7 @@ async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, d
     # Only sess-4b is still running on Grid
     grid_data = _grid_response([_grid_session("sess-4b", "dev-004")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
@@ -480,7 +480,7 @@ async def test_sync_startup_recovery(db_session: AsyncSession, db_host: Host) ->
     # Grid still has the session running
     grid_data = _grid_response([_grid_session("sess-5", "dev-005")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-5"))
@@ -522,7 +522,7 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
 
     grid_data = _grid_response([_grid_session("sess-terminal-race", "dev-terminal-race", "test_terminal_race")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-terminal-race"))
@@ -573,7 +573,7 @@ async def test_sync_backfills_started_at_for_active_run(db_session: AsyncSession
 
     grid_data = _grid_response([_grid_session("sess-6", "dev-006", "reservation_test")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     await db_session.refresh(run, ["device_reservations"])
@@ -631,7 +631,7 @@ async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     db_session.add_all([run, session])
     await db_session.commit()
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
@@ -687,7 +687,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
 
     await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
@@ -705,8 +705,8 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     device is currently healthy (defense-in-depth branch), it returns False so
     `_on_session_end` falls through to `ready_operational_state`.
     The device must end up `available`, not stuck at `busy`."""
-    from app.models.appium_node import AppiumDesiredState, AppiumNode
-    from app.services import device_health
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import health as device_health
 
     device = Device(
         pack_id="appium-uiautomator2",
@@ -757,7 +757,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     await db_session.commit()
 
     # Session ends — Grid no longer reports it.
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await _sync_sessions(db_session)
 
     await db_session.refresh(device)
@@ -778,7 +778,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     no-deferred-stop devices without doing the locked Session check, so the
     restore guard performs its own locked recheck.
     """
-    from app.services import session_sync
+    from app.sessions import service_sync as session_sync
 
     device = Device(
         pack_id="appium-uiautomator2",
@@ -826,7 +826,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     )
 
     # Old session leaves the Grid (not in active map), triggering ended-session processing.
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=_grid_response([])):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await session_sync._sync_sessions(db_session)
 
     await db_session.refresh(device)
@@ -873,7 +873,7 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
         ]
     )
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session))
@@ -905,7 +905,7 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
 
     grid_data = _grid_response([_grid_session("reserved", "emulator-5554")])
 
-    with patch("app.services.session_sync.grid_service.get_grid_status", return_value=grid_data):
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
         await _sync_sessions(db_session)
 
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved"))
@@ -919,9 +919,9 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.devices.services.lifecycle_policy import handle_health_failure
     from app.grid import service as grid_service
-    from app.services import session_sync
-    from app.services.lifecycle_policy import handle_health_failure
+    from app.sessions import service_sync as session_sync
 
     device = Device(
         pack_id="appium-uiautomator2",
@@ -984,7 +984,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
     Grid status.
     """
     from app.grid import service as grid_service
-    from app.services import session_sync
+    from app.sessions import service_sync as session_sync
 
     device = Device(
         pack_id="appium-uiautomator2",

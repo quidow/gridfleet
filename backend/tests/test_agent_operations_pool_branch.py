@@ -7,8 +7,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.services import agent_operations
-from app.services.agent_http_pool import AgentHttpPool
+from app.agent_comm import operations as agent_operations
+from app.agent_comm.http_pool import AgentHttpPool
 
 
 @pytest.mark.asyncio
@@ -29,12 +29,12 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.services.agent_operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.services.agent_operations.settings_service.get",
+            "app.agent_comm.operations.settings_service.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else None,
         ),
-        patch("app.services.agent_operations.agent_request", _stub_agent_request),
+        patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
             "GET",
@@ -63,12 +63,12 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.services.agent_operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.services.agent_operations.settings_service.get",
+            "app.agent_comm.operations.settings_service.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else 10 if "max_keepalive" in key else 60,
         ),
-        patch("app.services.agent_operations.agent_request", _stub_agent_request),
+        patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
             "GET",
@@ -86,12 +86,12 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
 
 
 def test_pool_enabled_returns_false_when_settings_cache_uninitialized() -> None:
-    from app.services.agent_operations import _pool_enabled
+    from app.agent_comm.operations import _pool_enabled
 
-    with patch("app.services.agent_operations.settings_service.get", side_effect=KeyError("not initialised")):
+    with patch("app.agent_comm.operations.settings_service.get", side_effect=KeyError("not initialised")):
         assert _pool_enabled() is False
 
-    with patch("app.services.agent_operations.settings_service.get", side_effect=RuntimeError("not initialised")):
+    with patch("app.agent_comm.operations.settings_service.get", side_effect=RuntimeError("not initialised")):
         assert _pool_enabled() is False
 
 
@@ -106,9 +106,9 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.services.agent_operations.agent_http_pool", fresh_pool),
-        patch("app.services.agent_operations.settings_service.get", side_effect=KeyError("not initialised")),
-        patch("app.services.agent_operations.agent_request", _stub_agent_request),
+        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations.settings_service.get", side_effect=KeyError("not initialised")),
+        patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
             "GET",
@@ -135,12 +135,12 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.services.agent_operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.services.agent_operations.settings_service.get",
+            "app.agent_comm.operations.settings_service.get",
             side_effect=lambda key: False if key == "agent.http_pool_enabled" else 10,
         ),
-        patch("app.services.agent_operations.agent_request", _stub_agent_request),
+        patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
             "GET",
@@ -164,7 +164,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pool branch must forward the BasicAuth returned by _agent_basic_auth."""
-    from app.services.agent_http_pool import agent_http_pool
+    from app.agent_comm.http_pool import agent_http_pool
 
     sentinel = httpx.BasicAuth("ops", "secret")
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: sentinel)
@@ -201,7 +201,7 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pool branch must not inject an auth kwarg when _agent_basic_auth returns None."""
-    from app.services.agent_http_pool import agent_http_pool
+    from app.agent_comm.http_pool import agent_http_pool
 
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     monkeypatch.setattr(agent_operations, "_pool_enabled", lambda: True)

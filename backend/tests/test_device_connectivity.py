@@ -7,29 +7,29 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentCallError
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus
-from app.services.device_connectivity import (
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.errors import AgentCallError
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services.connectivity import (
     _check_connectivity,
     _get_agent_devices,
     _get_lifecycle_state,
     get_connectivity_control_plane_state,
     track_previously_offline_device,
 )
+from app.hosts.models import Host, HostStatus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 @pytest.fixture(autouse=True)
 def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.device_connectivity._get_lifecycle_state", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", AsyncMock(return_value=None))
 
 
 @pytest.fixture(autouse=True)
 def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.device_connectivity.assert_current_leader", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.devices.services.connectivity.assert_current_leader", AsyncMock(return_value=None))
 
 
 async def _setup_host_and_device(
@@ -84,13 +84,13 @@ async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_ag
 ) -> None:
     host = Host(hostname="dc-agent-host", ip="10.0.0.10", os_type="linux", agent_port=5100, status=HostStatus.online)
     monkeypatch.setattr(
-        "app.services.device_connectivity.get_pack_devices",
+        "app.devices.services.connectivity.get_pack_devices",
         AsyncMock(return_value={"candidates": "not-a-list"}),
     )
     assert await _get_agent_devices(host) == set()
 
     monkeypatch.setattr(
-        "app.services.device_connectivity.get_pack_devices",
+        "app.devices.services.connectivity.get_pack_devices",
         AsyncMock(
             return_value={
                 "candidates": [
@@ -109,7 +109,7 @@ async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_ag
     assert {"serial-1", "serial-2", "10.0.0.5:5555"} <= aliases
 
     monkeypatch.setattr(
-        "app.services.device_connectivity.get_pack_devices",
+        "app.devices.services.connectivity.get_pack_devices",
         AsyncMock(side_effect=AgentCallError("10.0.0.10", "down")),
     )
     assert await _get_agent_devices(host) is None
@@ -119,9 +119,9 @@ async def test_connected_device_stays_available(db_session: AsyncSession) -> Non
     _host, device, _ = await _setup_host_and_device(db_session)
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
@@ -148,9 +148,9 @@ async def test_endpoint_only_device_stays_available_when_health_passes(db_sessio
     await db_session.commit()
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]},
         ) as health,
@@ -180,14 +180,14 @@ async def test_endpoint_only_offline_device_auto_starts_when_health_passes(db_se
     await db_session.commit()
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]},
         ),
         patch(
-            "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+            "app.devices.services.connectivity.lifecycle_policy.attempt_auto_recovery",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_recover,
@@ -228,17 +228,17 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     await db_session.commit()
 
     _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
-    monkeypatch.setattr("app.services.device_connectivity._uses_endpoint_health", AsyncMock(return_value=True))
-    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.devices.services.connectivity._uses_endpoint_health", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", AsyncMock(return_value=set()))
 
     async def endpoint_health(device: Device, **_kwargs: object) -> dict[str, object]:
         if device.identity_value == "endpoint-failing":
             return {"healthy": False}
         return healthy_payload(adb=True, ip_ping=False)
 
-    monkeypatch.setattr("app.services.device_connectivity._get_device_health", endpoint_health)
+    monkeypatch.setattr("app.devices.services.connectivity._get_device_health", endpoint_health)
     monkeypatch.setattr(
-        "app.services.device_connectivity.lifecycle_policy.handle_health_failure",
+        "app.devices.services.connectivity.lifecycle_policy.handle_health_failure",
         AsyncMock(),
     )
 
@@ -300,19 +300,19 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
     await db_session.commit()
 
     _stub_settings(monkeypatch, threshold=2, timeout=2.0, count=1)
-    monkeypatch.setattr("app.services.device_connectivity._uses_endpoint_health", AsyncMock(return_value=True))
-    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.devices.services.connectivity._uses_endpoint_health", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", AsyncMock(return_value=set()))
     monkeypatch.setattr(
-        "app.services.device_connectivity._get_device_health",
+        "app.devices.services.connectivity._get_device_health",
         AsyncMock(return_value={"healthy": True, "checks": [{"check_id": "ecp", "ok": True}]}),
     )
 
     async def endpoint_ready(_db: AsyncSession, device: Device) -> bool:
         return device.identity_value != "endpoint-not-ready"
 
-    monkeypatch.setattr("app.services.device_connectivity.is_ready_for_use_async", endpoint_ready)
+    monkeypatch.setattr("app.devices.services.connectivity.is_ready_for_use_async", endpoint_ready)
     monkeypatch.setattr(
-        "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+        "app.devices.services.connectivity.lifecycle_policy.attempt_auto_recovery",
         AsyncMock(return_value=False),
     )
 
@@ -336,12 +336,12 @@ async def test_running_avd_alias_keeps_stable_target_connected(db_session: Async
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
             return_value={"emulator-5554", "Pixel_6_API_35", "avd:Pixel_6_API_35"},
         ),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
@@ -368,12 +368,12 @@ async def test_running_avd_prefixed_alias_keeps_stable_target_connected(db_sessi
 
     with (
         patch(
-            "app.services.device_connectivity._get_agent_devices",
+            "app.devices.services.connectivity._get_agent_devices",
             new_callable=AsyncMock,
             return_value={"avd:Pixel_6_API_35"},
         ),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
@@ -391,7 +391,7 @@ async def test_agent_device_aliases_include_running_avd_name(db_session: AsyncSe
     host, _device, _node = await _setup_host_and_device(db_session)
 
     with patch(
-        "app.services.device_connectivity.get_pack_devices",
+        "app.devices.services.connectivity.get_pack_devices",
         new_callable=AsyncMock,
         return_value={
             "candidates": [
@@ -414,11 +414,11 @@ async def test_lifecycle_state_uses_pack_lifecycle_action(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.services.device_connectivity._get_lifecycle_state", _get_lifecycle_state)
+    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", _get_lifecycle_state)
     _host, device, _node = await _setup_host_and_device(db_session)
 
     with patch(
-        "app.services.device_connectivity.pack_device_lifecycle_action",
+        "app.devices.services.connectivity.pack_device_lifecycle_action",
         new_callable=AsyncMock,
         return_value={"state": "running"},
     ) as mock_lifecycle:
@@ -435,7 +435,7 @@ async def test_lifecycle_state_uses_pack_lifecycle_action(
 async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> None:
     _host, device, node = await _setup_host_and_device(db_session, with_node=True)
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
@@ -451,7 +451,7 @@ async def test_disconnected_device_marked_offline(db_session: AsyncSession) -> N
 async def test_disconnected_device_writes_stop_intent(db_session: AsyncSession) -> None:
     _host, device, node = await _setup_host_and_device(db_session, with_node=True)
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
@@ -471,7 +471,7 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
         with_node=True,
     )
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
@@ -487,7 +487,7 @@ async def test_offline_disconnected_device_stops_leftover_node(db_session: Async
 async def test_agent_unreachable_skips_host(db_session: AsyncSession) -> None:
     _host, device, _ = await _setup_host_and_device(db_session)
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
@@ -503,14 +503,14 @@ async def test_reappeared_device_auto_starts(db_session: AsyncSession) -> None:
     await track_previously_offline_device(db_session, "dc-001")
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
-            "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+            "app.devices.services.connectivity.lifecycle_policy.attempt_auto_recovery",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_recover,
@@ -528,14 +528,14 @@ async def test_offline_device_auto_starts_on_startup_recovery(db_session: AsyncS
     )
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
-            "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+            "app.devices.services.connectivity.lifecycle_policy.attempt_auto_recovery",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_recover,
@@ -552,14 +552,14 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
     await track_previously_offline_device(db_session, "dc-001")
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
-            "app.services.device_connectivity.lifecycle_policy.attempt_auto_recovery",
+            "app.devices.services.connectivity.lifecycle_policy.attempt_auto_recovery",
             new_callable=AsyncMock,
             return_value=False,
         ),
@@ -581,12 +581,12 @@ async def test_connected_offline_manual_device_skips_non_endpoint_auto_recovery(
     )
     device.auto_manage = False
     await db_session.commit()
-    monkeypatch.setattr("app.services.device_connectivity.is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.devices.services.connectivity.is_ready_for_use_async", AsyncMock(return_value=True))
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
@@ -604,9 +604,9 @@ async def test_offline_disconnected_device_tracks_stopped_leftover_node(
         db_session,
         device_operational_state=DeviceOperationalState.offline,
     )
-    monkeypatch.setattr("app.services.device_connectivity._stop_disconnected_node", AsyncMock(return_value=object()))
+    monkeypatch.setattr("app.devices.services.connectivity._stop_disconnected_node", AsyncMock(return_value=object()))
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)
@@ -616,7 +616,7 @@ async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
     """Maintenance devices should stay in maintenance when disconnected."""
     _host, device, _ = await _setup_host_and_device(db_session, device_hold=DeviceHold.maintenance)
 
-    with patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
+    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await _check_connectivity(db_session)
 
     await db_session.refresh(device)
@@ -628,7 +628,7 @@ async def test_connectivity_marks_busy_device_offline(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import device_connectivity
+    from app.devices.services import connectivity as device_connectivity
     from tests.helpers import create_device
 
     device = await create_device(
@@ -657,7 +657,7 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import device_connectivity
+    from app.devices.services import connectivity as device_connectivity
     from tests.helpers import create_device
 
     device = await create_device(
@@ -687,14 +687,14 @@ async def test_unhealthy_connected_device_triggers_policy_stop(db_session: Async
     )
 
     with (
-        patch("app.services.device_connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
-            "app.services.device_connectivity._get_device_health",
+            "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": False, "detail": "ADB not responsive"},
         ),
         patch(
-            "app.services.device_connectivity.lifecycle_policy.handle_health_failure",
+            "app.devices.services.connectivity.lifecycle_policy.handle_health_failure",
             new_callable=AsyncMock,
         ) as mock_handle,
     ):
@@ -714,8 +714,8 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     lifecycle_auto_stopped events; pre-PR behavior was silent and must be preserved."""
     from sqlalchemy import select
 
-    from app.models.device_event import DeviceEvent, DeviceEventType
-    from app.services import device_connectivity
+    from app.devices.models import DeviceEvent, DeviceEventType
+    from app.devices.services import connectivity as device_connectivity
     from tests.helpers import create_device
 
     device = await create_device(
@@ -779,7 +779,7 @@ def _stub_get_health(monkeypatch: pytest.MonkeyPatch, payload: object) -> None:
     async def _f(device: object, **kwargs: object) -> object:
         return payload
 
-    monkeypatch.setattr("app.services.device_connectivity._get_device_health", _f)
+    monkeypatch.setattr("app.devices.services.connectivity._get_device_health", _f)
 
 
 def _stub_get_health_sequence(monkeypatch: pytest.MonkeyPatch, payloads: list[object]) -> None:
@@ -788,14 +788,14 @@ def _stub_get_health_sequence(monkeypatch: pytest.MonkeyPatch, payloads: list[ob
     async def _f(device: object, **kwargs: object) -> object:
         return next(iterator)
 
-    monkeypatch.setattr("app.services.device_connectivity._get_device_health", _f)
+    monkeypatch.setattr("app.devices.services.connectivity._get_device_health", _f)
 
 
 def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> None:
     async def _f(host: object) -> set[str]:
         return aliases
 
-    monkeypatch.setattr("app.services.device_connectivity._get_agent_devices", _f)
+    monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", _f)
 
 
 def _stub_settings(monkeypatch: pytest.MonkeyPatch, *, threshold: int, timeout: float, count: int) -> None:
@@ -870,7 +870,7 @@ class _FakeDevice:
 
 
 def test_split_ip_ping_separates_check() -> None:
-    from app.services.device_connectivity import _split_ip_ping
+    from app.devices.services.connectivity import _split_ip_ping
 
     checks = [
         {"check_id": "adb", "ok": True, "message": ""},
@@ -882,7 +882,7 @@ def test_split_ip_ping_separates_check() -> None:
 
 
 def test_split_ip_ping_when_absent() -> None:
-    from app.services.device_connectivity import _split_ip_ping
+    from app.devices.services.connectivity import _split_ip_ping
 
     checks = [{"check_id": "adb", "ok": True, "message": ""}]
     ip_ping, others = _split_ip_ping(checks)
@@ -892,11 +892,8 @@ def test_split_ip_ping_when_absent() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import (
-        IP_PING_NAMESPACE,
-        _apply_ip_ping_hysteresis,
-    )
 
     fake = _FakeDevice(identity_value="dev-1")
     gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
@@ -907,11 +904,8 @@ async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: A
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import (
-        IP_PING_NAMESPACE,
-        _apply_ip_ping_hysteresis,
-    )
 
     fake = _FakeDevice(identity_value="dev-1")
     for _ in range(2):
@@ -924,11 +918,8 @@ async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import (
-        IP_PING_NAMESPACE,
-        _apply_ip_ping_hysteresis,
-    )
 
     fake = _FakeDevice(identity_value="dev-1")
     await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
@@ -950,8 +941,8 @@ async def test_ip_ping_first_miss_keeps_healthy(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -972,8 +963,8 @@ async def test_ip_ping_threshold_flips_unhealthy(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -981,7 +972,7 @@ async def test_ip_ping_threshold_flips_unhealthy(
     _stub_agent_devices(monkeypatch, {device.identity_value})
     handler_calls: list[str] = []
     monkeypatch.setattr(
-        "app.services.device_connectivity.lifecycle_policy.handle_health_failure",
+        "app.devices.services.connectivity.lifecycle_policy.handle_health_failure",
         _async_recorder(handler_calls),
     )
 
@@ -1001,8 +992,8 @@ async def test_ip_ping_success_clears_counter(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1029,8 +1020,8 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1051,8 +1042,8 @@ async def test_ip_ping_absent_no_counter_writes(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address=None)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1071,8 +1062,8 @@ async def test_ip_ping_skipped_for_held_device(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7", hold=DeviceHold.maintenance)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1091,8 +1082,8 @@ async def test_ip_ping_skipped_for_auto_manage_off(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7", auto_manage=False)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1111,8 +1102,8 @@ async def test_ip_ping_health_result_none_preserves_counter(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1154,9 +1145,9 @@ async def test_delete_device_clears_connectivity_and_ip_ping_namespaces(
     db_session: AsyncSession,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
+    from app.devices.services.service import delete_device
     from app.services import control_plane_state_store
-    from app.services.device_connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
-    from app.services.device_service import delete_device
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)

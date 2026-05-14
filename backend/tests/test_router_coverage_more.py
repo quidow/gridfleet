@@ -8,14 +8,17 @@ import pytest
 from fastapi import HTTPException
 from starlette.datastructures import QueryParams
 
-from app.errors import PackUnavailableError
-from app.models.test_run import RunState
-from app.routers import device_groups, devices_core, devices_verification, runs
-from app.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
-from app.schemas.device_group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
-from app.schemas.run import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
-from app.services.cursor_pagination import CursorPage, CursorPaginationError
-from app.services.device_identity_conflicts import DeviceIdentityConflictError
+from app.core.errors import PackUnavailableError
+from app.core.pagination import CursorPage, CursorPaginationError
+from app.devices.routers import core as devices_core
+from app.devices.routers import groups as device_groups
+from app.devices.routers import verification as devices_verification
+from app.devices.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
+from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError
+from app.runs import router as runs
+from app.runs.models import RunState
+from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:

@@ -11,16 +11,21 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.errors import AgentCallError
-from app.models.device import (
+from app.core.errors import AgentCallError
+from app.devices.models import (
     ConnectionType,
     DeviceType,
     HardwareChargingState,
     HardwareHealthStatus,
     HardwareTelemetrySupportStatus,
 )
-from app.schemas.device import HardwareTelemetryState
-from app.services import hardware_telemetry, host_resource_telemetry
+from app.devices.schemas.device import HardwareTelemetryState
+from app.hosts import (
+    service_hardware_telemetry as hardware_telemetry,
+)
+from app.hosts import (
+    service_resource_telemetry as host_resource_telemetry,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -123,18 +128,18 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.unknown
     assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.unknown
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
-    with patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
+    with patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
         assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.critical
     device.battery_temperature_c = 45
-    with patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
+    with patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
         assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.warning
     device.battery_temperature_c = None
     device.battery_level_percent = 80
-    with patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
+    with patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
         assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.healthy
     device.battery_level_percent = None
     device.charging_state = HardwareChargingState.unknown
-    with patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
+    with patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(side_effect=[50, 40])):
         assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.unknown
 
 
@@ -151,11 +156,13 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
         return values[key]
 
     with (
-        patch("app.services.hardware_telemetry.settings_service.get", new=Mock(side_effect=setting_value)),
-        patch("app.services.hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)),
-        patch("app.services.hardware_telemetry.control_plane_state_store.delete_value", new=AsyncMock()),
-        patch("app.services.hardware_telemetry.record_event", new=AsyncMock()) as record_event,
-        patch("app.services.hardware_telemetry.queue_event_for_session", new=Mock()) as queue_event,
+        patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(side_effect=setting_value)),
+        patch(
+            "app.hosts.service_hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)
+        ),
+        patch("app.hosts.service_hardware_telemetry.control_plane_state_store.delete_value", new=AsyncMock()),
+        patch("app.hosts.service_hardware_telemetry.record_event", new=AsyncMock()) as record_event,
+        patch("app.hosts.service_hardware_telemetry.queue_event_for_session", new=Mock()) as queue_event,
     ):
         status = await hardware_telemetry.apply_telemetry_sample(
             db,
@@ -183,11 +190,13 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
     device = _telemetry_device(hardware_health_status=HardwareHealthStatus.healthy)
 
     with (
-        patch("app.services.hardware_telemetry.settings_service.get", new=Mock(return_value=2)),
-        patch("app.services.hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)),
-        patch("app.services.hardware_telemetry.control_plane_state_store.set_value", new=AsyncMock()) as set_value,
+        patch("app.hosts.service_hardware_telemetry.settings_service.get", new=Mock(return_value=2)),
         patch(
-            "app.services.hardware_telemetry.control_plane_state_store.delete_value", new=AsyncMock()
+            "app.hosts.service_hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)
+        ),
+        patch("app.hosts.service_hardware_telemetry.control_plane_state_store.set_value", new=AsyncMock()) as set_value,
+        patch(
+            "app.hosts.service_hardware_telemetry.control_plane_state_store.delete_value", new=AsyncMock()
         ) as delete_value,
     ):
         status = await hardware_telemetry._resolve_effective_hardware_health_status(
@@ -201,7 +210,7 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
     delete_value.assert_not_awaited()
 
     with patch(
-        "app.services.hardware_telemetry.control_plane_state_store.delete_value",
+        "app.hosts.service_hardware_telemetry.control_plane_state_store.delete_value",
         new=AsyncMock(),
     ) as delete_value:
         status = await hardware_telemetry._resolve_effective_hardware_health_status(
@@ -214,7 +223,7 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
 
     device.hardware_health_status = HardwareHealthStatus.critical
     with patch(
-        "app.services.hardware_telemetry.control_plane_state_store.delete_value",
+        "app.hosts.service_hardware_telemetry.control_plane_state_store.delete_value",
         new=AsyncMock(),
     ) as delete_value:
         status = await hardware_telemetry._resolve_effective_hardware_health_status(
@@ -231,12 +240,12 @@ async def test_get_device_telemetry_handles_missing_host_and_agent_errors() -> N
     host = SimpleNamespace(ip="10.0.0.1", agent_port=5100)
     device = _telemetry_device(host=host)
     with patch(
-        "app.services.hardware_telemetry.fetch_pack_device_telemetry",
+        "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.1", "failed")),
     ):
         assert await hardware_telemetry._get_device_telemetry(device) is None
     with patch(
-        "app.services.hardware_telemetry.fetch_pack_device_telemetry",
+        "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(return_value={"battery_level_percent": 80}),
     ) as fetch:
         assert await hardware_telemetry._get_device_telemetry(device) == {"battery_level_percent": 80}
@@ -260,11 +269,11 @@ async def test_poll_hardware_telemetry_commits_samples_and_rolls_back_failures()
     db = PollSession()
     with (
         patch(
-            "app.services.hardware_telemetry._get_device_telemetry",
+            "app.hosts.service_hardware_telemetry._get_device_telemetry",
             new=AsyncMock(side_effect=[None, {"battery_level_percent": 80}, {"battery_level_percent": 70}]),
         ),
         patch(
-            "app.services.hardware_telemetry.apply_telemetry_sample",
+            "app.hosts.service_hardware_telemetry.apply_telemetry_sample",
             new=AsyncMock(side_effect=[HardwareHealthStatus.healthy, RuntimeError("boom")]),
         ),
     ):
@@ -328,7 +337,7 @@ async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors(
 
     db = PollSession()
     with patch(
-        "app.services.host_resource_telemetry.agent_host_telemetry",
+        "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(side_effect=[None, AgentCallError("10.0.0.1", "failed"), RuntimeError("boom")]),
     ):
         await host_resource_telemetry.poll_host_resource_telemetry_once(db)
@@ -352,7 +361,7 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
 
     db = PollSession()
     with patch(
-        "app.services.host_resource_telemetry.agent_host_telemetry",
+        "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(return_value={"cpu_percent": 50}),
     ):
         await host_resource_telemetry.poll_host_resource_telemetry_once(db)
@@ -372,15 +381,15 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
         yield FlushSession()
 
     with (
-        patch("app.services.host_resource_telemetry.observe_background_loop", return_value=_Observation()),
-        patch("app.services.host_resource_telemetry.async_session", fake_session),
+        patch("app.hosts.service_resource_telemetry.observe_background_loop", return_value=_Observation()),
+        patch("app.hosts.service_resource_telemetry.async_session", fake_session),
         patch(
-            "app.services.host_resource_telemetry.poll_host_resource_telemetry_once",
+            "app.hosts.service_resource_telemetry.poll_host_resource_telemetry_once",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
-        patch("app.services.host_resource_telemetry.settings_service.get", return_value=1),
-        patch("app.services.host_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.services.host_resource_telemetry.logger.exception") as log_exception,
+        patch("app.hosts.service_resource_telemetry.settings_service.get", return_value=1),
+        patch("app.hosts.service_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.hosts.service_resource_telemetry.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
         await host_resource_telemetry.host_resource_telemetry_loop()
@@ -395,7 +404,7 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
         async def scalar(self, *_args: object, **_kwargs: object) -> object | None:
             return host_id
 
-    with patch("app.services.host_resource_telemetry.settings_service.get", new=Mock(return_value=24)):
+    with patch("app.hosts.service_resource_telemetry.settings_service.get", new=Mock(return_value=24)):
         for since, until, bucket_minutes, message in (
             (
                 datetime(2026, 5, 1, tzinfo=UTC),

@@ -8,9 +8,9 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import reconciler_agent as node_manager
 from app.main import app
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.services import appium_reconciler_agent as node_manager
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -107,7 +107,7 @@ async def test_start_node_unexpected_exception_bubbles_to_500(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unexpected exceptions must NOT be swallowed by the narrowed except — they bubble to 500."""
-    from app.database import get_db
+    from app.core.database import get_db
 
     device_id = await _make_device(db_session, host_id)
 

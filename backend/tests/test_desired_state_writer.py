@@ -9,16 +9,16 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app import metrics_recorders
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.services.desired_state_writer import write_desired_state
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.core import metrics_recorders as metrics_recorders
+from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-import app.services.pack_template_service as svc
+import app.packs.services.template as svc
 
 if TYPE_CHECKING:
     from collections.abc import Generator

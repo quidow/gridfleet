@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.models.device import (
-    ConnectionType,
-    DeviceOperationalState,
-    DeviceType,
-)
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
 from app.seeding.factories.device import _PACK_IDENTITY_BY_PLATFORM_ID, make_device
 from tests.seeding.helpers import build_test_seed_context
 

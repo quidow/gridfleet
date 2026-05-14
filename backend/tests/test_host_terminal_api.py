@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.config import settings as process_settings
+from app.core.config import settings as process_settings
+from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
-from app.models.host import Host, HostStatus, OSType
 from app.settings import settings_service
 
 
@@ -49,7 +49,7 @@ def test_terminal_route_rejects_when_host_not_found(
     )
     # Mock host_service.get_host to return None (host not found)
     with patch(
-        "app.routers.host_terminal.host_service.get_host",
+        "app.hosts.router_terminal.host_service.get_host",
         new=AsyncMock(return_value=None),
     ):
         client = TestClient(app)
@@ -81,7 +81,7 @@ def test_terminal_route_rejects_offline_host(monkeypatch: pytest.MonkeyPatch, se
     offline_host.id = uuid.uuid4()
 
     with patch(
-        "app.routers.host_terminal.host_service.get_host",
+        "app.hosts.router_terminal.host_service.get_host",
         new=AsyncMock(return_value=offline_host),
     ):
         client = TestClient(app)
@@ -118,10 +118,10 @@ def test_terminal_route_proxies_online_host_and_audits_session(
     proxy_terminal = AsyncMock(return_value="client_disconnect")
 
     with (
-        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
-        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=open_session),
-        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
-        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
+        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
+        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=open_session),
+        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
     ):
         client = TestClient(app)
         with (
@@ -170,10 +170,10 @@ def test_terminal_route_uses_configured_agent_websocket_scheme(
     proxy_terminal = AsyncMock(return_value="client_disconnect")
 
     with (
-        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
-        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=open_session),
-        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
-        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
+        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
+        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=open_session),
+        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
     ):
         client = TestClient(app)
         with (
@@ -210,10 +210,10 @@ def test_terminal_route_brackets_ipv6_host(monkeypatch: pytest.MonkeyPatch, setu
     proxy_terminal = AsyncMock(return_value="client_disconnect")
 
     with (
-        patch("app.routers.host_terminal.host_service.get_host", new=AsyncMock(return_value=ipv6_host)),
-        patch("app.routers.host_terminal.host_terminal_audit.open_session", new=open_session),
-        patch("app.routers.host_terminal.host_terminal_audit.close_session", new=close_session),
-        patch("app.routers.host_terminal.proxy_terminal_session", new=proxy_terminal),
+        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=ipv6_host)),
+        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=open_session),
+        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
     ):
         client = TestClient(app)
         with (

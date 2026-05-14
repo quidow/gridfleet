@@ -2,7 +2,7 @@ import textwrap
 
 import pytest
 
-from app.pack.manifest import Manifest, ManifestValidationError, load_manifest_yaml
+from app.packs.manifest import Manifest, ManifestValidationError, load_manifest_yaml
 
 
 def _valid_yaml() -> str:

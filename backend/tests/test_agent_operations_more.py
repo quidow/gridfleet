@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from app.errors import AgentResponseError, AgentUnreachableError
-from app.services import agent_operations
+from app.agent_comm import operations as agent_operations
+from app.core.errors import AgentResponseError, AgentUnreachableError
 
 if TYPE_CHECKING:
-    from app.agent_client import AgentClientFactory, QueryParams, RequestHeaders
+    from app.agent_comm.client import AgentClientFactory, QueryParams, RequestHeaders
 
 
 def _response(method: str, url: str, *, status_code: int = 200, payload: object) -> httpx.Response:
@@ -290,7 +290,7 @@ async def test_appium_status_returns_empty_for_non_mapping_payload() -> None:
 
 
 async def test_agent_health_raises_response_error_for_non_200() -> None:
-    from app.errors import AgentResponseError
+    from app.core.errors import AgentResponseError
 
     client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/health", status_code=503, payload={"detail": "down"})

@@ -5,7 +5,7 @@ import base64
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.config import settings
+from app.core.config import settings
 from app.main import app
 
 OPEN_PATH_PREFIXES = (
@@ -80,7 +80,7 @@ def test_all_protected_routes_have_require_any_auth() -> None:
     """Inverted audit: every HTTP route must either be open-listed or run require_any_auth."""
     from fastapi.routing import APIRoute
 
-    from app.security.dependencies import require_any_auth
+    from app.auth.dependencies import require_any_auth
 
     for route in app.routes:
         if not isinstance(route, APIRoute):

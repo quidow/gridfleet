@@ -1,10 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.models.device import Device
-from app.models.device_event import DeviceEventType
-from app.models.test_run import RunState
-from app.services import lifecycle_policy_actions as actions
+from app.devices.models import Device, DeviceEventType
+from app.devices.services import lifecycle_policy_actions as actions
+from app.runs.models import RunState
 
 
 def test_lifecycle_policy_action_small_branch_helpers() -> None:

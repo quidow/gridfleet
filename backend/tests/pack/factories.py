@@ -6,14 +6,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.models.driver_pack import (
-    DriverPack,
-    DriverPackFeature,
-    DriverPackPlatform,
-    DriverPackRelease,
-    PackState,
-)
-from app.pack.manifest import Manifest, load_manifest_yaml
+from app.packs.manifest import Manifest, load_manifest_yaml
+from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

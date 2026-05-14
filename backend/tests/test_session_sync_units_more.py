@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.device import DeviceOperationalState
-from app.models.session import SessionStatus
-from app.services import session_sync
-from app.services.session_probe_constants import PROBE_TEST_NAME
+from app.devices.models import DeviceOperationalState
+from app.sessions import service_sync as session_sync
+from app.sessions.models import SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 
 
 def test_extract_sessions_from_grid_filters_invalid_reserved_and_probe_sessions() -> None:

@@ -5,10 +5,10 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import DeviceOperationalState
-from app.models.host import Host
-from app.routers.device_route_helpers import get_device_for_update_or_404
-from app.services.device_locking import lock_device, lock_devices
+from app.devices.locking import lock_device, lock_devices
+from app.devices.models import DeviceOperationalState
+from app.devices.routers.helpers import get_device_for_update_or_404
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio

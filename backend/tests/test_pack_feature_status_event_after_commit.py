@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.services.pack_feature_status_service import record_feature_status
+from app.packs.services.feature_status import record_feature_status
 from tests.helpers import settle_after_commit_tasks
 
 if TYPE_CHECKING:
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 async def test_pack_feature_degraded_queues_after_commit(

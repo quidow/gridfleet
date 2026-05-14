@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.host import Host
+from app.hosts.models import Host
 from app.seeding.runner import SeedResult, run_scenario
 
 if TYPE_CHECKING:
@@ -18,7 +18,7 @@ async def test_run_scenario_wipes_then_seeds(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     # Pre-seed some data that should be wiped.
-    from app.models.host import OSType
+    from app.hosts.models import OSType
 
     db_session.add(Host(hostname="pre-existing", ip="1.1.1.1", os_type=OSType.linux))
     await db_session.commit()

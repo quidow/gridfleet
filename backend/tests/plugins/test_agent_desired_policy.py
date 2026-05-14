@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.driver_pack import DriverPack
-from app.models.host import Host, HostStatus, OSType
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import DriverPack
+from app.packs.services.desired_state import compute_desired
 from app.plugins.models import AppiumPlugin
-from app.services.pack_desired_state_service import compute_desired
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

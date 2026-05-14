@@ -5,13 +5,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.services import appium_node_resource_service, appium_reconciler_agent
-from app.services.appium_reconciler_agent import build_agent_start_payload
-from app.services.pack_capability_service import render_stereotype
-from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import (
+    reconciler_agent as appium_reconciler_agent,
+)
+from app.appium_nodes.services import (
+    resource_service as appium_node_resource_service,
+)
+from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.services.capability import render_stereotype
+from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.pack.factories import seed_test_packs
 
 
@@ -374,7 +379,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         },
     )
 
-    from app.services.appium_reconciler_agent import restart_node_via_agent
+    from app.appium_nodes.services.reconciler_agent import restart_node_via_agent
 
     node = MagicMock()
     node.port = 4723

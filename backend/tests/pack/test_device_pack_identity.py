@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import exc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.host import Host, HostStatus, OSType
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.hosts.models import Host, HostStatus, OSType
 
 
 @pytest.fixture

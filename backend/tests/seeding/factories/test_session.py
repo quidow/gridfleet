@@ -3,14 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from app.models.device import (
-    ConnectionType,
-    Device,
-    DeviceType,
-)
-from app.models.session import SessionStatus
-from app.models.test_run import RunState, TestRun
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.runs.models import RunState, TestRun
 from app.seeding.factories.session import make_session
+from app.sessions.models import SessionStatus
 from tests.seeding.helpers import build_test_seed_context
 
 

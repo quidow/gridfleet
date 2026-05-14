@@ -7,8 +7,8 @@ from fastapi.params import Depends as DependsParam
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import dependencies as deps
-from app.database import get_db
-from app.services.auth_dependencies import require_admin
+from app.auth.dependencies import require_admin
+from app.core.database import get_db
 
 
 def _unwrap(alias: object) -> tuple[type, DependsParam]:

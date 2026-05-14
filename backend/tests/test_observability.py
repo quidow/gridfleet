@@ -7,10 +7,11 @@ import structlog
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_client import request as agent_request
-from app.health import check_readiness
-from app.metrics import record_background_loop_run, render_metrics
-from app.observability import (
+from app.agent_comm.client import request as agent_request
+from app.core.health import check_readiness
+from app.core.metrics import render_metrics
+from app.core.metrics_recorders import record_background_loop_run
+from app.core.observability import (
     BACKGROUND_LOOP_NAMES,
     REQUEST_ID_HEADER,
     bind_request_context,

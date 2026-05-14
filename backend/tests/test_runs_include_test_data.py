@@ -3,7 +3,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 

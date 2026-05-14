@@ -7,10 +7,10 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models.device import DeviceOperationalState
-from app.models.session import Session
-from app.services import session_sync
-from app.services.session_viability import PROBE_TEST_NAME
+from app.devices.models import DeviceOperationalState
+from app.sessions import service_sync as session_sync
+from app.sessions.models import Session
+from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture(autouse=True)
 def _skip_leader_fencing() -> Iterator[None]:
     """No-op assert_current_leader so unit tests don't need a real leader row."""
-    with patch("app.services.session_sync.assert_current_leader"):
+    with patch("app.sessions.service_sync.assert_current_leader"):
         yield
 
 

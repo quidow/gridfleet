@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.config import settings as process_settings
+from app.core.config import settings as process_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

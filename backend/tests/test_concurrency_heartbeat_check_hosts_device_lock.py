@@ -6,10 +6,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.host import Host
-from app.services import device_locking, heartbeat
-from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.hosts.models import Host
 from app.settings import settings_service
 from tests.helpers import create_device
 

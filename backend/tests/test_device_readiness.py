@@ -6,9 +6,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.driver_pack import DriverPackPlatform
-from app.services import device_readiness
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.services import readiness as device_readiness
+from app.packs.models import DriverPackPlatform
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 

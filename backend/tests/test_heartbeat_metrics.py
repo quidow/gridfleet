@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.metrics_recorders import HEARTBEAT_PING_TOTAL, record_heartbeat_ping
+from app.core.metrics_recorders import HEARTBEAT_PING_TOTAL, record_heartbeat_ping
 
 
 def test_heartbeat_ping_metric_increments_with_labels() -> None:
@@ -16,6 +16,6 @@ def test_heartbeat_ping_metric_increments_with_labels() -> None:
 
 
 def test_heartbeat_ping_helper_exported_via_app_metrics() -> None:
-    from app.metrics import record_heartbeat_ping as exported
+    from app.core.metrics_recorders import record_heartbeat_ping as exported
 
     assert exported is record_heartbeat_ping

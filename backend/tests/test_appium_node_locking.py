@@ -4,9 +4,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.host import Host
-from app.services import appium_node_locking, device_locking
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import locking as appium_node_locking
+from app.devices import locking as device_locking
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]

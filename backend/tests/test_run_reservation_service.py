@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.services import run_reservation_service
+from app.runs import service_reservation as run_reservation_service
 
 
 class FakeSession:

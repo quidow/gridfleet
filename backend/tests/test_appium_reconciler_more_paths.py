@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.host import HostStatus
-from app.services import appium_reconciler
-from app.services.appium_reconciler_convergence import DesiredRow
+from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.reconciler_convergence import DesiredRow
+from app.hosts.models import HostStatus
 
 
 async def test_fetch_backoff_until_parses_valid_rows_and_skips_bad_values() -> None:

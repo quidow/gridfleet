@@ -3,7 +3,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.device import BulkTagsUpdate, DeviceCreate, DevicePatch, DeviceRead
+from app.devices.schemas.device import BulkTagsUpdate, DeviceCreate, DevicePatch, DeviceRead
 
 
 def test_device_create_accepts_pack_identity_fields() -> None:

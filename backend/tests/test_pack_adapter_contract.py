@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import fields, is_dataclass
 
-from app.pack import adapter as backend_adapter
+from app.packs import adapter as backend_adapter
 
 EXPECTED_METHODS = {
     "discover",

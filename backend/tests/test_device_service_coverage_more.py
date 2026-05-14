@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.exc import IntegrityError, NoResultFound
 
-from app.models.device import DeviceOperationalState
-from app.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
-from app.services import device_service
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
+from app.devices.models import DeviceOperationalState
+from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import service as device_service
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 
 
 async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pytest.MonkeyPatch) -> None:

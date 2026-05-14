@@ -1,8 +1,8 @@
 import pytest
 
-from app.models.device import HardwareHealthStatus
-from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services.device_attention import compute_needs_attention
+from app.devices.models import HardwareHealthStatus
+from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services.attention import compute_needs_attention
 
 
 @pytest.mark.parametrize(

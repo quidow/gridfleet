@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.pack_platform_catalog import platform_has_lifecycle_action
+from app.packs.services.platform_catalog import platform_has_lifecycle_action
 
 
 def test_reconnect_available_for_android_real() -> None:

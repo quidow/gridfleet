@@ -1,7 +1,7 @@
 import pytest
 
-from app import config
-from app.config import Settings
+from app.core import config as config
+from app.core.config import Settings
 
 
 def test_settings_defaults_for_terminal_token(monkeypatch: pytest.MonkeyPatch) -> None:

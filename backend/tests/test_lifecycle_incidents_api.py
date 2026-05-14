@@ -4,7 +4,7 @@ from typing import Any, cast
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device_event import DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device_record
 
 DEVICE_PAYLOAD = {

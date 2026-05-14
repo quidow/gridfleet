@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.errors import AgentCallError
-from app.models.device import ConnectionType, DeviceType
-from app.services import device_verification_execution as execution
-from app.services.device_identity_conflicts import DeviceIdentityConflictError
-from app.services.node_service_types import NodeManagerError
+from app.appium_nodes.exceptions import NodeManagerError
+from app.core.errors import AgentCallError
+from app.devices.models import ConnectionType, DeviceType
+from app.devices.services import verification_execution as execution
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 
 
 def _device(**overrides: object) -> SimpleNamespace:

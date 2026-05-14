@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.errors import AgentCallError, AgentUnreachableError
-from app.models.host import Host, HostStatus, OSType
-from app.services import heartbeat
-from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.core.errors import AgentCallError, AgentUnreachableError
+from app.hosts.models import Host, HostStatus, OSType
 
 
 async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:

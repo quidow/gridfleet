@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.pack.manifest import Manifest, load_manifest_yaml
+from app.packs.manifest import Manifest, load_manifest_yaml
 
 _MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "manifests" / "appium-roku-dlenroc.yaml"
 

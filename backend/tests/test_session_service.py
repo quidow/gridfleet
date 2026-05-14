@@ -4,17 +4,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device import (
-    ConnectionType,
-    Device,
-    DeviceHold,
-    DeviceOperationalState,
-    DeviceType,
-)
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.services import session_service
-from app.services.lifecycle_policy import handle_health_failure
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services.lifecycle_policy import handle_health_failure
+from app.hosts.models import Host
+from app.sessions import service as session_service
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")

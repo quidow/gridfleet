@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.pack.manifest import ManifestValidationError, load_manifest_yaml
+from app.packs.manifest import ManifestValidationError, load_manifest_yaml
 
 
 def _base_yaml() -> str:

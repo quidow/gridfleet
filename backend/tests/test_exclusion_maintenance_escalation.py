@@ -5,12 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host
-from app.models.test_run import RunState, TestRun
-from app.services.lifecycle_policy_actions import exclude_run_if_needed, restore_run_if_needed
+from app.appium_nodes.models import AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services.lifecycle_policy_actions import exclude_run_if_needed, restore_run_if_needed
+from app.hosts.models import Host
+from app.runs.models import RunState, TestRun
 
 
 def _make_device(

@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.host import Host, HostStatus, OSType
+from app.hosts.models import Host, HostStatus, OSType
 from tests.pack.factories import seed_test_packs
 
 

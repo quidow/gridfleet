@@ -6,11 +6,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices import locking as device_locking
+from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services import maintenance as maintenance_service
+from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
-from app.models.device import DeviceHold, DeviceOperationalState
-from app.models.host import Host
-from app.services import device_locking, maintenance_service
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -75,7 +76,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
 
     mock_schedule = AsyncMock(side_effect=RuntimeError("simulated transient DB error"))
     with (
-        patch("app.services.maintenance_service.schedule_device_recovery", new=mock_schedule),
+        patch("app.devices.services.maintenance.schedule_device_recovery", new=mock_schedule),
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
         # Must NOT raise even though schedule_device_recovery raises.

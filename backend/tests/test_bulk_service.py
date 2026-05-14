@@ -10,14 +10,14 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentCallError
+from app.appium_nodes.exceptions import NodeManagerError
+from app.core.errors import AgentCallError
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import bulk as bulk_service
+from app.hosts.models import Host, HostStatus, OSType
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.services import bulk_service
-from app.services.node_service_types import NodeManagerError
-from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
+from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -93,10 +93,10 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             raise NodeManagerError("cannot restart")
         return object()
 
-    monkeypatch.setattr("app.services.bulk_service._bulk_start_one", fake_start_node)
-    monkeypatch.setattr("app.services.bulk_service._bulk_stop_one", fake_stop_node)
-    monkeypatch.setattr("app.services.bulk_service._bulk_restart_one", fake_restart_node)
-    monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
+    monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
+    monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
+    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
 
     started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])
     stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices])
@@ -143,16 +143,16 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
     )
 
     monkeypatch.setattr(
-        "app.services.bulk_service._load_devices",
+        "app.devices.services.bulk._load_devices",
         AsyncMock(return_value=[eligible_ok, eligible_fail, ineligible]),
     )
-    monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
     monkeypatch.setattr(
-        "app.services.bulk_service.resolve_pack_platform",
+        "app.devices.services.bulk.resolve_pack_platform",
         AsyncMock(return_value=_resolved),
     )
     monkeypatch.setattr(
-        "app.services.bulk_service.pack_device_lifecycle_action",
+        "app.devices.services.bulk.pack_device_lifecycle_action",
         AsyncMock(side_effect=[{"success": True}, AgentCallError("10.0.0.10", "boom")]),
     )
 
@@ -166,9 +166,9 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
 async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     devices = [_device(), _device()]
     db = AsyncMock()
-    monkeypatch.setattr("app.services.bulk_service._load_devices", AsyncMock(return_value=devices))
-    monkeypatch.setattr("app.services.bulk_service.event_bus.publish", AsyncMock())
-    monkeypatch.setattr("app.services.bulk_service.queue_event_for_session", Mock())
+    monkeypatch.setattr("app.devices.services.bulk._load_devices", AsyncMock(return_value=devices))
+    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk.queue_event_for_session", Mock())
     # bulk_enter_maintenance calls device_locking.lock_device(db, ...) which does
     # `(await db.execute(stmt)).scalar_one()`. With db = AsyncMock(), the value
     # returned by `await db.execute(...)` is itself an AsyncMock, so `.scalar_one()`
@@ -177,19 +177,19 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     # later test during gc. Patch lock_device directly to keep the mock chain
     # purely synchronous past the awaited call.
     monkeypatch.setattr(
-        "app.services.bulk_service.device_locking.lock_device",
+        "app.devices.services.bulk.device_locking.lock_device",
         AsyncMock(side_effect=lambda _db, device_id, **_: next(d for d in devices if d.id == device_id)),
     )
     monkeypatch.setattr(
-        "app.services.bulk_service.delete_device",
+        "app.devices.services.bulk.delete_device",
         AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),
     )
     monkeypatch.setattr(
-        "app.services.bulk_service.enter_maintenance",
+        "app.devices.services.bulk.enter_maintenance",
         AsyncMock(side_effect=[None, RuntimeError("boom")]),
     )
     monkeypatch.setattr(
-        "app.services.bulk_service.exit_maintenance",
+        "app.devices.services.bulk.exit_maintenance",
         AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")]),
     )
 

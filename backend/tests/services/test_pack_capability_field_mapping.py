@@ -1,5 +1,5 @@
-from app.services.pack_capability_service import render_device_field_capabilities
-from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
+from app.packs.services.capability import render_device_field_capabilities
+from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 
 
 def _make_resolved(device_fields_schema: list[dict]) -> ResolvedPackPlatform:

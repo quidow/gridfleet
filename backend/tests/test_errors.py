@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 
 
 def test_agent_response_error_is_agent_call_error_but_not_unreachable() -> None:

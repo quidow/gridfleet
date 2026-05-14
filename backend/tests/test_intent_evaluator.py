@@ -5,9 +5,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import AppiumDesiredState
-from app.models.device_intent import DeviceIntent
-from app.services.intent_evaluator import (
+from app.appium_nodes.models import AppiumDesiredState
+from app.devices.models import DeviceIntent
+from app.devices.services.intent_evaluator import (
     _optional_datetime,
     _optional_int,
     _optional_uuid,
@@ -18,7 +18,7 @@ from app.services.intent_evaluator import (
     evaluate_reservation,
     map_node_process_decision,
 )
-from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
 
 if TYPE_CHECKING:
     import pytest

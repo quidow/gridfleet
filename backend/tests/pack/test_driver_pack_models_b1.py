@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
+from app.packs.models import DriverPack, DriverPackRelease
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

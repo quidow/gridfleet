@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from app.models.device_reservation import DeviceReservation
-from app.models.test_run import RunState, TestRun
+from app.devices.models import DeviceReservation
+from app.runs.models import RunState, TestRun
 from tests.helpers import create_device
 
 if TYPE_CHECKING:

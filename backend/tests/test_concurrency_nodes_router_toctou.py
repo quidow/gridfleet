@@ -7,11 +7,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.database import get_db
+from app.core.database import get_db
+from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.hosts.models import Host
 from app.main import app
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -51,7 +50,7 @@ async def test_start_node_locks_device_before_reservation_check(
         await proceed_start.wait()
 
     try:
-        import app.routers.nodes as nodes_module
+        import app.appium_nodes.routers.nodes as nodes_module
 
         original_assert_not_reserved = nodes_module._assert_device_not_reserved
         nodes_module._assert_device_not_reserved = gated_assert_not_reserved
@@ -89,7 +88,7 @@ async def test_start_node_locks_device_before_reservation_check(
             )
     finally:
         if original_assert_not_reserved is not None:
-            import app.routers.nodes as nodes_module
+            import app.appium_nodes.routers.nodes as nodes_module
 
             nodes_module._assert_device_not_reserved = original_assert_not_reserved
         app.dependency_overrides.pop(get_db, None)

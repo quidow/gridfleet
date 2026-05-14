@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import func, select
 
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.models.session import Session, SessionStatus
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.hosts.models import Host, HostStatus, OSType
 from app.services.control_plane_leader import LeadershipLost
-from app.services.session_sync import _sync_sessions
+from app.sessions.models import Session, SessionStatus
+from app.sessions.service_sync import _sync_sessions
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,12 +29,12 @@ async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
 
     with (
         patch(
-            "app.services.session_sync.grid_service.get_grid_status",
+            "app.sessions.service_sync.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value=fake_grid,
         ),
         patch(
-            "app.services.session_sync.assert_current_leader",
+            "app.sessions.service_sync.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
@@ -88,12 +88,12 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
 
     with (
         patch(
-            "app.services.session_sync.grid_service.get_grid_status",
+            "app.sessions.service_sync.grid_service.get_grid_status",
             new_callable=AsyncMock,
             return_value=fake_grid,
         ),
         patch(
-            "app.services.session_sync.assert_current_leader",
+            "app.sessions.service_sync.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),

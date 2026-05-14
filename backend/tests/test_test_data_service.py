@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import DeviceTestDataAuditLog
-from app.models.host import Host
-from app.services import test_data_service
+from app.devices.models import DeviceTestDataAuditLog
+from app.devices.services import test_data as test_data_service
+from app.hosts.models import Host
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.db

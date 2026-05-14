@@ -6,11 +6,11 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.host import Host
-from app.services import session_viability
-from app.services.session_viability import (
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.hosts.models import Host
+from app.sessions import service_viability as session_viability
+from app.sessions.service_viability import (
     _check_due_devices,
     _extract_session_error,
     _format_http_error,
@@ -117,12 +117,12 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
 
     with (
         patch(
-            "app.services.session_viability.capability_service.get_device_capabilities",
+            "app.sessions.service_viability.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.services.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
         ) as probe_mock,
@@ -187,12 +187,12 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     with (
         patch(
-            "app.services.session_viability.capability_service.get_device_capabilities",
+            "app.sessions.service_viability.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.services.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),
@@ -245,7 +245,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     loaded_device.appium_node = loaded_node
 
     with patch(
-        "app.services.session_viability.probe_session_via_grid",
+        "app.sessions.service_viability.probe_session_via_grid",
         new_callable=AsyncMock,
         return_value=(True, None),
     ) as probe_mock:
@@ -336,7 +336,7 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
         },
     )
 
-    with patch("app.services.session_viability.run_session_viability_probe", new_callable=AsyncMock) as mock_probe:
+    with patch("app.sessions.service_viability.run_session_viability_probe", new_callable=AsyncMock) as mock_probe:
         await _check_due_devices(db_session)
 
     assert mock_probe.await_count == 1
@@ -352,7 +352,7 @@ async def test_probe_session_via_grid_includes_exception_type_for_blank_http_err
     mock_client = MagicMock()
     mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("", request=request))
 
-    with patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client):
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
         ok, error = await probe_session_via_grid({"platformName": "iOS"}, timeout_sec=5)
 
     assert ok is False
@@ -368,8 +368,8 @@ async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
     mock_client.delete = AsyncMock(return_value=delete_response)
 
     with (
-        patch("app.services.session_viability.settings_service.get", return_value="http://hub:4444/wd/hub"),
-        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+        patch("app.sessions.service_viability.settings_service.get", return_value="http://hub:4444/wd/hub"),
+        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
     ):
         ok, error = await probe_session_via_grid({"platformName": "iOS"}, timeout_sec=5)
 
@@ -392,8 +392,8 @@ async def test_probe_session_via_grid_uses_explicit_node_grid_url() -> None:
     mock_client.delete = AsyncMock(return_value=delete_response)
 
     with (
-        patch("app.services.session_viability.settings_service.get", return_value="http://global-hub:4444"),
-        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+        patch("app.sessions.service_viability.settings_service.get", return_value="http://global-hub:4444"),
+        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
     ):
         ok, error = await probe_session_via_grid(
             {"platformName": "iOS"},
@@ -519,10 +519,10 @@ async def test_should_run_scheduled_probe_covers_skip_and_due_paths(
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
     device.operational_state = DeviceOperationalState.available
 
-    monkeypatch.setattr("app.services.session_viability.is_ready_for_use_async", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=False))
     assert await _should_run_scheduled_probe(db_session, device, 60) is False
 
-    monkeypatch.setattr("app.services.session_viability.is_ready_for_use_async", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=True))
     await set_session_viability_control_plane_entry(
         db_session,
         str(device.id),
@@ -562,8 +562,8 @@ async def test_probe_session_via_grid_create_failure_paths(create_response: Magi
     mock_client.post = AsyncMock(return_value=create_response)
 
     with (
-        patch("app.services.session_viability.settings_service.get", return_value="http://hub:4444"),
-        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+        patch("app.sessions.service_viability.settings_service.get", return_value="http://hub:4444"),
+        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
     ):
         ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
 
@@ -580,8 +580,8 @@ async def test_probe_session_via_grid_cleanup_failure_paths() -> None:
     mock_client.delete = AsyncMock(return_value=delete_response)
 
     with (
-        patch("app.services.session_viability.settings_service.get", return_value="http://hub:4444"),
-        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+        patch("app.sessions.service_viability.settings_service.get", return_value="http://hub:4444"),
+        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
     ):
         ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
 
@@ -590,8 +590,8 @@ async def test_probe_session_via_grid_cleanup_failure_paths() -> None:
 
     mock_client.delete = AsyncMock(side_effect=httpx.ConnectError("down"))
     with (
-        patch("app.services.session_viability.settings_service.get", return_value="http://hub:4444"),
-        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+        patch("app.sessions.service_viability.settings_service.get", return_value="http://hub:4444"),
+        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
     ):
         ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
 
@@ -668,9 +668,9 @@ async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(
         session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
         str(device.id),
     )
-    monkeypatch.setattr("app.services.session_viability.is_ready_for_use_async", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.sessions.service_viability.is_ready_for_use_async", AsyncMock(return_value=False))
     monkeypatch.setattr(
-        "app.services.session_viability.readiness_error_detail_async",
+        "app.sessions.service_viability.readiness_error_detail_async",
         AsyncMock(return_value="not ready enough"),
     )
 

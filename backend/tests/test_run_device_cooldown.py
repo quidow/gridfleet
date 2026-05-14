@@ -11,10 +11,9 @@ from httpx import AsyncClient  # noqa: TC002
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.models.test_run import RunState, TestRun
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.runs.models import RunState, TestRun
 from app.settings import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
@@ -126,7 +125,7 @@ async def test_cooldown_device_terminal_run(
     run_id = uuid.UUID(run["id"])
 
     # Complete the run
-    from app.services import run_service as rs
+    from app.runs import service as rs
 
     run_obj = await rs.get_run(db_session, run_id)
     assert run_obj is not None
@@ -259,7 +258,7 @@ async def test_cooldown_does_not_mutate_operational_state(
 
 async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncSession, default_host_id: str) -> None:
     """to_reserved_device_info should report excluded=false once excluded_until passes."""
-    from app.models.test_run import TestRun
+    from app.runs.models import TestRun
 
     device = await create_device_record(
         db_session,
@@ -332,8 +331,8 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
 
 
 async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSession, default_host_id: str) -> None:
-    from app.models.test_run import TestRun
-    from app.services.device_connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.runs.models import TestRun
 
     device = await create_device_record(
         db_session,
@@ -393,8 +392,8 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
 
 async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
     """attempt_auto_recovery must not restart a node while cooldown is active."""
-    from app.models.host import Host
-    from app.services.lifecycle_policy import attempt_auto_recovery
+    from app.devices.services.lifecycle_policy import attempt_auto_recovery
+    from app.hosts.models import Host
 
     host = await db_session.get(Host, default_host_id)
     assert host is not None
@@ -446,8 +445,8 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
 
 async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: AsyncSession, default_host_id: str) -> None:
     """If a device enters maintenance while cooldown is active, expiry must not restart it."""
-    from app.models.host import Host
-    from app.services.device_connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.hosts.models import Host
 
     host = await db_session.get(Host, default_host_id)
     assert host is not None
@@ -515,7 +514,7 @@ async def test_expired_cooldown_does_not_restart_auto_manage_off(
     db_session: AsyncSession, default_host_id: str
 ) -> None:
     """If auto_manage is disabled during cooldown, expiry must not restart the node."""
-    from app.services.device_connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import _check_expired_cooldowns
 
     device = await create_device_record(
         db_session,
@@ -578,7 +577,7 @@ async def test_expired_cooldown_does_not_restart_auto_manage_off(
 
 async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSession, default_host_id: str) -> None:
     """Released reservations with stale excluded_until must be ignored."""
-    from app.services.device_connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import _check_expired_cooldowns
 
     device = await create_device_record(
         db_session,

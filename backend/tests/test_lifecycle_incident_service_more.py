@@ -3,9 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.device import Device
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.services import lifecycle_incident_service as incidents
+from app.devices.models import Device, DeviceEvent, DeviceEventType
+from app.devices.services import lifecycle_incidents as incidents
 
 
 def test_lifecycle_incident_serialization_parse_fallbacks() -> None:

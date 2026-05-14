@@ -4,8 +4,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from app.devices.services import recovery_job as device_recovery_job
 from app.jobs.statuses import JOB_STATUS_FAILED
-from app.services import device_recovery_job
 
 
 class RecoverySession:
@@ -48,7 +48,7 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
     row = _job_row()
     session = RecoverySession(row)
 
-    with patch("app.services.device_recovery_job.device_locking.lock_device", new=AsyncMock(side_effect=RuntimeError)):
+    with patch("app.devices.services.recovery_job.device_locking.lock_device", new=AsyncMock(side_effect=RuntimeError)):
         await device_recovery_job.run_device_recovery_job(
             job_id,
             {"device_id": str(device_id)},
@@ -71,9 +71,9 @@ async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:
     failure_session = RecoverySession(failure_row)
 
     with (
-        patch("app.services.device_recovery_job.device_locking.lock_device", new=AsyncMock(return_value=object())),
+        patch("app.devices.services.recovery_job.device_locking.lock_device", new=AsyncMock(return_value=object())),
         patch(
-            "app.services.device_recovery_job.lifecycle_policy.attempt_auto_recovery",
+            "app.devices.services.recovery_job.lifecycle_policy.attempt_auto_recovery",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
     ):

@@ -1,4 +1,4 @@
-from app.services.device_identity import derive_pack_identity
+from app.devices.services.identity import derive_pack_identity
 
 
 def test_derive_pack_identity_uses_manifest_scheme_when_value_supplied() -> None:

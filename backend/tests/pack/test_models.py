@@ -5,23 +5,21 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.driver_pack import (
+from app.hosts.models import HostPluginRuntimeStatus
+from app.packs.models import (
     DriverPack,
     DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
-)
-from app.models.host_pack_installation import (
     HostPackDoctorResult,
     HostPackInstallation,
+    HostRuntimeInstallation,
 )
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.models.host_runtime_installation import HostRuntimeInstallation
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 @pytest.mark.asyncio

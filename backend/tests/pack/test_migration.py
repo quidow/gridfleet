@@ -19,7 +19,7 @@ from sqlalchemy import NullPool, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
-from app.config import settings
+from app.core.config import settings
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection

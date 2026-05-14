@@ -3,12 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_installation import HostPackInstallation
-from app.models.host_runtime_installation import HostRuntimeInstallation
-from app.schemas.driver_pack import HostPackStatusOut
-from app.services.pack_status_service import get_host_driver_pack_status
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation, HostRuntimeInstallation
+from app.packs.schemas import HostPackStatusOut
+from app.packs.services.status import get_host_driver_pack_status
 
 
 def test_host_pack_status_includes_driver_version_fields() -> None:

@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.host import Host
-from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.schemas.host import DiscoveredDevice, DiscoveryResult
-from app.services import lifecycle_incident_service as incidents
-from app.services import pack_discovery_service as discovery
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services import lifecycle_incidents as incidents
+from app.hosts.models import Host
+from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
+from app.packs.services import discovery as discovery
 from tests.helpers import create_device_record
 
 
@@ -142,7 +142,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         },
     ]
     monkeypatch.setattr(
-        "app.services.pack_discovery_service.platform_label_service.load_platform_label_map",
+        "app.packs.services.discovery.platform_label_service.load_platform_label_map",
         AsyncMock(return_value={("appium-uiautomator2", "android_mobile"): "Android"}),
     )
 
@@ -184,7 +184,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         agent_get_pack_device_properties=AsyncMock(return_value=None),
     )
 
-    monkeypatch.setattr("app.services.pack_discovery_service.ensure_device_payload_identity_available", AsyncMock())
+    monkeypatch.setattr("app.packs.services.discovery.ensure_device_payload_identity_available", AsyncMock())
     confirm_result = await discovery.confirm_discovery(
         db_session,
         db_host,

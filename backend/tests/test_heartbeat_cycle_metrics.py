@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from app.metrics_recorders import (
-    HEARTBEAT_CYCLE_OVERRUN_TOTAL,
-    record_heartbeat_cycle,
-)
+from app.core.metrics_recorders import HEARTBEAT_CYCLE_OVERRUN_TOTAL, record_heartbeat_cycle
 
 
 def test_cycle_within_interval_does_not_overrun() -> None:

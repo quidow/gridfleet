@@ -7,18 +7,18 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.host import Host, HostStatus, OSType
-from app.services import appium_reconciler_agent as node_agent
-from app.services import device_service
-from app.services.appium_reconciler_agent import (
+from app.appium_nodes.exceptions import NodeManagerError, RemoteStartResult
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import reconciler_agent as node_agent
+from app.appium_nodes.services.reconciler_agent import (
     agent_url,
     build_agent_start_payload,
     restart_node_via_agent,
     start_remote_node,
 )
-from app.services.node_service_types import NodeManagerError, RemoteStartResult
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import service as device_service
+from app.hosts.models import Host, HostStatus, OSType
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -74,8 +74,8 @@ async def test_remote_start_node(client: AsyncClient, db_session: AsyncSession) 
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.appium_reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
-        patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client),
+        patch("app.appium_nodes.services.reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client),
     ):
         resp = await client.post(f"/api/devices/{device.id}/node/start")
 
@@ -132,8 +132,8 @@ async def test_remote_start_node_attaches_node_to_device_instance(
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.appium_reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
-        patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client),
+        patch("app.appium_nodes.services.reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client),
     ):
         resp = await client.post(f"/api/devices/{loaded_device.id}/node/start")
 
@@ -165,7 +165,7 @@ async def test_start_node_with_verification_caller_skips_readiness(
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return False
 
-    monkeypatch.setattr("app.services.appium_reconciler_agent.is_ready_for_use_async", fake_ready)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", fake_ready)
     node = await node_agent.start_node(db_session, device, caller="verification")
     assert node.desired_state is AppiumDesiredState.running
 
@@ -216,7 +216,7 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     mock_stop_client.__aenter__ = AsyncMock(return_value=mock_stop_client)
     mock_stop_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_stop_client):
+    with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_stop_client):
         resp = await client.post(f"/api/devices/{device.id}/node/stop")
 
     assert resp.status_code == 200, resp.json()
@@ -229,7 +229,7 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
 
 
 async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.services import appium_reconciler_agent as node_service
+    from app.appium_nodes.services import reconciler_agent as node_service
 
     host = Host(
         hostname="lock-host",
@@ -262,7 +262,7 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
 
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
-    with patch("app.services.appium_reconciler_agent._hold_device_row_lock", spy):
+    with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
         await node_agent.mark_node_started(db_session, loaded, port=4723, pid=12345)
 
     spy.assert_awaited_once()
@@ -273,8 +273,8 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     from sqlalchemy import delete as sa_delete
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
+    from app.appium_nodes.exceptions import NodeManagerError
     from app.events import event_bus
-    from app.services.node_service_types import NodeManagerError
 
     host = Host(
         hostname="lock-host-3",
@@ -323,7 +323,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
 
 
 async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.services import appium_reconciler_agent as node_service
+    from app.appium_nodes.services import reconciler_agent as node_service
 
     host = Host(
         hostname="lock-host-2",
@@ -367,7 +367,7 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
 
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
-    with patch("app.services.appium_reconciler_agent._hold_device_row_lock", spy):
+    with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
         await node_agent.mark_node_stopped(db_session, loaded)
 
     spy.assert_awaited_once()
@@ -431,8 +431,8 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     assert loaded.appium_node is not None
 
     with (
-        patch("app.services.appium_reconciler_agent.stop_remote_node", new_callable=AsyncMock),
-        patch("app.services.appium_reconciler_agent.start_remote_node", new_callable=AsyncMock) as start_mock,
+        patch("app.appium_nodes.services.reconciler_agent.stop_remote_node", new_callable=AsyncMock),
+        patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new_callable=AsyncMock) as start_mock,
     ):
         start_mock.return_value = RemoteStartResult(
             port=4724,
@@ -496,7 +496,7 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
         device_type="emulator",
     )
 
-    with patch("app.services.appium_reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4723)
 
@@ -517,7 +517,7 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
         tags={"emulator_headless": "false"},
     )
 
-    with patch("app.services.appium_reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4724)
 
@@ -541,7 +541,7 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
         name="Android Browser Device",
     )
 
-    with patch("app.services.appium_reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4725)
 
@@ -586,17 +586,19 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
     )
 
     with (
-        patch("app.services.appium_reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
+        patch("app.appium_nodes.services.reconciler_agent.assert_runnable", new=AsyncMock(return_value=None)),
         patch(
-            "app.services.appium_reconciler_agent.appium_start", new=AsyncMock(return_value=start_response)
+            "app.appium_nodes.services.reconciler_agent.appium_start", new=AsyncMock(return_value=start_response)
         ) as start_mock,
-        patch("app.services.appium_reconciler_agent.appium_status", new=AsyncMock(return_value={"running": True})),
         patch(
-            "app.services.appium_reconciler_agent.render_stereotype",
+            "app.appium_nodes.services.reconciler_agent.appium_status", new=AsyncMock(return_value={"running": True})
+        ),
+        patch(
+            "app.appium_nodes.services.reconciler_agent.render_stereotype",
             new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
         ),
-        patch("app.services.appium_reconciler_agent.get_default_plugins", return_value=[]),
-        patch("app.services.appium_reconciler_agent.settings_service") as mock_settings,
+        patch("app.appium_nodes.services.reconciler_agent.get_default_plugins", return_value=[]),
+        patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings,
     ):
         mock_settings.get.side_effect = lambda key: {
             "grid.hub_url": "http://selenium-hub:4444",
@@ -622,8 +624,8 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
 async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_session: AsyncSession) -> None:
     from sqlalchemy import select
 
-    from app.errors import PackDisabledError
-    from app.models.driver_pack import DriverPack
+    from app.core.errors import PackDisabledError
+    from app.packs.models import DriverPack
     from tests.pack.factories import seed_test_packs
 
     await seed_test_packs(db_session)
@@ -650,7 +652,7 @@ async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_s
     mock_client_obj.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj),
+        patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj),
         pytest.raises(PackDisabledError),
     ):
         await start_remote_node(
@@ -668,8 +670,9 @@ async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_s
 async def test_start_remote_node_renders_stereotype_once(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.services import appium_reconciler_agent as node_service
-    from app.services import pack_capability_service, pack_start_shim
+    from app.appium_nodes.services import reconciler_agent as node_service
+    from app.packs.services import capability as pack_capability_service
+    from app.packs.services import start_shim as pack_start_shim
     from tests.pack.factories import seed_test_packs
 
     await seed_test_packs(db_session)
@@ -712,7 +715,7 @@ async def test_start_remote_node_renders_stereotype_once(
     def _client_factory(**_kwargs: object) -> AsyncMock:
         return mock_client_obj
 
-    with patch("app.services.appium_reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj):
+    with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj):
         await start_remote_node(
             db_session,
             loaded,
@@ -726,7 +729,7 @@ async def test_start_remote_node_renders_stereotype_once(
 
 
 async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_host: Host) -> None:
-    from app.services import device_health
+    from app.devices.services import health as device_health
 
     device = await create_device_record(
         db_session,
@@ -751,11 +754,11 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
 async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
     """``stop_remote_node`` must report agent failures via False
     return so callers gate DB mutations correctly."""
-    from app.errors import AgentUnreachableError
-    from app.services.appium_reconciler_agent import stop_remote_node
+    from app.appium_nodes.services.reconciler_agent import stop_remote_node
+    from app.core.errors import AgentUnreachableError
 
     with patch(
-        "app.services.appium_reconciler_agent.appium_stop",
+        "app.appium_nodes.services.reconciler_agent.appium_stop",
         AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "boom")),
     ):
         result = await stop_remote_node(
@@ -770,13 +773,13 @@ async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
 
 async def test_stop_remote_node_returns_true_on_agent_ack() -> None:
     """Successful agent acknowledgement is a True return."""
-    from app.services.appium_reconciler_agent import stop_remote_node
+    from app.appium_nodes.services.reconciler_agent import stop_remote_node
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("app.services.appium_reconciler_agent.appium_stop", AsyncMock(return_value=mock_resp)):
+    with patch("app.appium_nodes.services.reconciler_agent.appium_stop", AsyncMock(return_value=mock_resp)):
         result = await stop_remote_node(
             port=4723,
             agent_base="http://10.0.0.1:5100",
@@ -821,11 +824,11 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
 
     with (
         patch(
-            "app.services.appium_reconciler_agent.stop_remote_node",
+            "app.appium_nodes.services.reconciler_agent.stop_remote_node",
             AsyncMock(return_value=False),
         ),
         patch(
-            "app.services.appium_reconciler_agent.start_remote_node",
+            "app.appium_nodes.services.reconciler_agent.start_remote_node",
             new_callable=AsyncMock,
         ) as start_mock,
     ):

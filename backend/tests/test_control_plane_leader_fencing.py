@@ -1,7 +1,7 @@
 """Fencing semantics: heartbeat write that does not match holder_id is fatal.
 
 Tests use the fixture's per-test engine (`setup_database`), not the global
-`app.database.engine` - the test fixture creates a unique schema per test
+`app.core.database.engine` - the test fixture creates a unique schema per test
 and binds the engine to a `search_path` for that schema. Using the global
 engine would touch the wrong schema or fail outright.
 """

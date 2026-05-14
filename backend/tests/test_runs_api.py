@@ -9,14 +9,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import Device, DeviceHold, DeviceOperationalState
-from app.models.device_reservation import DeviceReservation
-from app.models.driver_pack import DriverPack
-from app.models.host import Host
-from app.models.session import Session, SessionStatus
-from app.schemas.run import DeviceRequirement, RunCreate, SessionCounts
-from app.services import device_health, run_service
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services import health as device_health
+from app.hosts.models import Host
+from app.packs.models import DriverPack
+from app.runs import service as run_service
+from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -346,7 +346,7 @@ async def test_list_runs_out_of_range_offset_returns_empty_items_with_total(
 
 
 async def test_list_runs_cursor_navigation(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    from app.models.test_run import RunState, TestRun
+    from app.runs.models import RunState, TestRun
 
     start = datetime(2026, 4, 4, 10, 0, tzinfo=UTC)
     db_session.add_all(
@@ -981,7 +981,7 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import run_service
+    from app.runs import service as run_service
     from tests.helpers import create_device
 
     devices = [

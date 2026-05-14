@@ -13,16 +13,16 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.exc import NoResultFound
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.services import device_health as svc
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import health as svc
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

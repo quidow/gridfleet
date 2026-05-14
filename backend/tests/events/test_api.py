@@ -10,11 +10,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
+from app.devices.routers.verification import stream_device_verification_job_events
+from app.devices.services.verification import store_verification_job_for_test
+from app.devices.services.verification_job_state import new_job
 from app.events import event_bus
-from app.routers.devices_verification import stream_device_verification_job_events
-from app.routers.events import event_stream
-from app.services.device_verification import store_verification_job_for_test
-from app.services.device_verification_job_state import new_job
+from app.events.router import event_stream
 
 
 def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:
@@ -101,7 +101,7 @@ async def test_event_stream_emits_keepalive_on_timeout() -> None:
     )
 
     iterator = _event_stream_iterator(response.body_iterator)
-    with patch("app.routers.events.asyncio.wait_for", side_effect=TimeoutError):
+    with patch("app.events.router.asyncio.wait_for", side_effect=TimeoutError):
         payload = await iterator.__anext__()
 
     assert payload == {"comment": "keepalive"}

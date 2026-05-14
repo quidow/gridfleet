@@ -5,11 +5,24 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_pack_installation import HostPackDoctorResult, HostPackInstallation
-from app.schemas.driver_pack import RuntimePolicy
-from app.services import pack_delete_service, pack_policy_service, pack_release_service
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import (
+    DriverPack,
+    DriverPackPlatform,
+    DriverPackRelease,
+    HostPackDoctorResult,
+    HostPackInstallation,
+)
+from app.packs.schemas import RuntimePolicy
+from app.packs.services import (
+    delete as pack_delete_service,
+)
+from app.packs.services import (
+    policy as pack_policy_service,
+)
+from app.packs.services import (
+    release as pack_release_service,
+)
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:

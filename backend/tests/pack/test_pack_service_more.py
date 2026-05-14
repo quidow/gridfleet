@@ -3,8 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.models.driver_pack import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
-from app.services import pack_service
+from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
+from app.packs.services import service as pack_service
 
 
 class ScalarRowsResult:
@@ -194,9 +194,9 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
 
     with (
-        patch("app.services.pack_service.try_complete_drain", new=AsyncMock()) as complete_drain,
+        patch("app.packs.services.service.try_complete_drain", new=AsyncMock()) as complete_drain,
         patch(
-            "app.services.pack_service.count_active_work_for_pack",
+            "app.packs.services.service.count_active_work_for_pack",
             new=AsyncMock(return_value={"active_runs": 2, "live_sessions": 1}),
         ),
     ):

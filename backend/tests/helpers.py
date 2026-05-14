@@ -6,11 +6,10 @@ from typing import Any, cast
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.models.device_reservation import DeviceReservation
-from app.models.host import Host, HostStatus, OSType
-from app.models.test_run import RunState, TestRun
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.hosts.models import Host, HostStatus, OSType
+from app.runs.models import RunState, TestRun
 
 DEFAULT_HOST_PAYLOAD = {
     "hostname": "test-host",

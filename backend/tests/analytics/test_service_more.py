@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from app.models.device_event import DeviceEvent, DeviceEventType
-from app.models.session import Session, SessionStatus
-from app.schemas.analytics import GroupByOption
-from app.services import analytics_service
+from app.analytics import service as analytics_service
+from app.analytics.schemas import GroupByOption
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, seed_host_and_device
 
 if TYPE_CHECKING:

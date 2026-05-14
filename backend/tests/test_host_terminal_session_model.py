@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from app.models.host import Host, HostStatus, OSType
-from app.models.host_terminal_session import HostTerminalSession
+from app.hosts.models import Host, HostStatus, HostTerminalSession, OSType
 
 
 @pytest.mark.asyncio

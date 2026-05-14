@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.agent_probe_result import from_status_response
+from app.agent_comm.probe_result import from_status_response
 
 
 def test_status_2xx_running_true_is_ack() -> None:

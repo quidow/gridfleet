@@ -4,16 +4,16 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.models.appium_node import AppiumNode
-from app.models.device import ConnectionType, Device, DeviceType
-from app.services.agent_snapshot import RunningAppiumNode
-from app.services.appium_reconciler import (
+from app.agent_comm.snapshot import RunningAppiumNode
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.reconciler import (
     OrphanAppiumNode,
     appium_reconciler_loop_tick,
     detect_orphans,
     reconcile_host_orphans,
 )
-from app.services.appium_reconciler_agent import build_agent_start_payload
+from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
+from app.devices.models import ConnectionType, Device, DeviceType
 
 
 def _running_node(*, target: str, port: int) -> RunningAppiumNode:
@@ -50,7 +50,7 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
         desired_grid_run_id=run_id,
     )
     monkeypatch.setattr(
-        "app.services.appium_reconciler_agent.settings_service.get",
+        "app.appium_nodes.services.reconciler_agent.settings_service.get",
         Mock(
             side_effect=lambda key: {
                 "grid.hub_url": "http://grid:4444",

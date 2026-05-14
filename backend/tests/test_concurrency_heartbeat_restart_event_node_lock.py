@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.appium_node import AppiumNode
-from app.models.host import Host
-from app.services import heartbeat
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services import heartbeat as heartbeat
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -64,7 +64,7 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
     async def runner() -> None:
         async with db_session_maker() as session:
             host = await session.get(Host, db_host.id)
-            with patch("app.services.heartbeat.record_event", racing_record_event):
+            with patch("app.appium_nodes.services.heartbeat.record_event", racing_record_event):
                 await heartbeat._ingest_appium_restart_events(session, host, health_payload)
             await session.commit()
 

@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.driver_pack import PackState
-from app.services import pack_capability_service, pack_ingest_service
+from app.packs.models import PackState
+from app.packs.services import capability as pack_capability_service
+from app.packs.services import ingest as pack_ingest_service
 
 
 def _tar_with_member(name: str, data: bytes = b"content", *, member_type: bytes = tarfile.REGTYPE) -> bytes:

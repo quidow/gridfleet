@@ -10,21 +10,20 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import ConnectionType, DeviceOperationalState, DeviceType
-from app.models.device_intent import DeviceIntent
-from app.models.host import Host
-from app.routers import devices_control
-from app.services.intent_reconciler import _reconcile_device
-from app.services.intent_service import IntentService
-from app.services.intent_types import (
+from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, DeviceIntent, DeviceOperationalState, DeviceType
+from app.devices.routers import control as devices_control
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import _reconcile_device
+from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
     RECOVERY,
     IntentRegistration,
 )
-from app.services.node_service_types import NodeManagerError, NodePortConflictError
+from app.hosts.models import Host
 from tests.helpers import create_device
 
 

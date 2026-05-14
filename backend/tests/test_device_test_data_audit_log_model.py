@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models import DeviceTestDataAuditLog
+from app.devices.models import DeviceTestDataAuditLog
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 
 pytestmark = pytest.mark.db

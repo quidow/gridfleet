@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.device import ConnectionType, Device, DeviceType
-from app.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
-from app.services import device_write
+from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import write as device_write
 
 
 def test_platform_defaults_and_shape_validation_branches() -> None:

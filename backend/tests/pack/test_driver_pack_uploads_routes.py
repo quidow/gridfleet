@@ -8,15 +8,19 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.config import settings as process_settings
+from app.core.config import settings as process_settings
+from app.devices.models import ConnectionType, Device, DeviceType
 from app.main import app
-from app.models.device import ConnectionType, Device, DeviceType
-from app.models.driver_pack import DriverPack, DriverPackRelease
-from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.models.host_pack_installation import HostPackDoctorResult, HostPackInstallation
-from app.routers.driver_pack_uploads import get_pack_storage
-from app.services.pack_storage_service import PackStorageService
-from app.services.pack_upload_service import MAX_PACK_TARBALL_BYTES
+from app.packs.models import (
+    DriverPack,
+    DriverPackRelease,
+    HostPackDoctorResult,
+    HostPackFeatureStatus,
+    HostPackInstallation,
+)
+from app.packs.routers.uploads import get_pack_storage
+from app.packs.services.storage import PackStorageService
+from app.packs.services.upload import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -24,7 +28,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.host import Host
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 

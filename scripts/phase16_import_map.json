@@ -812,7 +812,9 @@
       "WebhookUpdate": "app.webhooks.schemas"
     },
     "app.security": {
-      "require_any_auth": "app.security.dependencies"
+      "AdminDep": "app.auth.dependencies",
+      "require_admin": "app.auth.dependencies",
+      "require_any_auth": "app.auth.dependencies"
     },
     "app.security.dependencies": {
       "AdminDep": "app.auth.dependencies",
@@ -1929,7 +1931,7 @@
     "app.schemas.setting": "app.settings.schemas",
     "app.schemas.test_data": "app.devices.schemas.test_data",
     "app.schemas.webhook": "app.webhooks.schemas",
-    "app.security": "app.security.dependencies",
+    "app.security": "app.auth.dependencies",
     "app.security.dependencies": "app.auth.dependencies",
     "app.services.agent_circuit_breaker": "app.agent_comm.circuit_breaker",
     "app.services.agent_error_codes": "app.agent_comm.error_codes",

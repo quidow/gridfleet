@@ -8,8 +8,8 @@ from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.auth import service as auth
-from app.config import settings
-from app.security.dependencies import require_any_auth
+from app.auth.dependencies import require_any_auth
+from app.core.config import settings
 
 
 def _app_with_require() -> FastAPI:

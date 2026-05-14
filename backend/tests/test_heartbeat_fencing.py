@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app.models.host import Host, HostStatus, OSType
+from app.appium_nodes.services.heartbeat import _check_hosts
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.hosts.models import Host, HostStatus, OSType
 from app.services.control_plane_leader import LeadershipLost
-from app.services.heartbeat import _check_hosts
-from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -25,7 +25,7 @@ async def _patch_heartbeat_session(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> AsyncGenerator[None]:
     """Redirect per-host sessions to the test schema engine for fencing tests."""
-    with patch("app.services.heartbeat.async_session", db_session_maker):
+    with patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker):
         yield
 
 
@@ -52,9 +52,9 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
         error_category=None,
     )
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=dead_result),
+        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=dead_result),
         patch(
-            "app.services.heartbeat.assert_current_leader",
+            "app.appium_nodes.services.heartbeat.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
@@ -99,9 +99,9 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         error_category=None,
     )
     with (
-        patch("app.services.heartbeat._ping_agent", return_value=ok_result),
+        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=ok_result),
         patch(
-            "app.services.heartbeat.assert_current_leader",
+            "app.appium_nodes.services.heartbeat.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),

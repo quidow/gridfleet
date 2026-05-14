@@ -6,9 +6,9 @@ import httpx
 import pytest
 import structlog.testing
 
-from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.services.heartbeat import _ping_agent
-from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
+from app.appium_nodes.services.heartbeat import _ping_agent
+from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
+from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 
 
 @pytest.mark.asyncio
@@ -20,7 +20,7 @@ async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.
 
     monkeypatch.setattr("app.settings.service.settings_service.get", fake_setting)
     with patch(
-        "app.services.heartbeat.agent_health",
+        "app.appium_nodes.services.heartbeat.agent_health",
         new=AsyncMock(return_value={"status": "ok", "version": "1.2.3"}),
     ):
         result = await _ping_agent("1.2.3.4", 5100)
@@ -38,13 +38,13 @@ async def test_ping_success_reports_fresh_mode_when_pool_disabled(monkeypatch: p
             return False
         raise KeyError(key)
 
-    monkeypatch.setattr("app.services.agent_operations.settings_service.get", fake_setting)
+    monkeypatch.setattr("app.agent_comm.operations.settings_service.get", fake_setting)
     response = httpx.Response(
         200,
         json={"status": "ok"},
         request=httpx.Request("GET", "http://1.2.3.4:5100/agent/health"),
     )
-    with patch("app.services.agent_operations.agent_request", new=AsyncMock(return_value=response)):
+    with patch("app.agent_comm.operations.agent_request", new=AsyncMock(return_value=response)):
         result = await _ping_agent("1.2.3.4", 5100)
 
     assert result.outcome is HeartbeatOutcome.success
@@ -59,7 +59,7 @@ async def test_ping_timeout_classified_via_transport_outcome() -> None:
         transport_outcome="timeout",
         error_category="ReadTimeout",
     )
-    with patch("app.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
+    with patch("app.appium_nodes.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.timeout
     assert result.error_category == "ReadTimeout"
@@ -73,7 +73,7 @@ async def test_ping_connect_error_classified() -> None:
         transport_outcome="connect_error",
         error_category="ConnectError",
     )
-    with patch("app.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
+    with patch("app.appium_nodes.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.connect_error
 
@@ -81,7 +81,7 @@ async def test_ping_connect_error_classified() -> None:
 @pytest.mark.asyncio
 async def test_ping_circuit_open_classified() -> None:
     err = CircuitOpenError("1.2.3.4", retry_after_seconds=10.0)
-    with patch("app.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
+    with patch("app.appium_nodes.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.circuit_open
     assert result.client_mode is ClientMode.skipped_circuit_open
@@ -90,7 +90,7 @@ async def test_ping_circuit_open_classified() -> None:
 @pytest.mark.asyncio
 async def test_ping_http_error_classified() -> None:
     err = AgentResponseError("1.2.3.4", "boom", http_status=503)
-    with patch("app.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
+    with patch("app.appium_nodes.services.heartbeat.agent_health", new=AsyncMock(side_effect=err)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.http_error
     assert result.http_status == 503
@@ -98,18 +98,14 @@ async def test_ping_http_error_classified() -> None:
 
 @pytest.mark.asyncio
 async def test_ping_invalid_payload_classified() -> None:
-    with patch("app.services.heartbeat.agent_health", new=AsyncMock(return_value=None)):
+    with patch("app.appium_nodes.services.heartbeat.agent_health", new=AsyncMock(return_value=None)):
         result = await _ping_agent("1.2.3.4", 5100)
     assert result.outcome is HeartbeatOutcome.invalid_payload
 
 
 def test_emit_heartbeat_log_records_full_schema() -> None:
-    from app.services.heartbeat import _emit_heartbeat_log
-    from app.services.heartbeat_outcomes import (
-        ClientMode,
-        HeartbeatOutcome,
-        HeartbeatPingResult,
-    )
+    from app.appium_nodes.services.heartbeat import _emit_heartbeat_log
+    from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
     ping_result = HeartbeatPingResult(
         outcome=HeartbeatOutcome.timeout,
@@ -143,12 +139,8 @@ def test_emit_heartbeat_log_records_full_schema() -> None:
 
 
 def test_emit_heartbeat_log_success_renders_none_fields() -> None:
-    from app.services.heartbeat import _emit_heartbeat_log
-    from app.services.heartbeat_outcomes import (
-        ClientMode,
-        HeartbeatOutcome,
-        HeartbeatPingResult,
-    )
+    from app.appium_nodes.services.heartbeat import _emit_heartbeat_log
+    from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 
     ping_result = HeartbeatPingResult(
         outcome=HeartbeatOutcome.success,

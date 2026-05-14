@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app import metrics_recorders
+from app.core import metrics_recorders as metrics_recorders
 
 
 def test_appium_desired_state_writes_counter_exists() -> None:
