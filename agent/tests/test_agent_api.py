@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from collections.abc import AsyncGenerator, Iterator  # noqa: TC003 - contextmanager signature is runtime-inspected
+from contextlib import contextmanager
+from typing import Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,11 +16,8 @@ from agent_app.pack.adapter_types import (
     HealthCheckResult,
     LifecycleActionResult,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from agent_app.pack.manifest import DesiredPack
+from agent_app.pack.dependencies import _latest_desired
+from agent_app.pack.manifest import DesiredPack  # noqa: TC001 - contextmanager signature is runtime-inspected
 
 
 class _AdapterContext(Protocol):
@@ -32,6 +31,15 @@ async def client() -> AsyncGenerator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     await appium_mgr.shutdown()
+
+
+@contextmanager
+def _latest_desired_override(*packs: DesiredPack) -> Iterator[None]:
+    app.dependency_overrides[_latest_desired] = lambda: list(packs)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(_latest_desired, None)
 
 
 async def test_health(client: AsyncClient) -> None:
@@ -104,7 +112,7 @@ async def test_pack_device_health_dispatches_correctly(client: AsyncClient) -> N
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/serial-1/health",
             params={
@@ -152,7 +160,7 @@ async def test_pack_device_health_forwards_ip_ping_params(client: AsyncClient) -
         return {"healthy": True, "checks": []}
 
     with (
-        patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]),
+        _latest_desired_override(desired_pack),
         patch("agent_app.pack.router.adapter_health_check", new=fake_adapter_health_check),
     ):
         resp = await client.get(

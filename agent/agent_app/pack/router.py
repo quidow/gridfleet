@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
+    DesiredPlatformDep,
     HostIdDep,
     OptionalAdapterRegistryDep,
     PackStateLoopDep,
@@ -83,8 +84,9 @@ async def pack_device_properties_route(
 
 @router.get("/devices/{connection_target}/health")
 async def pack_device_health_route(
-    request: Request,
     connection_target: str,
+    platform: DesiredPlatformDep,
+    adapter_registry: OptionalAdapterRegistryDep,
     pack_id: str = Query(...),
     platform_id: str = Query(...),
     device_type: str = Query(...),
@@ -95,12 +97,8 @@ async def pack_device_health_route(
     ip_ping_timeout_sec: float | None = Query(None),
     ip_ping_count: int | None = Query(None),
 ) -> dict[str, Any]:
-    platform_def = resolve_desired_platform(_latest_desired(request), pack_id=pack_id, platform_id=platform_id)
-    if platform_def is None:
-        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
-    adapter_registry = getattr(request.app.state, "adapter_registry", None)
-    release = _release_for_pack(request, pack_id)
-    if adapter_registry is not None and release is not None:
+    _platform_def, release = platform
+    if adapter_registry is not None:
         payload = await adapter_health_check(
             adapter_registry=adapter_registry,
             pack_id=pack_id,
