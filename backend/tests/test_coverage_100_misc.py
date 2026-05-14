@@ -21,7 +21,6 @@ from app.schemas.device import AppiumNodeRead, DesiredNodeState, SessionCreate
 from app.schemas.driver_pack import RuntimePolicy
 from app.schemas.run import DeviceRequirement
 from app.schemas.test_data import TestDataPayload
-from app.schemas.webhook import WebhookUpdate
 from app.seeding import runner as seeding_runner
 from app.seeding.runner import SeedResult, wipe_all_tables
 from app.seeding.scenarios import full_demo
@@ -69,6 +68,7 @@ from app.services import (
 from app.services import (
     control_plane_leader as control_plane_leader_module,
 )
+from app.webhooks.schemas import WebhookUpdate
 
 
 def test_config_and_error_guard_branches() -> None:

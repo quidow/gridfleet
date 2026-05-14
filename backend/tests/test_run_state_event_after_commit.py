@@ -50,7 +50,7 @@ async def test_run_created_dropped_on_rollback(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    from app.services.event_bus import queue_event_for_session
+    from app.events import queue_event_for_session
 
     queue_event_for_session(
         db_session,

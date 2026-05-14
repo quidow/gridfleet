@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.services.event_bus import event_bus
+from app.events import event_bus
 from app.services.session_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run
 
@@ -751,7 +751,7 @@ async def test_grid_queue(client: AsyncClient) -> None:
         }
     }
 
-    with patch("app.services.grid_service.get_grid_status", return_value=mock_data):
+    with patch("app.grid.service.get_grid_status", return_value=mock_data):
         resp = await client.get("/api/grid/queue")
 
     assert resp.status_code == 200

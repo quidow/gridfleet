@@ -10,23 +10,30 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import router as analytics
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.config import freeze_background_loops_enabled
+from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.database import async_session as session_factory
 from app.database import engine
 from app.dependencies import DbDep
 from app.errors import register_exception_handlers
+from app.events import event_bus
+from app.events import router as events
+from app.grid import router as grid
+from app.grid import service as grid_service
 from app.health import check_liveness, check_readiness
+from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
+from app.plugins import router as plugins
 from app.routers import (
     admin_appium_nodes,
     agent_driver_packs,
-    analytics,
     bulk,
     device_groups,
     devices,
@@ -35,21 +42,15 @@ from app.routers import (
     driver_pack_templates,
     driver_pack_uploads,
     driver_packs,
-    events,
-    grid,
     host_driver_pack_features,
     host_terminal,
     hosts,
     lifecycle,
     nodes,
-    plugins,
     runs,
     sessions,
-    settings,
-    webhooks,
 )
-from app.schemas.health import HealthStatusRead, LiveHealthRead
-from app.services import device_health, device_service, host_service, webhook_dispatcher
+from app.services import device_health, device_service, host_service
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
@@ -58,9 +59,7 @@ from app.services.control_plane_leader_watcher import control_plane_leader_watch
 from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop
 from app.services.heartbeat import (
     heartbeat_loop,
@@ -68,7 +67,6 @@ from app.services.heartbeat import (
 )
 from app.services.host_resource_telemetry import host_resource_telemetry_loop
 from app.services.intent_reconciler import device_intent_reconciler_loop
-from app.services.job_queue import durable_job_worker_loop
 from app.services.node_health import node_health_loop
 from app.services.pack_drain import pack_drain_loop
 from app.services.property_refresh import property_refresh_loop
@@ -76,8 +74,11 @@ from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
 from app.services.session_viability import close as close_session_viability_client
 from app.services.session_viability import session_viability_loop
-from app.services.settings_service import settings_service, validate_leader_keepalive_settings
+from app.settings import router as settings
+from app.settings import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
+from app.webhooks import dispatcher as webhook_dispatcher
+from app.webhooks import router as webhooks
 
 configure_logging()
 
@@ -204,7 +205,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
                 asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
                 asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
-                asyncio.create_task(durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
+                asyncio.create_task(job_queue.durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
                 asyncio.create_task(
                     webhook_dispatcher.webhook_delivery_loop(session_factory),
                     name="webhook_dispatcher.webhook_delivery_loop",
@@ -234,7 +235,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await control_plane_leader.release()
         await event_bus.shutdown()
         await agent_http_pool.close()
-        await close_grid_service_client()
+        await grid_service.close()
         await close_session_viability_client()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)

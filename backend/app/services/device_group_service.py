@@ -5,12 +5,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.events import queue_event_for_session
 from app.models.device import Device
 from app.models.device_group import DeviceGroup, DeviceGroupMembership, GroupType
 from app.schemas.device_filters import DeviceGroupFilters, DeviceQueryFilters
 from app.schemas.device_group import DeviceGroupCreate, DeviceGroupUpdate
 from app.services import device_service
-from app.services.event_bus import queue_event_for_session
 
 
 async def create_group(db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:

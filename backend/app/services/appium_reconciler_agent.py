@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.database import async_session
 from app.errors import AgentCallError
+from app.events import queue_event_for_session
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.services import (
@@ -42,7 +43,6 @@ from app.services.desired_state_writer import DesiredStateCaller, write_desired_
 from app.services.device_identity import appium_connection_target
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
-from app.services.event_bus import queue_event_for_session
 from app.services.lifecycle_policy_actions import reset_reconciler_start_failure_state
 from app.services.lifecycle_policy_state import (
     record_manual_recovered,
@@ -67,7 +67,7 @@ from app.services.pack_capability_service import (
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.pack_platform_resolver import assert_runnable, resolve_pack_platform
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

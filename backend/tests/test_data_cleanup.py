@@ -5,15 +5,15 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.events import event_bus
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
-from app.models.config_audit_log import ConfigAuditLog
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host
 from app.models.host_resource_sample import HostResourceSample
 from app.models.session import Session, SessionStatus
 from app.services.data_cleanup import _cleanup_old_data
-from app.services.event_bus import event_bus
+from app.settings.models import ConfigAuditLog
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:

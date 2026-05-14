@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.events import queue_event_for_session
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEventType
@@ -34,7 +35,6 @@ from app.services import (
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.device_state import ready_operational_state, set_hold, set_operational_state
-from app.services.event_bus import queue_event_for_session
 from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.services.intent_types import (
     GRID_ROUTING,
@@ -47,7 +47,7 @@ from app.services.intent_types import (
     IntentRegistration,
 )
 from app.services.pack_platform_resolver import assert_runnable
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = logging.getLogger(__name__)
 

@@ -5,11 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.events import queue_event_for_session
 from app.models.device import Device
 from app.models.host import Host, HostStatus
 from app.schemas.host import HostCreate, HostRegister, HostUpdate
-from app.services.event_bus import queue_event_for_session
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 2

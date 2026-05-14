@@ -15,7 +15,7 @@ from app.models.host_resource_sample import HostResourceSample
 from app.observability import get_logger, observe_background_loop, parse_timestamp
 from app.schemas.host import HostResourceSampleRead, HostResourceTelemetryResponse
 from app.services.agent_operations import agent_host_telemetry
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from uuid import UUID

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from app.models.device_group import DeviceGroup, GroupType
-from app.models.setting import Setting
+from app.settings.models import Setting
 
 if TYPE_CHECKING:
     from app.seeding.context import SeedContext

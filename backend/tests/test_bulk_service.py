@@ -11,11 +11,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import AgentCallError
+from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
+from app.jobs.models import Job
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host, HostStatus, OSType
-from app.models.job import Job
 from app.services import bulk_service
-from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
 from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.helpers import create_device

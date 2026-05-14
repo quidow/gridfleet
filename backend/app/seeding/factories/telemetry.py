@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
+from app.analytics.models import AnalyticsCapacitySnapshot
 from app.models.host_resource_sample import HostResourceSample
 from app.seeding.time_patterns import weekly_activity_multiplier
 

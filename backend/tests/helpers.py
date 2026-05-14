@@ -214,7 +214,7 @@ async def settle_after_commit_tasks() -> None:
     ``event_bus._handler_tasks`` set is deterministic — it only returns after
     every queued publish task has completed.
     """
-    from app.services.event_bus import event_bus
+    from app.events import event_bus
 
     # Yield once so any after_commit hooks fired during the just-completed
     # await have a chance to call ``loop.create_task`` and register on

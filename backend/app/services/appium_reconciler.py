@@ -53,7 +53,7 @@ from app.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
 )
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

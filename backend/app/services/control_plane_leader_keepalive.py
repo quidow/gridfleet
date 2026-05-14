@@ -5,7 +5,7 @@ import os
 
 from app.observability import get_logger, observe_background_loop
 from app.services.control_plane_leader import LeadershipLost, control_plane_leader
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 LEADER_KEEPALIVE_LOOP_NAME = "control_plane_leader_keepalive"

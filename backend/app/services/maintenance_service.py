@@ -138,9 +138,8 @@ async def schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> No
     is benign at runtime today but lazy import keeps the dependency graph
     clean and avoids future surprise on analyzer changes.
     """
-    from app.services import job_queue  # noqa: PLC0415
-    from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY  # noqa: PLC0415
-    from app.services.job_status_constants import JOB_STATUS_PENDING  # noqa: PLC0415
+    from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_PENDING  # noqa: PLC0415
+    from app.jobs import queue as job_queue  # noqa: PLC0415
 
     await job_queue.create_job(
         db,

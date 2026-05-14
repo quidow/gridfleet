@@ -12,14 +12,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.jobs.models import Job
+from app.jobs.queue import reset_stale_running_jobs, run_pending_jobs_once
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.driver_pack import DriverPack
 from app.models.host import Host
-from app.models.job import Job
 from app.services.device_verification import clear_verification_jobs
 from app.services.device_verification_execution import _health_failure_detail
-from app.services.job_queue import reset_stale_running_jobs, run_pending_jobs_once
 from app.services.node_service_types import NodeManagerError
 from app.services.session_viability import get_session_viability
 from tests.helpers import create_device_record

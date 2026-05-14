@@ -8,7 +8,7 @@ from app.config import freeze_background_loops_enabled
 from app.database import engine as default_engine
 from app.observability import get_logger, observe_background_loop
 from app.services.control_plane_leader import ControlPlaneLeader, control_plane_leader
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine

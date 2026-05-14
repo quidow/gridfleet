@@ -11,7 +11,7 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device
 from app.services import appium_node_resource_service as resource_claims
 from app.services.node_service_types import NodeManagerError, NodePortConflictError
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     import uuid

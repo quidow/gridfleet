@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
+from app.events import event_bus
 from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.services.event_bus import event_bus
 from app.services.pack_feature_status_service import record_feature_status
 
 if TYPE_CHECKING:

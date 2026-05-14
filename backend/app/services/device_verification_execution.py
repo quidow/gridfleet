@@ -29,7 +29,7 @@ from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.session_viability_types import SessionViabilityCheckedBy
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

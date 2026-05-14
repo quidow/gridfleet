@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from app.models.webhook import Webhook
-from app.models.webhook_delivery import WebhookDelivery
+from app.webhooks.models import Webhook, WebhookDelivery
 
 if TYPE_CHECKING:
     import uuid

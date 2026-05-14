@@ -18,32 +18,32 @@ from app.errors import (
     AgentUnreachableError,
     CircuitOpenError,
 )
+from app.events import queue_device_crashed_event, queue_event_for_session
 from app.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceOperationalState
 from app.models.device_event import DeviceEventType
 from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
+from app.plugins import service as plugin_service
 from app.services import (
     appium_node_locking,
     control_plane_state_store,
     device_health,
     device_locking,
     host_service,
-    plugin_service,
 )
 from app.services.agent_operations import agent_health
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
-from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.heartbeat_outcomes import (
     ClientMode,
     HeartbeatOutcome,
     HeartbeatPingResult,
 )
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory
 
 logger = get_logger(__name__)

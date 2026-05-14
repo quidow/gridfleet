@@ -2,7 +2,7 @@ from typing import Any
 
 from app.models.device import Device
 from app.services.appium_capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 DEFAULT_GRID_BROWSER_BY_PLATFORM: dict[str, str] = {}
 

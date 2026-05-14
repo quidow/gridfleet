@@ -15,7 +15,7 @@ from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.test_run import RunState, TestRun
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 

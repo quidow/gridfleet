@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.appium_plugin import AppiumPlugin
 from app.models.driver_pack import DriverPack, PackState
 from app.models.host import Host
+from app.plugins.models import AppiumPlugin
 from app.services.pack_host_compatibility import manifest_supports_host_os
 from app.services.pack_release_ordering import selected_release
 

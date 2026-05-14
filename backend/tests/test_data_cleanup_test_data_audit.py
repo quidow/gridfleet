@@ -7,7 +7,7 @@ import pytest
 
 from app.models import DeviceTestDataAuditLog
 from app.services import data_cleanup
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:

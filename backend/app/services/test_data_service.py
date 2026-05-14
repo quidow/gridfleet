@@ -5,9 +5,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.events import queue_event_for_session
 from app.models.device import Device
 from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
-from app.services.event_bus import queue_event_for_session
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

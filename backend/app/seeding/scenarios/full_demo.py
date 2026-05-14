@@ -7,8 +7,6 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.appium_plugin import AppiumPlugin
-from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import (
     ConnectionType,
     DeviceHold,
@@ -25,6 +23,7 @@ from app.models.host_runtime_installation import HostRuntimeInstallation
 from app.models.host_terminal_session import HostTerminalSession
 from app.models.session import SessionStatus
 from app.models.test_run import RunState
+from app.plugins.models import AppiumPlugin
 from app.seeding.factories.device import make_device
 from app.seeding.factories.driver_pack import seed_demo_driver_packs
 from app.seeding.factories.event import make_device_event, make_system_event
@@ -36,13 +35,14 @@ from app.seeding.factories.session import make_session
 from app.seeding.factories.telemetry import host_resource_series, make_capacity_snapshot
 from app.seeding.factories.webhook import make_webhook, make_webhook_delivery
 from app.seeding.time_patterns import log_normal_duration_seconds, sample_run_timestamps
+from app.settings.models import ConfigAuditLog
 
 if TYPE_CHECKING:
     import uuid
 
+    from app.events.models import SystemEvent
     from app.models.device import Device
     from app.models.host import Host
-    from app.models.system_event import SystemEvent
     from app.models.test_run import TestRun
     from app.seeding.context import SeedContext
 

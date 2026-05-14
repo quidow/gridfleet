@@ -33,6 +33,7 @@ from app.core.metrics import (
 from app.core.metrics import (
     refresh_system_gauges as _core_refresh_system_gauges,
 )
+from app.jobs.models import Job
 from app.metrics_recorders import (
     ACTIVE_SESSIONS,
     ACTIVE_SSE_CONNECTIONS,
@@ -64,9 +65,7 @@ from app.metrics_recorders import (
     record_webhook_delivery,
     set_ip_ping_consecutive_failures,
 )
-from app.models.job import Job
 from app.models.session import Session, SessionStatus
-from app.services.event_bus import event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,6 +88,7 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
     handler until the last contributing domain migrates and Phase 14
     flips the cutover to :func:`app.core.metrics.refresh_system_gauges`.
     """
+    await _core_refresh_system_gauges(db)
     pending_jobs_result = await db.execute(select(func.count()).select_from(Job).where(Job.status == "pending"))
     active_sessions_result = await db.execute(
         select(func.count())
@@ -100,7 +100,6 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
     )
     PENDING_JOBS.set(int(pending_jobs_result.scalar_one()))
     ACTIVE_SESSIONS.set(int(active_sessions_result.scalar_one()))
-    ACTIVE_SSE_CONNECTIONS.set(event_bus.subscriber_count)
     cooldown_result = await db.execute(
         select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))
         .select_from(DEVICE_RESERVATIONS)
@@ -117,10 +116,6 @@ refresh_system_gauges = refresh_system_gauges_legacy
 
 def render_metrics() -> bytes:
     return generate_latest()
-
-
-# Silence unused-import warnings on the re-exported core dispatcher.
-_ = _core_refresh_system_gauges
 
 
 __all__ = [

@@ -167,7 +167,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     async def fake_publish(name: str, payload: dict[str, object]) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.services.event_bus.event_bus.publish", fake_publish)
+    monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
 
     host = Host(
         hostname="cascade-host",

@@ -18,7 +18,7 @@ from app.agent_client import (
 )
 from app.errors import AgentResponseError, AgentUnreachableError
 from app.services.agent_http_pool import agent_http_pool
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient

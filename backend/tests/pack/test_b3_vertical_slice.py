@@ -40,13 +40,13 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.events import event_bus
 from app.main import app
 from app.models.driver_pack import DriverPack, DriverPackFeature, DriverPackRelease
 from app.models.host import Host, HostStatus, OSType
 from app.models.host_pack_feature_status import HostPackFeatureStatus
 from app.routers.driver_pack_uploads import get_pack_storage
 from app.services import pack_feature_dispatch_service
-from app.services.event_bus import event_bus
 from app.services.pack_storage_service import PackStorageService
 
 if TYPE_CHECKING:

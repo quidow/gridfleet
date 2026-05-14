@@ -31,7 +31,7 @@ from app.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     import uuid
