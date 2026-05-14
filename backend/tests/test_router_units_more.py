@@ -1389,6 +1389,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
     auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
+    auto_db = SimpleNamespace(commit=AsyncMock())
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
         patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
@@ -1396,10 +1397,11 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch(
             "app.routers.devices_control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
+        patch("app.routers.devices_control.revoke_intents_and_reconcile", new=AsyncMock()),
         patch("app.routers.devices_control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=auto_db)  # type: ignore[arg-type]
 
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -2635,6 +2637,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
+    reconnect_db = SimpleNamespace(commit=AsyncMock())
     # Phase 2: inner HTTPException(400) propagates unchanged (was incorrectly wrapped as 502)
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=reconnect_device)),
@@ -2643,9 +2646,10 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         ),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(HTTPException) as exc:
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=reconnect_db)  # type: ignore[arg-type]
     assert exc.value.status_code == 400
 
     with (

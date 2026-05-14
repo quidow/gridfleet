@@ -46,6 +46,7 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
     """NodeManagerError from restart_node must map to HTTP 502."""
     device_id = uuid.uuid4()
     device = _reconnect_device(id=device_id)
+    db = SimpleNamespace(commit=AsyncMock())
 
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
@@ -56,6 +57,7 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
         patch.object(
             devices_control.node_manager,
             "restart_node",
@@ -63,7 +65,7 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=object())
+        await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
     assert "restart failed" in exc.value.detail
@@ -74,6 +76,7 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
     device_id = uuid.uuid4()
     # Use observed_running=False so start_node is invoked (not restart_node)
     device = _reconnect_device(id=device_id, appium_node=SimpleNamespace(observed_running=False))
+    db = SimpleNamespace(commit=AsyncMock())
 
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
@@ -84,6 +87,7 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
         patch.object(
             devices_control.node_manager,
             "start_node",
@@ -91,7 +95,7 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=object())
+        await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
     assert "port occupied" in exc.value.detail
@@ -110,6 +114,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
         host_id=None,
         appium_node=SimpleNamespace(observed_running=False),
     )
+    db = SimpleNamespace(commit=AsyncMock())
 
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
@@ -120,9 +125,10 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=object())
+        await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
 
     # Must be 400, NOT 502
     assert exc.value.status_code == 400
@@ -133,6 +139,7 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
     """Unexpected RuntimeError must NOT be caught — it bubbles past the narrowed except."""
     device_id = uuid.uuid4()
     device = _reconnect_device(id=device_id)
+    db = SimpleNamespace(commit=AsyncMock())
 
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
@@ -143,6 +150,7 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
         patch.object(
             devices_control.node_manager,
             "restart_node",
@@ -150,4 +158,4 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
         ),
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
-        await devices_control.reconnect_device(device_id, db=object())
+        await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
