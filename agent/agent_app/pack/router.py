@@ -62,21 +62,19 @@ async def pack_devices(
 
 @router.get("/devices/{connection_target}/properties")
 async def pack_device_properties_route(
-    request: Request,
     connection_target: str,
+    pack_state_loop: PackStateLoopDep,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
     pack_id: str = Query(...),
 ) -> dict[str, Any]:
-    loop = getattr(request.app.state, "pack_state_loop", None)
-    desired = loop.latest_desired_packs if loop else None
-    adapter_registry = getattr(request.app.state, "adapter_registry", None)
-    host_identity = getattr(request.app.state, "host_identity", None)
-    host_id_value = host_identity.get() if host_identity is not None else None
+    desired = pack_state_loop.latest_desired_packs if pack_state_loop else None
     data = await pack_device_properties(
         connection_target,
         pack_id,
         desired,
         adapter_registry=adapter_registry,
-        host_id=host_id_value or "",
+        host_id=host_id,
     )
     if data is None:
         raise HTTPException(status_code=404, detail=f"Pack device {connection_target} not found")
