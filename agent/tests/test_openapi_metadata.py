@@ -16,6 +16,10 @@ _OPS_WITHOUT_REQUIRED_4XX: set[tuple[str, str]] = {
     ("POST", "/agent/plugins/sync"),
     # Enumeration endpoint: always returns 200 (empty list when no pack is loaded)
     ("GET", "/agent/pack/devices"),
+    # Idempotent stop and soft-state probes: unknown port is treated as success
+    ("POST", "/agent/appium/stop"),
+    ("GET", "/agent/appium/{port}/status"),
+    ("GET", "/agent/appium/{port}/logs"),
 }
 
 
@@ -53,11 +57,9 @@ def test_operations_with_4xx_reference_error_envelope(method: str, path: str, op
     if (method, path) in _OPS_WITHOUT_REQUIRED_4XX:
         pytest.skip("operation has no required 4xx surface")
     responses = op.get("responses", {})
-    fourxx = {code: resp for code, resp in responses.items() if code.startswith("4")}
-    assert fourxx, f"{method} {path}: no 4xx response declared"
+    fourxx = {code: resp for code, resp in responses.items() if code.startswith("4") and code != "422"}
+    assert fourxx, f"{method} {path}: no non-422 4xx response declared"
     for code, resp in fourxx.items():
-        if code == "422":
-            continue
         schema = resp.get("content", {}).get("application/json", {}).get("schema", {})
         ref = schema.get("$ref", "")
         assert "ErrorEnvelope" in ref, (

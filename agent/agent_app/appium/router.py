@@ -118,10 +118,7 @@ async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[s
     "/stop",
     response_model=AppiumStopResponse,
     status_code=status.HTTP_200_OK,
-    summary="Stop a managed Appium process by port",
-    responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
-    },
+    summary="Stop a managed Appium process by port (idempotent)",
 )
 async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
     await appium_mgr.stop(req.port)
@@ -133,9 +130,6 @@ async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
     response_model=AppiumStatusResponse,
     status_code=status.HTTP_200_OK,
     summary="Process info for a managed Appium port",
-    responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
-    },
 )
 async def appium_status(port: int) -> dict[str, Any]:
     return await appium_mgr.status(port)
@@ -146,9 +140,6 @@ async def appium_status(port: int) -> dict[str, Any]:
     response_model=AppiumLogsResponse,
     status_code=status.HTTP_200_OK,
     summary="Recent stdout/stderr lines for a managed Appium",
-    responses={
-        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
-    },
 )
 async def appium_logs(port: int, lines: int = Query(100, ge=1, le=5000)) -> dict[str, Any]:
     log_lines = appium_mgr.get_logs(port, lines=lines)
