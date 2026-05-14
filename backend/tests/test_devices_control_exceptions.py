@@ -17,7 +17,13 @@ from app.models.host import Host
 from app.routers import devices_control
 from app.services.intent_reconciler import _reconcile_device
 from app.services.intent_service import IntentService
-from app.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
+from app.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_CONNECTIVITY_LOST,
+    PRIORITY_HEALTH_FAILURE,
+    RECOVERY,
+    IntentRegistration,
+)
 from app.services.node_service_types import NodeManagerError, NodePortConflictError
 from tests.helpers import create_device
 
@@ -82,6 +88,11 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         reason="health failure",
         intents=[
             IntentRegistration(
+                source=f"connectivity:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
+            ),
+            IntentRegistration(
                 source=f"health_failure:node:{device.id}",
                 axis=NODE_PROCESS,
                 payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
@@ -111,6 +122,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     assert device.session_viability_error is None
     assert device.recovery_allowed is True
     remaining_sources = set((await db_session.execute(select(DeviceIntent.source))).scalars().all())
+    assert f"connectivity:{device.id}" not in remaining_sources
     assert f"health_failure:node:{device.id}" not in remaining_sources
     assert f"health_failure:recovery:{device.id}" not in remaining_sources
 

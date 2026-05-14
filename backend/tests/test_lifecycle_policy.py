@@ -1595,7 +1595,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(lifecycle_policy_module._MACHINE, "transition", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
     probe_order: list[str] = []
-    monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 1, raising=False)
 
     async def probe_after_wait(*_args: object, **_kwargs: object) -> dict[str, str]:
         probe_order.append("probe")
