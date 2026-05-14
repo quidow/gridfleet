@@ -18,15 +18,14 @@ from app.database import Base, get_db
 from app.main import app
 from app.models.host import Host, HostStatus, OSType
 from app.models.system_event import SystemEvent
-from app.models.webhook import Webhook
-from app.models.webhook_delivery import WebhookDelivery
-from app.services import webhook_dispatcher
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 from app.services.event_bus import event_bus
 from app.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.settings import settings_service
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.shutdown import shutdown_coordinator
+from app.webhooks import dispatcher as webhook_dispatcher
+from app.webhooks.models import Webhook, WebhookDelivery
 from tests.helpers import create_host
 
 

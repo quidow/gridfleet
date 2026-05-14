@@ -14,6 +14,7 @@ MIGRATED_DOMAINS: frozenset[str] = frozenset(
         "auth",
         "analytics",
         "settings",
+        "webhooks",
     }
 )
 
@@ -40,9 +41,11 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/routers/auth.py",
         "app/routers/analytics.py",
         "app/routers/settings.py",
+        "app/routers/webhooks.py",
         "app/schemas/auth.py",
         "app/schemas/analytics.py",
         "app/schemas/setting.py",
+        "app/schemas/webhook.py",
         "app/security/__init__.py",
         "app/security/dependencies.py",
         "app/services/auth.py",
@@ -54,6 +57,10 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/services/config_service.py",
         "app/models/setting.py",
         "app/models/config_audit_log.py",
+        "app/services/webhook_dispatcher.py",
+        "app/services/webhook_service.py",
+        "app/models/webhook.py",
+        "app/models/webhook_delivery.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the

@@ -45,10 +45,9 @@ from app.routers import (
     plugins,
     runs,
     sessions,
-    webhooks,
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
-from app.services import device_health, device_service, host_service, webhook_dispatcher
+from app.services import device_health, device_service, host_service
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
@@ -78,6 +77,8 @@ from app.services.session_viability import session_viability_loop
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
+from app.webhooks import dispatcher as webhook_dispatcher
+from app.webhooks import router as webhooks
 
 configure_logging()
 

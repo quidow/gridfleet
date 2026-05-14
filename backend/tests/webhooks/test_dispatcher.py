@@ -8,15 +8,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.webhook_delivery import WebhookDelivery
 from app.services.event_bus import event_bus
-from app.services.webhook_dispatcher import (
+from app.webhooks.dispatcher import (
     _compute_retry_delay,
     _is_retryable_exception,
     _process_delivery,
     _record_failure,
     run_pending_webhook_deliveries_once,
 )
+from app.webhooks.models import WebhookDelivery
 
 
 def _make_response(*, status_code: int = 200) -> MagicMock:

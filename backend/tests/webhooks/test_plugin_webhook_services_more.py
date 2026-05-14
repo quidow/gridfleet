@@ -10,8 +10,9 @@ from app.errors import AgentCallError
 from app.models.appium_plugin import AppiumPlugin
 from app.models.host import Host, HostStatus, OSType
 from app.schemas.plugin import PluginCreate, PluginUpdate
-from app.schemas.webhook import WebhookCreate, WebhookUpdate
-from app.services import plugin_service, webhook_service
+from app.services import plugin_service
+from app.webhooks import service as webhook_service
+from app.webhooks.schemas import WebhookCreate, WebhookUpdate
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

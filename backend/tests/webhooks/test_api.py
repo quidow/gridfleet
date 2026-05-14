@@ -5,8 +5,8 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.system_event import SystemEvent
-from app.models.webhook_delivery import WebhookDelivery
 from app.services.event_bus import event_bus
+from app.webhooks.models import WebhookDelivery
 
 WEBHOOK_PAYLOAD = {
     "name": "CI Notifications",

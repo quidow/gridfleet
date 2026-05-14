@@ -32,9 +32,8 @@ from app.models.job import Job
 from app.models.session import Session
 from app.models.system_event import SystemEvent
 from app.models.test_run import TestRun
-from app.models.webhook import Webhook
-from app.models.webhook_delivery import WebhookDelivery
 from app.settings.models import ConfigAuditLog, Setting
+from app.webhooks.models import Webhook, WebhookDelivery
 
 __all__ = [
     "AgentReconfigureOutbox",

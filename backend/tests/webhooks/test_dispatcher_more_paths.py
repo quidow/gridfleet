@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from app.services import webhook_dispatcher
+from app.webhooks import dispatcher as webhook_dispatcher
 
 
 class _Db:

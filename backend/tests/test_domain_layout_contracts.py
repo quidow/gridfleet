@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "analytics": ("config", "models", "router", "schemas", "service"),
     "settings": ("config", "models", "registry", "router", "schemas", "service", "service_config"),
+    "webhooks": ("config", "dispatcher", "models", "router", "schemas", "service"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -30,6 +31,12 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     "app.schemas.setting": ("app.settings.schemas", "SettingRead", "SettingRead"),
     "app.models.setting": ("app.settings.models", "Setting", "Setting"),
     "app.models.config_audit_log": ("app.settings.models", "ConfigAuditLog", "ConfigAuditLog"),
+    "app.routers.webhooks": ("app.webhooks.router", "router", "router"),
+    "app.services.webhook_dispatcher": ("app.webhooks.dispatcher", "configure", "configure"),
+    "app.services.webhook_service": ("app.webhooks.service", "list_webhooks", "list_webhooks"),
+    "app.schemas.webhook": ("app.webhooks.schemas", "WebhookRead", "WebhookRead"),
+    "app.models.webhook": ("app.webhooks.models", "Webhook", "Webhook"),
+    "app.models.webhook_delivery": ("app.webhooks.models", "WebhookDelivery", "WebhookDelivery"),
 }
 
 
