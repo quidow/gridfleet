@@ -17,7 +17,7 @@ from app.dependencies import DbDep
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
-from app.middleware import RequestContextMiddleware
+from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
 from app.routers import (
@@ -246,6 +246,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="GridFleet", version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(StaticPathsAuthMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth.router)

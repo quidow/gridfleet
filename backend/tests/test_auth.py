@@ -134,7 +134,7 @@ async def test_protected_routes_require_machine_or_browser_auth(
     assert machine_response.status_code == 200
 
 
-async def test_health_endpoints_stay_open(
+async def test_health_endpoints_stay_open_but_metrics_is_protected(
     client: AsyncClient,
     auth_settings: dict[str, str],
 ) -> None:
@@ -143,6 +143,18 @@ async def test_health_endpoints_stay_open(
 
     assert live.status_code == 200
     assert ready.status_code in {200, 503}
+
+    metrics_unauth = await client.get("/metrics")
+    assert metrics_unauth.status_code == 401
+
+    metrics_auth = await client.get(
+        "/metrics",
+        headers=_basic_auth_header(
+            auth_settings["machine_auth_username"],
+            auth_settings["machine_auth_password"],
+        ),
+    )
+    assert metrics_auth.status_code == 200
 
 
 async def test_execution_plane_paths_require_auth(
