@@ -7,7 +7,7 @@ from agent_app.appium import appium_mgr
 from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.router import _latest_desired, _release_for_pack
+from agent_app.pack.dependencies import _latest_desired, _release_for_pack
 
 
 async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -> None:
@@ -144,7 +144,9 @@ async def test_start_appium_generic_runtime_error() -> None:
 async def test_start_appium_unexpected_exception() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=ValueError("unexpected"),
@@ -212,11 +214,14 @@ async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
             )
         ],
     )
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired]):
+    app.dependency_overrides[_latest_desired] = lambda: [desired]
+    try:
         app.state.adapter_registry = None
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 "/agent/pack/devices/abc/lifecycle/reboot", params={"pack_id": "p", "platform_id": "x"}, json={}
             )
+    finally:
+        app.dependency_overrides.pop(_latest_desired, None)
     assert resp.status_code == 200
     assert resp.json()["detail"] == "Adapter not loaded for pack p:x"

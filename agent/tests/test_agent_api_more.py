@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Protocol, cast
 from unittest.mock import AsyncMock, patch
@@ -13,6 +14,8 @@ from agent_app.lifespan import lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
+from agent_app.pack.dependencies import _latest_desired
+from agent_app.pack.manifest import DesiredPack
 
 
 class _AdapterContext(Protocol):
@@ -26,6 +29,15 @@ async def client() -> AsyncGenerator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     await appium_mgr.shutdown()
+
+
+@contextmanager
+def _latest_desired_override(*packs: DesiredPack) -> Iterator[None]:
+    app.dependency_overrides[_latest_desired] = lambda: list(packs)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(_latest_desired, None)
 
 
 def test_get_network_devices_filters_non_network_targets() -> None:
@@ -117,7 +129,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/abc123/health",
             params={
@@ -132,7 +144,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert resp.status_code == 200
     assert adapter.health_calls == [("abc123", True)]
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.get(
             "/agent/pack/devices/abc123/telemetry",
             params={
@@ -147,7 +159,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert adapter.telemetry_calls == [("abc123", "abc123")]
 
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         missing_resp = await client.get(
             "/agent/pack/devices/missing-device/telemetry",
             params={
@@ -186,7 +198,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
+    with _latest_desired_override(desired_pack):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},

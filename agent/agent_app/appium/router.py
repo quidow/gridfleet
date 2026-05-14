@@ -66,8 +66,6 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
         raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
     except RuntimeError as e:
         raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
-    except Exception as e:
-        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
 
 
