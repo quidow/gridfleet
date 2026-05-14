@@ -42,6 +42,12 @@ async def test_host_offline_cascade_queues_all_events(
     # Redirect per-host sessions to the test schema engine so events are queued
     # on sessions that share the same after-commit event hook configuration.
     monkeypatch.setattr("app.services.heartbeat.async_session", db_session_maker)
+    # The resume guard uses a module-level _LAST_CYCLE_MONOTONIC to detect a paused
+    # backend (>= max_missed * interval gap between cycles). On slow CI runners the
+    # gap between the last unrelated test that called _check_hosts and this one can
+    # exceed the threshold, causing the guard to swallow the offline cascade we are
+    # asserting. Reset to None so the guard treats this call as the first cycle.
+    monkeypatch.setattr("app.services.heartbeat._LAST_CYCLE_MONOTONIC", None)
 
     await _check_hosts(db_session)
     await settle_after_commit_tasks()
