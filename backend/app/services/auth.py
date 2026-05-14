@@ -6,10 +6,10 @@ import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from http.cookies import CookieError, SimpleCookie
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jwt
+from starlette.requests import cookie_parser
 
 from app.config import settings
 
@@ -267,16 +267,12 @@ def _authenticate_basic_auth(headers: Headers) -> str | None:
 
 
 def _read_cookie(headers: Headers, name: str) -> str | None:
-    raw_cookie = headers.get("cookie")
-    if not raw_cookie:
+    raw = headers.get("cookie")
+    if not raw:
         return None
-    cookie = SimpleCookie()
     try:
-        cookie.load(raw_cookie)
-    except (CookieError, ValueError):
+        cookies = cookie_parser(raw)
+    except ValueError:
         return None
-    morsel = cookie.get(name)
-    if morsel is None:
-        return None
-    value = morsel.value
+    value = cookies.get(name)
     return value if isinstance(value, str) and value else None
