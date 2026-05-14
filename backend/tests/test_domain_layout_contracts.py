@@ -17,6 +17,18 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "jobs": ("config", "kinds", "models", "queue", "statuses"),
     "grid": ("config", "router", "schemas", "service"),
     "plugins": ("config", "models", "router", "schemas", "service"),
+    "agent_comm": (
+        "circuit_breaker",
+        "client",
+        "config",
+        "error_codes",
+        "http_pool",
+        "models",
+        "operations",
+        "probe_result",
+        "reconfigure_delivery",
+        "snapshot",
+    ),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -64,6 +76,27 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     "app.services.plugin_service": ("app.plugins.service", "list_plugins", "list_plugins"),
     "app.schemas.plugin": ("app.plugins.schemas", "PluginRead", "PluginRead"),
     "app.models.appium_plugin": ("app.plugins.models", "AppiumPlugin", "AppiumPlugin"),
+    "app.agent_client": ("app.agent_comm.client", "request", "request"),
+    "app.services.agent_http_pool": ("app.agent_comm.http_pool", "agent_http_pool", "agent_http_pool"),
+    "app.services.agent_circuit_breaker": (
+        "app.agent_comm.circuit_breaker",
+        "agent_circuit_breaker",
+        "agent_circuit_breaker",
+    ),
+    "app.services.agent_operations": ("app.agent_comm.operations", "agent_health", "agent_health"),
+    "app.services.agent_error_codes": ("app.agent_comm.error_codes", "AgentErrorCode", "AgentErrorCode"),
+    "app.services.agent_probe_result": ("app.agent_comm.probe_result", "ProbeResult", "ProbeResult"),
+    "app.services.agent_reconfigure_delivery": (
+        "app.agent_comm.reconfigure_delivery",
+        "deliver_agent_reconfigures",
+        "deliver_agent_reconfigures",
+    ),
+    "app.services.agent_snapshot": ("app.agent_comm.snapshot", "parse_running_nodes", "parse_running_nodes"),
+    "app.models.agent_reconfigure_outbox": (
+        "app.agent_comm.models",
+        "AgentReconfigureOutbox",
+        "AgentReconfigureOutbox",
+    ),
 }
 
 

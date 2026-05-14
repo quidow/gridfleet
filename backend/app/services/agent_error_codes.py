@@ -1,15 +1,9 @@
-"""Backend mirror of the agent-side AgentErrorCode enum."""
+import sys
+from typing import TYPE_CHECKING
 
-from __future__ import annotations
+from app.agent_comm import error_codes as _error_codes
 
-import enum
+if TYPE_CHECKING:
+    from app.agent_comm.error_codes import *  # noqa: F403
 
-
-class AgentErrorCode(enum.StrEnum):
-    PORT_OCCUPIED = "PORT_OCCUPIED"
-    ALREADY_RUNNING = "ALREADY_RUNNING"
-    DEVICE_NOT_FOUND = "DEVICE_NOT_FOUND"
-    RUNTIME_MISSING = "RUNTIME_MISSING"
-    STARTUP_TIMEOUT = "STARTUP_TIMEOUT"
-    INVALID_PAYLOAD = "INVALID_PAYLOAD"
-    INTERNAL_ERROR = "INTERNAL_ERROR"
+sys.modules[__name__] = _error_codes

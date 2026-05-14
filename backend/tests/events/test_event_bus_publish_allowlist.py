@@ -17,10 +17,10 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
         "No writer transaction exists to bind this notification to."
     ),
     "app/webhooks/router.py:test_webhook": "webhook.test is a synthetic broadcaster with no paired DB write.",
-    "app/services/agent_circuit_breaker.py:AgentCircuitBreaker.record_success": (
+    "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_success": (
         "In-memory state-machine transition to closed; no DB write paired."
     ),
-    "app/services/agent_circuit_breaker.py:AgentCircuitBreaker.record_failure": (
+    "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_failure": (
         "In-memory state-machine transition to opened; no DB write paired."
     ),
     "app/services/bulk_service.py:_run_per_device_node_action": (
