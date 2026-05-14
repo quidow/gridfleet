@@ -3206,7 +3206,7 @@ export interface components {
         };
         /**
          * FeatureActionResultOut
-         * @description HTTP-shaped response mirroring :class:`app.pack.adapter.FeatureActionResult`.
+         * @description HTTP-shaped response mirroring :class:`app.packs.adapter.FeatureActionResult`.
          */
         FeatureActionResultOut: {
             /** Data */
