@@ -221,6 +221,14 @@ def authenticate_operator(username: str, password: str) -> bool:
     return hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)
 
 
+def check_machine_credentials(username: str, password: str) -> str | None:
+    expected_user = machine_username()
+    expected_pass = machine_password()
+    if hmac.compare_digest(username, expected_user) and hmac.compare_digest(password, expected_pass):
+        return username
+    return None
+
+
 def set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,

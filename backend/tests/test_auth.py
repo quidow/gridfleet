@@ -560,3 +560,18 @@ def test_auth_token_and_cookie_guard_branches(auth_settings: dict[str, str], mon
     monkeypatch.setattr(auth, "cookie_parser", _bad_cookie_parser)
     assert auth._read_cookie(Headers({"cookie": "broken=cookie"}), auth.SESSION_COOKIE_NAME) is None
     assert auth._authenticate_basic_auth(Headers({"authorization": "Basic not-base64"})) is None
+
+
+def test_check_machine_credentials_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "machine_auth_username", "bot", raising=False)
+    monkeypatch.setattr(settings, "machine_auth_password", "shh", raising=False)
+    assert auth.check_machine_credentials("bot", "shh") == "bot"
+
+
+def test_check_machine_credentials_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "auth_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "machine_auth_username", "bot", raising=False)
+    monkeypatch.setattr(settings, "machine_auth_password", "shh", raising=False)
+    assert auth.check_machine_credentials("bot", "wrong") is None
+    assert auth.check_machine_credentials("other", "shh") is None
