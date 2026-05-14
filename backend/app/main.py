@@ -16,7 +16,7 @@ from app.database import engine
 from app.dependencies import DbDep
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
-from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
+from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
@@ -300,7 +300,7 @@ async def health(db: DbDep) -> JSONResponse:
 
 @app.get("/metrics")
 async def metrics(db: DbDep) -> Response:
-    await refresh_system_gauges(db)
+    await refresh_system_gauges_legacy(db)
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
