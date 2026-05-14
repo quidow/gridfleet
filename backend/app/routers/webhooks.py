@@ -1,10 +1,9 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException, Query
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.models.webhook import Webhook
 from app.schemas.webhook import (
     WebhookCreate,
@@ -20,17 +19,17 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 
 @router.post("", response_model=WebhookRead, status_code=201)
-async def create_webhook(data: WebhookCreate, db: AsyncSession = Depends(get_db)) -> Webhook:
+async def create_webhook(data: WebhookCreate, db: DbDep) -> Webhook:
     return await webhook_service.create_webhook(db, data)
 
 
 @router.get("", response_model=list[WebhookRead])
-async def list_webhooks(db: AsyncSession = Depends(get_db)) -> list[Webhook]:
+async def list_webhooks(db: DbDep) -> list[Webhook]:
     return await webhook_service.list_webhooks(db)
 
 
 @router.get("/{webhook_id}", response_model=WebhookRead)
-async def get_webhook(webhook_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Webhook:
+async def get_webhook(webhook_id: uuid.UUID, db: DbDep) -> Webhook:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
@@ -38,7 +37,7 @@ async def get_webhook(webhook_id: uuid.UUID, db: AsyncSession = Depends(get_db))
 
 
 @router.patch("/{webhook_id}", response_model=WebhookRead)
-async def update_webhook(webhook_id: uuid.UUID, data: WebhookUpdate, db: AsyncSession = Depends(get_db)) -> Webhook:
+async def update_webhook(webhook_id: uuid.UUID, data: WebhookUpdate, db: DbDep) -> Webhook:
     webhook = await webhook_service.update_webhook(db, webhook_id, data)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
@@ -46,14 +45,14 @@ async def update_webhook(webhook_id: uuid.UUID, data: WebhookUpdate, db: AsyncSe
 
 
 @router.delete("/{webhook_id}", status_code=204)
-async def delete_webhook(webhook_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_webhook(webhook_id: uuid.UUID, db: DbDep) -> None:
     deleted = await webhook_service.delete_webhook(db, webhook_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Webhook not found")
 
 
 @router.post("/{webhook_id}/test", status_code=200)
-async def test_webhook(webhook_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def test_webhook(webhook_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
@@ -71,8 +70,8 @@ async def test_webhook(webhook_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 @router.get("/{webhook_id}/deliveries", response_model=WebhookDeliveryListRead)
 async def list_webhook_deliveries(
     webhook_id: uuid.UUID,
+    db: DbDep,
     limit: int = Query(10, ge=1, le=50),
-    db: AsyncSession = Depends(get_db),
 ) -> WebhookDeliveryListRead:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
@@ -85,7 +84,7 @@ async def list_webhook_deliveries(
 async def retry_webhook_delivery(
     webhook_id: uuid.UUID,
     delivery_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> WebhookDeliveryRead:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
