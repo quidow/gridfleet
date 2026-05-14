@@ -43,11 +43,11 @@ from app.observability import configure_logging, get_logger
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
-from app.routers import runs
+from app.runs import router as runs_router
+from app.runs.service_reaper import run_reaper_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
-from app.services.run_reaper import run_reaper_loop
 from app.sessions import router as sessions_router
 from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
@@ -288,7 +288,7 @@ app.include_router(sessions_router.router, dependencies=[Depends(auth_dependenci
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(runs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(runs_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
