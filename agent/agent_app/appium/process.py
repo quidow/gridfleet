@@ -17,6 +17,15 @@ from typing import Any
 
 import httpx
 
+from agent_app.appium.exceptions import (
+    AlreadyRunningError,
+    DeviceNotFoundError,
+    InvalidStartPayloadError,
+    PortOccupiedError,
+    RuntimeMissingError,
+    RuntimeNotInstalledError,
+    StartupTimeoutError,
+)
 from agent_app.config import agent_settings
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.event_bus import EventBus
@@ -80,34 +89,6 @@ def sanitize_appium_driver_capabilities(capabilities: dict[str, Any]) -> dict[st
 class AppiumInvocation:
     binary: str
     env_extra: dict[str, str] = field(default_factory=dict)
-
-
-class RuntimeNotInstalledError(RuntimeError):
-    """Raised when no runtime is installed for the requested pack."""
-
-
-class PortOccupiedError(RuntimeError):
-    """Raised when a managed Appium port is now owned by another listener."""
-
-
-class AlreadyRunningError(RuntimeError):
-    """A managed Appium is already running on this port."""
-
-
-class StartupTimeoutError(RuntimeError):
-    """Appium failed to become ready before the timeout."""
-
-
-class RuntimeMissingError(RuntimeError):
-    """Required runtime tools are not installed on the host."""
-
-
-class InvalidStartPayloadError(RuntimeError):
-    """Start payload is missing required fields."""
-
-
-class DeviceNotFoundError(RuntimeError):
-    """Connection target is not visible to the host adapter."""
 
 
 def _validate_appium_port_in_range(port: int) -> None:
