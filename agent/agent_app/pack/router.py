@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
@@ -20,10 +20,6 @@ from agent_app.pack.dispatch import (
     adapter_normalize_device,
     adapter_telemetry,
 )
-
-if TYPE_CHECKING:
-    from agent_app.pack.adapter_registry import AdapterRegistry
-    from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.schemas import (
     FeatureActionRequest,
     NormalizeDeviceRequest,
@@ -204,10 +200,11 @@ async def feature_action_route(
 
 
 @router.post("/devices/normalize", response_model=NormalizeDeviceResponse)
-async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) -> dict[str, Any]:
-    adapter_registry: AdapterRegistry | None = getattr(request.app.state, "adapter_registry", None)
-    host_identity: HostIdentity | None = getattr(request.app.state, "host_identity", None)
-    host_id_value = host_identity.get() if host_identity is not None else ""
+async def normalize_device_route(
+    req: NormalizeDeviceRequest,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
+) -> dict[str, Any]:
     if adapter_registry is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
 
@@ -215,7 +212,7 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
         adapter_registry=adapter_registry,
         pack_id=req.pack_id,
         pack_release=req.pack_release,
-        host_id=host_id_value or "",
+        host_id=host_id,
         platform_id=req.platform_id,
         raw_input=req.raw_input,
     )
