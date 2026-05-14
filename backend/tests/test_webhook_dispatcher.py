@@ -4,12 +4,13 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.webhook_delivery import WebhookDelivery
 from app.services.event_bus import event_bus
-from app.services.webhook_dispatcher import run_pending_webhook_deliveries_once
+from app.services.webhook_dispatcher import _is_retryable_exception, run_pending_webhook_deliveries_once
 
 
 def _make_response(*, status_code: int = 200) -> MagicMock:
@@ -111,3 +112,28 @@ async def test_webhook_delivery_failures_persist_retries_and_exhaustion(
         else:
             assert delivery["status"] == "exhausted"
             assert delivery["attempts"] == 3
+
+
+def _status_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.test/")
+    response = httpx.Response(code, request=request)
+    return httpx.HTTPStatusError("err", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (httpx.ConnectError("boom"), True),
+        (httpx.ReadTimeout("slow"), True),
+        (_status_error(500), True),
+        (_status_error(502), True),
+        (_status_error(503), True),
+        (_status_error(400), False),
+        (_status_error(401), False),
+        (_status_error(404), False),
+        (_status_error(422), False),
+        (httpx.InvalidURL("nope"), False),
+    ],
+)
+def test_is_retryable_exception(exc: BaseException, expected: bool) -> None:
+    assert _is_retryable_exception(exc) is expected

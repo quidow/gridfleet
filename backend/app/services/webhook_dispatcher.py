@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+def _is_retryable_exception(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.NetworkError | httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
+
+
 MAX_RETRIES = 3
 BACKOFF_BASE = 4  # 1s, 4s, 16s
 DELIVERY_TIMEOUT_SEC = 10
