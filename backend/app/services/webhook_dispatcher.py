@@ -44,7 +44,6 @@ def _is_retryable_exception(exc: BaseException) -> bool:
 
 
 MAX_RETRIES = 3
-BACKOFF_BASE = 4  # 1s, 4s, 16s
 DELIVERY_TIMEOUT_SEC = 10
 CLAIM_LEASE_SEC = 30
 POLL_INTERVAL_SEC = 1
@@ -230,10 +229,26 @@ async def _process_delivery(
             session_factory,
             error=str(exc),
             http_status=exc.response.status_code,
+            retryable=_is_retryable_exception(exc),
+        )
+        return
+    except (httpx.NetworkError, httpx.TimeoutException) as exc:
+        await _record_failure(
+            delivery_id,
+            session_factory,
+            error=str(exc),
+            http_status=None,
+            retryable=True,
         )
         return
     except httpx.HTTPError as exc:
-        await _record_failure(delivery_id, session_factory, error=str(exc), http_status=None)
+        await _record_failure(
+            delivery_id,
+            session_factory,
+            error=str(exc),
+            http_status=None,
+            retryable=False,
+        )
         return
 
     async with session_factory() as db:
@@ -256,6 +271,7 @@ async def _record_failure(
     *,
     error: str,
     http_status: int | None,
+    retryable: bool,
 ) -> None:
     async with session_factory() as db:
         delivery = await db.get(WebhookDelivery, delivery_id)
@@ -266,13 +282,14 @@ async def _record_failure(
         delivery.last_error = error
         delivery.last_http_status = http_status
 
-        if delivery.attempts >= delivery.max_attempts:
+        if not retryable or delivery.attempts >= delivery.max_attempts:
             delivery.status = "exhausted"
             delivery.next_retry_at = None
             metric_status = "exhausted"
         else:
             delivery.status = "failed"
-            delivery.next_retry_at = utcnow() + timedelta(seconds=BACKOFF_BASE ** (delivery.attempts - 1))
+            delay = _compute_retry_delay(delivery.attempts)
+            delivery.next_retry_at = utcnow() + timedelta(seconds=delay)
             metric_status = "failed"
         await db.commit()
     record_webhook_delivery(metric_status)

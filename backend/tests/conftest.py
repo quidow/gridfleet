@@ -2,6 +2,7 @@ import contextlib
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -16,6 +17,9 @@ from app.config import settings
 from app.database import Base, get_db
 from app.main import app
 from app.models.host import Host, HostStatus, OSType
+from app.models.system_event import SystemEvent
+from app.models.webhook import Webhook
+from app.models.webhook_delivery import WebhookDelivery
 from app.services import webhook_dispatcher
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 from app.services.event_bus import event_bus
@@ -324,3 +328,37 @@ async def populated_hosts_one_slow_one_fast(
             if h is not None:
                 await cleanup_db.delete(h)
         await cleanup_db.commit()
+
+
+@pytest_asyncio.fixture
+async def test_session_factory(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> async_sessionmaker[AsyncSession]:
+    """Alias for db_session_maker, used by webhook_dispatcher unit tests."""
+    return db_session_maker
+
+
+@pytest_asyncio.fixture
+async def seeded_pending_delivery(
+    test_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[WebhookDelivery]:
+    async with test_session_factory() as db:
+        webhook = Webhook(name="t", url="https://example.test/hook", event_types=["system.test"], enabled=True)
+        db.add(webhook)
+        await db.flush()
+        event = SystemEvent(type="system.test", data={"x": 1})
+        db.add(event)
+        await db.flush()
+        delivery = WebhookDelivery(
+            webhook_id=webhook.id,
+            system_event_id=event.id,
+            event_type="system.test",
+            status="pending",
+            attempts=0,
+            max_attempts=3,
+            next_retry_at=datetime.now(UTC),
+        )
+        db.add(delivery)
+        await db.commit()
+        await db.refresh(delivery)
+        yield delivery

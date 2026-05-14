@@ -255,7 +255,7 @@ async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.Mon
         next_retry_at=None,
     )
     db = _Db(delivery)
-    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="down", http_status=None)
+    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="down", http_status=None, retryable=True)
     assert delivery.status == "failed"
     assert delivery.next_retry_at is not None
     metric.assert_called_with("failed")
@@ -269,7 +269,9 @@ async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.Mon
         last_http_status=None,
         next_retry_at=None,
     )
-    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(_Db(exhausted)), error="down", http_status=503)
+    await webhook_dispatcher._record_failure(
+        uuid.uuid4(), _Factory(_Db(exhausted)), error="down", http_status=503, retryable=True
+    )
     assert exhausted.status == "exhausted"
     assert exhausted.next_retry_at is None
     metric.assert_called_with("exhausted")

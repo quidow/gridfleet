@@ -13,6 +13,7 @@ from app.services.event_bus import event_bus
 from app.services.webhook_dispatcher import (
     _compute_retry_delay,
     _is_retryable_exception,
+    _record_failure,
     run_pending_webhook_deliveries_once,
 )
 
@@ -157,3 +158,78 @@ def test_compute_retry_delay_bounds() -> None:
         assert 16.0 <= _compute_retry_delay(3) <= 18.0
         assert _compute_retry_delay(4) <= 64.0
         assert _compute_retry_delay(10) <= 64.0
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_retryable_marks_failed_with_next_retry(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    before = datetime.now(UTC)
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="boom",
+        http_status=502,
+        retryable=True,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "failed"
+        assert delivery.attempts == 1
+        assert delivery.last_error == "boom"
+        assert delivery.last_http_status == 502
+        assert delivery.next_retry_at is not None
+        assert before <= delivery.next_retry_at <= before + timedelta(seconds=4.0)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_not_retryable_exhausts_immediately(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="bad request",
+        http_status=400,
+        retryable=False,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "exhausted"
+        assert delivery.attempts == 1
+        assert delivery.last_http_status == 400
+        assert delivery.next_retry_at is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_retryable_at_max_attempts_exhausts(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    # Pre-bump attempts so the next failure crosses max_attempts.
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        delivery.attempts = delivery.max_attempts - 1
+        await db.commit()
+
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="still failing",
+        http_status=503,
+        retryable=True,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "exhausted"
+        assert delivery.attempts == delivery.max_attempts
+        assert delivery.next_retry_at is None
