@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]+$"
 
@@ -36,6 +36,60 @@ class NormalizeDeviceResponse(BaseModel):
     model_number: str = ""
     software_versions: dict[str, str] = Field(default_factory=dict)
     field_errors: list[dict[str, str]]
+
+
+class PackDeviceCandidate(BaseModel):
+    """A single entry in ``GET /agent/pack/devices``. Adapters return arbitrary keys."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PackDevicesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    devices: list[PackDeviceCandidate] = Field(default_factory=list)
+
+
+class PackDevicePropertiesResponse(BaseModel):
+    """Adapter-defined property bag. Schema is intentionally open."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class HealthCheckResult(BaseModel):
+    """One check in a pack device's health response."""
+
+    model_config = ConfigDict(extra="allow")
+
+    check_id: str
+    ok: bool
+    message: str | None = None
+
+
+class PackDeviceHealthResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    healthy: bool | None
+    checks: list[HealthCheckResult] = Field(default_factory=list)
+
+
+class PackDeviceTelemetryResponse(BaseModel):
+    """Adapter telemetry blob."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PackDeviceLifecycleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    success: bool
+    detail: str | None = None
+
+
+class FeatureActionResponse(BaseModel):
+    ok: bool
+    detail: str | None = None
+    data: dict[str, Any] | None = None
 
 
 class _FeatureActionContext:

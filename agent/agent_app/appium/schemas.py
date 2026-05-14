@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID  # noqa: TC003 - Pydantic resolves this field annotation at runtime.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]+$"
 
@@ -41,3 +41,35 @@ class AppiumStartRequest(BaseModel):
 
 class AppiumStopRequest(BaseModel):
     port: int = Field(ge=1024, le=65535)
+
+
+class AppiumStartResponse(BaseModel):
+    pid: int = Field(ge=1)
+    port: int = Field(ge=1024, le=65535)
+    connection_target: str = Field(min_length=1)
+
+
+class AppiumReconfigureResponse(BaseModel):
+    port: int = Field(ge=1024, le=65535)
+    accepting_new_sessions: bool
+    stop_pending: bool
+    grid_run_id: str | None
+
+
+class AppiumStopResponse(BaseModel):
+    stopped: bool
+    port: int = Field(ge=1024, le=65535)
+
+
+class AppiumStatusResponse(BaseModel):
+    """Shape varies — accept extras so OpenAPI captures the typed core only."""
+
+    model_config = ConfigDict(extra="allow")
+
+    port: int = Field(ge=1024, le=65535)
+
+
+class AppiumLogsResponse(BaseModel):
+    port: int = Field(ge=1024, le=65535)
+    lines: list[str]
+    count: int = Field(ge=0)
