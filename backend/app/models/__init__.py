@@ -1,5 +1,5 @@
+from app.analytics.models import AnalyticsCapacitySnapshot
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.appium_plugin import AppiumPlugin

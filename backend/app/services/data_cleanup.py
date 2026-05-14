@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 
+from app.analytics.models import AnalyticsCapacitySnapshot
 from app.database import async_session
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.config_audit_log import ConfigAuditLog
 from app.models.device_event import DeviceEvent
 from app.models.device_test_data_audit_log import DeviceTestDataAuditLog

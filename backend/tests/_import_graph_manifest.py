@@ -12,6 +12,7 @@ from __future__ import annotations
 MIGRATED_DOMAINS: frozenset[str] = frozenset(
     {
         "auth",
+        "analytics",
     }
 )
 
@@ -36,11 +37,15 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/dependencies.py",
         "app/middleware.py",
         "app/routers/auth.py",
+        "app/routers/analytics.py",
         "app/schemas/auth.py",
+        "app/schemas/analytics.py",
         "app/security/__init__.py",
         "app/security/dependencies.py",
         "app/services/auth.py",
         "app/services/auth_dependencies.py",
+        "app/services/analytics_service.py",
+        "app/models/analytics_capacity_snapshot.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the

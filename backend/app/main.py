@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import router as analytics
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -26,7 +27,6 @@ from app.observability import configure_logging, get_logger
 from app.routers import (
     admin_appium_nodes,
     agent_driver_packs,
-    analytics,
     bulk,
     device_groups,
     devices,

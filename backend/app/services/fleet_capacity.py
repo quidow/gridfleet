@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, func, or_, select, text
 
+from app.analytics import schemas as analytics_schemas
+from app.analytics.models import AnalyticsCapacitySnapshot
 from app.database import async_session
-from app.models.analytics_capacity_snapshot import AnalyticsCapacitySnapshot
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host, HostStatus
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop
-from app.schemas.analytics import FleetCapacityTimeline, FleetCapacityTimelinePoint
 from app.services import grid_service
 from app.services.session_filters import exclude_non_test_sessions
 from app.services.settings_service import settings_service
@@ -123,7 +123,7 @@ async def get_fleet_capacity_timeline(
     date_from: datetime,
     date_to: datetime,
     bucket_minutes: int = DEFAULT_BUCKET_MINUTES,
-) -> FleetCapacityTimeline:
+) -> analytics_schemas.FleetCapacityTimeline:
     if date_from >= date_to:
         raise ValueError("date_from must be before date_to")
     if not 1 <= bucket_minutes <= MAX_BUCKET_MINUTES:
@@ -169,7 +169,7 @@ async def get_fleet_capacity_timeline(
         bucket_minutes=bucket_minutes,
     )
 
-    series: list[FleetCapacityTimelinePoint] = []
+    series: list[analytics_schemas.FleetCapacityTimelinePoint] = []
     for row in bucket_rows:
         timestamp = row["bucket_start"]
         total_capacity_slots = int(row["total_capacity_slots"] or 0)
@@ -184,7 +184,7 @@ async def get_fleet_capacity_timeline(
         rejected_unfulfilled_sessions = rejected_counts.get(timestamp, 0)
         available_capacity_slots = max(total_capacity_slots - active_sessions, 0)
         series.append(
-            FleetCapacityTimelinePoint(
+            analytics_schemas.FleetCapacityTimelinePoint(
                 timestamp=timestamp,
                 total_capacity_slots=total_capacity_slots,
                 active_sessions=active_sessions,
@@ -201,7 +201,7 @@ async def get_fleet_capacity_timeline(
             )
         )
 
-    return FleetCapacityTimeline(
+    return analytics_schemas.FleetCapacityTimeline(
         date_from=date_from,
         date_to=date_to,
         bucket_minutes=bucket_minutes,
