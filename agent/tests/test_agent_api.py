@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
 from agent_app.appium.dependencies import get_appium_mgr
+from agent_app.host.dependencies import get_capabilities_snapshot_dep
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
@@ -44,11 +45,12 @@ def _latest_desired_override(*packs: DesiredPack) -> Iterator[None]:
 
 
 async def test_health(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.host.router.get_capabilities_snapshot",
-        return_value={"platforms": [], "tools": {}, "missing_prerequisites": []},
-    ):
+    fake_caps = {"platforms": [], "tools": {}, "missing_prerequisites": []}
+    app.dependency_overrides[get_capabilities_snapshot_dep] = lambda: fake_caps
+    try:
         resp = await client.get("/agent/health")
+    finally:
+        app.dependency_overrides.pop(get_capabilities_snapshot_dep, None)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
@@ -517,8 +519,11 @@ async def test_health_includes_version_guidance(client: AsyncClient) -> None:
             "agent_update_available": True,
         }
     )
-    with patch("agent_app.host.router.get_capabilities_snapshot", return_value={"missing_prerequisites": []}):
+    app.dependency_overrides[get_capabilities_snapshot_dep] = lambda: {"missing_prerequisites": []}
+    try:
         resp = await client.get("/agent/health")
+    finally:
+        app.dependency_overrides.pop(get_capabilities_snapshot_dep, None)
 
     assert resp.status_code == 200
     assert resp.json()["version_guidance"] == {

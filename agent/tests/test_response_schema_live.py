@@ -8,12 +8,12 @@ before PR 2 wires ``response_model=`` on those routes.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
+from agent_app.host.dependencies import get_capabilities_snapshot_dep
 from agent_app.host.schemas import HealthResponse
 from agent_app.main import app
 
@@ -30,10 +30,11 @@ async def health_client() -> AsyncGenerator[AsyncClient, None]:
 
 
 async def test_health_response_matches_live_route_output(health_client: AsyncClient) -> None:
-    with patch(
-        "agent_app.host.router.get_capabilities_snapshot",
-        return_value={"platforms": [], "tools": {}, "missing_prerequisites": []},
-    ):
+    fake_caps = {"platforms": [], "tools": {}, "missing_prerequisites": []}
+    app.dependency_overrides[get_capabilities_snapshot_dep] = lambda: fake_caps
+    try:
         resp = await health_client.get("/agent/health")
+    finally:
+        app.dependency_overrides.pop(get_capabilities_snapshot_dep, None)
     assert resp.status_code == 200
     HealthResponse.model_validate(resp.json())

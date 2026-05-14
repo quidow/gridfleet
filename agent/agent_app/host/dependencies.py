@@ -1,0 +1,22 @@
+"""FastAPI dependencies for ``/agent/health`` and ``/agent/host/*``."""
+
+from __future__ import annotations
+
+from typing import Annotated, Any
+
+from fastapi import Depends
+
+from agent_app.host.capabilities import get_capabilities_snapshot
+from agent_app.host.version_guidance import get_version_guidance
+
+
+def get_capabilities_snapshot_dep() -> dict[str, Any]:
+    return get_capabilities_snapshot()
+
+
+def get_version_guidance_payload() -> dict[str, Any]:
+    return get_version_guidance().to_payload()
+
+
+CapabilitiesDep = Annotated[dict[str, Any], Depends(get_capabilities_snapshot_dep)]
+VersionGuidanceDep = Annotated[dict[str, Any], Depends(get_version_guidance_payload)]
