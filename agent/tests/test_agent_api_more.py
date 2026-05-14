@@ -119,7 +119,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/abc123/health",
             params={
@@ -134,7 +134,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert resp.status_code == 200
     assert adapter.health_calls == [("abc123", True)]
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.get(
             "/agent/pack/devices/abc123/telemetry",
             params={
@@ -149,7 +149,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
     assert adapter.telemetry_calls == [("abc123", "abc123")]
 
     app.state.adapter_registry = AdapterRegistry()
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         missing_resp = await client.get(
             "/agent/pack/devices/missing-device/telemetry",
             params={
@@ -188,7 +188,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     registry.set(desired_pack.id, desired_pack.release, adapter)  # type: ignore[arg-type]
     app.state.adapter_registry = registry
 
-    with patch("agent_app.main._latest_desired", return_value=[desired_pack]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired_pack]):
         resp = await client.post(
             "/agent/pack/devices/device-1/lifecycle/reconnect",
             params={"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"},

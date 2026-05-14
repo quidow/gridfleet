@@ -4,14 +4,13 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_app.main import (
-    _latest_desired,
-    _release_for_pack,
     _stop_grid_node_supervisors_for_shutdown,
     app,
     appium_mgr,
     lifespan,
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.router import _latest_desired, _release_for_pack
 
 
 async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -> None:
@@ -216,7 +215,7 @@ async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:
             )
         ],
     )
-    with patch("agent_app.main._latest_desired", return_value=[desired]):
+    with patch("agent_app.pack.router._latest_desired", return_value=[desired]):
         app.state.adapter_registry = None
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(

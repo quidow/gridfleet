@@ -69,7 +69,7 @@ def test_grid_node_reregister_response_model_preserved() -> None:
 
 
 def test_normalize_device_response_model_preserved() -> None:
-    from agent_app.main import NormalizeDeviceResponse
+    from agent_app.pack.schemas import NormalizeDeviceResponse
 
     route = _find_route("POST", "/agent/pack/devices/normalize")
     assert route.response_model is NormalizeDeviceResponse
