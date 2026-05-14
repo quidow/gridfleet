@@ -62,7 +62,7 @@ def test_websocket_terminal_route_present() -> None:
 
 
 def test_grid_node_reregister_response_model_preserved() -> None:
-    from agent_app.main import GridNodeReregisterResponse
+    from agent_app.grid_node.schemas import GridNodeReregisterResponse
 
     route = _find_route("POST", "/grid/node/{node_id}/reregister")
     assert route.response_model is GridNodeReregisterResponse

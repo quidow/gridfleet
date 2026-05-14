@@ -6,11 +6,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import httpx
 from fastapi import FastAPI
-from pydantic import BaseModel
 
 from agent_app.api_auth import BasicAuthMiddleware
 from agent_app.appium import appium_mgr  # re-exported for tests pending patch-target migration
@@ -20,8 +18,8 @@ from agent_app.appium.schemas import (
     AppiumStartRequest as AppiumStartRequest,
 )  # re-exported for tests pending patch-target migration
 from agent_app.config import agent_settings
-from agent_app.error_codes import AgentErrorCode, http_exc
-from agent_app.grid_node.supervisor import GridNodeServiceProtocol, GridNodeSupervisorHandle
+from agent_app.grid_node.router import router as grid_node_router
+from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
 from agent_app.host.capabilities import (
     capabilities_refresh_loop,
     refresh_capabilities_snapshot,
@@ -249,35 +247,7 @@ app.add_middleware(RequestContextMiddleware)  # outer: binds request_id, runs fi
 app.include_router(host_router)
 app.include_router(appium_router)
 app.include_router(pack_router)
+app.include_router(grid_node_router)
 app.include_router(plugins_router)
 app.include_router(tools_router)
 app.include_router(terminal_router)
-
-
-class GridNodeReregisterRequest(BaseModel):
-    target_run_id: UUID | None = None
-
-
-class GridNodeReregisterResponse(BaseModel):
-    grid_run_id: UUID | None
-
-
-def _grid_node_service_for(node_id: str) -> GridNodeServiceProtocol:
-    for supervisor in appium_mgr._grid_supervisors.values():
-        service = supervisor.service
-        if service is not None and service.node_id == node_id:
-            return service
-    raise http_exc(
-        status_code=404,
-        code=AgentErrorCode.DEVICE_NOT_FOUND,
-        message=f"No running grid node is registered for node_id={node_id}",
-    )
-
-
-@app.post("/grid/node/{node_id}/reregister", response_model=GridNodeReregisterResponse)
-async def reregister_grid_node(node_id: str, payload: GridNodeReregisterRequest) -> GridNodeReregisterResponse:
-    service = _grid_node_service_for(node_id)
-    caps = service.slot_stereotype_caps()
-    caps["gridfleet:run_id"] = str(payload.target_run_id) if payload.target_run_id is not None else "free"
-    await service.reregister_with_stereotype(new_caps=caps)
-    return GridNodeReregisterResponse(grid_run_id=payload.target_run_id)
