@@ -2,10 +2,9 @@ import uuid
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException, Query
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.errors import AgentCallError
 from app.models.appium_node import AppiumDesiredState
 from app.routers.device_route_helpers import (
@@ -56,7 +55,7 @@ router = APIRouter()
 async def enter_device_maintenance(
     device_id: uuid.UUID,
     body: DeviceMaintenanceUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
@@ -67,7 +66,7 @@ async def enter_device_maintenance(
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
-async def exit_device_maintenance(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def exit_device_maintenance(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.exit_maintenance(db, device)
@@ -79,8 +78,8 @@ async def exit_device_maintenance(device_id: uuid.UUID, db: AsyncSession = Depen
 @router.get("/{device_id}/config", response_model=DeviceConfigRead)
 async def get_device_config(
     device_id: uuid.UUID,
+    db: DbDep,
     keys: str | None = Query(None, description="Comma-separated list of keys to return"),
-    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     key_list = [k.strip() for k in keys.split(",")] if keys else None
@@ -91,7 +90,7 @@ async def get_device_config(
 async def replace_device_config(
     device_id: uuid.UUID,
     body: dict[str, Any],
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     return await config_service.replace_device_config(db, device, body)
@@ -101,7 +100,7 @@ async def replace_device_config(
 async def merge_device_config(
     device_id: uuid.UUID,
     body: dict[str, Any],
-    db: AsyncSession = Depends(get_db),
+    db: DbDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     return await config_service.merge_device_config(db, device, body)
@@ -110,8 +109,8 @@ async def merge_device_config(
 @router.get("/{device_id}/config/history", response_model=list[ConfigAuditEntryRead])
 async def get_config_history(
     device_id: uuid.UUID,
+    db: DbDep,
     limit: int = Query(50, le=200),
-    db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     await get_device_or_404(device_id, db)
     logs = await config_service.get_config_history(db, device_id, limit=limit)
@@ -128,7 +127,7 @@ async def get_config_history(
 
 
 @router.get("/{device_id}/health", response_model=DeviceHealthRead)
-async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def device_health(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     host = require_management_host(device, action="inspect device health")
 
@@ -197,7 +196,7 @@ async def device_health(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/{device_id}/session-test", response_model=SessionViabilityRead)
-async def device_session_test(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def device_session_test(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         return await session_viability.run_session_viability_probe(
@@ -208,7 +207,7 @@ async def device_session_test(device_id: uuid.UUID, db: AsyncSession = Depends(g
 
 
 @router.post("/{device_id}/reconnect")
-async def reconnect_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
     try:
@@ -273,8 +272,8 @@ async def reconnect_device(device_id: uuid.UUID, db: AsyncSession = Depends(get_
 async def device_lifecycle_action(
     device_id: uuid.UUID,
     action: str,
+    db: DbDep,
     body: dict[str, Any] | None = None,
-    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
@@ -313,7 +312,7 @@ async def device_lifecycle_action(
 
 
 @router.post("/{device_id}/refresh", response_model=DeviceRead)
-async def refresh_device_properties(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def refresh_device_properties(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     if not device.host_id:
         raise HTTPException(status_code=400, detail="Device has no host — cannot refresh properties")
@@ -329,8 +328,8 @@ async def refresh_device_properties(device_id: uuid.UUID, db: AsyncSession = Dep
 @router.get("/{device_id}/logs")
 async def device_logs(
     device_id: uuid.UUID,
+    db: DbDep,
     lines: int = Query(100, le=5000),
-    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     host = require_management_host(device, action="fetch device logs")
