@@ -50,7 +50,7 @@ def test_reconfigure_request_serializes_run_id() -> None:
 @pytest.mark.asyncio
 async def test_reconfigure_route_invokes_manager() -> None:
     run_id = uuid4()
-    with patch("agent_app.main.appium_mgr.reconfigure", new_callable=AsyncMock) as reconfigure:
+    with patch("agent_app.appium.appium_mgr.reconfigure", new_callable=AsyncMock) as reconfigure:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/agent/appium/4723/reconfigure",
@@ -79,7 +79,7 @@ async def test_reconfigure_route_invokes_manager() -> None:
 @pytest.mark.asyncio
 async def test_reconfigure_unknown_port_returns_404() -> None:
     with patch(
-        "agent_app.main.appium_mgr.reconfigure",
+        "agent_app.appium.appium_mgr.reconfigure",
         new_callable=AsyncMock,
         side_effect=DeviceNotFoundError("No Appium process for port 4723"),
     ):

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -1198,3 +1199,21 @@ class AppiumProcessManager:
                 return True
             await asyncio.sleep(READINESS_POLL_INTERVAL)
         return False
+
+
+def _get_network_devices(mgr: "AppiumProcessManager | None" = None) -> list[dict[str, Any]]:
+    """Return network devices from currently running Appium processes.
+
+    Defaults to the module-level ``appium_mgr`` singleton when ``mgr`` is
+    omitted, for parity with the previous module-level helper that lived
+    in ``main.py``.
+    """
+    from agent_app.appium import appium_mgr  # noqa: PLC0415 - local import avoids cycle
+
+    manager = mgr or appium_mgr
+    devices: list[dict[str, Any]] = []
+    for info in manager.list_running():
+        if re.match(r"\d+\.\d+\.\d+\.\d+:\d+", info.connection_target):
+            ip, _, port_str = info.connection_target.rpartition(":")
+            devices.append({"connection_target": info.connection_target, "ip_address": ip, "port": int(port_str)})
+    return devices

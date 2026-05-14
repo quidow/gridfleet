@@ -314,7 +314,7 @@ async def test_normalize_device_no_adapter(client: AsyncClient) -> None:
 async def test_start_appium(client: AsyncClient) -> None:
     mock_info = MagicMock(pid=1234, port=4723, connection_target="abc-123")
 
-    with patch("agent_app.main.appium_mgr.start", new_callable=AsyncMock, return_value=mock_info) as start_mock:
+    with patch("agent_app.appium.appium_mgr.start", new_callable=AsyncMock, return_value=mock_info) as start_mock:
         resp = await client.post(
             "/agent/appium/start",
             json={
@@ -353,7 +353,9 @@ async def test_start_appium_requires_pack_identity(client: AsyncClient) -> None:
 
 
 async def test_start_appium_failure(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.start", new_callable=AsyncMock, side_effect=RuntimeError("appium not found")):
+    with patch(
+        "agent_app.appium.appium_mgr.start", new_callable=AsyncMock, side_effect=RuntimeError("appium not found")
+    ):
         resp = await client.post(
             "/agent/appium/start",
             json={
@@ -372,7 +374,7 @@ async def test_start_appium_failure(client: AsyncClient) -> None:
 
 
 async def test_stop_appium(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.stop", new_callable=AsyncMock):
+    with patch("agent_app.appium.appium_mgr.stop", new_callable=AsyncMock):
         resp = await client.post("/agent/appium/stop", json={"port": 4723})
 
     assert resp.status_code == 200
@@ -381,7 +383,7 @@ async def test_stop_appium(client: AsyncClient) -> None:
 
 async def test_appium_status(client: AsyncClient) -> None:
     with patch(
-        "agent_app.main.appium_mgr.status", new_callable=AsyncMock, return_value={"running": True, "port": 4723}
+        "agent_app.appium.appium_mgr.status", new_callable=AsyncMock, return_value={"running": True, "port": 4723}
     ):
         resp = await client.get("/agent/appium/4723/status")
 
@@ -390,7 +392,7 @@ async def test_appium_status(client: AsyncClient) -> None:
 
 
 async def test_appium_logs(client: AsyncClient) -> None:
-    with patch("agent_app.main.appium_mgr.get_logs", return_value=["line 1", "line 2"]) as get_logs:
+    with patch("agent_app.appium.appium_mgr.get_logs", return_value=["line 1", "line 2"]) as get_logs:
         resp = await client.get("/agent/appium/4723/logs", params={"lines": 2})
 
     assert resp.status_code == 200

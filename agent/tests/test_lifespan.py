@@ -67,10 +67,10 @@ async def test_lifespan_stops_grid_node_supervisors_before_appium_shutdown() -> 
 
     try:
         with (
-            patch("agent_app.main.refresh_capabilities_snapshot", new_callable=AsyncMock),
-            patch("agent_app.main.capabilities_refresh_loop", side_effect=_wait_forever),
-            patch("agent_app.main.registration_loop", side_effect=_wait_forever),
-            patch("agent_app.main.appium_mgr.shutdown", side_effect=_record_shutdown),
+            patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
+            patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
+            patch("agent_app.lifespan.registration_loop", side_effect=_wait_forever),
+            patch("agent_app.appium.appium_mgr.shutdown", side_effect=_record_shutdown),
         ):
             async with lifespan(app):
                 pass

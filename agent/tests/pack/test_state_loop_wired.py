@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 def _mock_lifespan_deps() -> list[AbstractContextManager[object]]:
     """Return context managers that mock out network/subprocess calls in lifespan."""
     return [
-        patch("agent_app.main.refresh_capabilities_snapshot", new_callable=AsyncMock),
-        patch("agent_app.main.capabilities_refresh_loop", new_callable=AsyncMock),
+        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
+        patch("agent_app.lifespan.capabilities_refresh_loop", new_callable=AsyncMock),
         patch("agent_app.registration.register_with_manager", new_callable=AsyncMock, return_value=None),
     ]
 
