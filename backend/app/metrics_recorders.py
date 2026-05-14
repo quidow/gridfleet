@@ -1,264 +1,113 @@
-from __future__ import annotations
+"""Legacy import shim for Phase 0b backend domain-layout refactor.
 
-from prometheus_client import Counter, Gauge, Histogram
+Real implementation lives at ``app/core/metrics_recorders.py``. Phase 16
+deletes this shim once every caller migrates.
+"""
 
-HTTP_REQUEST_DURATION_SECONDS = Histogram(
-    "http_request_duration_seconds",
-    "HTTP request duration in seconds.",
-    labelnames=("method", "path", "status"),
-)
-HTTP_REQUESTS_TOTAL = Counter(
-    "http_requests_total",
-    "Total HTTP requests handled by the backend.",
-    labelnames=("method", "path", "status"),
-)
-AGENT_CALL_DURATION_SECONDS = Histogram(
-    "agent_call_duration_seconds",
-    "Agent HTTP call duration in seconds.",
-    labelnames=("host", "endpoint", "client_mode"),
-)
-AGENT_CALLS_TOTAL = Counter(
-    "agent_calls_total",
-    "Total backend-to-agent HTTP calls.",
-    labelnames=("host", "endpoint", "outcome", "client_mode"),
-)
-BACKGROUND_LOOP_DURATION_SECONDS = Histogram(
-    "background_loop_duration_seconds",
-    "Background loop iteration duration in seconds.",
-    labelnames=("loop_name",),
-)
-BACKGROUND_LOOP_RUNS_TOTAL = Counter(
-    "background_loop_runs_total",
-    "Total successful background loop iterations.",
-    labelnames=("loop_name",),
-)
-BACKGROUND_LOOP_ERRORS_TOTAL = Counter(
-    "background_loop_errors_total",
-    "Total failed background loop iterations.",
-    labelnames=("loop_name",),
-)
-APPIUM_RECONCILER_ORPHANS_STOPPED = Counter(
-    "appium_reconciler_orphans_stopped_total",
-    "Agent appium processes stopped by the reconciler because no DB row claimed them.",
-    labelnames=("reason",),
-)
-APPIUM_RECONCILER_CYCLE_FAILURES = Counter(
-    "appium_reconciler_cycle_failures_total",
-    "Reconciler cycles that raised before completing.",
-)
-APPIUM_RECONCILER_LAST_CYCLE_SECONDS = Gauge(
-    "appium_reconciler_last_cycle_seconds",
-    "Wall-clock duration of the most recent reconciler cycle.",
-)
-APPIUM_DESIRED_STATE_WRITES = Counter(
-    "appium_desired_state_writes_total",
-    "Total writes of AppiumNode.desired_state by Phase 3 writers.",
-    labelnames=("caller", "target_state"),
-)
-APPIUM_DESIRED_GRID_RUN_ID_WRITES = Counter(
-    "gridfleet_appium_desired_grid_run_id_writes_total",
-    "Total writes of AppiumNode.desired_grid_run_id by the run-routing writer.",
-    labelnames=("caller",),
-)
-GRID_NODE_RUN_ID_CONVERGED = Counter(
-    "gridfleet_grid_node_run_id_converged_total",
-    "Successful Grid node re-registrations that converged observed grid_run_id.",
-)
-GRID_NODE_RUN_ID_RECONCILE_FAILURES = Counter(
-    "gridfleet_grid_node_run_id_reconcile_failures_total",
-    "Grid node run-id reconciler dispatch failures.",
-)
-APPIUM_TRANSITION_TOKEN_WRITES = Counter(
-    "appium_transition_token_writes_total",
-    "Total transition_token allocations by Phase 3 writers.",
-    labelnames=("caller",),
-)
-APPIUM_TRANSITION_TOKEN_OVERRIDDEN = Counter(
-    "appium_transition_token_overridden_total",
-    "Counts every time one writer overrode another writer's pending transition_token.",
-    labelnames=("losing_source", "winning_source"),
-)
-APPIUM_RECONCILER_CONVERGENCE_ACTIONS = Counter(
-    "appium_reconciler_convergence_actions_total",
-    "Convergence actions executed by the Appium reconciler.",
-    labelnames=("action",),
-)
-APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
-    "appium_reconciler_host_cycle_seconds",
-    "Wall-clock duration of one host's Appium convergence cycle.",
-    labelnames=("host_id",),
-)
-APPIUM_RECONCILER_ALLOCATION_COLLISIONS = Counter(
-    "appium_reconciler_allocation_collisions_total",
-    "Port allocation collisions encountered by the Appium reconciler.",
-)
-APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED = Counter(
-    "appium_reconciler_transition_token_expired_total",
-    "Restart transition tokens cleared by the Appium reconciler after their deadline elapsed.",
-)
-APPIUM_RECONCILER_START_FAILURES = Counter(
-    "appium_reconciler_start_failures_total",
-    "Agent-start failures observed by the Appium reconciler, labeled by reason.",
-    labelnames=("reason",),
-)
-APPIUM_RECONCILER_STOP_FAILURES = Counter(
-    "appium_reconciler_stop_failures_total",
-    "Agent-stop failures observed by the Appium reconciler, labeled by reason.",
-    labelnames=("reason",),
-)
-WEBHOOK_DELIVERIES_TOTAL = Counter(
-    "webhook_deliveries_total",
-    "Webhook delivery state transitions.",
-    labelnames=("status",),
-)
-EVENTS_PUBLISHED_TOTAL = Counter(
-    "events_published_total",
-    "System events published by the backend.",
-    labelnames=("event_type",),
-)
-ACTIVE_SSE_CONNECTIONS = Gauge(
-    "active_sse_connections",
-    "Number of active SSE subscribers.",
-)
-PENDING_JOBS = Gauge(
-    "pending_jobs",
-    "Number of pending durable jobs.",
-)
-ACTIVE_SESSIONS = Gauge(
-    "active_sessions",
-    "Number of active sessions in the backend database.",
-)
-DEVICES_IN_COOLDOWN = Gauge(
-    "gridfleet_devices_in_cooldown",
-    "Number of devices with an active run-scoped reservation cooldown.",
-)
-INTENT_REGISTRY_INTENTS = Gauge(
-    "intent_registry_intents_total",
-    "Current number of registered device orchestration intents.",
-)
-INTENT_RECONCILER_EVALUATIONS = Counter(
-    "intent_reconciler_evaluations_total",
-    "Total device intent reconciliation evaluations.",
-)
-INTENT_RECONCILER_DIRTY_QUEUE_SIZE = Gauge(
-    "intent_reconciler_dirty_queue_size",
-    "Current number of devices pending intent reconciliation.",
-)
-INTENT_RECONCILER_CONFLICTS = Counter(
-    "intent_reconciler_conflicts_total",
-    "Total same-priority device intent conflicts.",
-)
-AGENT_RECONFIGURE_OUTBOX_PENDING = Gauge(
-    "agent_reconfigure_outbox_pending_total",
-    "Current number of undelivered agent reconfigure outbox rows.",
-)
-AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED = Counter(
-    "agent_reconfigure_outbox_stale_skipped_total",
-    "Stale agent reconfigure outbox rows skipped by delivery.",
-)
-AGENT_RECONFIGURE_OUTBOX_ABANDONED = Counter(
-    "agent_reconfigure_outbox_abandoned_total",
-    "Agent reconfigure outbox rows abandoned after exhausting delivery attempts.",
+from app.core.metrics_recorders import (
+    ACTIVE_SESSIONS,
+    ACTIVE_SSE_CONNECTIONS,
+    AGENT_CALL_DURATION_SECONDS,
+    AGENT_CALLS_TOTAL,
+    AGENT_RECONFIGURE_OUTBOX_ABANDONED,
+    AGENT_RECONFIGURE_OUTBOX_PENDING,
+    AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED,
+    APPIUM_DESIRED_GRID_RUN_ID_WRITES,
+    APPIUM_DESIRED_STATE_WRITES,
+    APPIUM_RECONCILER_ALLOCATION_COLLISIONS,
+    APPIUM_RECONCILER_CONVERGENCE_ACTIONS,
+    APPIUM_RECONCILER_CYCLE_FAILURES,
+    APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
+    APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
+    APPIUM_RECONCILER_ORPHANS_STOPPED,
+    APPIUM_RECONCILER_START_FAILURES,
+    APPIUM_RECONCILER_STOP_FAILURES,
+    APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED,
+    APPIUM_TRANSITION_TOKEN_OVERRIDDEN,
+    APPIUM_TRANSITION_TOKEN_WRITES,
+    BACKGROUND_LOOP_DURATION_SECONDS,
+    BACKGROUND_LOOP_ERRORS_TOTAL,
+    BACKGROUND_LOOP_RUNS_TOTAL,
+    DEVICES_IN_COOLDOWN,
+    EVENTS_PUBLISHED_TOTAL,
+    GRID_NODE_RUN_ID_CONVERGED,
+    GRID_NODE_RUN_ID_RECONCILE_FAILURES,
+    HEARTBEAT_CYCLE_DURATION_SECONDS,
+    HEARTBEAT_CYCLE_OVERRUN_TOTAL,
+    HEARTBEAT_PING_DURATION_SECONDS,
+    HEARTBEAT_PING_TOTAL,
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    INTENT_RECONCILER_CONFLICTS,
+    INTENT_RECONCILER_DIRTY_QUEUE_SIZE,
+    INTENT_RECONCILER_EVALUATIONS,
+    INTENT_REGISTRY_INTENTS,
+    PENDING_JOBS,
+    WEBHOOK_DELIVERIES_TOTAL,
+    ip_ping_consecutive_failures,
+    ip_ping_failures_total,
+    record_agent_call,
+    record_background_loop_error,
+    record_background_loop_run,
+    record_event_published,
+    record_heartbeat_cycle,
+    record_heartbeat_ping,
+    record_http_request,
+    record_ip_ping_failure,
+    record_webhook_delivery,
+    set_ip_ping_consecutive_failures,
 )
 
-
-def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:
-    labels = {
-        "method": method.upper(),
-        "path": path,
-        "status": str(status_code),
-    }
-    HTTP_REQUESTS_TOTAL.labels(**labels).inc()
-    HTTP_REQUEST_DURATION_SECONDS.labels(**labels).observe(duration_seconds)
-
-
-def record_agent_call(
-    *,
-    host: str,
-    endpoint: str,
-    outcome: str,
-    client_mode: str,
-    duration_seconds: float,
-) -> None:
-    AGENT_CALLS_TOTAL.labels(host=host, endpoint=endpoint, outcome=outcome, client_mode=client_mode).inc()
-    AGENT_CALL_DURATION_SECONDS.labels(host=host, endpoint=endpoint, client_mode=client_mode).observe(duration_seconds)
-
-
-def record_background_loop_run(loop_name: str, duration_seconds: float) -> None:
-    BACKGROUND_LOOP_RUNS_TOTAL.labels(loop_name=loop_name).inc()
-    BACKGROUND_LOOP_DURATION_SECONDS.labels(loop_name=loop_name).observe(duration_seconds)
-
-
-def record_background_loop_error(loop_name: str, duration_seconds: float) -> None:
-    BACKGROUND_LOOP_ERRORS_TOTAL.labels(loop_name=loop_name).inc()
-    BACKGROUND_LOOP_DURATION_SECONDS.labels(loop_name=loop_name).observe(duration_seconds)
-
-
-def record_webhook_delivery(status: str, count: int = 1) -> None:
-    if count <= 0:
-        return
-    WEBHOOK_DELIVERIES_TOTAL.labels(status=status).inc(count)
-
-
-def record_event_published(event_type: str) -> None:
-    EVENTS_PUBLISHED_TOTAL.labels(event_type=event_type).inc()
-
-
-HEARTBEAT_PING_DURATION_SECONDS = Histogram(
-    "gridfleet_agent_heartbeat_duration_seconds",
-    "Backend->agent heartbeat ping duration in seconds.",
-    labelnames=("host_id", "outcome", "client_mode"),
-)
-HEARTBEAT_PING_TOTAL = Counter(
-    "gridfleet_agent_heartbeat_total",
-    "Total backend->agent heartbeat pings.",
-    labelnames=("host_id", "outcome", "client_mode"),
-)
-HEARTBEAT_CYCLE_DURATION_SECONDS = Histogram(
-    "gridfleet_heartbeat_cycle_duration_seconds",
-    "Wall clock duration of one full _check_hosts iteration.",
-)
-HEARTBEAT_CYCLE_OVERRUN_TOTAL = Counter(
-    "gridfleet_heartbeat_cycle_overrun_total",
-    "Heartbeat cycles whose duration exceeded heartbeat_interval_sec.",
-)
-
-
-def record_heartbeat_ping(
-    *,
-    host_id: str,
-    outcome: str,
-    client_mode: str,
-    duration_seconds: float,
-) -> None:
-    HEARTBEAT_PING_TOTAL.labels(host_id=host_id, outcome=outcome, client_mode=client_mode).inc()
-    HEARTBEAT_PING_DURATION_SECONDS.labels(host_id=host_id, outcome=outcome, client_mode=client_mode).observe(
-        duration_seconds
-    )
-
-
-def record_heartbeat_cycle(duration_seconds: float, *, interval_seconds: float) -> None:
-    HEARTBEAT_CYCLE_DURATION_SECONDS.observe(duration_seconds)
-    if duration_seconds > interval_seconds:
-        HEARTBEAT_CYCLE_OVERRUN_TOTAL.inc()
-
-
-ip_ping_failures_total = Counter(
-    "gridfleet_ip_ping_failures_total",
-    "Total ICMP ping misses observed by the connectivity loop.",
-    ["device_identity", "host"],
-)
-
-ip_ping_consecutive_failures = Gauge(
-    "gridfleet_ip_ping_consecutive_failures",
-    "Current consecutive ICMP ping miss counter, per device.",
-    ["device_identity", "host"],
-)
-
-
-def record_ip_ping_failure(*, device_identity: str, host: str) -> None:
-    ip_ping_failures_total.labels(device_identity=device_identity, host=host).inc()
-
-
-def set_ip_ping_consecutive_failures(*, device_identity: str, host: str, value: int) -> None:
-    ip_ping_consecutive_failures.labels(device_identity=device_identity, host=host).set(value)
+__all__ = [
+    "ACTIVE_SESSIONS",
+    "ACTIVE_SSE_CONNECTIONS",
+    "AGENT_CALLS_TOTAL",
+    "AGENT_CALL_DURATION_SECONDS",
+    "AGENT_RECONFIGURE_OUTBOX_ABANDONED",
+    "AGENT_RECONFIGURE_OUTBOX_PENDING",
+    "AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED",
+    "APPIUM_DESIRED_GRID_RUN_ID_WRITES",
+    "APPIUM_DESIRED_STATE_WRITES",
+    "APPIUM_RECONCILER_ALLOCATION_COLLISIONS",
+    "APPIUM_RECONCILER_CONVERGENCE_ACTIONS",
+    "APPIUM_RECONCILER_CYCLE_FAILURES",
+    "APPIUM_RECONCILER_HOST_CYCLE_SECONDS",
+    "APPIUM_RECONCILER_LAST_CYCLE_SECONDS",
+    "APPIUM_RECONCILER_ORPHANS_STOPPED",
+    "APPIUM_RECONCILER_START_FAILURES",
+    "APPIUM_RECONCILER_STOP_FAILURES",
+    "APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED",
+    "APPIUM_TRANSITION_TOKEN_OVERRIDDEN",
+    "APPIUM_TRANSITION_TOKEN_WRITES",
+    "BACKGROUND_LOOP_DURATION_SECONDS",
+    "BACKGROUND_LOOP_ERRORS_TOTAL",
+    "BACKGROUND_LOOP_RUNS_TOTAL",
+    "DEVICES_IN_COOLDOWN",
+    "EVENTS_PUBLISHED_TOTAL",
+    "GRID_NODE_RUN_ID_CONVERGED",
+    "GRID_NODE_RUN_ID_RECONCILE_FAILURES",
+    "HEARTBEAT_CYCLE_DURATION_SECONDS",
+    "HEARTBEAT_CYCLE_OVERRUN_TOTAL",
+    "HEARTBEAT_PING_DURATION_SECONDS",
+    "HEARTBEAT_PING_TOTAL",
+    "HTTP_REQUESTS_TOTAL",
+    "HTTP_REQUEST_DURATION_SECONDS",
+    "INTENT_RECONCILER_CONFLICTS",
+    "INTENT_RECONCILER_DIRTY_QUEUE_SIZE",
+    "INTENT_RECONCILER_EVALUATIONS",
+    "INTENT_REGISTRY_INTENTS",
+    "PENDING_JOBS",
+    "WEBHOOK_DELIVERIES_TOTAL",
+    "ip_ping_consecutive_failures",
+    "ip_ping_failures_total",
+    "record_agent_call",
+    "record_background_loop_error",
+    "record_background_loop_run",
+    "record_event_published",
+    "record_heartbeat_cycle",
+    "record_heartbeat_ping",
+    "record_http_request",
+    "record_ip_ping_failure",
+    "record_webhook_delivery",
+    "set_ip_ping_consecutive_failures",
+]
