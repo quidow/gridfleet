@@ -50,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--port",
         type=int,
-        default=agent_settings.agent_port,
+        default=agent_settings.core.agent_port,
         help="Bind port for the agent API service.",
     )
 
@@ -59,7 +59,7 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--no-start", action="store_true", help="Write files but do not enable or start the service.")
     install.add_argument("--start", action="store_true", help="Enable and start the service after writing files.")
     install.add_argument("--manager-url", default="http://localhost:8000")
-    install.add_argument("--port", type=int, default=agent_settings.agent_port)
+    install.add_argument("--port", type=int, default=agent_settings.core.agent_port)
     install.add_argument("--manager-auth-username", default=None)
     install.add_argument("--manager-auth-password", default=None)
     install.add_argument("--api-auth-username", default=None)

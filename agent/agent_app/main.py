@@ -25,7 +25,7 @@ app_kwargs: dict[str, Any] = {
     "version": "0.1.0",
     "lifespan": lifespan,
 }
-if agent_settings.environment not in SHOW_DOCS_IN:
+if agent_settings.core.environment not in SHOW_DOCS_IN:
     app_kwargs["openapi_url"] = None
 
 app = FastAPI(**app_kwargs)

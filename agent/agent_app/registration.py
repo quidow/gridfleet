@@ -44,8 +44,8 @@ def _handle_version_guidance(data: dict[str, Any]) -> None:
 
 
 def _manager_auth() -> httpx.BasicAuth | None:
-    username = agent_settings.manager_auth_username
-    password = agent_settings.manager_auth_password
+    username = agent_settings.manager.manager_auth_username
+    password = agent_settings.manager.manager_auth_password
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
@@ -86,7 +86,7 @@ async def registration_loop(
     delay = 2.0
     max_delay = 60.0
     refresh_delay = float(
-        agent_settings.registration_refresh_interval_sec if refresh_interval is None else refresh_interval
+        agent_settings.core.registration_refresh_interval_sec if refresh_interval is None else refresh_interval
     )
     last_advertised_ip: str | None = None
 

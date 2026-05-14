@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
-from agent_app.config import AgentSettings
+from agent_app.config import ManagerSettings
 from agent_app.host.version_guidance import clear_version_guidance, get_version_guidance
 from agent_app.registration import _map_os_type, get_local_ip, register_with_manager, registration_loop
 
 
 def test_get_local_ip_prefers_advertised_ip() -> None:
-    with patch("agent_app.registration.agent_settings.advertise_ip", "10.0.0.9"):
+    with patch("agent_app.registration.agent_settings.core.advertise_ip", "10.0.0.9"):
         assert get_local_ip() == "10.0.0.9"
 
 
@@ -19,7 +19,7 @@ def test_get_local_ip_uses_udp_socket_address() -> None:
     socket_obj.getsockname.return_value = ("10.0.0.10", 54321)
 
     with (
-        patch("agent_app.grid_url.agent_settings.advertise_ip", None),
+        patch("agent_app.grid_url.agent_settings.core.advertise_ip", None),
         patch("agent_app.grid_url.socket.socket", return_value=socket_obj),
     ):
         assert get_local_ip() == "10.0.0.10"
@@ -30,7 +30,7 @@ def test_get_local_ip_uses_udp_socket_address() -> None:
 
 def test_get_local_ip_falls_back_to_hostname_lookup() -> None:
     with (
-        patch("agent_app.grid_url.agent_settings.advertise_ip", None),
+        patch("agent_app.grid_url.agent_settings.core.advertise_ip", None),
         patch("agent_app.grid_url.socket.socket", side_effect=OSError),
         patch("agent_app.grid_url.socket.gethostname", return_value="agent-host"),
         patch("agent_app.grid_url.socket.gethostbyname", return_value="127.0.0.1"),
@@ -96,8 +96,8 @@ async def test_register_with_manager_uses_basic_auth_when_configured() -> None:
         patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
         patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
         patch("agent_app.registration.httpx.AsyncClient", return_value=client),
-        patch("agent_app.registration.agent_settings.manager_auth_username", "machine"),
-        patch("agent_app.registration.agent_settings.manager_auth_password", "machine-secret"),
+        patch("agent_app.registration.agent_settings.manager.manager_auth_username", "machine"),
+        patch("agent_app.registration.agent_settings.manager.manager_auth_password", "machine-secret"),
     ):
         result = await register_with_manager("http://manager:8000", 5100)
 
@@ -108,7 +108,7 @@ async def test_register_with_manager_uses_basic_auth_when_configured() -> None:
 
 def test_agent_settings_require_complete_manager_auth_pair() -> None:
     with pytest.raises(ValueError, match="must be set together"):
-        AgentSettings(manager_auth_username="machine")
+        ManagerSettings(manager_auth_username="machine")
 
 
 async def test_registration_loop_stops_after_4xx_rejection() -> None:

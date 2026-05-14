@@ -676,8 +676,8 @@ async def test_start_rejects_port_outside_configured_range_before_localhost_prob
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = AppiumProcessManager()
-    monkeypatch.setattr("agent_app.appium.process.agent_settings.appium_port_range_start", 4723)
-    monkeypatch.setattr("agent_app.appium.process.agent_settings.appium_port_range_end", 4823)
+    monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_start", 4723)
+    monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_end", 4823)
 
     with (
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock) as can_connect,

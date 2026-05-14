@@ -23,8 +23,8 @@ class BasicAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        username = agent_settings.api_auth_username
-        password = agent_settings.api_auth_password
+        username = agent_settings.api_auth.api_auth_username
+        password = agent_settings.api_auth.api_auth_password
         if not username or not password:
             await self.app(scope, receive, send)
             return

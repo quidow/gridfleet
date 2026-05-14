@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def clear_manager_auth(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setattr(agent_settings, "manager_auth_username", None)
-    monkeypatch.setattr(agent_settings, "manager_auth_password", None)
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_username", None)
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_password", None)
     yield
 
 
@@ -30,8 +30,8 @@ async def test_adapter_tarball_download_uses_manager_basic_auth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(agent_settings, "manager_auth_username", "machine")
-    monkeypatch.setattr(agent_settings, "manager_auth_password", "machine-secret")
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_username", "machine")
+    monkeypatch.setattr(agent_settings.manager, "manager_auth_password", "machine-secret")
     payload = b"adapter-tarball"
     seen_requests: list[httpx.Request] = []
     original_async_client = httpx.AsyncClient

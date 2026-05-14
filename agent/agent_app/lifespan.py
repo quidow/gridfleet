@@ -49,8 +49,8 @@ GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
 def _manager_auth() -> httpx.BasicAuth | None:
-    username = agent_settings.manager_auth_username
-    password = agent_settings.manager_auth_password
+    username = agent_settings.manager.manager_auth_username
+    password = agent_settings.manager.manager_auth_password
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
@@ -191,15 +191,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pack_state_loop = None
 
     env_host_id = os.environ.get("AGENT_HOST_ID")
-    backend_url = os.environ.get("AGENT_BACKEND_URL") or agent_settings.manager_url
+    backend_url = os.environ.get("AGENT_BACKEND_URL") or agent_settings.manager.manager_url
     if env_host_id:
         host_identity.set(env_host_id)
         app.state.pack_state_loop_enabled = True
 
     reg_task = asyncio.create_task(
         registration_loop(
-            agent_settings.manager_url,
-            agent_settings.agent_port,
+            agent_settings.manager.manager_url,
+            agent_settings.core.agent_port,
             host_identity,
         )
     )

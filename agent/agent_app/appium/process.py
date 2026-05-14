@@ -111,8 +111,8 @@ class DeviceNotFoundError(RuntimeError):
 
 
 def _validate_appium_port_in_range(port: int) -> None:
-    start = agent_settings.appium_port_range_start
-    end = agent_settings.appium_port_range_end
+    start = agent_settings.runtime.appium_port_range_start
+    end = agent_settings.runtime.appium_port_range_end
     if port < start or port > end:
         raise InvalidStartPayloadError(f"Port {port} is outside configured Appium port range {start}-{end}")
 
@@ -337,7 +337,7 @@ class AppiumProcessManager:
         )
         self._restart_sequence = 0
         self._intentional_stop_ports: set[int] = set()
-        self._next_node_port = agent_settings.grid_node_port_start
+        self._next_node_port = agent_settings.grid_node.grid_node_port_start
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
         self._start_lock = asyncio.Lock()
@@ -642,7 +642,7 @@ class AppiumProcessManager:
             connection_target=spec.connection_target,
             platform_id=spec.platform_id,
             port=spec.port,
-            grid_url=agent_settings.grid_hub_url,
+            grid_url=agent_settings.grid_node.grid_hub_url,
             plugins=spec.plugins,
             extra_caps=spec.extra_caps,
             stereotype_caps=spec.stereotype_caps,
@@ -901,8 +901,8 @@ class AppiumProcessManager:
             node_uri=self._grid_external_url(node_port),
             appium_upstream=f"http://127.0.0.1:{spec.port}",
             slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
-            hub_publish_url=agent_settings.grid_publish_url,
-            hub_subscribe_url=agent_settings.grid_subscribe_url,
+            hub_publish_url=agent_settings.grid_node.grid_publish_url,
+            hub_subscribe_url=agent_settings.grid_node.grid_subscribe_url,
             heartbeat_sec=getattr(agent_settings, "grid_node_heartbeat_sec", 5.0),
             session_timeout_sec=getattr(agent_settings, "grid_node_session_timeout_sec", 300.0),
             proxy_timeout_sec=getattr(agent_settings, "grid_node_proxy_timeout_sec", 60.0),
