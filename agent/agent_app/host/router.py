@@ -5,18 +5,24 @@ from __future__ import annotations
 import platform
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from agent_app import __version__
 from agent_app.appium import appium_mgr
 from agent_app.host.capabilities import get_capabilities_snapshot
+from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
 from agent_app.host.telemetry import get_host_telemetry
 from agent_app.host.version_guidance import get_version_guidance
 
 router = APIRouter(prefix="/agent", tags=["host"])
 
 
-@router.get("/health", summary="Agent process health, capabilities, and version guidance")
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Agent process health, capabilities, and version guidance",
+)
 async def health() -> dict[str, Any]:
     capabilities = get_capabilities_snapshot()
     payload: dict[str, Any] = {
@@ -32,6 +38,11 @@ async def health() -> dict[str, Any]:
     return payload
 
 
-@router.get("/host/telemetry", summary="Snapshot of host CPU/memory/disk telemetry")
+@router.get(
+    "/host/telemetry",
+    response_model=HostTelemetryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Snapshot of host CPU/memory/disk telemetry",
+)
 async def host_telemetry() -> dict[str, Any]:
     return await get_host_telemetry()

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, Query, Request
 
+from agent_app.error_codes import AgentErrorCode, http_exc
 from agent_app.pack.manifest import resolve_desired_platform
 
 if TYPE_CHECKING:
@@ -33,7 +34,11 @@ def _optional_adapter_registry(request: Request) -> AdapterRegistry | None:
 def _require_adapter_registry(request: Request) -> AdapterRegistry:
     registry = cast("AdapterRegistry | None", getattr(request.app.state, "adapter_registry", None))
     if registry is None:
-        raise HTTPException(status_code=404, detail="No adapter registry available")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.NO_ADAPTER,
+            message="No adapter registry available",
+        )
     return registry
 
 
@@ -56,14 +61,22 @@ def _desired_platform(
 ) -> tuple[DesiredPlatform, str]:
     platform_def = resolve_desired_platform(latest_desired, pack_id=pack_id, platform_id=platform_id)
     if platform_def is None:
-        raise HTTPException(status_code=404, detail=f"Unknown desired pack platform {pack_id}:{platform_id}")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.UNKNOWN_PLATFORM,
+            message=f"Unknown desired pack platform {pack_id}:{platform_id}",
+        )
     release: str | None = None
     for pack in latest_desired:
         if getattr(pack, "id", None) == pack_id:
             release = str(getattr(pack, "release", ""))
             break
     if not release:
-        raise HTTPException(status_code=404, detail=f"Unknown pack release for {pack_id}")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.UNKNOWN_PLATFORM,
+            message=f"Unknown pack release for {pack_id}",
+        )
     return platform_def, release
 
 

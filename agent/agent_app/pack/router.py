@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query, status
+from fastapi import APIRouter, Body, Query, status
 
+from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
     DesiredPlatformDep,
@@ -22,15 +23,26 @@ from agent_app.pack.dispatch import (
 )
 from agent_app.pack.schemas import (
     FeatureActionRequest,
+    FeatureActionResponse,
     NormalizeDeviceRequest,
     NormalizeDeviceResponse,
+    PackDeviceHealthResponse,
+    PackDeviceLifecycleResponse,
+    PackDevicePropertiesResponse,
+    PackDevicesResponse,
+    PackDeviceTelemetryResponse,
     _FeatureActionContext,
 )
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
 
-@router.get("/devices", summary="Pack-aware enumeration of candidate devices")
+@router.get(
+    "/devices",
+    response_model=PackDevicesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Pack-aware enumeration of candidate devices",
+)
 async def pack_devices(
     pack_state_loop: PackStateLoopDep,
     adapter_registry: OptionalAdapterRegistryDep,
@@ -46,8 +58,12 @@ async def pack_devices(
 
 @router.get(
     "/devices/{connection_target}/properties",
+    response_model=PackDevicePropertiesResponse,
+    status_code=status.HTTP_200_OK,
     summary="Pack-shaped device properties via adapter",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Pack device not found"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
+    },
 )
 async def pack_device_properties_route(
     connection_target: str,
@@ -65,14 +81,22 @@ async def pack_device_properties_route(
         host_id=host_id,
     )
     if data is None:
-        raise HTTPException(status_code=404, detail=f"Pack device {connection_target} not found")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.DEVICE_NOT_FOUND,
+            message=f"Pack device {connection_target} not found",
+        )
     return data
 
 
 @router.get(
     "/devices/{connection_target}/health",
+    response_model=PackDeviceHealthResponse,
+    status_code=status.HTTP_200_OK,
     summary="Pack-shaped device health check via adapter",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Unknown desired pack platform"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "UNKNOWN_PLATFORM"},
+    },
 )
 async def pack_device_health_route(
     connection_target: str,
@@ -119,8 +143,12 @@ async def pack_device_health_route(
 
 @router.get(
     "/devices/{connection_target}/telemetry",
+    response_model=PackDeviceTelemetryResponse,
+    status_code=status.HTTP_200_OK,
     summary="Pack-shaped device telemetry via adapter",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Device not found"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND or UNKNOWN_PLATFORM"},
+    },
 )
 async def pack_device_telemetry_route(
     connection_target: str,
@@ -145,14 +173,22 @@ async def pack_device_telemetry_route(
         else None
     )
     if telemetry is None:
-        raise HTTPException(status_code=404, detail=f"Device {connection_target} not found or not connected")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.DEVICE_NOT_FOUND,
+            message=f"Device {connection_target} not found or not connected",
+        )
     return telemetry
 
 
 @router.post(
     "/devices/{connection_target}/lifecycle/{action}",
+    response_model=PackDeviceLifecycleResponse,
+    status_code=status.HTTP_200_OK,
     summary="Dispatch a lifecycle action through the adapter",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Unknown desired pack platform"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "UNKNOWN_PLATFORM"},
+    },
 )
 async def pack_device_lifecycle_route(
     connection_target: str,
@@ -185,8 +221,12 @@ async def pack_device_lifecycle_route(
 
 @router.post(
     "/features/{feature_id}/actions/{action_id}",
+    response_model=FeatureActionResponse,
+    status_code=status.HTTP_200_OK,
     summary="Dispatch a feature action through the adapter",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "No adapter loaded"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "NO_ADAPTER"},
+    },
 )
 async def feature_action_route(
     feature_id: str,
@@ -197,7 +237,11 @@ async def feature_action_route(
 ) -> dict[str, Any]:
     adapter = adapter_registry.get_current(body.pack_id) if adapter_registry is not None else None
     if adapter is None:
-        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {body.pack_id!r}")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.NO_ADAPTER,
+            message=f"No adapter loaded for pack {body.pack_id!r}",
+        )
 
     ctx = _FeatureActionContext(
         host_id=host_id,
@@ -210,8 +254,11 @@ async def feature_action_route(
 @router.post(
     "/devices/normalize",
     response_model=NormalizeDeviceResponse,
+    status_code=status.HTTP_200_OK,
     summary="Normalize raw device input into pack canonical form",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "No adapter loaded"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "NO_ADAPTER"},
+    },
 )
 async def normalize_device_route(
     req: NormalizeDeviceRequest,
@@ -219,7 +266,11 @@ async def normalize_device_route(
     host_id: HostIdDep,
 ) -> dict[str, Any]:
     if adapter_registry is None:
-        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.NO_ADAPTER,
+            message=f"No adapter loaded for pack {req.pack_id!r}",
+        )
 
     result = await adapter_normalize_device(
         adapter_registry=adapter_registry,
@@ -230,5 +281,9 @@ async def normalize_device_route(
         raw_input=req.raw_input,
     )
     if result is None:
-        raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
+        raise http_exc(
+            status_code=404,
+            code=AgentErrorCode.NO_ADAPTER,
+            message=f"No adapter loaded for pack {req.pack_id!r}",
+        )
     return result
