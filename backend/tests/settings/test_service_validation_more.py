@@ -27,8 +27,8 @@ def test_settings_service_validation_and_normalization_edges(monkeypatch: pytest
     assert "item" in (service._validate_value("notifications.toast_events", [""]) or "")
     assert "item" in (service._validate_value("notifications.toast_events", ["unknown.event"]) or "")
 
-    monkeypatch.setattr(settings_module.process_settings, "auth_enabled", True)
-    monkeypatch.setattr(settings_module.process_settings, "agent_terminal_token", "")
+    monkeypatch.setattr(settings_module.auth_settings, "auth_enabled", True)
+    monkeypatch.setattr(settings_module.agent_settings, "agent_terminal_token", "")
     assert "GRIDFLEET_AGENT_TERMINAL_TOKEN" in (
         settings_module._cross_field_validate("agent.enable_web_terminal", True) or ""
     )

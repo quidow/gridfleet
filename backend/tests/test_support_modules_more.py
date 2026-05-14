@@ -14,6 +14,7 @@ from app.agent_comm import client as agent_client
 from app.core import database as database
 from app.core import health as health
 from app.core import metrics as metrics
+from app.core import metrics_recorders
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
@@ -127,9 +128,9 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
 
 
 def test_metrics_helpers_and_rendering() -> None:
-    metrics.record_background_loop_error("heartbeat", 0.2)
-    metrics.record_webhook_delivery("success", count=0)
-    metrics.record_event_published("device.created")
+    metrics_recorders.record_background_loop_error("heartbeat", 0.2)
+    metrics_recorders.record_webhook_delivery("success", count=0)
+    metrics_recorders.record_event_published("device.created")
     assert isinstance(metrics.render_metrics(), bytes)
 
 
@@ -140,8 +141,7 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
     async def fake_async_session() -> AsyncGenerator[object, None]:
         yield yielded
 
-    # Phase 0b: database is a shim re-exporting from app.core.database; the
-    # canonical async_session lookup happens in app.core.database.
+    # The canonical async_session lookup happens in app.core.database.
     from app.core import database as core_database
 
     monkeypatch.setattr(core_database, "async_session", fake_async_session)

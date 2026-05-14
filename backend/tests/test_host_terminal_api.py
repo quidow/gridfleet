@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.config import settings as process_settings
+from app.agent_comm import agent_settings
+from app.auth import auth_settings
 from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
 from app.settings import settings_service
@@ -24,9 +25,9 @@ def _configure_terminal(
     """Seed runtime settings + process env state for a terminal test."""
     monkeypatch.setitem(settings_service._cache, "agent.enable_web_terminal", enabled)
     monkeypatch.setitem(settings_service._cache, "agent.web_terminal_allowed_origins", origins)
-    monkeypatch.setattr(process_settings, "agent_terminal_token", token)
-    monkeypatch.setattr(process_settings, "agent_terminal_scheme", agent_scheme)
-    monkeypatch.setattr(process_settings, "auth_enabled", auth_enabled)
+    monkeypatch.setattr(agent_settings, "agent_terminal_token", token)
+    monkeypatch.setattr(agent_settings, "agent_terminal_scheme", agent_scheme)
+    monkeypatch.setattr(auth_settings, "auth_enabled", auth_enabled)
 
 
 def test_terminal_route_rejects_when_feature_disabled(

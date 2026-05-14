@@ -45,10 +45,10 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import health as device_health
 from app.devices.services.identity import appium_connection_target
-from app.devices.services.lifecycle_policy_actions import reset_reconciler_start_failure_state
-from app.devices.services.lifecycle_policy_state import record_manual_recovered
-from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.devices.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
+from app.devices.services.lifecycle_policy_actions import (
+    clear_manual_recovery_suppression_state,
+    reset_reconciler_start_failure_state,
+)
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.events import queue_event_for_session
@@ -794,13 +794,6 @@ async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.U
     # device delete after mark_node_started commits and releases the row lock)
     # into NodeManagerError so the route returns a managed 4xx instead of 500.
     locked = await _hold_device_row_lock(db, device_id)
-    current_state = lifecycle_policy_state(locked)
-    if (
-        current_state.get("recovery_suppressed_reason") is None
-        and current_state.get("last_failure_reason") is None
-        and current_state.get("backoff_until") is None
-    ):
+    if not clear_manual_recovery_suppression_state(locked):
         return
-    record_manual_recovered(current_state)
-    write_lifecycle_policy_state(locked, current_state)
     await db.commit()

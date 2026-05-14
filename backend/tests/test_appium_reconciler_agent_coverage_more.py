@@ -486,10 +486,12 @@ async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.M
 
     dirty_device = SimpleNamespace(id=device_id, lifecycle_policy_state={"last_failure_reason": "boom"})
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=dirty_device))
-    monkeypatch.setattr(node_agent, "record_manual_recovered", MagicMock())
-    monkeypatch.setattr(node_agent, "write_lifecycle_policy_state", MagicMock())
+    clear_suppression = MagicMock(return_value=True)
+    monkeypatch.setattr(node_agent, "clear_manual_recovery_suppression_state", clear_suppression)
+    db.commit.reset_mock()
     await node_agent._clear_manual_recovery_suppression(db, device_id)
-    node_agent.record_manual_recovered.assert_called_once()
+    clear_suppression.assert_called_once_with(dirty_device)
+    db.commit.assert_awaited_once()
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:

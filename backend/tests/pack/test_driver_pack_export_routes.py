@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.core.config import settings as process_settings
+from app.auth import auth_settings as process_settings
 from app.main import app
 from app.packs.routers.export import get_pack_storage
 from app.packs.services.storage import PackStorageService

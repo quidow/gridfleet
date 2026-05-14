@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.core.config import settings as process_settings
+from app.auth import auth_settings as process_settings
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.main import app
 from app.packs.models import (

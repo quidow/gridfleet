@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING
 
@@ -139,11 +140,16 @@ class ControlPlaneLeader:
             )
             self._privilege_warned = True
 
-        retry = await connection.execute(
-            text("SELECT pg_try_advisory_lock(:lock_id)"),
-            {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
-        )
-        return bool(retry.scalar())
+        retry_attempts = 10 if terminated else 1
+        for _ in range(retry_attempts):
+            retry = await connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": CONTROL_PLANE_LEADER_LOCK_ID},
+            )
+            if bool(retry.scalar()):
+                return True
+            await asyncio.sleep(0.05)
+        return False
 
     async def _claim_heartbeat_row(self) -> None:
         """Stamp the row with my holder_id, my backend pid, and fresh timestamps.

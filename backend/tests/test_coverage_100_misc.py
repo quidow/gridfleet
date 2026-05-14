@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -111,11 +112,13 @@ from app.seeding.scenarios import full_demo
 from app.services import (
     control_plane_leader as control_plane_leader_module,
 )
-from app.services import control_plane_leader_watcher, event_bus
+from app.services import control_plane_leader_watcher
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
+
+event_bus = import_module("app.events.event_bus")
 
 
 def test_config_and_error_guard_branches() -> None:

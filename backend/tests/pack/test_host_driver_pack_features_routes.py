@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from app.core.config import settings as process_settings
+from app.auth import auth_settings as process_settings
 from app.main import app
 from app.packs.adapter import FeatureActionResult
 from app.packs.routers import host_features as feature_routes
