@@ -11,6 +11,11 @@ from agent_app.installer.uninstall import UninstallResult, uninstall
 _LINUX_OPERATOR = OperatorIdentity(login="ops", uid=1000, home=Path("/home/ops"))
 
 
+@pytest.fixture(autouse=True)
+def _patch_legacy_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("agent_app.installer.install._LEGACY_PATHS", (tmp_path / "nope",))
+
+
 def _make_config(tmp_path: Path) -> InstallConfig:
     return InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
@@ -18,11 +23,15 @@ def _make_config(tmp_path: Path) -> InstallConfig:
     )
 
 
-def test_uninstall_linux_stops_disables_removes_files_and_reloads(tmp_path: Path) -> None:
+def test_uninstall_linux_stops_disables_removes_files_and_reloads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
-    service_file = tmp_path / "etc/systemd/system/gridfleet-agent.service"
+    service_file = tmp_path / ".config/systemd/user/gridfleet-agent.service"
     agent_dir.mkdir(parents=True)
     config_dir.mkdir(parents=True)
     service_file.parent.mkdir(parents=True)
@@ -43,16 +52,19 @@ def test_uninstall_linux_stops_disables_removes_files_and_reloads(tmp_path: Path
         removed_config_dir=True,
     )
     assert commands == [
-        (["systemctl", "stop", "gridfleet-agent"], False),
-        (["systemctl", "disable", "gridfleet-agent"], False),
-        (["systemctl", "daemon-reload"], True),
+        (["systemctl", "--user", "stop", "gridfleet-agent"], False),
+        (["systemctl", "--user", "disable", "gridfleet-agent"], False),
+        (["systemctl", "--user", "daemon-reload"], True),
     ]
     assert not agent_dir.exists()
     assert not config_dir.exists()
     assert not service_file.exists()
 
 
-def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(tmp_path: Path) -> None:
+def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)

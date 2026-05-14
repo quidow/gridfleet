@@ -123,3 +123,26 @@ def test_render_launchd_plist_without_android_or_auth() -> None:
     rendered = render_launchd_plist(InstallConfig(), ToolDiscovery())
     assert "ANDROID_HOME" not in rendered
     assert "AGENT_MANAGER_AUTH" not in rendered
+
+
+def test_discover_tools_ignores_sudo_user(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """discover_tools must not read SUDO_USER when resolving operator home."""
+    sudo_home = tmp_path / "sudo-home"
+    sudo_home.mkdir()
+    (sudo_home / ".nvm/versions/node/v20.0.0/bin").mkdir(parents=True)
+    node_bin = sudo_home / ".nvm/versions/node/v20.0.0/bin/node"
+    node_bin.write_text("#!/bin/sh\n")
+    node_bin.chmod(0o755)
+
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+
+    monkeypatch.setenv("SUDO_USER", "fakeoperator")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: real_home))  # type: ignore[arg-type]
+    monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: None)
+
+    from agent_app.installer.plan import discover_tools
+
+    discovery = discover_tools(env={"SUDO_USER": "fakeoperator"})
+
+    assert discovery.node_bin_dir is None

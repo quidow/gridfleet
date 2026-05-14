@@ -2,19 +2,23 @@
 
 `gridfleet-agent` is the host-side service that registers a device host with a GridFleet manager, spawns Appium per device, and runs a Selenium Grid relay node so the hub can route WebDriver requests directly to the device.
 
+The agent installs entirely under the operator's home directory — no `sudo` is required to install, start, update, or uninstall.
+
 ## Contents
 - [Quick install](#quick-install)
 - [Prerequisites](#prerequisites)
 - [Manual install](#manual-install)
+- [Headless Linux: enable linger](#headless-linux-enable-linger)
 - [Commands](#commands)
 - [Configuration reference](#configuration-reference)
 - [Logs and service control](#logs-and-service-control)
+- [Migrating from a pre-2026-05-14 install](#migrating-from-a-pre-2026-05-14-install)
 - [Troubleshooting](#troubleshooting)
 - [Security note](#security-note)
 
 ## Quick install
 
-Both Linux and macOS use the same bootstrap script. It installs `uv`, fetches Python 3.12, installs `gridfleet-agent`, and runs `gridfleet-agent install --start` with `sudo`.
+Both Linux and macOS use the same bootstrap script. It installs `uv` if missing, creates a dedicated venv under the per-OS user-scope agent directory, installs `gridfleet-agent` into it, and runs `gridfleet-agent install --start` — all as the invoking operator, no `sudo`.
 
 ```bash
 # Latest version (development hosts)
@@ -25,14 +29,14 @@ curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/insta
 ```bash
 # Production: always pin VERSION
 curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/install-agent.sh \
-    | VERSION=0.4.0 sh -s -- --start --manager-url http://manager.example.com:8000
+    | VERSION=0.10.0 sh -s -- --start --manager-url http://manager.example.com:8000
 ```
 
-The script reads `$USER` and passes `--user "$USER"` to the sudo'd `gridfleet-agent install`, so the systemd unit runs as the invoking operator, not root.
+The script refuses to run as root. The service runs as the operator that invoked the script.
 
 ## Prerequisites
 
-The agent itself only needs Python 3.12, which `uv` fetches automatically — you do not need a system Python install. The following host-level tools are probed during `install`. If any are missing, the installer prints a warning but does not abort; the affected feature simply will not work until the tool is added to the host.
+The agent itself only needs Python 3.12, which `uv` fetches automatically. Host-level tools probed during `install`:
 
 | Tool | Needed for | Detection |
 |---|---|---|
@@ -42,68 +46,74 @@ The agent itself only needs Python 3.12, which `uv` fetches automatically — yo
 
 ## Manual install
 
-If you prefer not to pipe a script from the internet, install `gridfleet-agent` yourself and run the installer with `sudo` and an explicit operator login.
-
 ```bash
-# 1. Install uv (https://docs.astral.sh/uv/)
+# 1. Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-# 2. Install the agent (Python 3.12 fetched automatically)
-uv tool install --python 3.12 gridfleet-agent==0.4.0
+# 2. Create the dedicated venv and install gridfleet-agent.
+#    Linux:
+AGENT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/gridfleet-agent"
+#    macOS:
+#    AGENT_DIR="$HOME/Library/Application Support/gridfleet-agent"
+mkdir -p "$AGENT_DIR"
+uv venv --python 3.12 "$AGENT_DIR/venv"
+uv pip install --python "$AGENT_DIR/venv/bin/python" "gridfleet-agent==0.10.0"
 
-# 3. Provision the service. sudo is required because /opt/gridfleet-agent
-#    and /etc/gridfleet-agent are root-owned, and the systemd unit file
-#    lives in /etc/systemd/system/. --user makes the service run as you,
-#    not as root.
-sudo gridfleet-agent install --start \
-    --manager-url http://manager.example.com:8000 \
-    --user "$USER"
+# 3. Provision the service from the dedicated venv. No sudo.
+"$AGENT_DIR/venv/bin/gridfleet-agent" install --start --manager-url http://manager.example.com:8000
 ```
 
-On macOS the `sudo` is still required for `/opt` and `/etc`, but the launchd plist is written into your `~/Library/LaunchAgents/` and the agent runs under your `gui/<uid>` domain.
+## Headless Linux: enable linger
+
+A systemd user instance runs only while the user has an active login session. For headless lab hosts, enable lingering once per host so the agent survives logout and reboots:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+The installer probes this state after `systemctl --user enable` and prints a warning if linger is off — it does not abort, because desktop / dev hosts where the operator is always logged in do not need it.
 
 ## Commands
 
 ### `install`
-Provision files, write the systemd unit (Linux) or launchd plist (macOS), optionally start the service. Requires `sudo` and exactly one of `--dry-run`, `--no-start`, `--start`.
+Provision files, write the systemd user unit (Linux) or launchd LaunchAgent plist (macOS), optionally start the service. No `sudo`. Pass exactly one of `--dry-run`, `--no-start`, `--start`.
 
 ```bash
-sudo gridfleet-agent install --dry-run --manager-url http://manager.example.com:8000
-sudo gridfleet-agent install --no-start --manager-url http://manager.example.com:8000 --user "$USER"
-sudo gridfleet-agent install --start    --manager-url http://manager.example.com:8000 --user "$USER"
+gridfleet-agent install --dry-run --manager-url http://manager.example.com:8000
+gridfleet-agent install --no-start --manager-url http://manager.example.com:8000
+gridfleet-agent install --start    --manager-url http://manager.example.com:8000
 ```
 
-Exit codes: `0` success (including registration pending — printed as a WARNING); `1` files installed but local `/agent/health` failed; `2` invalid args or setup error.
+Exit codes: `0` success (including registration pending — printed as a WARNING); `1` files installed but local `/agent/health` failed; `2` invalid args, setup error, or legacy `/opt`+`/etc` install detected.
 
 ### `status`
-Read-only. Reports config file, service file, service active/enabled, local `/agent/health`, resolved `OperatorIdentity`, resolved `uv` path, and the current configured environment with secrets redacted.
+Read-only. Reports config file, service file, service active/enabled, local `/agent/health`, operator identity, uv path, and the configured environment with secrets redacted.
 
 ```bash
-sudo gridfleet-agent status
-sudo gridfleet-agent status --user "$USER"
+gridfleet-agent status
 ```
 
 ### `update`
-Drain → upgrade → restart → re-poll health. Requires the service to be running and idle.
+Drain -> upgrade the dedicated venv in place -> restart -> re-poll health. No `sudo`.
 
 ```bash
-sudo gridfleet-agent update --to 0.4.0
-sudo gridfleet-agent update --dry-run
-sudo gridfleet-agent update --uv-bin /opt/uv/bin/uv          # advanced
+gridfleet-agent update --to 0.10.0
+gridfleet-agent update --dry-run
+gridfleet-agent update --uv-bin /path/to/uv          # advanced
 ```
 
-Exit codes: `0` success; `1` drain timeout, uv missing for the operator, or post-restart health failure (package was upgraded, but the service is unhealthy); `2` `uv tool upgrade` or restart command failed.
+Exit codes: `0` success; `1` drain timeout or post-restart health failure; `2` `uv pip install --upgrade` or restart command failed.
 
 ### `uninstall`
 ```bash
-sudo gridfleet-agent uninstall --yes
-sudo gridfleet-agent uninstall --yes --keep-config       # leave /etc/gridfleet-agent
-sudo gridfleet-agent uninstall --yes --keep-agent-dir    # leave /opt/gridfleet-agent
+gridfleet-agent uninstall --yes
+gridfleet-agent uninstall --yes --keep-config       # leave config dir in place
+gridfleet-agent uninstall --yes --keep-agent-dir    # leave agent dir in place
 ```
 
 ### Service internals: `serve`
-`gridfleet-agent serve` is the entrypoint that systemd / launchd invoke; you should not run it by hand. It binds to `0.0.0.0:5100` by default and reads its configuration from `/etc/gridfleet-agent/config.env`. Use `install` and `update` instead.
+`gridfleet-agent serve` is the entrypoint that systemd / launchd invoke; you should not run it by hand.
 
 ### `--version`
 ```bash
@@ -112,13 +122,12 @@ gridfleet-agent --version
 
 ## Configuration reference
 
-All flags below belong to `install`; `status`, `update`, and `uninstall` accept only `--user` (and `update` adds `--uv-bin`).
+All flags below belong to `install`. `status`, `update`, and `uninstall` accept their own subset (`update` adds `--to`, `--dry-run`, `--uv-bin`).
 
 | Flag | Default | Mapped env var | Notes |
 |---|---|---|---|
 | `--manager-url` | `http://localhost:8000` | `AGENT_MANAGER_URL` | Manager base URL. |
 | `--port` | `5100` | `AGENT_AGENT_PORT` | Agent HTTP port. |
-| `--user` | resolved operator | systemd `User=` | See [Manual install](#manual-install). |
 | `--manager-auth-username` | none | `AGENT_MANAGER_AUTH_USERNAME` | Required pair with `--manager-auth-password`. |
 | `--manager-auth-password` | none | `AGENT_MANAGER_AUTH_PASSWORD` | Required pair with `--manager-auth-username`. |
 | `--api-auth-username` | none | `AGENT_API_AUTH_USERNAME` | Required pair with `--api-auth-password`. |
@@ -130,46 +139,52 @@ All flags below belong to `install`; `status`, `update`, and `uninstall` accept 
 | `--enable-web-terminal` | off | `AGENT_ENABLE_WEB_TERMINAL=true` | Requires `--terminal-token`. |
 | `--terminal-token` | none | `AGENT_TERMINAL_TOKEN` | Required when web terminal enabled. |
 
-`update` flags:
+Install paths (defaults; override with `--agent-dir`, `--config-dir`):
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--to <version>` | latest | Pin a specific `gridfleet-agent` package version. |
-| `--dry-run` | off | Print the resolved drain URL, uv command (with effective user), restart command, and operator identity. |
-| `--user <login>` | resolved | Override operator identity. |
-| `--uv-bin <path>` | discovered | Use a specific `uv` binary instead of operator-home discovery. |
+| OS | `agent_dir` | `config_dir` | Service file | Logs |
+|---|---|---|---|---|
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/systemd/user/gridfleet-agent.service` | journald (user instance) |
+| macOS | `~/Library/Application Support/gridfleet-agent` | `~/Library/Application Support/gridfleet-agent/config` | `~/Library/LaunchAgents/com.gridfleet.agent.plist` | `~/Library/Logs/gridfleet-agent/{stdout,stderr}.log` |
 
 ## Logs and service control
 
 ### Linux
 ```bash
-journalctl -u gridfleet-agent -f
-systemctl status gridfleet-agent
-sudo systemctl restart gridfleet-agent
+journalctl --user -u gridfleet-agent -f
+systemctl --user status gridfleet-agent
+systemctl --user restart gridfleet-agent
 ```
 
 ### macOS
 ```bash
-tail -f /tmp/gridfleet-agent.log
-tail -f /tmp/gridfleet-agent.err
+tail -f ~/Library/Logs/gridfleet-agent/stdout.log
+tail -f ~/Library/Logs/gridfleet-agent/stderr.log
 launchctl print "gui/$(id -u)/com.gridfleet.agent"
-launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"   # restart
+launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"
 ```
 
-`gui/$(id -u)` is correct **only** when you run these commands as the operator that installed the agent. If you installed via `sudo` from a different shell, replace `$(id -u)` with the operator's uid.
+## Migrating from a pre-2026-05-14 install
+
+Older versions of this installer placed files under `/opt/gridfleet-agent` and `/etc/gridfleet-agent` and required `sudo`. If those paths still exist, `gridfleet-agent install` will refuse to run and tell you to remove them first. Run the one-shot legacy uninstaller:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/uninstall-legacy-agent.sh \
+    | sudo sh
+```
+
+Then run the normal installer without `sudo`. Agent state is ephemeral (registration with the manager re-happens on next start; runtimes re-download from manager-served tarballs), so there is no data to back up.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `gridfleet-agent install` raises `PermissionError` on `/opt/gridfleet-agent` | Ran without `sudo` | Re-run with `sudo` and `--user "$USER"` |
-| `install` ends with `WARNING: agent registration pending` | Manager requires manual approval or machine auth | Approve in the manager UI, or pass `--manager-auth-username` / `--manager-auth-password` |
-| `update` exits `1` with `uv not found for operator …` | Operator's `~/.local/bin/uv` missing | Run `curl -LsSf https://astral.sh/uv/install.sh \| sh` as the operator, or pass `--uv-bin` |
-| `update` exits `1` with `update drain timed out` | Sessions still active | Stop new sessions, wait, retry; do not pass `--force` (not implemented) |
-| `launchctl print` returns "Could not find service" | Wrong `gui/<uid>` (not the operator) | Run `gridfleet-agent status` to see the resolved operator uid |
-| `/agent/health` returns 401 | `--api-auth-*` mismatch between agent and operator's curl | Recheck flags; `status` shows the configured username |
-| Port `5100` / `5555+` / `4444` already in use | Another service bound the port | Pick free ports via `--port` / `--grid-node-port-start`, or stop the other service |
+| `gridfleet-agent install` aborts with `Legacy root-scope install detected` | Old `/opt` or `/etc` paths still present | Run the legacy uninstaller (see migration section), then retry. |
+| Install ends with `WARNING: agent registration pending` | Manager requires manual approval or machine auth | Approve in the manager UI, or pass `--manager-auth-username` / `--manager-auth-password`. |
+| `WARNING: user-instance linger is off` | Linux headless host without lingering enabled | `sudo loginctl enable-linger "$USER"`. |
+| `systemctl --user start gridfleet-agent` says `Failed to connect to bus` | No `$XDG_RUNTIME_DIR`; SSH session has no D-Bus user session | Log in via console or `loginctl enable-linger` so a user systemd instance always runs. |
+| `/agent/health` returns 401 | `--api-auth-*` mismatch between agent and operator's curl | Recheck flags; `gridfleet-agent status` shows the configured username. |
+| Port `5100` / `5555+` / `4444` already in use | Another service bound the port | Pick free ports via `--port` / `--grid-node-port-start`. |
 
 ## Security note
 
-The quick install pipes a shell script from the `main` branch — pin `VERSION=` for production hosts. `uv tool install` verifies the package wheel against PyPI's hash. Do not run the agent on hosts where uploaded driver-pack adapter wheels are not trusted: those wheels execute in the agent's runtime venv.
+The quick install pipes a shell script from the `main` branch — pin `VERSION=` for production hosts. `uv pip install` verifies the package wheel against PyPI's hash. Do not run the agent on hosts where uploaded driver-pack adapter wheels are not trusted: those wheels execute in the agent's runtime venv.

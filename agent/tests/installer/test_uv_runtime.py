@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_app.installer.identity import OperatorIdentity
+from agent_app.installer.plan import InstallConfig
 from agent_app.installer.uv_runtime import UvRuntime, build_upgrade_command, discover_uv
 
 OPERATOR = OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops"))
@@ -67,82 +68,38 @@ def test_missing_uv_returns_none() -> None:
     assert any(".local/bin/uv" in c for c in runtime.searched)
 
 
-def test_build_upgrade_command_uses_runuser_when_available(tmp_path: Path) -> None:
+def test_build_upgrade_command_uses_dedicated_venv_python(tmp_path: Path) -> None:
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
     runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
-    with patch("agent_app.installer.uv_runtime.shutil.which", return_value="/usr/sbin/runuser"):
-        cmd = build_upgrade_command(
-            runtime,
-            operator=OPERATOR,
-            package_spec="gridfleet-agent==0.4.0",
-            os_name="Linux",
-            current_uid=0,
-        )
-    assert cmd[0] == "/usr/sbin/runuser"
-    assert cmd[1:4] == ["-u", "ops", "--"]
-    assert "tool" in cmd and "upgrade" in cmd and "gridfleet-agent==0.4.0" in cmd
-    assert any(arg.startswith("HOME=") for arg in cmd)
-
-
-def test_build_upgrade_command_falls_back_to_sudo_u_on_linux(tmp_path: Path) -> None:
-    bin_path = tmp_path / "uv"
-    bin_path.write_text("")
-    bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
-    with patch("agent_app.installer.uv_runtime.shutil.which", return_value=None):
-        cmd = build_upgrade_command(
-            runtime,
-            operator=OPERATOR,
-            package_spec="gridfleet-agent",
-            os_name="Linux",
-            current_uid=0,
-        )
-    assert cmd[:3] == ["sudo", "-u", "ops"]
-    assert any(arg.startswith("HOME=") for arg in cmd)
-
-
-def test_build_upgrade_command_skips_wrapper_when_already_operator(tmp_path: Path) -> None:
-    bin_path = tmp_path / "uv"
-    bin_path.write_text("")
-    bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), config_dir=str(tmp_path / "config"))
     cmd = build_upgrade_command(
         runtime,
         operator=OPERATOR,
-        package_spec="gridfleet-agent",
-        os_name="Linux",
-        current_uid=OPERATOR.uid,
+        package_spec="gridfleet-agent==0.4.0",
+        config=config,
     )
     assert cmd[0] == str(bin_path)
-    assert cmd[1:] == ["tool", "upgrade", "gridfleet-agent"]
-
-
-def test_build_upgrade_command_macos_uses_sudo_u(tmp_path: Path) -> None:
-    bin_path = tmp_path / "uv"
-    bin_path.write_text("")
-    bin_path.chmod(0o755)
-    runtime = UvRuntime(bin_path=bin_path, source="operator_home", searched=())
-    cmd = build_upgrade_command(
-        runtime,
-        operator=OPERATOR,
-        package_spec="gridfleet-agent",
-        os_name="Darwin",
-        current_uid=0,
-    )
-    assert cmd[:3] == ["sudo", "-u", "ops"]
+    assert cmd[1:] == [
+        "pip",
+        "install",
+        "--python",
+        str(tmp_path / "agent/venv/bin/python"),
+        "--upgrade",
+        "gridfleet-agent==0.4.0",
+    ]
 
 
 def test_build_upgrade_command_raises_if_missing(tmp_path: Path) -> None:
     runtime = UvRuntime(bin_path=None, source="missing", searched=("/foo", "/bar"))
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), config_dir=str(tmp_path / "config"))
     with pytest.raises(RuntimeError, match="uv not found"):
         build_upgrade_command(
             runtime,
             operator=OPERATOR,
             package_spec="gridfleet-agent",
-            os_name="Linux",
-            current_uid=0,
+            config=config,
         )
 
 

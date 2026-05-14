@@ -94,7 +94,6 @@ def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None
 def test_render_systemd_unit_uses_console_entry_point() -> None:
     rendered = render_systemd_unit(InstallConfig(user="gridfleet", port=5200))
 
-    assert "User=gridfleet" in rendered
     assert "EnvironmentFile=/etc/gridfleet-agent/config.env" in rendered
     assert "ExecStart=/opt/gridfleet-agent/venv/bin/gridfleet-agent serve --host 0.0.0.0 --port 5200" in rendered
 
@@ -201,18 +200,20 @@ def test_find_node_bin_dir_uses_highest_nvm_version(tmp_path: Path) -> None:
     assert _find_node_bin_dir({}, tmp_path) == str(new_node.parent)
 
 
-def test_discover_tools_uses_sudo_user_home_for_nvm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discover_tools_ignores_sudo_user_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sudo_home = tmp_path / "operator"
     nvm_node = sudo_home / ".nvm/versions/node/v24.12.0/bin/node"
     nvm_node.parent.mkdir(parents=True)
     nvm_node.write_text("")
     nvm_node.chmod(0o755)
-    monkeypatch.setattr("agent_app.installer.plan.Path.expanduser", lambda path: sudo_home)
-    monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr("agent_app.installer.plan.Path.home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: None)
 
     discovery = discover_tools(env={"SUDO_USER": "operator"}, os_name="Linux")
 
-    assert discovery.node_bin_dir == str(nvm_node.parent)
+    # SUDO_USER is ignored; with no node in the real home and shutil.which returning None,
+    # node_bin_dir should be None.
+    assert discovery.node_bin_dir is None
 
 
 def test_config_resolved_bin_path_defaults_to_venv() -> None:
@@ -319,7 +320,77 @@ def test_redacted_config_masks_api_auth_password() -> None:
     assert redacted.api_auth_password == "<redacted>"
 
 
-def test_systemd_unit_uses_explicit_user() -> None:
-    config = InstallConfig(user="ops")
+def test_render_systemd_unit_is_user_scope() -> None:
+    config = InstallConfig(
+        agent_dir="/home/op/.local/share/gridfleet-agent",
+        config_dir="/home/op/.config/gridfleet-agent",
+        bin_path="/home/op/.local/share/gridfleet-agent/venv/bin/gridfleet-agent",
+    )
     rendered = render_systemd_unit(config)
-    assert "User=ops" in rendered
+
+    # User-scope units rely on systemctl --user; the User= directive is forbidden.
+    assert "User=" not in rendered
+    assert "WantedBy=default.target" in rendered
+    assert "WantedBy=multi-user.target" not in rendered
+    assert "EnvironmentFile=/home/op/.config/gridfleet-agent/config.env" in rendered
+    assert "ExecStart=/home/op/.local/share/gridfleet-agent/venv/bin/gridfleet-agent serve" in rendered
+
+
+def test_default_install_config_linux_uses_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert config.agent_dir == str(tmp_path / "data/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / "cfg/gridfleet-agent")
+
+
+def test_default_install_config_linux_falls_back_to_dot_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+
+    assert config.agent_dir == str(tmp_path / ".local/share/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / ".config/gridfleet-agent")
+
+
+def test_default_install_config_darwin_uses_application_support(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Darwin")
+
+    assert config.agent_dir == str(tmp_path / "Library/Application Support/gridfleet-agent")
+    assert config.config_dir == str(tmp_path / "Library/Application Support/gridfleet-agent/config")
+
+
+def test_render_launchd_plist_uses_library_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "Library/Application Support/gridfleet-agent"),
+        config_dir=str(tmp_path / "Library/Application Support/gridfleet-agent/config"),
+        bin_path=str(tmp_path / "Library/Application Support/gridfleet-agent/venv/bin/gridfleet-agent"),
+    )
+    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+
+    rendered = render_launchd_plist(config, discovery)
+
+    expected_log_dir = tmp_path / "Library/Logs/gridfleet-agent"
+    assert f"<string>{expected_log_dir}/stdout.log</string>" in rendered
+    assert f"<string>{expected_log_dir}/stderr.log</string>" in rendered
+    assert "/tmp/gridfleet-agent.log" not in rendered
+    assert "/tmp/gridfleet-agent.err" not in rendered
+
+
+def test_default_install_config_rejects_unknown_os() -> None:
+    from agent_app.installer.plan import default_install_config
+
+    with pytest.raises(RuntimeError, match="Unsupported OS"):
+        default_install_config("Plan9")

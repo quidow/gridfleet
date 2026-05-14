@@ -1,75 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GridFleet Agent — Uninstall Script
-# Supports Linux (systemd) and macOS (launchd)
+# GridFleet Agent — Uninstall (user-scope, no sudo)
 
-AGENT_DIR="/opt/gridfleet-agent"
-CONFIG_DIR="/etc/gridfleet-agent"
+OS="$(uname -s)"
+SERVICE="gridfleet-agent"
 
-echo "=== GridFleet Agent Uninstaller ==="
+case "$OS" in
+    Linux)
+        XDG_DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+        XDG_CFG="${XDG_CONFIG_HOME:-$HOME/.config}"
+        AGENT_DIR="$XDG_DATA/gridfleet-agent"
+        CONFIG_DIR="$XDG_CFG/gridfleet-agent"
+        UNIT_FILE="$XDG_CFG/systemd/user/${SERVICE}.service"
 
-# Detect OS
-OS=$(uname -s)
+        systemctl --user stop "$SERVICE" 2>/dev/null || true
+        systemctl --user disable "$SERVICE" 2>/dev/null || true
+        if [ -f "$UNIT_FILE" ]; then
+            rm "$UNIT_FILE"
+            systemctl --user daemon-reload || true
+        fi
+        ;;
+    Darwin)
+        AGENT_DIR="$HOME/Library/Application Support/gridfleet-agent"
+        CONFIG_DIR="$HOME/Library/Application Support/gridfleet-agent/config"
+        PLIST_PATH="$HOME/Library/LaunchAgents/com.gridfleet.agent.plist"
+        LOG_DIR="$HOME/Library/Logs/gridfleet-agent"
 
-if [ "$OS" = "Linux" ]; then
-    SERVICE="gridfleet-agent"
-    if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
-        echo "Stopping $SERVICE..."
-        sudo systemctl stop "$SERVICE"
-    fi
-    if systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; then
-        echo "Disabling $SERVICE..."
-        sudo systemctl disable "$SERVICE"
-    fi
-    UNIT_FILE="/etc/systemd/system/${SERVICE}.service"
-    if [ -f "$UNIT_FILE" ]; then
-        echo "Removing $UNIT_FILE"
-        sudo rm "$UNIT_FILE"
-        sudo systemctl daemon-reload
-    fi
-    echo "systemd service removed."
-    AGENT_PID=$(pgrep -f "uvicorn agent_app.main:app" 2>/dev/null || true)
-    if [ -n "$AGENT_PID" ]; then
-        echo "Stopping lingering agent process (PID $AGENT_PID)..."
-        kill $AGENT_PID 2>/dev/null || true
-        sleep 2
-        kill -9 $AGENT_PID 2>/dev/null || true
-    fi
+        launchctl bootout "gui/$(id -u)/com.gridfleet.agent" 2>/dev/null || true
+        [ -f "$PLIST_PATH" ] && rm "$PLIST_PATH"
+        [ -d "$LOG_DIR" ] && rm -rf "$LOG_DIR"
+        ;;
+    *)
+        echo "Unsupported OS: $OS" >&2
+        exit 1
+        ;;
+esac
 
-elif [ "$OS" = "Darwin" ]; then
-    PLIST_PATH="$HOME/Library/LaunchAgents/com.gridfleet.agent.plist"
-    if [ -f "$PLIST_PATH" ]; then
-        echo "Unloading launchd service..."
-        launchctl unload "$PLIST_PATH" 2>/dev/null || true
-        rm "$PLIST_PATH"
-    fi
-    echo "launchd service removed."
-    AGENT_PID=$(pgrep -f "uvicorn agent_app.main:app" 2>/dev/null || true)
-    if [ -n "$AGENT_PID" ]; then
-        echo "Stopping agent process (PID $AGENT_PID)..."
-        kill $AGENT_PID 2>/dev/null || true
-        sleep 2
-        kill -9 $AGENT_PID 2>/dev/null || true
-    fi
-else
-    echo "Unsupported OS: $OS"
-    exit 1
-fi
+[ -d "$AGENT_DIR" ] && rm -rf "$AGENT_DIR"
+[ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR"
 
-# Remove agent files
-if [ -d "$AGENT_DIR" ]; then
-    echo "Removing $AGENT_DIR"
-    if [ "$OS" = "Darwin" ]; then
-        sudo xattr -rc "$AGENT_DIR" 2>/dev/null || true
-    fi
-    sudo rm -rf "$AGENT_DIR"
-fi
-
-# Remove config
-if [ -d "$CONFIG_DIR" ]; then
-    echo "Removing $CONFIG_DIR"
-    sudo rm -rf "$CONFIG_DIR"
-fi
-
-echo "Done. GridFleet Agent has been uninstalled."
+echo "GridFleet Agent uninstalled."

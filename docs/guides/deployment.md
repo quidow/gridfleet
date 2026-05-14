@@ -98,7 +98,7 @@ Before running the installer on a device host, confirm the machine already satis
 From the repo root on the device host:
 
 ```bash
-VERSION=0.3.0 sudo -E bash scripts/install-agent.sh \
+VERSION=0.3.0 bash scripts/install-agent.sh \
   --manager-url http://MANAGER_IP:8000 \
   --manager-auth-username gridfleet-machine \
   --manager-auth-password change-me \
@@ -111,10 +111,16 @@ Verify:
 
 ```bash
 curl -s http://localhost:5100/agent/health | python -m json.tool
-sudo systemctl status gridfleet-agent
+systemctl --user status gridfleet-agent
 ```
 
-The installer writes process environment to `/etc/gridfleet-agent/config.env`. When you provide `--manager-auth-username` and `--manager-auth-password`, it persists them there as optional manager API credentials.
+The installer writes process environment to `~/.config/gridfleet-agent/config.env`. When you provide `--manager-auth-username` and `--manager-auth-password`, it persists them there as optional manager API credentials.
+
+For headless Linux hosts, enable lingering so the user-scoped systemd service survives logout and reboots:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
 
 With the recommended production default `GRIDFLEET_HOST_AUTO_ACCEPT=false`, newly registered agents appear as pending hosts in the manager and must be approved by an operator before they can manage devices.
 
@@ -123,7 +129,7 @@ With the recommended production default `GRIDFLEET_HOST_AUTO_ACCEPT=false`, newl
 From the repo root on the device host:
 
 ```bash
-VERSION=0.3.0 sudo -E bash scripts/install-agent.sh \
+VERSION=0.3.0 bash scripts/install-agent.sh \
   --manager-url http://MANAGER_IP:8000 \
   --manager-auth-username gridfleet-machine \
   --manager-auth-password change-me \

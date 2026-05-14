@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Never
 
 import pytest
 
+from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import (
     _host_list_contains,
     _manager_hosts_url,
@@ -13,7 +15,7 @@ from agent_app.installer.install import (
     poll_manager_registration,
     resolve_bin_path,
 )
-from agent_app.installer.plan import InstallConfig
+from agent_app.installer.plan import InstallConfig, ToolDiscovery
 
 
 def test_resolve_bin_path_with_none_uses_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,10 +62,9 @@ def test_run_command_nonzero_exit_with_stdout() -> None:
             _run_command(["false"], timeout=10)
 
 
-def test_start_service_darwin_with_uid() -> None:
+def test_start_service_darwin_with_uid(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
-    monkeypatch = pytest.MonkeyPatch()
     with monkeypatch.context() as m:
         commands: list[list[str]] = []
 
@@ -71,9 +72,10 @@ def test_start_service_darwin_with_uid() -> None:
             commands.append(command)
 
         m.setattr(subprocess, "run", fake_run)
+        m.setattr("os.getuid", lambda: 501)
         from pathlib import Path
 
-        _start_service("Darwin", Path("/tmp/com.gridfleet.agent.plist"), run_command=fake_run, uid=501)
+        _start_service("Darwin", Path("/tmp/com.gridfleet.agent.plist"), run_command=fake_run)
         assert any("launchctl" in str(cmd) and "bootstrap" in str(cmd) for cmd in commands)
 
 
@@ -153,3 +155,120 @@ def test_host_list_contains_empty_hostname() -> None:
 def test_manager_hosts_url_trailing_slash() -> None:
     config = InstallConfig(manager_url="https://manager.example.com/")
     assert _manager_hosts_url(config) == "https://manager.example.com/api/hosts"
+
+
+def test_validate_dedicated_venv_accepts_xdg_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    from agent_app.installer.install import validate_dedicated_venv
+    from agent_app.installer.plan import default_install_config
+
+    config = default_install_config("Linux")
+    venv_bin = Path(config.agent_dir) / "venv/bin/gridfleet-agent"
+    venv_bin.parent.mkdir(parents=True)
+    venv_bin.write_text("#!/bin/sh\n")
+    venv_bin.chmod(0o755)
+
+    validate_dedicated_venv(config, executable=venv_bin)  # should not raise
+
+
+def test_validate_dedicated_venv_rejects_other_path(tmp_path: Path) -> None:
+    from agent_app.installer.install import validate_dedicated_venv
+    from agent_app.installer.plan import InstallConfig
+
+    config = InstallConfig(
+        agent_dir=str(tmp_path / "agent"),
+        config_dir=str(tmp_path / "config"),
+        bin_path=str(tmp_path / "agent/venv/bin/gridfleet-agent"),
+    )
+    other = tmp_path / "elsewhere/gridfleet-agent"
+    other.parent.mkdir(parents=True)
+    other.write_text("#!/bin/sh\n")
+
+    with pytest.raises(RuntimeError, match="must run from"):
+        validate_dedicated_venv(config, executable=other)
+
+
+LEGACY_MARKERS = [
+    Path("/opt/gridfleet-agent"),
+    Path("/etc/gridfleet-agent/config.env"),
+    Path("/etc/systemd/system/gridfleet-agent.service"),
+]
+
+
+def test_detect_legacy_install_returns_first_existing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import detect_legacy_install
+
+    fake_paths = {marker: (tmp_path / marker.name) for marker in LEGACY_MARKERS}
+    # Only the second marker exists.
+    second = fake_paths[LEGACY_MARKERS[1]]
+    second.parent.mkdir(parents=True, exist_ok=True)
+    second.write_text("")
+    monkeypatch.setattr(
+        "agent_app.installer.install._LEGACY_PATHS",
+        tuple(fake_paths.values()),
+    )
+
+    found = detect_legacy_install()
+
+    assert found == second
+
+
+def test_detect_legacy_install_returns_none_when_clean(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import detect_legacy_install
+
+    monkeypatch.setattr(
+        "agent_app.installer.install._LEGACY_PATHS",
+        (tmp_path / "nope", tmp_path / "also-nope"),
+    )
+
+    assert detect_legacy_install() is None
+
+
+def test_install_no_start_aborts_on_legacy_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_app.installer.install import LegacyInstallDetectedError, install_no_start
+    from agent_app.installer.plan import default_install_config
+
+    fake_legacy = tmp_path / "fake-opt-gridfleet-agent"
+    fake_legacy.mkdir()
+    monkeypatch.setattr("agent_app.installer.install._LEGACY_PATHS", (fake_legacy,))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))  # type: ignore[arg-type]
+
+    config = default_install_config("Linux")
+    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    operator = OperatorIdentity(login="anyone", uid=4242, home=tmp_path / "home")
+
+    with pytest.raises(LegacyInstallDetectedError, match="Legacy root-scope install"):
+        install_no_start(config, discovery, operator=operator, os_name="Linux")
+
+
+def test_check_linger_returns_warning_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    import getpass
+
+    from agent_app.installer.install import check_linger
+
+    captured: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> str:
+        captured.append(cmd)
+        return "Linger=no"
+
+    warning = check_linger(run_command=fake_run)
+
+    user = getpass.getuser()
+    assert captured == [["loginctl", "show-user", user, "--property=Linger"]]
+    assert warning is not None
+    assert "loginctl enable-linger" in warning
+    assert user in warning
+
+
+def test_check_linger_returns_none_when_on() -> None:
+    from agent_app.installer.install import check_linger
+
+    assert check_linger(run_command=lambda _cmd: "Linger=yes") is None
+
+
+def test_check_linger_returns_warning_when_unknown() -> None:
+    from agent_app.installer.install import check_linger
+
+    warning = check_linger(run_command=lambda _cmd: "")
+    assert warning is not None

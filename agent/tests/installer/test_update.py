@@ -53,9 +53,9 @@ def test_format_update_dry_run_names_uv_and_restart_commands(tmp_path: Path) -> 
     )
 
     assert "GridFleet Agent update dry run" in output
-    # build_upgrade_command returns [bin_path, "tool", "upgrade", package_spec] when uid matches
-    assert "tool upgrade gridfleet-agent==0.3.0" in output
-    assert "systemctl restart gridfleet-agent" in output
+    assert "pip install" in output
+    assert "gridfleet-agent==0.3.0" in output
+    assert "systemctl --user restart gridfleet-agent" in output
     assert "Wait for active local nodes to drain" in output
     assert "http://localhost:5200/agent/health" in output
 
@@ -73,7 +73,6 @@ def test_format_update_dry_run_reports_unsupported_os_without_traceback(tmp_path
 def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_linux(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # uid matches so build_upgrade_command returns [bin_path, "tool", "upgrade", ...]
     operator = _make_operator(tmp_path, uid=1001)
     commands: list[list[str]] = []
     drains: list[str] = []
@@ -100,9 +99,9 @@ def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_l
         health=HealthCheckResult(ok=True, message="healthy at http://localhost:5200/agent/health"),
     )
     assert drains == ["http://localhost:5200/agent/health"]
-    # commands[0] is the upgrade cmd: [bin_path, "tool", "upgrade", "gridfleet-agent==0.3.0"]
-    assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent==0.3.0"]
-    assert commands[1] == ["systemctl", "restart", "gridfleet-agent"]
+    assert commands[0][1:4] == ["pip", "install", "--python"]
+    assert commands[0][-2:] == ["--upgrade", "gridfleet-agent==0.3.0"]
+    assert commands[1] == ["systemctl", "--user", "restart", "gridfleet-agent"]
 
 
 def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
@@ -126,19 +125,20 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
     )
 
-    assert commands[0][1:] == ["tool", "upgrade", "gridfleet-agent"]
+    assert commands[0][1:4] == ["pip", "install", "--python"]
+    assert commands[0][-2:] == ["--upgrade", "gridfleet-agent"]
 
 
-def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
+def test_update_agent_restarts_launchd_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # operator.uid=0 → _restart_command uses gui/0/com.gridfleet.agent
     operator = _make_operator(tmp_path, uid=0)
     commands: list[list[str]] = []
 
     def record(command: list[str]) -> None:
         commands.append(command)
 
+    monkeypatch.setattr("os.getuid", lambda: 0)
     update_agent(
         config,
         operator=operator,
@@ -154,23 +154,25 @@ def test_update_agent_restarts_launchd_on_macos(tmp_path: Path) -> None:
     assert commands[1] == ["launchctl", "kickstart", "-k", "gui/0/com.gridfleet.agent"]
 
 
-def test_update_agent_uses_operator_uid_for_launchd_restart_on_macos(tmp_path: Path) -> None:
+def test_update_agent_uses_current_uid_for_launchd_restart_on_macos(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config = _make_config(tmp_path)
     uv_runtime = _make_uv_runtime(tmp_path)
-    # operator uid is 501 — this is what ends up in the launchctl command
-    operator = OperatorIdentity(login="ops", uid=501, home=tmp_path / "home" / "ops")
+    operator = OperatorIdentity(login="ops", uid=1001, home=tmp_path / "home" / "ops")
     commands: list[list[str]] = []
 
     def record(command: list[str]) -> None:
         commands.append(command)
 
+    monkeypatch.setattr("os.getuid", lambda: 501)
     update_agent(
         config,
         operator=operator,
         uv_runtime=uv_runtime,
         to_version=None,
         os_name="Darwin",
-        current_uid=501,
+        current_uid=1001,
         run_command=record,
         drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -363,7 +365,7 @@ def test_update_uv_missing_raises_typed(tmp_path: Path) -> None:
         )
 
 
-def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
+def test_update_runs_uv_pip_install_to_dedicated_venv(tmp_path: Path) -> None:
     bin_path = tmp_path / "uv"
     bin_path.write_text("")
     bin_path.chmod(0o755)
@@ -372,7 +374,7 @@ def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
     invoked: list[list[str]] = []
 
     update_agent(
-        InstallConfig(user="ops"),
+        InstallConfig(user="ops", agent_dir=str(tmp_path / "agent")),
         operator=operator,
         uv_runtime=runtime,
         os_name="Linux",
@@ -382,8 +384,9 @@ def test_update_runs_uv_as_operator_when_root(tmp_path: Path) -> None:
         current_uid=0,
     )
     upgrade_cmd = invoked[0]
-    assert "ops" in upgrade_cmd
-    assert "tool" in upgrade_cmd and "upgrade" in upgrade_cmd
+    assert upgrade_cmd[0] == str(bin_path)
+    assert upgrade_cmd[1:4] == ["pip", "install", "--python"]
+    assert upgrade_cmd[-2:] == ["--upgrade", "gridfleet-agent"]
 
 
 def test_cli_update_invalid_uv_bin_exits_one(
@@ -393,10 +396,10 @@ def test_cli_update_invalid_uv_bin_exits_one(
         raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
 
     monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update", "--uv-bin", "/missing"])
     assert rc == 1
@@ -412,10 +415,10 @@ def test_cli_update_dry_run_invalid_uv_bin_exits_one(
         raise RuntimeError("--uv-bin '/missing' is not an executable file; refusing to fall back to discovery")
 
     monkeypatch.setattr("agent_app.cli.discover_uv", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update", "--dry-run", "--uv-bin", "/missing"])
     assert rc == 1
@@ -429,14 +432,14 @@ def test_cli_update_exit_code_for_drain(monkeypatch: pytest.MonkeyPatch) -> None
         raise UpdateDrainError("busy")
 
     monkeypatch.setattr("agent_app.cli.update_agent", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.discover_uv",
         lambda **kw: UvRuntime(bin_path=Path("/x"), source="path", searched=("/x",)),
     )
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update"])
     assert rc == 1
@@ -447,14 +450,14 @@ def test_cli_update_exit_code_for_restart_failure(monkeypatch: pytest.MonkeyPatc
         raise UpdateRestartError("systemctl failed")
 
     monkeypatch.setattr("agent_app.cli.update_agent", raiser)
-    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda: InstallConfig(user="ops"))
+    monkeypatch.setattr("agent_app.cli.load_installed_config", lambda _defaults=None: InstallConfig(user="ops"))
     monkeypatch.setattr(
         "agent_app.cli.discover_uv",
         lambda **kw: UvRuntime(bin_path=Path("/x"), source="path", searched=("/x",)),
     )
     monkeypatch.setattr(
         "agent_app.cli.resolve_operator_identity",
-        lambda login=None: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
+        lambda: OperatorIdentity(login="ops", uid=1001, home=Path("/home/ops")),
     )
     rc = cli_main(["update"])
     assert rc == 2

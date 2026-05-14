@@ -85,11 +85,11 @@ def _agent_package_spec(to_version: str | None) -> str:
     return f"gridfleet-agent=={to_version}" if to_version else "gridfleet-agent"
 
 
-def _restart_command(os_name: str, *, operator_uid: int) -> list[str]:
+def _restart_command(os_name: str) -> list[str]:
     if os_name == "Linux":
-        return ["systemctl", "restart", "gridfleet-agent"]
+        return ["systemctl", "--user", "restart", "gridfleet-agent"]
     if os_name == "Darwin":
-        return ["launchctl", "kickstart", "-k", f"gui/{operator_uid}/com.gridfleet.agent"]
+        return ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.gridfleet.agent"]
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
@@ -112,7 +112,6 @@ def format_update_dry_run(
     current_uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
-    resolved_uid = current_uid if current_uid is not None else os.getuid()
     package_spec = _agent_package_spec(to_version)
 
     # Resolve uv path display
@@ -128,8 +127,7 @@ def format_update_dry_run(
             uv_runtime,
             operator=operator,
             package_spec=package_spec,
-            os_name=resolved_os,
-            current_uid=resolved_uid,
+            config=config,
         )
         uv_command = " ".join(upgrade_cmd)
     except RuntimeError as exc:
@@ -137,7 +135,7 @@ def format_update_dry_run(
 
     # Resolve restart command
     try:
-        restart_command = " ".join(_restart_command(resolved_os, operator_uid=operator.uid))
+        restart_command = " ".join(_restart_command(resolved_os))
     except RuntimeError as exc:
         restart_command = str(exc).replace("Unsupported OS", "unsupported OS", 1)
 
@@ -230,8 +228,7 @@ def update_agent(
             uv_runtime,
             operator=operator,
             package_spec=package_spec,
-            os_name=resolved_os,
-            current_uid=current_uid if current_uid is not None else os.getuid(),
+            config=config,
         )
     except RuntimeError as exc:
         raise UvNotFoundError(str(exc)) from exc
@@ -242,7 +239,7 @@ def update_agent(
         raise UpdateUpgradeError(str(exc)) from exc
 
     try:
-        run_command(_restart_command(resolved_os, operator_uid=operator.uid))
+        run_command(_restart_command(resolved_os))
     except (RuntimeError, OSError) as exc:
         raise UpdateRestartError(str(exc)) from exc
 

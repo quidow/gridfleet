@@ -43,16 +43,16 @@ If this fails but step 2 succeeds, the problem is network reachability from the 
 Linux:
 
 ```bash
-sudo systemctl status gridfleet-agent
-sudo journalctl -u gridfleet-agent -n 200 --no-pager
+systemctl --user status gridfleet-agent
+journalctl --user -u gridfleet-agent -n 200 --no-pager
 ```
 
 macOS:
 
 ```bash
 launchctl print "gui/$(id -u)/com.gridfleet.agent"
-tail -n 200 /tmp/gridfleet-agent.log
-tail -n 200 /tmp/gridfleet-agent.err
+tail -n 200 ~/Library/Logs/gridfleet-agent/stdout.log
+tail -n 200 ~/Library/Logs/gridfleet-agent/stderr.log
 ```
 
 ## 5. Verify the agent process configuration
@@ -60,7 +60,7 @@ tail -n 200 /tmp/gridfleet-agent.err
 Linux:
 
 ```bash
-sudo grep '^AGENT_' /etc/gridfleet-agent/config.env
+grep '^AGENT_' ~/.config/gridfleet-agent/config.env
 ```
 
 macOS:

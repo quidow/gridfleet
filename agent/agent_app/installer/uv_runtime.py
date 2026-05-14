@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_app.installer.identity import OperatorIdentity
+    from agent_app.installer.plan import InstallConfig
 
 
 @dataclass(frozen=True)
@@ -54,20 +55,18 @@ def build_upgrade_command(
     *,
     operator: OperatorIdentity,
     package_spec: str,
-    os_name: str,
-    current_uid: int,
+    config: InstallConfig,
 ) -> list[str]:
+    del operator
     if runtime.bin_path is None:
-        raise RuntimeError(f"uv not found for operator {operator.login!r}; searched: {runtime.searched}")
-    bin_path = str(runtime.bin_path)
-    if current_uid == operator.uid:
-        return [bin_path, "tool", "upgrade", package_spec]
-    home_arg = f"HOME={operator.home}"
-    if os_name == "Linux":
-        runuser = shutil.which("runuser")
-        if runuser:
-            return [runuser, "-u", operator.login, "--", "env", home_arg, bin_path, "tool", "upgrade", package_spec]
-        return ["sudo", "-u", operator.login, "env", home_arg, bin_path, "tool", "upgrade", package_spec]
-    if os_name == "Darwin":
-        return ["sudo", "-u", operator.login, "env", home_arg, bin_path, "tool", "upgrade", package_spec]
-    raise RuntimeError(f"unsupported OS for uv upgrade: {os_name!r}")
+        raise RuntimeError(f"uv not found; searched: {runtime.searched}")
+    venv_python = Path(config.agent_dir) / "venv/bin/python"
+    return [
+        str(runtime.bin_path),
+        "pip",
+        "install",
+        "--python",
+        str(venv_python),
+        "--upgrade",
+        package_spec,
+    ]

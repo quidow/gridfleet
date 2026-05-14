@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_app.installer.install import _service_file_path
+from agent_app.installer.install import LegacyInstallDetectedError, _service_file_path, detect_legacy_install
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,8 +39,8 @@ def _stop_service(
     operator: OperatorIdentity,
 ) -> None:
     if os_name == "Linux":
-        run_command(["systemctl", "stop", "gridfleet-agent"], check=False)
-        run_command(["systemctl", "disable", "gridfleet-agent"], check=False)
+        run_command(["systemctl", "--user", "stop", "gridfleet-agent"], check=False)
+        run_command(["systemctl", "--user", "disable", "gridfleet-agent"], check=False)
         return
     if os_name == "Darwin":
         run_command(["launchctl", "bootout", f"gui/{operator.uid}", str(service_file)], check=False)
@@ -58,6 +58,9 @@ def uninstall(
     remove_config_dir: bool = True,
 ) -> UninstallResult:
     resolved_os = os_name or platform.system()
+    legacy = detect_legacy_install()
+    if legacy is not None:
+        raise LegacyInstallDetectedError(legacy)
     service_file = _service_file_path(config, resolved_os, operator)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
@@ -70,7 +73,7 @@ def uninstall(
         removed_service_file = True
 
     if resolved_os == "Linux":
-        run_command(["systemctl", "daemon-reload"], check=True)
+        run_command(["systemctl", "--user", "daemon-reload"], check=True)
 
     removed_agent_dir = False
     if remove_agent_dir and agent_dir.exists():

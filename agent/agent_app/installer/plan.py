@@ -16,6 +16,20 @@ if TYPE_CHECKING:
 DEFAULT_SERVICE_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 
+def _xdg_data_home() -> Path:
+    raw = os.environ.get("XDG_DATA_HOME")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".local" / "share"
+
+
+def _xdg_config_home() -> Path:
+    raw = os.environ.get("XDG_CONFIG_HOME")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".config"
+
+
 @dataclass(frozen=True)
 class InstallConfig:
     agent_dir: str = "/opt/gridfleet-agent"
@@ -61,6 +75,27 @@ class InstallConfig:
     @property
     def config_env_path(self) -> str:
         return f"{self.config_dir}/config.env"
+
+
+def default_install_config(os_name: str) -> InstallConfig:
+    """Return an InstallConfig with per-OS user-scope defaults.
+
+    Linux uses XDG base directories ($XDG_DATA_HOME / $XDG_CONFIG_HOME, with
+    ~/.local/share and ~/.config as fallbacks). Darwin uses Apple's
+    Application Support convention under the operator's home directory.
+    """
+    if os_name == "Linux":
+        return InstallConfig(
+            agent_dir=str(_xdg_data_home() / "gridfleet-agent"),
+            config_dir=str(_xdg_config_home() / "gridfleet-agent"),
+        )
+    if os_name == "Darwin":
+        agent = Path.home() / "Library" / "Application Support" / "gridfleet-agent"
+        return InstallConfig(
+            agent_dir=str(agent),
+            config_dir=str(agent / "config"),
+        )
+    raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
 @dataclass(frozen=True)
@@ -132,12 +167,8 @@ def _find_android_home(env: Mapping[str, str], home: Path) -> str | None:
 
 
 def _operator_home(env: Mapping[str, str]) -> Path:
-    sudo_user = env.get("SUDO_USER")
-    if sudo_user:
-        try:
-            return Path(f"~{sudo_user}").expanduser()
-        except RuntimeError:
-            pass
+    """Return the home directory of the user running this process."""
+    del env  # SUDO_USER no longer consulted; install runs as operator.
     return Path.home()
 
 
@@ -183,6 +214,7 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
         f"AGENT_GRID_PUBLISH_URL={config.grid_publish_url}",
         f"AGENT_GRID_SUBSCRIBE_URL={config.grid_subscribe_url}",
         f"AGENT_GRID_NODE_PORT_START={config.grid_node_port_start}",
+        f"AGENT_RUNTIME_ROOT={config.agent_dir}/runtimes",
         f"PATH={build_service_path(discovery)}",
     ]
     if discovery.android_home:
@@ -268,7 +300,6 @@ After=network.target
 
 [Service]
 Type=simple
-User={config.user}
 WorkingDirectory={config.agent_dir}
 EnvironmentFile={config.config_env_path}
 ExecStart={config.resolved_bin_path} serve --host 0.0.0.0 --port {config.port}
@@ -276,12 +307,15 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 """
 
 
 def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str:
     env_entries = _launchd_env_entries(config, discovery)
+    log_dir = Path.home() / "Library" / "Logs" / "gridfleet-agent"
+    stdout_path = escape(str(log_dir / "stdout.log"))
+    stderr_path = escape(str(log_dir / "stderr.log"))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -290,7 +324,7 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
     <string>com.gridfleet.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{config.resolved_bin_path}</string>
+        <string>{escape(config.resolved_bin_path)}</string>
         <string>serve</string>
         <string>--host</string>
         <string>0.0.0.0</string>
@@ -298,7 +332,7 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
         <string>{config.port}</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>{config.agent_dir}</string>
+    <string>{escape(config.agent_dir)}</string>
     <key>EnvironmentVariables</key>
     <dict>
 {env_entries}
@@ -308,9 +342,9 @@ def render_launchd_plist(config: InstallConfig, discovery: ToolDiscovery) -> str
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/gridfleet-agent.log</string>
+    <string>{stdout_path}</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/gridfleet-agent.err</string>
+    <string>{stderr_path}</string>
 </dict>
 </plist>
 """

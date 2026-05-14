@@ -18,6 +18,7 @@ import httpx
 from agent_app.installer.plan import (
     InstallConfig,
     ToolDiscovery,
+    _xdg_config_home,
     render_config_env,
     render_launchd_plist,
     render_systemd_unit,
@@ -54,6 +55,7 @@ class InstallResult:
     started: bool
     health: HealthCheckResult | None = None
     registration: RegistrationCheckResult | None = None
+    linger_warning: str | None = None
 
 
 def resolve_bin_path(*, executable: Path | None = None) -> str:
@@ -68,65 +70,53 @@ def resolve_bin_path(*, executable: Path | None = None) -> str:
 def validate_dedicated_venv(
     config: InstallConfig, *, executable: Path | None = None, command_name: str = "install"
 ) -> None:
-    expected = Path(config.venv_bin_dir) / "gridfleet-agent"
+    expected = Path(config.resolved_bin_path)
     actual = (executable or Path(sys.argv[0])).resolve()
     if actual != expected.resolve():
         raise RuntimeError(
             f"gridfleet-agent {command_name} must run from {expected}. "
-            "Create /opt/gridfleet-agent/venv first, install gridfleet-agent there, "
-            f"then run /opt/gridfleet-agent/venv/bin/gridfleet-agent {command_name}."
+            f"Create {Path(config.agent_dir)}/venv first, install gridfleet-agent there, "
+            f"then run {expected} {command_name}."
         )
 
 
-def _operator_home_darwin() -> Path:
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
-        try:
-            return Path(f"~{sudo_user}").expanduser()
-        except (KeyError, RuntimeError):
-            pass
-    return Path.home()
+_LEGACY_PATHS: tuple[Path, ...] = (
+    Path("/opt/gridfleet-agent"),
+    Path("/etc/gridfleet-agent/config.env"),
+    Path("/etc/systemd/system/gridfleet-agent.service"),
+)
+
+_LEGACY_UNINSTALL_URL = "https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/uninstall-legacy-agent.sh"
 
 
-def _resolve_uid(uid: int | None = None) -> int:
-    if uid is not None:
-        return uid
-    sudo_uid = os.environ.get("SUDO_UID")
-    if sudo_uid and sudo_uid.isdecimal():
-        return int(sudo_uid)
-    return os.getuid()
+def detect_legacy_install() -> Path | None:
+    """Return the first legacy artefact path that exists, or None."""
+    for candidate in _LEGACY_PATHS:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+class LegacyInstallDetectedError(RuntimeError):
+    """Raised when /opt or /etc artefacts from a pre-user-scope install remain."""
+
+    def __init__(self, path: Path) -> None:
+        message = (
+            f"Legacy root-scope install detected at {path}. "
+            f"Run `curl -LsSf {_LEGACY_UNINSTALL_URL} | sudo sh` once to remove the root-owned files, "
+            "then re-run this installer without sudo."
+        )
+        super().__init__(message)
+        self.path = path
 
 
 def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
+    del operator  # SUDO_USER fallbacks gone; operator is the calling user.
     if os_name == "Linux":
-        config_dir = Path(config.config_dir)
-        if str(config_dir).startswith("/etc/"):
-            return Path("/etc/systemd/system/gridfleet-agent.service")
-        return config_dir.parent / "systemd/system/gridfleet-agent.service"
+        return _xdg_config_home() / "systemd/user/gridfleet-agent.service"
     if os_name == "Darwin":
-        home = operator.home if operator is not None else _operator_home_darwin()
-        return home / "Library/LaunchAgents/com.gridfleet.agent.plist"
+        return Path.home() / "Library/LaunchAgents/com.gridfleet.agent.plist"
     raise RuntimeError(f"Unsupported OS: {os_name}")
-
-
-def _chown_to_user(path: Path, user: str) -> None:
-    try:
-        shutil.chown(path, user=user)
-    except OSError as exc:
-        raise RuntimeError(f"failed to set owner of {path} to {user}: {exc}") from exc
-
-
-def _should_chown(operator: OperatorIdentity) -> bool:
-    """Whether install artefacts need a chown to the operator.
-
-    Skip only when the current process is already running as the operator
-    (same euid). Don't compare logins — under sudo -E the env-derived login
-    can match the operator while euid is still 0, leaving artefacts root-owned.
-    """
-    try:
-        return os.geteuid() != operator.uid
-    except AttributeError:  # pragma: no cover — non-POSIX platforms
-        return operator.login != getpass.getuser()
 
 
 def install_no_start(
@@ -137,7 +127,6 @@ def install_no_start(
     os_name: str | None = None,
     executable: Path | None = None,
     download: Callable[[str, Path], None] | None = None,
-    chown: Callable[[Path, str], None] = _chown_to_user,
     start: bool = False,
 ) -> InstallResult:
     del download
@@ -156,6 +145,10 @@ def install_no_start(
     runtime_dir = agent_dir / "runtimes"
     service_file = _service_file_path(config, resolved_os, operator)
 
+    legacy = detect_legacy_install()
+    if legacy is not None:
+        raise LegacyInstallDetectedError(legacy)
+
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)
     service_file.parent.mkdir(parents=True, exist_ok=True)
@@ -166,16 +159,11 @@ def install_no_start(
     if resolved_os == "Linux":
         service_file.write_text(render_systemd_unit(config))
     elif resolved_os == "Darwin":
+        (Path.home() / "Library/Logs/gridfleet-agent").mkdir(parents=True, exist_ok=True)
         service_file.write_text(render_launchd_plist(config, discovery))
     else:
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
     os.chmod(service_file, 0o600)
-
-    chown_targets = (agent_dir, runtime_dir, config_dir, config_env, service_file)
-    if _should_chown(operator):
-        for path in chown_targets:
-            if path.exists():
-                chown(path, operator.login)
 
     return InstallResult(
         config_env=Path(config.config_env_path),
@@ -194,17 +182,41 @@ def _run_command(command: list[str], *, timeout: float | None = 30) -> None:
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
+def check_linger(*, run_command: Callable[[list[str]], str] | None = None) -> str | None:
+    """Probe `loginctl show-user --property=Linger` for the current user.
+
+    Returns a warning string if linger is off or unknown, None if linger is on.
+    Never raises — this is best-effort; missing loginctl on non-systemd boxes is fine.
+    """
+    user = getpass.getuser()
+    cmd = ["loginctl", "show-user", user, "--property=Linger"]
+    try:
+        if run_command is None:
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=5)
+            output = result.stdout.strip()
+        else:
+            output = run_command(cmd).strip()
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None  # loginctl missing — not a systemd host.
+    if output == "Linger=yes":
+        return None
+    return f"WARNING: user-instance linger is off. For headless hosts, run: sudo loginctl enable-linger {user}"
+
+
 def _start_service(
-    os_name: str, service_file: Path, *, run_command: Callable[[list[str]], None], uid: int | None = None
+    os_name: str,
+    service_file: Path,
+    *,
+    run_command: Callable[[list[str]], None],
 ) -> None:
     if os_name == "Linux":
-        run_command(["systemctl", "daemon-reload"])
-        run_command(["systemctl", "enable", "gridfleet-agent"])
-        run_command(["systemctl", "start", "gridfleet-agent"])
+        run_command(["systemctl", "--user", "daemon-reload"])
+        run_command(["systemctl", "--user", "enable", "gridfleet-agent"])
+        run_command(["systemctl", "--user", "start", "gridfleet-agent"])
         return
     if os_name == "Darwin":
-        resolved_uid = _resolve_uid(uid)
-        domain_target = f"gui/{resolved_uid}"
+        uid = os.getuid()
+        domain_target = f"gui/{uid}"
         with contextlib.suppress(RuntimeError):
             run_command(["launchctl", "bootout", f"{domain_target}/com.gridfleet.agent"])
         run_command(["launchctl", "bootstrap", domain_target, str(service_file)])
@@ -307,7 +319,7 @@ def install_with_start(
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
-    uid: int | None = None,
+    linger_check: Callable[[], str | None] = check_linger,
 ) -> InstallResult:
     resolved_os = os_name or platform.system()
     result = install_no_start(
@@ -318,8 +330,9 @@ def install_with_start(
         executable=executable,
         download=download,
     )
-    resolved_uid = uid if uid is not None else operator.uid
-    _start_service(resolved_os, result.service_file, run_command=run_command, uid=resolved_uid)
+    _start_service(resolved_os, result.service_file, run_command=run_command)
+
+    linger_warning = linger_check() if resolved_os == "Linux" else None
 
     api_auth = (
         (config.api_auth_username, config.api_auth_password)
@@ -336,4 +349,5 @@ def install_with_start(
         started=True,
         health=health,
         registration=registration,
+        linger_warning=linger_warning,
     )
