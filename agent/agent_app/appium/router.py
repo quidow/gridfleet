@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, status
 
-from agent_app.appium import appium_mgr
+from agent_app.appium.dependencies import AppiumMgrDep  # noqa: TC001 - FastAPI resolves at runtime
 from agent_app.appium.exceptions import (
     AlreadyRunningError,
     DeviceNotFoundError,
@@ -45,9 +45,9 @@ router = APIRouter(prefix="/agent/appium", tags=["appium"])
         status.HTTP_504_GATEWAY_TIMEOUT: {"model": ErrorEnvelope, "description": "STARTUP_TIMEOUT"},
     },
 )
-async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
+async def start_appium(req: AppiumStartRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
     try:
-        info = await appium_mgr.start(
+        info = await mgr.start(
             connection_target=req.connection_target,
             platform_id=req.platform_id,
             port=req.port,
@@ -96,9 +96,9 @@ async def start_appium(req: AppiumStartRequest) -> dict[str, Any]:
         status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope, "description": "DEVICE_NOT_FOUND"},
     },
 )
-async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[str, Any]:
+async def reconfigure_appium(port: int, req: AppiumReconfigureRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
     try:
-        await appium_mgr.reconfigure(
+        await mgr.reconfigure(
             port,
             accepting_new_sessions=req.accepting_new_sessions,
             stop_pending=req.stop_pending,
@@ -120,8 +120,8 @@ async def reconfigure_appium(port: int, req: AppiumReconfigureRequest) -> dict[s
     status_code=status.HTTP_200_OK,
     summary="Stop a managed Appium process by port (idempotent)",
 )
-async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
-    await appium_mgr.stop(req.port)
+async def stop_appium(req: AppiumStopRequest, mgr: AppiumMgrDep) -> dict[str, Any]:
+    await mgr.stop(req.port)
     return {"stopped": True, "port": req.port}
 
 
@@ -131,8 +131,8 @@ async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
     status_code=status.HTTP_200_OK,
     summary="Process info for a managed Appium port",
 )
-async def appium_status(port: int) -> dict[str, Any]:
-    return await appium_mgr.status(port)
+async def appium_status(port: int, mgr: AppiumMgrDep) -> dict[str, Any]:
+    return await mgr.status(port)
 
 
 @router.get(
@@ -141,6 +141,6 @@ async def appium_status(port: int) -> dict[str, Any]:
     status_code=status.HTTP_200_OK,
     summary="Recent stdout/stderr lines for a managed Appium",
 )
-async def appium_logs(port: int, lines: int = Query(100, ge=1, le=5000)) -> dict[str, Any]:
-    log_lines = appium_mgr.get_logs(port, lines=lines)
+async def appium_logs(port: int, mgr: AppiumMgrDep, lines: int = Query(100, ge=1, le=5000)) -> dict[str, Any]:
+    log_lines = mgr.get_logs(port, lines=lines)
     return {"port": port, "lines": log_lines, "count": len(log_lines)}

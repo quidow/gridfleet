@@ -6,7 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter, status
 
-from agent_app.plugins.manager import get_installed_plugins, sync_plugins
+from agent_app.plugins.dependencies import (  # noqa: TC001 - FastAPI resolves at runtime
+    InstalledPluginsDep,
+    SyncPluginsDep,
+)
 from agent_app.plugins.schemas import (
     PluginListItem,
     PluginSyncRequest,
@@ -22,8 +25,8 @@ router = APIRouter(prefix="/agent/plugins", tags=["plugins"])
     status_code=status.HTTP_200_OK,
     summary="List installed Appium plugins",
 )
-async def list_plugins() -> list[dict[str, str]]:
-    return await get_installed_plugins()
+async def list_plugins(installed: InstalledPluginsDep) -> list[dict[str, str]]:
+    return installed
 
 
 @router.post(
@@ -32,6 +35,6 @@ async def list_plugins() -> list[dict[str, str]]:
     status_code=status.HTTP_200_OK,
     summary="Sync the installed plugin set",
 )
-async def sync_agent_plugins(req: PluginSyncRequest) -> dict[str, Any]:
+async def sync_agent_plugins(req: PluginSyncRequest, do_sync: SyncPluginsDep) -> dict[str, Any]:
     configs = [plugin.model_dump() for plugin in req.plugins]
-    return await sync_plugins(configs)
+    return await do_sync(configs)
