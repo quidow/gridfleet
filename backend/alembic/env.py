@@ -5,10 +5,42 @@ from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-import app.models  # noqa: F401 — register all models on Base.metadata
 from alembic import context
+from app.agent_comm.models import AgentReconfigureOutbox  # noqa: F401
+from app.analytics.models import AnalyticsCapacitySnapshot  # noqa: F401
+from app.appium_nodes.models import AppiumNode, AppiumNodeResourceClaim  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base
+from app.devices.models import (  # noqa: F401
+    Device,
+    DeviceEvent,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceIntent,
+    DeviceIntentDirty,
+    DeviceReservation,
+    DeviceTestDataAuditLog,
+)
+from app.events.models import SystemEvent  # noqa: F401
+from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample, HostTerminalSession  # noqa: F401
+from app.jobs.models import Job  # noqa: F401
+from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat  # noqa: F401
+from app.models.control_plane_state_entry import ControlPlaneStateEntry  # noqa: F401
+from app.packs.models import (  # noqa: F401
+    DriverPack,
+    DriverPackFeature,
+    DriverPackPlatform,
+    DriverPackRelease,
+    HostPackDoctorResult,
+    HostPackFeatureStatus,
+    HostPackInstallation,
+    HostRuntimeInstallation,
+)
+from app.plugins.models import AppiumPlugin  # noqa: F401
+from app.runs.models import RunState, TestRun  # noqa: F401
+from app.sessions.models import Session, SessionStatus  # noqa: F401
+from app.settings.models import ConfigAuditLog, Setting  # noqa: F401
+from app.webhooks.models import Webhook, WebhookDelivery  # noqa: F401
 
 config = context.config
 

@@ -4,11 +4,9 @@ Reads the same environment variables as the legacy ``Settings`` fields
 (``GRIDFLEET_AUTH_*`` and ``GRIDFLEET_MACHINE_AUTH_*``) via per-field
 aliases, so ops-facing env var names are unchanged. ``populate_by_name=
 True`` lets tests construct via the Python field name
-(``AuthConfig(auth_enabled=True)``) which mirrors the legacy
-``Settings(auth_enabled=True)`` call shape.
+(``AuthConfig(auth_enabled=True)``).
 
-This is the canonical source of auth process-config. ``Settings``
-forwards every ``auth_*`` / ``machine_auth_*`` attribute access here.
+This is the canonical source of auth process-config.
 """
 
 from __future__ import annotations

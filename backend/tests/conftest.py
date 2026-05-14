@@ -170,10 +170,9 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     event_bus.reset()
     agent_circuit_breaker.reset()
     shutdown_coordinator.reset()
-    # Phase 1: auth_settings is a process-global singleton. Tests that set
-    # ``settings.auth_enabled = True`` (or any other auth_* field) mutate
-    # this singleton. Restore the snapshot taken before yield so leaks
-    # don't gate other tests' routes behind auth.
+    # Domain process settings are module-level singletons. Restore the
+    # snapshots taken before yield so auth, agent, and pack storage state
+    # does not leak between tests.
     for key, value in agent_snapshot.items():
         setattr(agent_settings, key, value)
     for key, value in auth_snapshot.items():

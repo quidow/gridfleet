@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
-from app.core.config import settings as process_settings
+from app.agent_comm import agent_settings
+from app.auth import auth_settings
 from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names, queue_event_for_session
 from app.settings.models import Setting
 
@@ -61,8 +62,8 @@ def _cross_field_validate(key: str, value: SettingValue) -> str | None:
     if (
         key == "agent.enable_web_terminal"
         and value is True
-        and process_settings.auth_enabled
-        and not process_settings.agent_terminal_token
+        and auth_settings.auth_enabled
+        and not agent_settings.agent_terminal_token
     ):
         return (
             "GRIDFLEET_AGENT_TERMINAL_TOKEN must be set in the environment before "

@@ -1252,7 +1252,7 @@ async def test_host_terminal_adapter_methods_and_proxy_error_path() -> None:
         patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=AsyncMock(return_value=session_id)),
         patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
         patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
-        patch("app.hosts.router_terminal.settings.agent_terminal_token", "token"),
+        patch("app.hosts.router_terminal.agent_settings.agent_terminal_token", "token"),
     ):
         await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
 

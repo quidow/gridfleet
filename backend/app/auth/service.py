@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import jwt
 from starlette.requests import cookie_parser
 
-from app.core.config import settings
+from app.auth import auth_settings as settings
 
 _ALGORITHM = "HS256"
 

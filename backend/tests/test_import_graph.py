@@ -1,15 +1,9 @@
-"""Migration-aware import-graph guard.
+"""Backend import-graph guard.
 
 Enforces three rules:
   1. Core purity — no module under ``app/core/`` imports from
-     ``app/<anything-not-core>``. Always on.
-  2. Migrated domains — for each domain in
-     ``_import_graph_manifest.MIGRATED_DOMAINS``, no other module may
-     reach past its package root. Empty in Phase 0b.
-  3. Legacy areas — modules listed in
-     ``_import_graph_manifest.LEGACY_SHIM_FILES`` are exempt.
-
-Phase 16 deletes the manifest and tightens this test.
+     ``app/<anything-not-core>``.
+  2. Deleted layout shim namespaces may not be imported anywhere.
 """
 
 from __future__ import annotations
@@ -19,9 +13,25 @@ from pathlib import Path
 
 import pytest
 
-from tests._import_graph_manifest import LEGACY_SHIM_FILES, MIGRATED_DOMAINS
-
 BACKEND_APP = Path(__file__).resolve().parent.parent / "app"
+LEGACY_MODULE_PREFIXES: tuple[str, ...] = (
+    "app.agent_client",
+    "app.config",
+    "app.database",
+    "app.dependencies",
+    "app.errors",
+    "app.health",
+    "app.metrics",
+    "app.metrics_recorders",
+    "app.middleware",
+    "app.observability",
+    "app.pack",
+    "app.routers",
+    "app.schemas",
+    "app.security",
+    "app.shutdown",
+    "app.type_defs",
+)
 
 
 def _iter_python_modules(root: Path) -> list[Path]:
@@ -51,8 +61,6 @@ def _relative(path: Path) -> str:
 )
 def test_core_purity(core_file: Path) -> None:
     rel = _relative(core_file)
-    if rel in LEGACY_SHIM_FILES:
-        pytest.skip(f"{rel} carries a Phase-1+ shim exemption — see manifest comment.")
     for imported in _imports_from(core_file):
         if not imported.startswith("app.core"):
             pytest.fail(
@@ -61,48 +69,14 @@ def test_core_purity(core_file: Path) -> None:
             )
 
 
-def test_migrated_domains_have_no_deep_external_imports() -> None:
-    if not MIGRATED_DOMAINS:
-        pytest.skip("No domains migrated yet; rule 2 inactive in Phase 0b.")
-
+def test_no_deleted_layout_shim_imports() -> None:
     for module in _iter_python_modules(BACKEND_APP):
         rel = _relative(module)
-        if rel in LEGACY_SHIM_FILES:
-            continue
-        owner = rel.removeprefix("app/").split("/", 1)[0]
         for imported in _imports_from(module):
-            parts = imported.split(".")
-            if len(parts) < 3:
-                continue
-            target = parts[1]
-            if target not in MIGRATED_DOMAINS or target == owner:
-                continue
-            allowed = (
-                f"app.{target}",
-                f"app.{target}.models",
-            )
-            if target == "packs":
-                allowed = (
-                    *allowed,
-                    "app.packs.routers",
-                    "app.packs.services",
-                )
-            if target == "appium_nodes":
-                allowed = (
-                    *allowed,
-                    "app.appium_nodes.routers",
-                    "app.appium_nodes.services",
-                )
-            if target == "devices":
-                allowed = (
-                    *allowed,
-                    "app.devices.routers",
-                    "app.devices.services",
-                )
-            if imported not in allowed:
+            if imported in LEGACY_MODULE_PREFIXES or any(
+                imported.startswith(f"{prefix}.") for prefix in LEGACY_MODULE_PREFIXES
+            ):
                 pytest.fail(
-                    f"{rel} imports `{imported}` — cross-domain imports must "
-                    f"go through `app.{target}` or `app.{target}.models` "
-                    f"(concrete model files like `app.{target}.models.<name>` "
-                    f"are forbidden; rely on the models package's re-exports)."
+                    f"{rel} imports `{imported}` — layout shim modules were "
+                    "deleted; import from app.core or the owning domain package instead."
                 )

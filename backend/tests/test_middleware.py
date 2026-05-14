@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.auth import auth_settings as settings
 from app.auth.middleware import StaticPathsAuthMiddleware
-from app.core.config import settings
 
 
 @pytest.fixture(autouse=True)

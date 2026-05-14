@@ -8,8 +8,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.core.config import settings
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs import packs_settings
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
 from app.packs.services import release as pack_release_service
@@ -32,7 +32,7 @@ def get_pack_storage() -> PackStorageService:
     Override ``app.dependency_overrides[get_pack_storage]`` in tests to point at
     a writable ``tmp_path``-rooted instance instead of the production storage dir.
     """
-    return PackStorageService(root=settings.driver_pack_storage_dir)
+    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
 
 
 PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]

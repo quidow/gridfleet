@@ -5,7 +5,7 @@ import base64
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.core.config import settings
+from app.auth import auth_settings as settings
 from app.main import app
 
 OPEN_PATH_PREFIXES = (

@@ -6,7 +6,6 @@ from fastapi import APIRouter, WebSocket, status
 
 from app.agent_comm import agent_settings
 from app.auth import service as auth
-from app.core.config import settings
 from app.core.database import async_session
 from app.hosts import service as host_service
 from app.hosts import service_terminal_audit as host_terminal_audit
@@ -86,7 +85,7 @@ async def host_terminal(ws: WebSocket, host_id: uuid.UUID) -> None:
         close_reason = await proxy_terminal_session(
             browser=_BrowserAdapter(),
             agent_url=agent_url,
-            agent_token=settings.agent_terminal_token or "",
+            agent_token=agent_settings.agent_terminal_token or "",
         )
     except Exception:
         logger.exception("terminal proxy crashed")

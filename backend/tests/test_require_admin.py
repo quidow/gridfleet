@@ -46,8 +46,8 @@ async def test_require_admin_returns_username_when_auth_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When auth is enabled, require_any_auth sets auth_username; require_admin reads it."""
+    from app.auth import auth_settings as settings
     from app.auth.dependencies import require_any_auth
-    from app.core.config import settings
 
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "auth_username", "admin")

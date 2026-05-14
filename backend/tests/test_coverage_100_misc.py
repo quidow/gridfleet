@@ -23,7 +23,7 @@ from app.appium_nodes.services import (
 from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
 )
-from app.core.config import Settings
+from app.auth.config import AuthConfig
 from app.core.errors import PackDrainingError, _http_error_code
 from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
@@ -120,9 +120,9 @@ from app.webhooks.schemas import WebhookUpdate
 
 def test_config_and_error_guard_branches() -> None:
     with pytest.raises(ValidationError, match="at least 1 second"):
-        Settings(auth_session_ttl_sec=0)
+        AuthConfig(auth_session_ttl_sec=0)
 
-    settings = Settings(
+    settings = AuthConfig(
         auth_enabled=True,
         auth_username="operator",
         auth_password="secret",

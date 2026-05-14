@@ -11,8 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.core.config import settings
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs import packs_settings
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.schemas import PackOut
 from app.packs.services.ingest import (
@@ -84,7 +84,7 @@ async def fork(
         info.gname = ""
         tar.addfile(info, io.BytesIO(manifest_bytes))
 
-    storage = PackStorageService(settings.driver_pack_storage_dir)
+    storage = PackStorageService(packs_settings.driver_pack_storage_dir)
     try:
         pack = await ingest_pack_tarball(
             session,
