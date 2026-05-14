@@ -8,14 +8,14 @@ from sqlalchemy import and_, func, or_, select, text
 
 from app.analytics import schemas as analytics_schemas
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.database import async_session
+from app.appium_nodes.models import AppiumNode
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.grid import service as grid_service
-from app.models.appium_node import AppiumNode
-from app.models.host import Host, HostStatus
-from app.models.session import Session, SessionStatus
-from app.observability import get_logger, observe_background_loop
-from app.services.session_filters import exclude_non_test_sessions
+from app.hosts.models import Host, HostStatus
+from app.sessions.filters import exclude_non_test_sessions
+from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
 
 if TYPE_CHECKING:

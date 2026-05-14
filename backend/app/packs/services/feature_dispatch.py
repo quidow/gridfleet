@@ -22,10 +22,10 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.agent_client import AgentClientFactory, AgentHttpClient
-from app.agent_client import request as agent_request
-from app.errors import AgentCallError
-from app.models.host import Host
+from app.agent_comm.client import AgentClientFactory, AgentHttpClient
+from app.agent_comm.client import request as agent_request
+from app.core.errors import AgentCallError
+from app.hosts.models import Host
 from app.packs.adapter import FeatureActionResult
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services.feature_status import record_feature_status
@@ -149,7 +149,7 @@ async def _call_agent(
     """POST the action body to the agent and parse the response.
 
     Mirrors the ``_send_request`` pattern used by
-    :mod:`app.services.agent_operations` (see ``node_service.py``
+    :mod:`app.agent_comm.operations` (see ``node_service.py``
     and ``agent_operations.py:24-47``) so that circuit-breaker bookkeeping,
     request-id headers, and timeout semantics stay consistent across all
     backend → agent calls.

@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.models.device import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceHold, DeviceOperationalState
 
 
 class GridRegistryDeviceRead(BaseModel):

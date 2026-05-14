@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - runtime use in helper signature
 
-from app.observability import get_logger
+from app.core.observability import get_logger
 from app.settings import settings_service
 
 if TYPE_CHECKING:

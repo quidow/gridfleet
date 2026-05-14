@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
-from app.models.host import Host
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
+from app.hosts.models import Host, HostPluginRuntimeStatus
 from app.packs.models import (
     DriverPackRelease,
     HostPackDoctorResult,

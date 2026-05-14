@@ -6,11 +6,10 @@ from sqlalchemy import cast, func, literal, or_, select, union
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import selectinload
 
-from app.models.device import Device
-from app.models.device_reservation import DeviceReservation
-from app.models.session import Session, SessionStatus
-from app.models.test_run import TERMINAL_STATES, RunState, TestRun
+from app.devices.models import Device, DeviceReservation
 from app.packs.models import DriverPack, DriverPackRelease, PackState
+from app.runs.models import TERMINAL_STATES, RunState, TestRun
+from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

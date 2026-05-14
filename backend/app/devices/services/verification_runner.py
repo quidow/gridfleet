@@ -4,14 +4,14 @@ from typing import Any
 
 import httpx
 
+from app.core.type_defs import SessionFactory
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.verification_execution import execute_verification_context
 from app.devices.services.verification_job_state import finish_job, hydrate_job
 from app.devices.services.verification_preparation import validate_create_request, validate_update_request
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.services import session_viability
-from app.type_defs import SessionFactory
+from app.sessions import service_viability as session_viability
 
 logger = logging.getLogger(__name__)
 

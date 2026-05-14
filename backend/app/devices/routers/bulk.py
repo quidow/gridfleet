@@ -2,7 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.devices.schemas.device import (
     BulkAutoManageUpdate,
     BulkDeviceIds,

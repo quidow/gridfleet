@@ -4,12 +4,13 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, status
 
-from app.config import settings
-from app.database import async_session
+from app.agent_comm import agent_settings
+from app.auth import service as auth
+from app.core.config import settings
+from app.core.database import async_session
 from app.hosts import service as host_service
 from app.hosts import service_terminal_audit as host_terminal_audit
 from app.hosts.service_terminal_proxy import proxy_terminal_session
-from app.services import auth
 from app.settings import settings_service
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
@@ -35,7 +36,7 @@ def _resolve_browser_username(ws: WebSocket) -> str | None:
 
 def _agent_terminal_url(host_ip: str, agent_port: int) -> str:
     host = f"[{host_ip}]" if ":" in host_ip else host_ip
-    return f"{settings.agent_terminal_scheme}://{host}:{agent_port}/agent/terminal"
+    return f"{agent_settings.agent_terminal_scheme}://{host}:{agent_port}/agent/terminal"
 
 
 @router.websocket("/{host_id}/terminal")

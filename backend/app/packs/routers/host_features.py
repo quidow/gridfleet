@@ -17,7 +17,8 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.dependencies import AdminDep, DbDep
+from app.auth.dependencies import AdminDep
+from app.core.dependencies import DbDep
 from app.packs.services.feature_dispatch import dispatch_feature_action
 
 router = APIRouter(prefix="/api/hosts", tags=["driver-pack-feature-actions"])

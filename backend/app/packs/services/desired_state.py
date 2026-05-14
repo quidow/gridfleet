@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.host import Host
+from app.hosts.models import Host
 from app.packs.models import DriverPack, PackState
 from app.packs.services.host_compatibility import manifest_supports_host_os
 from app.packs.services.release_ordering import selected_release

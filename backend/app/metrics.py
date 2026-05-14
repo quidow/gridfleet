@@ -1,7 +1,7 @@
 """Legacy metrics surface for the GridFleet backend.
 
 Phase 0a state: this module re-exports every Prometheus gauge and
-recorder from :mod:`app.metrics_recorders` plus the fan-out dispatcher
+recorder from :mod:`app.core.metrics_recorders` plus the fan-out dispatcher
 from :mod:`app.core.metrics`, and carries the legacy cross-domain
 aggregator as :func:`refresh_system_gauges_legacy`.
 :func:`refresh_system_gauges` is kept as a module-level alias pointing
@@ -27,7 +27,7 @@ from app.core.metrics import (
     register_gauge_refresher,
 )
 from app.core.metrics import refresh_system_gauges as _core_refresh_system_gauges
-from app.metrics_recorders import (
+from app.core.metrics_recorders import (
     ACTIVE_SESSIONS,
     ACTIVE_SSE_CONNECTIONS,
     AGENT_CALL_DURATION_SECONDS,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import socket
@@ -7,19 +8,27 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
 
 import structlog
 
-from app.database import async_session
-from app.metrics_recorders import record_background_loop_error, record_background_loop_run
-from app.services import control_plane_state_store
+from app.core.database import async_session
+from app.core.metrics_recorders import record_background_loop_error, record_background_loop_run
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class _ControlPlaneStateStore(Protocol):
+    async def get_values(self, db: AsyncSession, namespace: str) -> dict[str, Any]: ...
+
+    async def get_value(self, db: AsyncSession, namespace: str, key: str) -> object: ...
+
+    async def set_value(self, db: AsyncSession, namespace: str, key: str, value: dict[str, Any]) -> None: ...
+
 
 REQUEST_ID_HEADER = "X-Request-ID"
 LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
@@ -184,12 +193,18 @@ def loop_heartbeat_fresh(snapshot: dict[str, Any], *, now: datetime | None = Non
     return current_time <= next_expected_at + timedelta(seconds=LOOP_HEARTBEAT_STALE_GRACE_SEC)
 
 
+def _control_plane_state_store() -> _ControlPlaneStateStore:
+    return cast("_ControlPlaneStateStore", importlib.import_module("app.services.control_plane_state_store"))
+
+
 async def get_background_loop_snapshots(db: AsyncSession) -> dict[str, dict[str, Any]]:
+    control_plane_state_store = _control_plane_state_store()
     values = await control_plane_state_store.get_values(db, LOOP_HEARTBEAT_NAMESPACE)
     return {name: value for name, value in values.items() if isinstance(value, dict)}
 
 
 async def set_background_loop_snapshot(db: AsyncSession, loop_name: str, snapshot: dict[str, Any]) -> None:
+    control_plane_state_store = _control_plane_state_store()
     await control_plane_state_store.set_value(db, LOOP_HEARTBEAT_NAMESPACE, loop_name, snapshot)
 
 
@@ -226,6 +241,7 @@ async def _write_background_loop_state(
     error: str | None = None,
 ) -> None:
     async with async_session() as db:
+        control_plane_state_store = _control_plane_state_store()
         previous = await control_plane_state_store.get_value(db, LOOP_HEARTBEAT_NAMESPACE, loop_name)
         snapshot = dict(previous) if isinstance(previous, dict) else {}
         reference_time = succeeded_at or error_at or started_at or _now()

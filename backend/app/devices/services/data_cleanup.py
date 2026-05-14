@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 
+from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.database import async_session
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events import event_bus
-from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.host_resource_sample import HostResourceSample
-from app.models.session import Session, SessionStatus
-from app.observability import get_logger, observe_background_loop, schedule_background_loop
+from app.hosts.models import HostResourceSample
+from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
 from app.settings.models import ConfigAuditLog
 

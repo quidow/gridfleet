@@ -14,8 +14,8 @@ from app.devices.models import (
     HardwareChargingState,
     HardwareHealthStatus,
 )
-from app.models.session import Session, SessionStatus
-from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.sessions.models import Session, SessionStatus
+from app.sessions.viability_types import SessionViabilityCheckedBy
 
 DeviceTags = dict[str, str]
 

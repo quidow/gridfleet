@@ -12,27 +12,30 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agent_comm.operations import appium_status as fetch_appium_status
+from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.reconciler_agent import require_management_host
-from app.database import async_session
-from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.database import async_session
+from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.observability import get_logger, observe_background_loop
+from app.devices import locking as device_locking
+from app.devices.models import ConnectionType, Device, DeviceEventType, DeviceOperationalState, DeviceType
+from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services import capability as capability_service
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services.event import record_event
+from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
+from app.devices.services.lifecycle_incidents import record_lifecycle_incident
+from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_device_crashed_event, queue_event_for_session
-from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.models.device_event import DeviceEventType
-from app.observability import get_logger, observe_background_loop
-from app.schemas.device import DeviceLifecyclePolicySummaryState
-from app.services import capability_service, device_health, device_locking, grid_service, lifecycle_policy
-from app.services.agent_operations import appium_status as fetch_appium_status
-from app.services.agent_probe_result import ProbeResult, from_status_response
+from app.grid import service as grid_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.device_event_service import record_event
-from app.services.device_readiness import is_ready_for_use_async
-from app.services.intent_service import register_intents_and_reconcile
-from app.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
-from app.services.lifecycle_incident_service import record_lifecycle_incident
-from app.services.session_viability import (
+from app.sessions.service_viability import (
     build_probe_capabilities,
     grid_probe_response_to_result,
     probe_session_via_grid,

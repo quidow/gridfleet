@@ -9,7 +9,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.database import async_session
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import intent as intent_service
@@ -22,10 +23,10 @@ from app.devices.services import (
 )
 from app.devices.services import state as device_state
 from app.grid import service as grid_service
-from app.models.test_run import TERMINAL_STATES, RunState
-from app.observability import get_logger, observe_background_loop
-from app.services import run_service, session_service
+from app.runs import service as run_service
+from app.runs.models import TERMINAL_STATES, RunState
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
+from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings import settings_service

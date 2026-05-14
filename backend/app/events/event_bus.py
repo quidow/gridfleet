@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session  # noqa: TC002
 
 from app.core.metrics import register_gauge_refresher
+from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
+from app.core.observability import get_logger
 from app.events.models import SystemEvent
-from app.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
-from app.observability import get_logger
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker

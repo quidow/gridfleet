@@ -6,11 +6,11 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from app.models.session import Session, SessionStatus
+from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
-    from app.models.device import Device
-    from app.models.test_run import TestRun
+    from app.devices.models import Device
+    from app.runs.models import TestRun
     from app.seeding.context import SeedContext
 
 

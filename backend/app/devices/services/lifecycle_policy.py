@@ -5,8 +5,16 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.reconciler_agent import wait_for_node_running
+from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_incidents as lifecycle_incident_service
+from app.devices.services import lifecycle_policy_summary as lifecycle_policy_summary
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.intent_types import (
@@ -50,20 +58,10 @@ from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, Inc
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import ready_operational_state, set_hold
-from app.models.appium_node import AppiumNode
-from app.models.test_run import TERMINAL_STATES
-from app.services import (
-    device_health,
-    device_locking,
-    lifecycle_incident_service,
-    lifecycle_policy_summary,
-    run_reservation_service,
-    session_viability,
-)
-from app.services.appium_reconciler_agent import wait_for_node_running
-from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.node_service_types import NodeManagerError
-from app.services.session_viability_types import SessionViabilityCheckedBy
+from app.runs import service_reservation as run_reservation_service
+from app.runs.models import TERMINAL_STATES
+from app.sessions import service_viability as session_viability
+from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
 
 if TYPE_CHECKING:

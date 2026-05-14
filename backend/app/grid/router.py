@@ -2,10 +2,10 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
+from app.devices.services import service as device_service
 from app.grid import service as grid_service
 from app.grid.schemas import GridQueueRead, GridStatusRead
-from app.services import device_service
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 

@@ -18,8 +18,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 
-from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.config import settings
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.services.export import export_pack
 from app.packs.services.storage import PackStorageService
 

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.type_defs import ControlPlaneValue
+    from app.core.type_defs import ControlPlaneValue
 
 
 async def get_value(db: AsyncSession, namespace: str, key: str) -> ControlPlaneValue | None:

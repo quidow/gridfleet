@@ -10,8 +10,9 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.config import settings
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.schemas import PackOut
 from app.packs.services.ingest import (

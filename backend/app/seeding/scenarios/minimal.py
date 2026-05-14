@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from app.models.device import ConnectionType, DeviceOperationalState, DeviceType
-from app.models.host import HostStatus, OSType
-from app.models.session import SessionStatus
-from app.models.test_run import RunState
+from app.devices.models import ConnectionType, DeviceOperationalState, DeviceType
+from app.hosts.models import HostStatus, OSType
+from app.runs.models import RunState
 from app.seeding.factories.device import make_device
 from app.seeding.factories.host import make_host
 from app.seeding.factories.run import make_reservation, make_run
 from app.seeding.factories.session import make_session
+from app.sessions.models import SessionStatus
 
 if TYPE_CHECKING:
     from app.seeding.context import SeedContext

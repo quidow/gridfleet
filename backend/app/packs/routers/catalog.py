@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import PackState
 from app.packs.schemas import (
     DriverPackHostsOut,

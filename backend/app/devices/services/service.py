@@ -8,6 +8,10 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumNode
+from app.core.observability import sanitize_log_value
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -24,6 +28,11 @@ from app.devices.schemas.device import (
     HardwareTelemetryState,
 )
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
+from app.devices.services import attention as device_attention
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services import readiness as device_readiness
+from app.devices.services import write as device_write
 from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
 from app.devices.services.identity_conflicts import (
     ensure_device_payload_identity_available,
@@ -36,21 +45,10 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
-from app.models.appium_node import AppiumNode
-from app.models.host import Host
-from app.observability import sanitize_log_value
-from app.services import (
-    control_plane_state_store,
-    device_attention,
-    device_health,
-    device_locking,
-    device_readiness,
-    device_write,
-    hardware_telemetry,
-    lifecycle_policy,
-    run_service,
-)
-from app.services.node_service_types import NodeManagerError
+from app.hosts import service_hardware_telemetry as hardware_telemetry
+from app.hosts.models import Host
+from app.runs import service as run_service
+from app.services import control_plane_state_store
 
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]

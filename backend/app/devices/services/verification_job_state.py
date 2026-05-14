@@ -2,9 +2,9 @@ import copy
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from app.core.type_defs import SessionFactory
 from app.events import event_bus
 from app.jobs.models import Job
-from app.type_defs import SessionFactory
 
 VERIFICATION_EVENT = "device.verification.updated"
 STAGE_NAMES = ("validation", "device_health", "node_start", "session_probe", "cleanup", "save_device")

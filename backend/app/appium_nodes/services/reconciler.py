@@ -22,6 +22,8 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
+from app.agent_comm.operations import agent_base_url, agent_health, appium_stop
+from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.appium_nodes.services.desired_state_writer import write_desired_state
@@ -32,9 +34,9 @@ from app.appium_nodes.services.reconciler_agent import (
     stop_remote_node,
 )
 from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
-from app.config import reconciler_convergence_enabled
-from app.database import async_session
-from app.metrics_recorders import (
+from app.core.config import reconciler_convergence_enabled
+from app.core.database import async_session
+from app.core.metrics_recorders import (
     APPIUM_RECONCILER_CYCLE_FAILURES,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
     APPIUM_RECONCILER_LAST_CYCLE_SECONDS,
@@ -42,18 +44,16 @@ from app.metrics_recorders import (
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
 )
-from app.models.device import Device
-from app.models.host import Host, HostStatus
-from app.observability import get_logger, observe_background_loop
-from app.services import device_locking
-from app.services.agent_operations import agent_base_url, agent_health, appium_stop
-from app.services.agent_snapshot import parse_running_nodes
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.lifecycle_policy_actions import (
+from app.core.observability import get_logger, observe_background_loop
+from app.devices import locking as device_locking
+from app.devices.models import Device
+from app.devices.services.lifecycle_policy_actions import (
     record_reconciler_start_failure_state,
     reset_reconciler_start_failure_state,
 )
-from app.services.lifecycle_policy_state import state as lifecycle_policy_state
+from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
+from app.hosts.models import Host, HostStatus
+from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.services.agent_snapshot import RunningAppiumNode
+    from app.agent_comm.snapshot import RunningAppiumNode
 
 logger = get_logger(__name__)
 

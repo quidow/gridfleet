@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm import circuit_breaker as agent_circuit_breaker_module
+from app.appium_nodes.models import AppiumNode
+from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.hosts.models import Host
 from app.hosts.schemas import (
     HostAppiumProcessesRead,
@@ -15,9 +17,6 @@ from app.hosts.schemas import (
     HostDiagnosticsRead,
     HostRecoveryEventRead,
 )
-from app.models.appium_node import AppiumNode
-from app.models.device import Device
-from app.models.device_event import DeviceEvent, DeviceEventType
 from app.services import control_plane_state_store
 
 if TYPE_CHECKING:

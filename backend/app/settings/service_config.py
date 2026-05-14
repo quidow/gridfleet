@@ -5,9 +5,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.models import Device
+from app.devices.services import readiness as device_readiness
 from app.events import queue_event_for_session
-from app.models.device import Device
-from app.services import device_readiness
 from app.settings.models import ConfigAuditLog
 
 

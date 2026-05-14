@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
-from app.observability import BACKGROUND_LOOP_NAMES, get_background_loop_snapshots, loop_heartbeat_fresh
-from app.shutdown import shutdown_coordinator
+from app.core.observability import BACKGROUND_LOOP_NAMES, get_background_loop_snapshots, loop_heartbeat_fresh
+from app.core.shutdown import shutdown_coordinator
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

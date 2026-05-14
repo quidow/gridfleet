@@ -7,8 +7,13 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
 
-from app import metrics_recorders
-from app.database import async_session
+from app.agent_comm.models import AgentReconfigureOutbox
+from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
+from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
+from app.core import metrics_recorders
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceHold, DeviceIntent, DeviceIntentDirty, DeviceReservation
 from app.devices.services.event import record_event
@@ -21,12 +26,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
-from app.models.appium_node import AppiumDesiredState
-from app.observability import get_logger, observe_background_loop
-from app.services.agent_reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.settings import settings_service
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.models.appium_node import AppiumNode
+    from app.appium_nodes.models import AppiumNode
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"

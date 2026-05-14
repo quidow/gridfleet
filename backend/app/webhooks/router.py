@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.events import event_bus
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import service as webhook_service

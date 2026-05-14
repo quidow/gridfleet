@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Query
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.devices.schemas.lifecycle import LifecycleIncidentListRead
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 

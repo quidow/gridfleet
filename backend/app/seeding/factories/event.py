@@ -5,8 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from app.devices.models import DeviceEvent, DeviceEventType
 from app.events.models import SystemEvent
-from app.models.device_event import DeviceEvent, DeviceEventType
 
 if TYPE_CHECKING:
     from datetime import datetime

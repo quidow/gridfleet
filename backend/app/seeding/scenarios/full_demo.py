@@ -6,23 +6,21 @@ import random as _random_module
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.appium_node import AppiumDesiredState, AppiumNode
-from app.models.device import (
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import (
     ConnectionType,
+    DeviceEventType,
+    DeviceGroupMembership,
     DeviceHold,
     DeviceOperationalState,
     DeviceType,
+    GroupType,
     HardwareHealthStatus,
 )
-from app.models.device_event import DeviceEventType
-from app.models.device_group import DeviceGroupMembership, GroupType
-from app.models.host import HostStatus, OSType
-from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
-from app.models.host_terminal_session import HostTerminalSession
-from app.models.session import SessionStatus
-from app.models.test_run import RunState
+from app.hosts.models import HostPluginRuntimeStatus, HostStatus, HostTerminalSession, OSType
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.plugins.models import AppiumPlugin
+from app.runs.models import RunState
 from app.seeding.factories.device import make_device
 from app.seeding.factories.driver_pack import seed_demo_driver_packs
 from app.seeding.factories.event import make_device_event, make_system_event
@@ -34,15 +32,16 @@ from app.seeding.factories.session import make_session
 from app.seeding.factories.telemetry import host_resource_series, make_capacity_snapshot
 from app.seeding.factories.webhook import make_webhook, make_webhook_delivery
 from app.seeding.time_patterns import log_normal_duration_seconds, sample_run_timestamps
+from app.sessions.models import SessionStatus
 from app.settings.models import ConfigAuditLog
 
 if TYPE_CHECKING:
     import uuid
 
+    from app.devices.models import Device
     from app.events.models import SystemEvent
-    from app.models.device import Device
-    from app.models.host import Host
-    from app.models.test_run import TestRun
+    from app.hosts.models import Host
+    from app.runs.models import TestRun
     from app.seeding.context import SeedContext
 
 
@@ -443,7 +442,7 @@ def _apply_lifecycle_policy_states(
     """Seed a variety of lifecycle_policy_state payloads across the fleet.
 
     The backend derives the dashboard "Device recovery" summary states from
-    this JSON — see app.services.lifecycle_policy_summary.build_lifecycle_policy.
+    this JSON — see app.devices.services.lifecycle_policy_summary.build_lifecycle_policy.
     """
 
     def _iso(offset_seconds: int) -> str:

@@ -6,27 +6,23 @@ from typing import TYPE_CHECKING
 
 from starlette.datastructures import Headers, MutableHeaders
 
-# ``StaticPathsAuthMiddleware`` moved to ``app/auth/middleware.py`` in
-# Phase 1 of the backend domain-layout refactor. Re-exported here so
-# ``app/main.py`` and any other existing importer keeps resolving.
-from app.auth.middleware import StaticPathsAuthMiddleware
-from app.config import settings
-from app.errors import error_response, request_id_from_scope
-from app.metrics import record_http_request
-from app.observability import (
+from app.core.config import settings
+from app.core.errors import error_response, request_id_from_scope
+from app.core.metrics_recorders import record_http_request
+from app.core.observability import (
     REQUEST_ID_HEADER,
     bind_request_context,
     clear_request_context,
     generate_request_id,
 )
-from app.shutdown import shutdown_coordinator
+from app.core.shutdown import shutdown_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-__all__ = ["RequestContextMiddleware", "StaticPathsAuthMiddleware"]
+__all__ = ["RequestContextMiddleware"]
 
 
 class RequestContextMiddleware:

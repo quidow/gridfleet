@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.observability import get_logger
+from app.core.observability import get_logger
 
 logger = get_logger(__name__)
 

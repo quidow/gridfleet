@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import Response
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
 from app.packs.services.desired_state import compute_desired
 from app.packs.services.status import apply_status
 

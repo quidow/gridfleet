@@ -3,12 +3,12 @@ import asyncio
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.database import async_session
+from app.agent_comm.operations import get_pack_device_properties
+from app.core.database import async_session
+from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
-from app.models.host import Host, HostStatus
-from app.observability import get_logger, observe_background_loop
+from app.hosts.models import Host, HostStatus
 from app.packs.services import discovery as pack_discovery
-from app.services.agent_operations import get_pack_device_properties
 from app.settings import settings_service
 
 pack_refresh_device_properties = pack_discovery.refresh_device_properties

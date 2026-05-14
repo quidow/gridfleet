@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from app.observability import get_logger, observe_background_loop
+from app.core.observability import get_logger, observe_background_loop
 from app.services.control_plane_leader import LeadershipLost, control_plane_leader
 from app.settings import settings_service
 

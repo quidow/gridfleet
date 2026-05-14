@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.models.device_group import DeviceGroup, GroupType
+from app.devices.models import DeviceGroup, GroupType
 from app.settings.models import Setting
 
 if TYPE_CHECKING:

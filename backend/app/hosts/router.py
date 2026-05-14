@@ -8,8 +8,12 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
-from app.database import async_session
-from app.dependencies import DbDep
+from app.core.database import async_session
+from app.core.dependencies import DbDep
+from app.core.type_defs import AsyncTaskFactory
+from app.devices.services import platform_label as platform_label_service
+from app.devices.services import presenter as device_presenter
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events import event_bus
 from app.hosts import service as host_service
 from app.hosts import service_diagnostics as host_diagnostics
@@ -30,16 +34,10 @@ from app.hosts.schemas import (
     IntakeCandidateRead,
 )
 from app.packs import schemas as pack_schemas
+from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
 from app.plugins import service as plugin_service
-from app.services import (
-    device_presenter,
-    pack_discovery_service,
-    platform_label_service,
-)
-from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.settings import settings_service
-from app.type_defs import AsyncTaskFactory
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 

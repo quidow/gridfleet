@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from app import metrics_recorders
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.models import AgentReconfigureOutbox
-from app.errors import AgentResponseError, AgentUnreachableError
-from app.models.appium_node import AppiumNode
-from app.models.device import Device
+from app.appium_nodes.models import AppiumNode
+from app.core import metrics_recorders
+from app.core.errors import AgentResponseError, AgentUnreachableError
+from app.devices.models import Device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

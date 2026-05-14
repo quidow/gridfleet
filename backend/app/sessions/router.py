@@ -6,10 +6,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import DbDep
+from app.core.dependencies import DbDep
+from app.core.pagination import CursorPaginationError
 from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
-from app.services.cursor_pagination import CursorPaginationError
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 

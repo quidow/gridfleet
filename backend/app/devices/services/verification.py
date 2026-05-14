@@ -1,7 +1,8 @@
 import uuid
 from typing import Any
 
-from app.database import async_session
+from app.core.database import async_session
+from app.core.type_defs import SessionFactory
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.verification_job_state import (
     new_job,
@@ -12,7 +13,6 @@ from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.type_defs import SessionFactory
 
 assert_runnable = pack_platform_resolver.assert_runnable
 

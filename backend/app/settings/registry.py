@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from app.events import DEFAULT_TOAST_EVENT_NAMES, PUBLIC_EVENT_NAMES
 
 if TYPE_CHECKING:
-    from app.type_defs import SettingValue
+    from app.core.type_defs import SettingValue
 
 
 @dataclass(frozen=True)

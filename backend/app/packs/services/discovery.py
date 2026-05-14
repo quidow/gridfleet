@@ -6,17 +6,15 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from sqlalchemy import select
 
-from app.models.device import Device
-from app.models.host import Host
-from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
-from app.schemas.host import DiscoveredDevice, DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
-from app.services import device_presenter, device_write, platform_label_service
-from app.services.device_identity import (
-    host_scoped_clause,
-    is_host_scoped_identity,
-    non_host_scoped_clause,
-)
-from app.services.device_identity_conflicts import ensure_device_payload_identity_available
+from app.devices.models import Device
+from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import platform_label as platform_label_service
+from app.devices.services import presenter as device_presenter
+from app.devices.services import write as device_write
+from app.devices.services.identity import host_scoped_clause, is_host_scoped_identity, non_host_scoped_clause
+from app.devices.services.identity_conflicts import ensure_device_payload_identity_available
+from app.hosts.models import Host
+from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
 from app.settings import settings_service
 
 if TYPE_CHECKING:

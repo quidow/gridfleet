@@ -15,7 +15,7 @@ from app.devices.routers import (
 )
 from app.devices.services import lifecycle_policy
 from app.devices.services import service as device_service
-from app.services import session_viability
+from app.sessions import service_viability as session_viability
 
 router = APIRouter()
 

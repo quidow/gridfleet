@@ -9,11 +9,11 @@ import httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
-from app.database import async_session
-from app.errors import AgentCallError
+from app.core.database import async_session
+from app.core.errors import AgentCallError
+from app.core.observability import get_logger, observe_background_loop, parse_timestamp
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
-from app.observability import get_logger, observe_background_loop, parse_timestamp
 from app.settings import settings_service
 
 if TYPE_CHECKING:

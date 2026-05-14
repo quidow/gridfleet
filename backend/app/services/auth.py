@@ -6,7 +6,7 @@ this shim once every caller migrates.
 The shim re-exports both the public API and the private helpers that
 existing tests reach into (``_decode_session_payload``, ``_read_cookie``),
 plus the module-level ``settings`` reference so
-``monkeypatch.setattr(app.services.auth.settings, …)`` keeps working
+``monkeypatch.setattr(app.core.config.settings, …)`` keeps working
 until tests migrate to the new module path.
 """
 

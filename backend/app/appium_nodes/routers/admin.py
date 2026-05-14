@@ -9,11 +9,12 @@ from pydantic import BaseModel
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
-from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
-from app.models.device_event import DeviceEventType
-from app.schemas.device import AppiumNodeRead
-from app.services import device_locking
-from app.services.device_event_service import record_event
+from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
+from app.devices import locking as device_locking
+from app.devices.models import DeviceEventType
+from app.devices.schemas.device import AppiumNodeRead
+from app.devices.services.event import record_event
 
 router = APIRouter(prefix="/api/admin/appium-nodes", tags=["admin"])
 

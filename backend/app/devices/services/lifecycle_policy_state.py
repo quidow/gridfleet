@@ -2,7 +2,7 @@
 
 INVARIANT: ``state`` reads and ``write_state`` writes do NOT lock. Callers
 must hold a row-level lock on the Device row (use
-``app.services.device_locking.lock_device``) for the entire read-modify-write
+``app.devices.locking.lock_device``) for the entire read-modify-write
 window. See app/services/lifecycle_policy.py for canonical usage.
 """
 
@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import inspect as sa_inspect
 
 if TYPE_CHECKING:
+    from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
-    from app.models.appium_node import AppiumNode
 
 
 def now() -> datetime:

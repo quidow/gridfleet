@@ -7,7 +7,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.core.database import Base
 
 
 class HostResourceSample(Base):

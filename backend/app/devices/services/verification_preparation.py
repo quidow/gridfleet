@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.agent_comm.operations import normalize_pack_device, pack_device_lifecycle_action
+from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.services import readiness as device_readiness
@@ -20,10 +22,8 @@ from app.devices.services.identity_conflicts import (
     ensure_device_payload_identity_available,
 )
 from app.devices.services.verification_job_state import set_stage, should_keep_verified_node_running
-from app.errors import AgentCallError
-from app.models.host import Host
+from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.services.agent_operations import normalize_pack_device, pack_device_lifecycle_action
 
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_client import AgentClientFactory
+    from app.agent_comm.client import AgentClientFactory
     from app.devices.schemas.device import DeviceVerificationUpdate
 
 

@@ -5,13 +5,13 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import AgentCallError
-from app.models.host import Host, HostStatus
-from app.observability import get_logger
+from app.agent_comm.operations import list_plugins as list_agent_plugins
+from app.agent_comm.operations import sync_plugins as sync_agent_plugins
+from app.core.errors import AgentCallError
+from app.core.observability import get_logger
+from app.hosts.models import Host, HostStatus
 from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import PluginCreate, PluginUpdate
-from app.services.agent_operations import list_plugins as list_agent_plugins
-from app.services.agent_operations import sync_plugins as sync_agent_plugins
 
 logger = get_logger(__name__)
 

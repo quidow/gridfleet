@@ -7,7 +7,7 @@ aggregator in ``app/metrics.py``; Phase 0b moves the registry and
 recorders here. The fan-out dispatcher will accumulate per-domain
 callbacks over phases 5/6/13/14 (events, jobs, devices, sessions).
 
-``app/main.py`` calls ``app.metrics.refresh_system_gauges_legacy``
+``app/main.py`` calls ``app.core.metrics.refresh_system_gauges_legacy``
 directly until Phase 14 flips the ``/metrics`` route over to the
 dispatcher below.
 """
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
+
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,8 +48,14 @@ async def refresh_system_gauges(db: AsyncSession) -> None:
         await fn(db)
 
 
+def render_metrics() -> bytes:
+    return generate_latest()
+
+
 __all__ = [
+    "CONTENT_TYPE_LATEST",
     "GaugeRefresher",
     "refresh_system_gauges",
     "register_gauge_refresher",
+    "render_metrics",
 ]

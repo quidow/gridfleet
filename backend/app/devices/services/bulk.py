@@ -11,6 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent_comm.operations import pack_device_lifecycle_action
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
@@ -23,14 +28,9 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.devices.services.service import delete_device
-from app.errors import AgentCallError
 from app.events import event_bus, queue_event_for_session
-from app.models.appium_node import AppiumNode
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.services.agent_operations import pack_device_lifecycle_action
-from app.services.appium_reconciler_allocation import candidate_ports
-from app.services.node_service_types import NodeManagerError
 from app.settings import settings_service
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action

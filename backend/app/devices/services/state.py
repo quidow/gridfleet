@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect as sa_inspect
 
+from app.core.observability import get_logger
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_event_for_session
-from app.observability import get_logger
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
