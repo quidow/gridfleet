@@ -53,7 +53,7 @@ class AppiumReconfigureResponse(BaseModel):
     port: int = Field(ge=1024, le=65535)
     accepting_new_sessions: bool
     stop_pending: bool
-    grid_run_id: str | None
+    grid_run_id: str | None = None
 
 
 class AppiumStopResponse(BaseModel):

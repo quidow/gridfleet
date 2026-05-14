@@ -60,7 +60,17 @@ def test_health_response_accepts_route_shape() -> None:
 
 
 def test_host_telemetry_response_accepts_route_shape() -> None:
-    HostTelemetryResponse.model_validate({"cpu_percent": 0.0, "memory_percent": 0.0, "disk_percent": 0.0})
+    HostTelemetryResponse.model_validate(
+        {
+            "recorded_at": "2024-01-01T00:00:00+00:00",
+            "cpu_percent": 12.5,
+            "memory_used_mb": 4096,
+            "memory_total_mb": 16384,
+            "disk_used_gb": 50.0,
+            "disk_total_gb": 500.0,
+            "disk_percent": 10.0,
+        }
+    )
 
 
 def test_pack_devices_response_accepts_route_shape() -> None:
@@ -97,7 +107,7 @@ def test_plugin_list_item_accepts_route_shape() -> None:
 
 
 def test_plugin_sync_response_accepts_arbitrary_dict() -> None:
-    PluginSyncResponse.model_validate({"installed": [], "removed": []})
+    PluginSyncResponse.model_validate({"installed": [], "updated": [], "removed": [], "errors": {}})
 
 
 def test_tools_status_response_accepts_arbitrary_dict() -> None:
