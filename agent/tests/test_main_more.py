@@ -144,7 +144,9 @@ async def test_start_appium_generic_runtime_error() -> None:
 async def test_start_appium_unexpected_exception() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=ValueError("unexpected"),
