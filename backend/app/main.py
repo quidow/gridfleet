@@ -245,8 +245,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="GridFleet", version="0.1.0", lifespan=lifespan)
-app.add_middleware(RequestContextMiddleware)
+# Starlette installs middlewares in reverse-add order: the most recently added
+# wraps the previous one. We want RequestContextMiddleware on the outside so it
+# binds request_id, error envelopes, and metrics around all responses — including
+# the 401s emitted by StaticPathsAuthMiddleware.
 app.add_middleware(StaticPathsAuthMiddleware)
+app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth.router)
