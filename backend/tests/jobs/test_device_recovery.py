@@ -5,10 +5,12 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
+from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.services import device_locking, maintenance_service
@@ -30,11 +32,17 @@ async def _make_device_available(
     reason: str,
     **kwargs: object,
 ) -> None:
-    """Side-effect for intent registration stub — marks device available."""
+    """Side-effect for intent registration stub — marks device available and
+    simulates the reconciler bringing the node up so wait_for_node_running
+    exits on its first poll instead of blocking for its full 60s timeout."""
     del intents, reason, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
     device.operational_state = DeviceOperationalState.available
+    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
+    if node is not None:
+        node.pid = 12345
+        node.active_connection_target = "127.0.0.1:4723"
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")

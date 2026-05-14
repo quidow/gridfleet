@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
@@ -22,10 +24,17 @@ async def _mark_device_available(
     reason: str,
     **kwargs: object,
 ) -> None:
+    """Marks the device available and simulates the reconciler bringing the
+    node up so wait_for_node_running in attempt_auto_recovery exits on its
+    first poll instead of blocking for its full 60s timeout."""
     del intents, reason, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
     device.operational_state = DeviceOperationalState.available
+    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
+    if node is not None:
+        node.pid = 12345
+        node.active_connection_target = "127.0.0.1:4723"
 
 
 async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
