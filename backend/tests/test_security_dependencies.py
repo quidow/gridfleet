@@ -16,11 +16,11 @@ def _app_with_require() -> FastAPI:
     app = FastAPI()
 
     @app.get("/probe")
-    async def probe_get(result: Annotated[auth.RequestAuthResult, Depends(require_any_auth)]) -> dict:
+    async def probe_get(result: Annotated[auth.RequestAuthResult, Depends(require_any_auth)]) -> dict[str, str | None]:
         return {"mode": result.mode, "username": result.username}
 
     @app.post("/probe")
-    async def probe_post(result: Annotated[auth.RequestAuthResult, Depends(require_any_auth)]) -> dict:
+    async def probe_post(result: Annotated[auth.RequestAuthResult, Depends(require_any_auth)]) -> dict[str, str | None]:
         return {"mode": result.mode, "username": result.username}
 
     return app
