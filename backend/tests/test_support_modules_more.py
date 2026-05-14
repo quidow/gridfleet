@@ -12,10 +12,9 @@ from sqlalchemy import select
 
 from app import agent_client, database, health, metrics
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.grid import run_reaper
 from app.grid import service as grid_service
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
-from app.services import control_plane_state_store, device_identity
+from app.services import control_plane_state_store, device_identity, run_reaper
 from app.shutdown import ShutdownCoordinator
 from app.type_defs import AsyncSessionContextManager, SessionFactory
 

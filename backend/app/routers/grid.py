@@ -1,1 +1,5 @@
-from app.grid.router import *  # noqa: F403
+import sys
+
+from app.grid import router as _router
+
+sys.modules[__name__] = _router

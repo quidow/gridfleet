@@ -4,7 +4,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.grid import run_service
 from app.grid import service as grid_service
 from app.models.device import (
     ConnectionType,
@@ -16,6 +15,7 @@ from app.models.device_reservation import DeviceReservation
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
+from app.services import run_service
 from app.services.lifecycle_policy import handle_health_failure
 
 

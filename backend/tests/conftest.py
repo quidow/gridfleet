@@ -257,7 +257,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     async def _fake_publish(name: str, payload: dict[str, Any]) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.event_bus.publish", _fake_publish)
+    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
     return captured
 
 
