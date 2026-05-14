@@ -713,13 +713,14 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
             },
         ),
     ):
+        recovery_started_at = datetime.now(UTC)
         recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
 
     assert recovered is False
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     backoff_until = datetime.fromisoformat(device.lifecycle_policy_state["backoff_until"])
-    assert 4 <= (backoff_until - datetime.now(UTC)).total_seconds() <= 6
+    assert 5 <= (backoff_until - recovery_started_at).total_seconds() <= 8
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
