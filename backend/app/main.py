@@ -23,6 +23,8 @@ from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.database import async_session as session_factory
 from app.database import engine
 from app.dependencies import DbDep
+from app.devices import routers as device_routers
+from app.devices import services as device_services
 from app.errors import register_exception_handlers
 from app.events import event_bus
 from app.events import router as events
@@ -40,24 +42,10 @@ from app.observability import configure_logging, get_logger
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
-from app.routers import (
-    bulk,
-    device_groups,
-    devices,
-    lifecycle,
-    runs,
-    sessions,
-)
-from app.services import device_health, device_service
+from app.routers import runs, sessions
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
-from app.services.data_cleanup import data_cleanup_loop
-from app.services.device_connectivity import device_connectivity_loop
-from app.services.device_readiness import is_ready_for_use_async
-from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.intent_reconciler import device_intent_reconciler_loop
-from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
 from app.services.session_viability import close as close_session_viability_client
@@ -77,6 +65,14 @@ appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
 heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
 node_health_loop = appium_node_services.node_health.node_health_loop
 shutdown_background_tasks = appium_node_services.heartbeat.shutdown_background_tasks
+data_cleanup_loop = device_services.data_cleanup.data_cleanup_loop
+device_connectivity_loop = device_services.connectivity.device_connectivity_loop
+device_health = device_services.health
+device_intent_reconciler_loop = device_services.intent_reconciler.device_intent_reconciler_loop
+device_service = device_services.service
+fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
+is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
+property_refresh_loop = device_services.property_refresh.property_refresh_loop
 
 
 async def _reopen_agent_http_pool() -> None:
@@ -277,9 +273,9 @@ appium_node_exception_handlers.register(app)
 app.include_router(auth_router_module.router)
 app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
-    bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
+    device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
-app.include_router(devices.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
@@ -287,11 +283,13 @@ app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside 
 app.include_router(sessions.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(device_groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(runs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(lifecycle.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(
+    device_routers.lifecycle_incidents.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
+)
 app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.authoring.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.templates.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

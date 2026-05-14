@@ -23,17 +23,17 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
     "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_failure": (
         "In-memory state-machine transition to opened; no DB write paired."
     ),
-    "app/services/bulk_service.py:_run_per_device_node_action": (
+    "app/devices/services/bulk.py:_run_per_device_node_action": (
         "_run_per_device_node_action summary. Per-device sessions commit independently of the outer db."
     ),
-    "app/services/bulk_service.py:bulk_delete": (
+    "app/devices/services/bulk.py:bulk_delete": (
         "bulk_delete summary spans delete_device calls that commit independently; no aggregate transaction."
     ),
-    "app/services/bulk_service.py:bulk_reconnect": "bulk_reconnect summary is HTTP-only with no paired DB writes.",
-    "app/services/data_cleanup.py:_cleanup_old_data": (
+    "app/devices/services/bulk.py:bulk_reconnect": "bulk_reconnect summary is HTTP-only with no paired DB writes.",
+    "app/devices/services/data_cleanup.py:_cleanup_old_data": (
         "Background-loop summary aggregating committed delete batches across inner sessions."
     ),
-    "app/services/device_verification_job_state.py:publish": (
+    "app/devices/services/verification_job_state.py:publish": (
         "persist_job opens and commits its own session before publish; no caller-level outer transaction."
     ),
     "app/events/event_bus.py:_publish_pending_events": (

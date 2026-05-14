@@ -16,6 +16,9 @@ from pathlib import Path
 
 BACKEND_APP = Path(__file__).resolve().parents[1] / "app"
 ALLOWLIST = {
+    BACKEND_APP / "devices" / "services" / "lifecycle_policy.py",
+    BACKEND_APP / "devices" / "services" / "lifecycle_policy_actions.py",
+    BACKEND_APP / "devices" / "services" / "lifecycle_policy_state.py",
     BACKEND_APP / "services" / "lifecycle_policy.py",
     BACKEND_APP / "services" / "lifecycle_policy_actions.py",
     BACKEND_APP / "services" / "lifecycle_policy_state.py",
@@ -30,7 +33,9 @@ EXEMPT_DIRS = {BACKEND_APP / "seeding"}
 # suffixes like `_write_state(` or `prevent_write_state(` are not.
 # Lines that start with `#` are filtered out below; multi-line docstrings
 # are not stripped — keep references in those out of non-allowlisted files.
-_IMPORT_RE = re.compile(r"\bfrom\s+app\.services\.lifecycle_policy_state\s+import\b[^#\n]*\bwrite_state\b")
+_IMPORT_RE = re.compile(
+    r"\bfrom\s+app\.(?:devices\.services|services)\.lifecycle_policy_state\s+import\b[^#\n]*\bwrite_state\b"
+)
 _CALL_RE = re.compile(r"\bwrite_state\s*\(")
 
 

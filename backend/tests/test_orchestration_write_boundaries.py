@@ -7,16 +7,22 @@ ROOT = Path(__file__).resolve().parents[1] / "app"
 DESIRED_STATE_IMPORT_ALLOWED = {
     "appium_nodes/services/reconciler.py",
     "appium_nodes/services/reconciler_agent.py",
+    "devices/services/intent_reconciler.py",
+    "devices/services/verification_execution.py",
     "services/appium_reconciler.py",
     "services/appium_reconciler_agent.py",
     "services/device_verification_execution.py",
     "services/intent_reconciler.py",
 }
 DESIRED_GRID_RUN_ID_IMPORT_ALLOWED = {
+    "devices/services/intent_reconciler.py",
     "services/intent_reconciler.py",
 }
 DIRECT_ASSIGN_ALLOWED = {
     "appium_nodes/services/desired_state_writer.py",
+    "devices/models/device.py",
+    "devices/services/intent_reconciler.py",
+    "devices/services/write.py",
     "models/appium_node.py",
     "models/device.py",
     "services/desired_state_writer.py",

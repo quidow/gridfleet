@@ -93,6 +93,12 @@ def test_migrated_domains_have_no_deep_external_imports() -> None:
                     "app.appium_nodes.routers",
                     "app.appium_nodes.services",
                 )
+            if target == "devices":
+                allowed = (
+                    *allowed,
+                    "app.devices.routers",
+                    "app.devices.services",
+                )
             if imported not in allowed:
                 pytest.fail(
                     f"{rel} imports `{imported}` — cross-domain imports must "

@@ -18,7 +18,10 @@ from pathlib import Path
 
 BACKEND_APP = Path(__file__).resolve().parents[1] / "app"
 EXEMPT_DIRS = {BACKEND_APP / "seeding"}
-EXEMPT_FILE = BACKEND_APP / "services" / "lifecycle_policy_state.py"
+EXEMPT_FILES = {
+    BACKEND_APP / "devices" / "services" / "lifecycle_policy_state.py",
+    BACKEND_APP / "services" / "lifecycle_policy_state.py",
+}
 
 _ASSIGNMENT_RE = re.compile(r"\.lifecycle_policy_state\s*=(?!=)")
 
@@ -26,7 +29,7 @@ _ASSIGNMENT_RE = re.compile(r"\.lifecycle_policy_state\s*=(?!=)")
 def _scan() -> list[tuple[Path, int, str]]:
     findings: list[tuple[Path, int, str]] = []
     for path in BACKEND_APP.rglob("*.py"):
-        if path == EXEMPT_FILE:
+        if path in EXEMPT_FILES:
             continue
         if any(path.is_relative_to(d) for d in EXEMPT_DIRS):
             continue

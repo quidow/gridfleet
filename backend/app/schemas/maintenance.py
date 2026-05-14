@@ -1,5 +1,1 @@
-from pydantic import BaseModel
-
-
-class DeviceMaintenanceUpdate(BaseModel):
-    pass
+from app.devices.schemas.maintenance import *  # noqa: F403

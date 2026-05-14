@@ -1,28 +1,6 @@
-from app.models.device import HardwareHealthStatus
-from app.schemas.device import DeviceLifecyclePolicySummaryState
+import sys
 
-_LIFECYCLE_NEEDS_ATTENTION = frozenset(
-    {
-        DeviceLifecyclePolicySummaryState.suppressed,
-        DeviceLifecyclePolicySummaryState.manual,
-    }
-)
-_READINESS_NEEDS_ATTENTION = frozenset({"setup_required", "verification_required"})
+from app.devices.services import attention as _attention
+from app.devices.services.attention import *  # noqa: F403
 
-
-def compute_needs_attention(
-    lifecycle_state: DeviceLifecyclePolicySummaryState,
-    readiness_state: str,
-    *,
-    health_healthy: bool | None = None,
-    hardware_health_status: HardwareHealthStatus | None = None,
-) -> bool:
-    if lifecycle_state in _LIFECYCLE_NEEDS_ATTENTION:
-        return True
-    if readiness_state in _READINESS_NEEDS_ATTENTION:
-        return True
-    if health_healthy is False:
-        return True
-    if hardware_health_status is HardwareHealthStatus.critical:  # noqa: SIM103 - short-circuit for clarity
-        return True
-    return False
+sys.modules[__name__] = _attention
