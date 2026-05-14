@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import Depends
 
 from agent_app.host.capabilities import get_capabilities_snapshot
+from agent_app.host.telemetry import get_host_telemetry
 from agent_app.host.version_guidance import get_version_guidance
 
 
@@ -14,9 +15,14 @@ def get_capabilities_snapshot_dep() -> dict[str, Any]:
     return get_capabilities_snapshot()
 
 
+async def get_host_telemetry_dep() -> dict[str, Any]:
+    return await get_host_telemetry()
+
+
 def get_version_guidance_payload() -> dict[str, Any]:
     return get_version_guidance().to_payload()
 
 
 CapabilitiesDep = Annotated[dict[str, Any], Depends(get_capabilities_snapshot_dep)]
+HostTelemetryDep = Annotated[dict[str, Any], Depends(get_host_telemetry_dep)]
 VersionGuidanceDep = Annotated[dict[str, Any], Depends(get_version_guidance_payload)]
