@@ -22,6 +22,7 @@ MIGRATED_DOMAINS: frozenset[str] = frozenset(
         "agent_comm",
         "hosts",
         "packs",
+        "appium_nodes",
     }
 )
 
@@ -148,6 +149,23 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/pack/__init__.py",
         "app/pack/manifest.py",
         "app/pack/adapter.py",
+        "app/routers/admin_appium_nodes.py",
+        "app/routers/nodes.py",
+        "app/models/appium_node.py",
+        "app/models/appium_node_resource_claim.py",
+        "app/services/appium_capability_keys.py",
+        "app/services/appium_node_locking.py",
+        "app/services/appium_node_resource_service.py",
+        "app/services/appium_reconciler.py",
+        "app/services/appium_reconciler_agent.py",
+        "app/services/appium_reconciler_allocation.py",
+        "app/services/appium_reconciler_convergence.py",
+        "app/services/desired_state_writer.py",
+        "app/services/heartbeat.py",
+        "app/services/heartbeat_outcomes.py",
+        "app/services/node_health.py",
+        "app/services/node_service_common.py",
+        "app/services/node_service_types.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the

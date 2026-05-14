@@ -1,10 +1,9 @@
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
+from app.appium_nodes.models import AppiumNode, AppiumNodeResourceClaim
 from app.events.models import SystemEvent
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample, HostTerminalSession
 from app.jobs.models import Job
-from app.models.appium_node import AppiumNode
-from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
 from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
 from app.models.device import Device

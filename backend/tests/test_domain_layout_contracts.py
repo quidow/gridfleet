@@ -81,6 +81,27 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "services.template",
         "services.upload",
     ),
+    "appium_nodes": (
+        "exception_handlers",
+        "exceptions",
+        "models",
+        "routers",
+        "routers.admin",
+        "routers.nodes",
+        "services",
+        "services.capability_keys",
+        "services.common",
+        "services.desired_state_writer",
+        "services.heartbeat",
+        "services.heartbeat_outcomes",
+        "services.locking",
+        "services.node_health",
+        "services.reconciler",
+        "services.reconciler_agent",
+        "services.reconciler_allocation",
+        "services.reconciler_convergence",
+        "services.resource_service",
+    ),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -284,6 +305,71 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     ),
     "app.pack.manifest": ("app.packs.manifest", "Manifest", "Manifest"),
     "app.pack.adapter": ("app.packs.adapter", "DriverPackAdapter", "DriverPackAdapter"),
+    "app.routers.admin_appium_nodes": ("app.appium_nodes.routers.admin", "router", "router"),
+    "app.routers.nodes": ("app.appium_nodes.routers.nodes", "router", "router"),
+    "app.models.appium_node": ("app.appium_nodes.models", "AppiumNode", "AppiumNode"),
+    "app.models.appium_node_resource_claim": (
+        "app.appium_nodes.models",
+        "AppiumNodeResourceClaim",
+        "AppiumNodeResourceClaim",
+    ),
+    "app.services.appium_capability_keys": (
+        "app.appium_nodes.services.capability_keys",
+        "sanitize_appium_caps",
+        "sanitize_appium_caps",
+    ),
+    "app.services.appium_node_locking": (
+        "app.appium_nodes.services.locking",
+        "lock_appium_node_for_device",
+        "lock_appium_node_for_device",
+    ),
+    "app.services.appium_node_resource_service": (
+        "app.appium_nodes.services.resource_service",
+        "get_capabilities",
+        "get_capabilities",
+    ),
+    "app.services.appium_reconciler": (
+        "app.appium_nodes.services.reconciler",
+        "appium_reconciler_loop",
+        "appium_reconciler_loop",
+    ),
+    "app.services.appium_reconciler_agent": (
+        "app.appium_nodes.services.reconciler_agent",
+        "start_node",
+        "start_node",
+    ),
+    "app.services.appium_reconciler_allocation": (
+        "app.appium_nodes.services.reconciler_allocation",
+        "candidate_ports",
+        "candidate_ports",
+    ),
+    "app.services.appium_reconciler_convergence": (
+        "app.appium_nodes.services.reconciler_convergence",
+        "converge_host_rows",
+        "converge_host_rows",
+    ),
+    "app.services.desired_state_writer": (
+        "app.appium_nodes.services.desired_state_writer",
+        "write_desired_state",
+        "write_desired_state",
+    ),
+    "app.services.heartbeat": ("app.appium_nodes.services.heartbeat", "heartbeat_loop", "heartbeat_loop"),
+    "app.services.heartbeat_outcomes": (
+        "app.appium_nodes.services.heartbeat_outcomes",
+        "HeartbeatOutcome",
+        "HeartbeatOutcome",
+    ),
+    "app.services.node_health": ("app.appium_nodes.services.node_health", "node_health_loop", "node_health_loop"),
+    "app.services.node_service_common": (
+        "app.appium_nodes.services.common",
+        "build_grid_stereotype_caps",
+        "build_grid_stereotype_caps",
+    ),
+    "app.services.node_service_types": (
+        "app.appium_nodes.exceptions",
+        "NodeManagerError",
+        "NodeManagerError",
+    ),
 }
 
 

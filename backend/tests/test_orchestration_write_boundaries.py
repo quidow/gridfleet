@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "app"
 
 DESIRED_STATE_IMPORT_ALLOWED = {
+    "appium_nodes/services/reconciler.py",
+    "appium_nodes/services/reconciler_agent.py",
     "services/appium_reconciler.py",
     "services/appium_reconciler_agent.py",
     "services/device_verification_execution.py",
@@ -14,6 +16,7 @@ DESIRED_GRID_RUN_ID_IMPORT_ALLOWED = {
     "services/intent_reconciler.py",
 }
 DIRECT_ASSIGN_ALLOWED = {
+    "appium_nodes/services/desired_state_writer.py",
     "models/appium_node.py",
     "models/device.py",
     "services/desired_state_writer.py",
