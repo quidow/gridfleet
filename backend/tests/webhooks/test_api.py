@@ -4,8 +4,8 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.system_event import SystemEvent
-from app.services.event_bus import event_bus
+from app.events import event_bus
+from app.events.models import SystemEvent
 from app.webhooks.models import WebhookDelivery
 
 WEBHOOK_PAYLOAD = {

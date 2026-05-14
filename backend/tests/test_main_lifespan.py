@@ -86,7 +86,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         return task
 
     import app.database as database_module
-    import app.services.event_bus as event_bus_module
+    import app.events.event_bus as event_bus_module
     import app.settings.service as settings_service_module
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
@@ -173,7 +173,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     create_task = Mock(side_effect=asyncio.create_task)
 
     import app.database as database_module
-    import app.services.event_bus as event_bus_module
+    import app.events.event_bus as event_bus_module
     import app.settings.service as settings_service_module
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
@@ -220,7 +220,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
     try_acquire = AsyncMock(return_value=True)
 
     import app.database as database_module
-    import app.services.event_bus as event_bus_module
+    import app.events.event_bus as event_bus_module
     import app.settings.service as settings_service_module
 
     monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
@@ -282,7 +282,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
         return True
 
     import app.database as database_module
-    import app.services.event_bus as event_bus_module
+    import app.events.event_bus as event_bus_module
     import app.settings.service as settings_service_module
 
     _patch_agent_http_pool(monkeypatch)

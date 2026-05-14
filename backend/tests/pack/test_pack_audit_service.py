@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.models.system_event import SystemEvent
+from app.events.models import SystemEvent
 from app.services.pack_audit_service import record_pack_tarball_fetched, record_pack_upload
 
 if TYPE_CHECKING:

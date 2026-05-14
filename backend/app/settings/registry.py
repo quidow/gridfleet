@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.services.event_catalog import DEFAULT_TOAST_EVENT_NAMES, PUBLIC_EVENT_NAMES
+from app.events import DEFAULT_TOAST_EVENT_NAMES, PUBLIC_EVENT_NAMES
 
 if TYPE_CHECKING:
     from app.type_defs import SettingValue

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 
+from app.events import queue_device_crashed_event
 from app.models.device_event import DeviceEventType
 from app.models.session import Session, SessionStatus
 from app.models.test_run import TERMINAL_STATES
@@ -15,7 +16,6 @@ from app.services import (
     run_reservation_service,
 )
 from app.services.device_event_service import record_event
-from app.services.event_bus import queue_device_crashed_event
 from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.services.intent_types import (
     GRID_ROUTING,

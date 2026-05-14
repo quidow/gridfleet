@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.events import queue_event_for_session
 from app.models.host_pack_feature_status import HostPackFeatureStatus
-from app.services.event_bus import queue_event_for_session
 
 if TYPE_CHECKING:
     import uuid

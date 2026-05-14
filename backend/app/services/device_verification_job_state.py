@@ -2,8 +2,8 @@ import copy
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from app.events import event_bus
 from app.models.job import Job
-from app.services.event_bus import event_bus
 from app.type_defs import SessionFactory
 
 VERIFICATION_EVENT = "device.verification.updated"

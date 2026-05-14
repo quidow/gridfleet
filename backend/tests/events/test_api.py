@@ -10,11 +10,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
+from app.events import event_bus
 from app.routers.devices_verification import stream_device_verification_job_events
 from app.routers.events import event_stream
 from app.services.device_verification import store_verification_job_for_test
 from app.services.device_verification_job_state import new_job
-from app.services.event_bus import event_bus
 
 
 def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:

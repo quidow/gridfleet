@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.event_catalog import PUBLIC_EVENT_NAME_SET
+from app.events import PUBLIC_EVENT_NAME_SET
 
 
 def test_device_health_changed_is_registered() -> None:

@@ -40,9 +40,9 @@ from app.settings.models import ConfigAuditLog
 if TYPE_CHECKING:
     import uuid
 
+    from app.events.models import SystemEvent
     from app.models.device import Device
     from app.models.host import Host
-    from app.models.system_event import SystemEvent
     from app.models.test_run import TestRun
     from app.seeding.context import SeedContext
 

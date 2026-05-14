@@ -18,6 +18,7 @@ from app.errors import (
     AgentUnreachableError,
     CircuitOpenError,
 )
+from app.events import queue_device_crashed_event, queue_event_for_session
 from app.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.models.appium_node import AppiumNode
 from app.models.device import Device, DeviceOperationalState
@@ -36,7 +37,6 @@ from app.services.agent_operations import agent_health
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader
 from app.services.device_event_service import record_event
 from app.services.device_state import set_operational_state
-from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.heartbeat_outcomes import (
     ClientMode,
     HeartbeatOutcome,

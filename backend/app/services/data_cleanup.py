@@ -10,13 +10,13 @@ from sqlalchemy import delete, select
 
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.database import async_session
+from app.events import event_bus
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.device_event import DeviceEvent
 from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
 from app.models.host_resource_sample import HostResourceSample
 from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop, schedule_background_loop
-from app.services.event_bus import event_bus
 from app.settings import settings_service
 from app.settings.models import ConfigAuditLog
 

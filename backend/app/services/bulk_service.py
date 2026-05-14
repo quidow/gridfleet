@@ -12,13 +12,13 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.errors import AgentCallError
+from app.events import event_bus, queue_event_for_session
 from app.models.appium_node import AppiumNode
 from app.models.device import Device
 from app.services import device_locking
 from app.services.agent_operations import pack_device_lifecycle_action
 from app.services.appium_reconciler_allocation import candidate_ports
 from app.services.device_service import delete_device
-from app.services.event_bus import event_bus, queue_event_for_session
 from app.services.intent_service import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.services.intent_types import (
     GRID_ROUTING,

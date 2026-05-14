@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-APP_ROOT = Path(__file__).resolve().parents[1] / "app"
+APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
 
 ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
@@ -16,7 +16,7 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
         "_auto_discover calls pack_discovery_service.discover_devices, which is read-only. "
         "No writer transaction exists to bind this notification to."
     ),
-    "app/routers/webhooks.py:test_webhook": "webhook.test is a synthetic broadcaster with no paired DB write.",
+    "app/webhooks/router.py:test_webhook": "webhook.test is a synthetic broadcaster with no paired DB write.",
     "app/services/agent_circuit_breaker.py:AgentCircuitBreaker.record_success": (
         "In-memory state-machine transition to closed; no DB write paired."
     ),
@@ -36,7 +36,7 @@ ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
     "app/services/device_verification_job_state.py:publish": (
         "persist_job opens and commits its own session before publish; no caller-level outer transaction."
     ),
-    "app/services/event_bus.py:_publish_pending_events": (
+    "app/events/event_bus.py:_publish_pending_events": (
         "Internal recursive dispatch from _publish_pending_events after the writer transaction committed."
     ),
 }

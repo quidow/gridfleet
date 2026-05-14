@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import async_session
 from app.dependencies import DbDep
+from app.events import event_bus
 from app.models.host import Host
 from app.schemas.driver_pack import HostDriverPacksOut
 from app.schemas.host import (
@@ -37,7 +38,6 @@ from app.services import (
 from app.services.agent_operations import get_pack_devices
 from app.services.agent_operations import get_tool_status as get_agent_tool_status
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
-from app.services.event_bus import event_bus
 from app.services.pack_status_service import get_host_driver_pack_status
 from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory

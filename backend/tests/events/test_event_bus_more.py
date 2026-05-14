@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.system_event import SystemEvent
-from app.services.event_bus import Event, EventBus
+from app.events import Event, EventBus
+from app.events.models import SystemEvent
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -264,7 +264,7 @@ async def test_poll_for_missed_events_logs_exceptions_and_sleeps() -> None:
             "_dispatch_missed_events",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
-        patch("app.services.event_bus.asyncio.sleep", new=AsyncMock()) as sleep,
+        patch("app.events.event_bus.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
         await bus._poll_for_missed_events()

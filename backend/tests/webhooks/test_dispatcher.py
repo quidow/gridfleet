@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.services.event_bus import event_bus
+from app.events import event_bus
 from app.webhooks.dispatcher import (
     _compute_retry_delay,
     _is_retryable_exception,

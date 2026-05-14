@@ -9,13 +9,13 @@ from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.events import queue_event_for_session
 from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.session import Session, SessionStatus
 from app.services import device_locking, lifecycle_policy, run_service
 from app.services.cursor_pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.services.device_state import ready_operational_state, set_operational_state
-from app.services.event_bus import queue_event_for_session
 from app.services.session_filters import exclude_non_test_sessions, exclude_reserved_sessions
 
 

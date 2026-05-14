@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.events import event_bus
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
 from app.models.job import Job
@@ -19,7 +20,6 @@ from app.services.device_verification import (
     clear_verification_jobs,
     store_verification_job_for_test,
 )
-from app.services.event_bus import event_bus
 from app.services.session_viability import (
     get_session_viability_control_plane_state,
     reset_session_viability_control_plane_state,

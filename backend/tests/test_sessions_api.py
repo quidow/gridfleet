@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.services.event_bus import event_bus
+from app.events import event_bus
 from app.services.session_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run
 

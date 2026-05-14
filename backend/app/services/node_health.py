@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session
 from app.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.events import queue_device_crashed_event, queue_event_for_session
 from app.models.appium_node import AppiumNode
 from app.models.device import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEventType
@@ -33,7 +34,6 @@ from app.services.appium_reconciler_agent import require_management_host
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import queue_device_crashed_event, queue_event_for_session
 from app.services.intent_service import register_intents_and_reconcile
 from app.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.services.lifecycle_incident_service import record_lifecycle_incident

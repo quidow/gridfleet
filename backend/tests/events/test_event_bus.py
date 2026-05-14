@@ -3,7 +3,7 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.services.event_bus import Event, EventBus, event_bus
+from app.events import Event, EventBus, event_bus
 
 
 def _session_bind_engine(session: AsyncSession) -> AsyncEngine:

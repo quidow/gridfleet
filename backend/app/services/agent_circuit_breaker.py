@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
+from app.events import event_bus
 from app.observability import get_logger
-from app.services.event_bus import event_bus
 from app.settings import settings_service
 
 logger = get_logger(__name__)

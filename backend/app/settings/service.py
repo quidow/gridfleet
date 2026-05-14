@@ -12,14 +12,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import delete, select
 
 from app.config import settings as process_settings
-from app.services.event_bus import queue_event_for_session
-from app.services.event_catalog import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
+from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names, queue_event_for_session
 from app.settings.models import Setting
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.services.event_bus import Event
+    from app.events import Event
 from app.settings.registry import (
     CATEGORY_DISPLAY_NAMES,
     SETTINGS_REGISTRY,

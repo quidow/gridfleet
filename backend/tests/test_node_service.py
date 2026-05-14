@@ -273,7 +273,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     from sqlalchemy import delete as sa_delete
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.services.event_bus import event_bus
+    from app.events import event_bus
     from app.services.node_service_types import NodeManagerError
 
     host = Host(

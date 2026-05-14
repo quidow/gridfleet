@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from app.services.event_catalog import validate_public_event_names
+from app.events import validate_public_event_names
 
 
 class WebhookCreate(BaseModel):

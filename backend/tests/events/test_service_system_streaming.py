@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.models.system_event import SystemEvent
-from app.services.system_event_service import iter_system_events
+from app.events.models import SystemEvent
+from app.events.service_system import iter_system_events
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

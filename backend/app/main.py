@@ -19,6 +19,8 @@ from app.database import async_session as session_factory
 from app.database import engine
 from app.dependencies import DbDep
 from app.errors import register_exception_handlers
+from app.events import event_bus
+from app.events import router as events
 from app.health import check_liveness, check_readiness
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
@@ -35,7 +37,6 @@ from app.routers import (
     driver_pack_templates,
     driver_pack_uploads,
     driver_packs,
-    events,
     grid,
     host_driver_pack_features,
     host_terminal,
@@ -56,7 +57,6 @@ from app.services.control_plane_leader_watcher import control_plane_leader_watch
 from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
-from app.services.event_bus import event_bus
 from app.services.fleet_capacity import fleet_capacity_collector_loop
 from app.services.grid_service import close as close_grid_service_client
 from app.services.hardware_telemetry import hardware_telemetry_loop

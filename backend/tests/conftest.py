@@ -15,11 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 import app.models as _app_models  # noqa: F401  # Ensure all ORM models are registered on Base.metadata.
 from app.config import settings
 from app.database import Base, get_db
+from app.events import event_bus
+from app.events.models import SystemEvent
 from app.main import app
 from app.models.host import Host, HostStatus, OSType
-from app.models.system_event import SystemEvent
 from app.services.agent_circuit_breaker import agent_circuit_breaker
-from app.services.event_bus import event_bus
 from app.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.settings import settings_service
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
@@ -257,7 +257,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     async def _fake_publish(name: str, payload: dict[str, Any]) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.services.event_bus.event_bus.publish", _fake_publish)
+    monkeypatch.setattr("app.events.event_bus.event_bus.publish", _fake_publish)
     return captured
 
 

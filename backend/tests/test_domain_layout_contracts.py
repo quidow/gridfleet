@@ -13,6 +13,7 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "analytics": ("config", "models", "router", "schemas", "service"),
     "settings": ("config", "models", "registry", "router", "schemas", "service", "service_config"),
     "webhooks": ("config", "dispatcher", "models", "router", "schemas", "service"),
+    "events": ("catalog", "config", "event_bus", "models", "router", "schemas", "schemas_catalog", "service_system"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -37,6 +38,13 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     "app.schemas.webhook": ("app.webhooks.schemas", "WebhookRead", "WebhookRead"),
     "app.models.webhook": ("app.webhooks.models", "Webhook", "Webhook"),
     "app.models.webhook_delivery": ("app.webhooks.models", "WebhookDelivery", "WebhookDelivery"),
+    "app.routers.events": ("app.events.router", "router", "router"),
+    "app.services.event_bus": ("app.events.event_bus", "event_bus", "event_bus"),
+    "app.services.event_catalog": ("app.events.catalog", "PUBLIC_EVENT_NAMES", "PUBLIC_EVENT_NAMES"),
+    "app.services.system_event_service": ("app.events.service_system", "iter_system_events", "iter_system_events"),
+    "app.schemas.event": ("app.events.schemas", "SystemEventRead", "SystemEventRead"),
+    "app.schemas.event_catalog": ("app.events.schemas_catalog", "EventCatalogRead", "EventCatalogRead"),
+    "app.models.system_event": ("app.events.models", "SystemEvent", "SystemEvent"),
 }
 
 

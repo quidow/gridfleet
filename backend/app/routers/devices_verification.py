@@ -10,6 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.dependencies import DbDep
 from app.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.events import Event, event_bus
 from app.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationJobRead,
@@ -17,7 +18,6 @@ from app.schemas.device import (
 )
 from app.services import device_service, device_verification
 from app.services.device_verification_job_state import public_snapshot
-from app.services.event_bus import Event, event_bus
 
 router = APIRouter()
 

@@ -443,7 +443,7 @@ async def test_recovery_rejoin_publishes_availability_event(
     async def fake_publish(name: str, payload: dict[str, object]) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.services.event_bus.event_bus.publish", fake_publish)
+    monkeypatch.setattr("app.events.event_bus.event_bus.publish", fake_publish)
 
     device = Device(
         pack_id="appium-uiautomator2",

@@ -66,7 +66,6 @@ from app.metrics_recorders import (
 )
 from app.models.job import Job
 from app.models.session import Session, SessionStatus
-from app.services.event_bus import event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,6 +88,7 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
     handler until the last contributing domain migrates and Phase 14
     flips the cutover to :func:`app.core.metrics.refresh_system_gauges`.
     """
+    await _core_refresh_system_gauges(db)
     pending_jobs_result = await db.execute(select(func.count()).select_from(Job).where(Job.status == "pending"))
     active_sessions_result = await db.execute(
         select(func.count())
@@ -100,7 +100,6 @@ async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
     )
     PENDING_JOBS.set(int(pending_jobs_result.scalar_one()))
     ACTIVE_SESSIONS.set(int(active_sessions_result.scalar_one()))
-    ACTIVE_SSE_CONNECTIONS.set(event_bus.subscriber_count)
     cooldown_result = await db.execute(
         select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))
         .select_from(DEVICE_RESERVATIONS)
