@@ -99,7 +99,7 @@ Loops that consume probes **must** branch on `result.status` explicitly:
 
 Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
-`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). Session-creating probes use Selenium Grid, not the agent: `probe_session_via_grid` creates a WebDriver session through `grid.hub_url`, tags it with `gridfleet:probeSession=true`, and deletes it through the hub. Agent `/status` remains a process liveness check only.
+`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). Session-creating probes use Selenium Grid, not the agent: `probe_session_via_grid` creates a WebDriver session through the node's `grid_url` (falling back to `grid.hub_url` for callers without a node), tags it with `gridfleet:probeSession=true`, and deletes it through the hub. Agent `/status` remains a process liveness check only.
 
 ## Idempotency rules
 

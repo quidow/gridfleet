@@ -230,11 +230,13 @@ Operational note: pooled clients do not refresh DNS until they are closed. If a 
 
 There is no formal API version on either side today. The backend records the agent's `version` from `/agent/health` on the `Host` row and computes `agent_version_status` against `agent.min_version` for operator visibility. The bootstrap installer and `/agent/health` `version_guidance` payload help keep agents within compatible ranges. Adding/changing an endpoint requires a coordinated release of backend + agent (`docs/reference/release-policy.md`).
 
+`agent.min_version` is backend-enforced guidance for hosts that report to the current backend. It protects new backend expectations for old agents, but it cannot protect the opposite direction: an old backend calling an endpoint removed from a newer agent. Backend-called endpoint removals are safe only when the backend stops calling the endpoint before or at the same time the agent removes it. Roll those changes out backend-first, or deploy backend and agent together; do not roll newer agents across the fleet while an older backend still depends on the removed endpoint.
+
 When evolving an endpoint:
 
 - Adding a field to a request payload — agents must tolerate unknown fields (FastAPI/Pydantic does by default unless `model_config = {extra: 'forbid'}`).
 - Adding a field to a response — backend wrappers must tolerate missing fields (use `payload.get(...)`).
-- Renaming or removing — needs a version bump in `release-please` and a coordinated rollout. Don't.
+- Renaming or removing — needs a breaking component release in `release-please` and the coordinated rollout model above. Don't.
 
 ## Structured error codes
 
