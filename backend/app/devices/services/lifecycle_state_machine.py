@@ -8,8 +8,8 @@ from app.devices.services.lifecycle_state_machine_types import (
     TransitionEvent,
     TransitionHook,
 )
+from app.devices.services.state import set_hold, set_operational_state
 from app.errors import InvalidTransitionError
-from app.services.device_state import set_hold, set_operational_state
 
 if TYPE_CHECKING:
     from app.devices.models import Device
