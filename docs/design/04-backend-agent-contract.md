@@ -62,7 +62,6 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/appium/start` | `node_service.start_node`, `restart_node_via_agent` | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
 | POST | `/agent/appium/stop` | `node_service.stop_node`, `restart_node_via_agent` | kill an Appium node | wrapper returns `httpx.Response`; `stop_remote_temporary_node` maps 2xx → `True`, transport/HTTP error → `False` |
 | GET | `/agent/appium/{port}/status` | `node_health`, `_wait_for_remote_appium_ready` | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
-| POST | `/agent/appium/{port}/probe-session` | `node_health`, `session_viability` | full session create+delete probe | 200 → `(True, None)`; 4xx with detail → `(False, detail)`; transport-shaped → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
 | GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
 | POST | `/agent/plugins/sync` | plugin sync flow | install/remove plugin set | 2xx required |
@@ -79,7 +78,7 @@ Each row has a typed function in `agent_operations.py`. The function signature p
 | GET | `/agent/driver-packs/desired` | `PackStateLoop` (~10 s) | desired pack list for this host | 200 → `{packs: [...]}` |
 | POST | `/agent/driver-packs/status` | `PackStateLoop` after each tick | report runtime/adapter state | 204 |
 
-Defined in `backend/app/routers/agent_driver_packs.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls (status, probe-session) — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
+Defined in `backend/app/routers/agent_driver_packs.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
 
 ## Request envelope
 
@@ -146,7 +145,6 @@ Per endpoint, a brief contract:
 | `/agent/appium/start` | **no** | Caller must allocate a free port first (`candidate_ports`). Re-issuing with the same port and the agent already running on it → `NodePortConflictError`. Re-issuing with a fresh port → second running node. |
 | `/agent/appium/stop` | yes | Stop on a port that has nothing returns 2xx. Safe to retry. |
 | `/agent/appium/{port}/status` | yes | Read-only. |
-| `/agent/appium/{port}/probe-session` | yes-ish | Each probe creates and tears down its own Appium session. Concurrent probes are bounded by `node_health.PROBE_CONCURRENCY_PER_HOST = 2`. |
 | `/agent/appium/{port}/logs` | yes | Read-only |
 | `/agent/plugins/sync` | yes | Replaces full plugin set; converges to the requested state |
 | `/agent/driver-packs/desired` | yes | Read-only by host_id |
@@ -182,13 +180,13 @@ sequenceDiagram
     end
 ```
 
-The endpoints whose result is a tri-state probe (`/agent/appium/{port}/status`, `/agent/appium/{port}/probe-session`) project HTTP shapes into `bool | None`:
+The agent endpoint whose result is a tri-state probe (`/agent/appium/{port}/status`) projects HTTP shapes into `bool | None`:
 
 - **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
 
-- **`appium_probe_session`** (`agent_operations.py`). 200 with `ok: True` → `(True, None)`. 200 with no `ok` → `(False, "Probe session returned an invalid payload")`. Non-200 → `(False, parsed detail)` or the fallback `(False, "Probe session failed (HTTP <code>)")`. The consumer in `agent_probe_result.from_probe_session_response` maps only the HTTP-shaped fallback to `indeterminate`; structured Appium-side probe failures remain definitive `refused`.
-
 - **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The caller (`stop_remote_temporary_node`) bridges into the DB-flip rule: `resp.raise_for_status()` success → `True`; `AgentCallError` or `httpx.HTTPError` → `False`; only `True` allows `mark_node_stopped`.
+
+The agent does not expose a WebDriver session probe endpoint. Probe sessions are created by the backend through Selenium Grid so health checks exercise the same routing path as CI clients.
 
 When you add a new state-changing endpoint, follow this pattern: pick an explicit return type (`bool`, `bool | None`, or a dataclass) and document the projection from HTTP into that type at the wrapper layer. Do not let the lifecycle code do its own HTTP error handling — that is what `agent_operations.py` is for.
 
@@ -202,7 +200,6 @@ Each wrapper picks a default. Override via the `timeout=` argument when the call
 | `/agent/appium/start` | `appium.startup_timeout_sec + 5` (~35 s), or `AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190` for virtual devices | virtual devices boot is slow |
 | `/agent/appium/stop` | 10 s | bounded shutdown |
 | `/agent/appium/{port}/status` | 5 s | quick check |
-| `/agent/appium/{port}/probe-session` | `timeout_sec` arg (default 15 s in `node_health`) | full session create+delete |
 | `/agent/appium/{port}/logs` | 10 s | small payload |
 | `/agent/plugins` | 15 s | adapter-fetched |
 | `/agent/plugins/sync` | 180 s | npm install |
@@ -241,7 +238,7 @@ When evolving an endpoint:
 
 ## Structured error codes
 
-The Appium lifecycle/probe endpoints return structured failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. Other agent endpoints may still use ordinary FastAPI `detail` strings or endpoint-specific payloads. The Appium error enum is mirrored on both sides:
+The Appium lifecycle endpoints return structured failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. Other agent endpoints may still use ordinary FastAPI `detail` strings or endpoint-specific payloads. The Appium error enum is mirrored on both sides:
 
 - `agent/agent_app/error_codes.py:AgentErrorCode`
 - `backend/app/services/agent_error_codes.py:AgentErrorCode`
@@ -256,7 +253,6 @@ The Appium lifecycle/probe endpoints return structured failure detail as `{"code
 | `RUNTIME_MISSING` | `appium_process.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
 | `DEVICE_NOT_FOUND` | `appium_process.DeviceNotFoundError` | Connection target not visible to the host adapter |
 | `INVALID_PAYLOAD` | `appium_process.InvalidStartPayloadError` | Start request missing required fields |
-| `PROBE_FAILED` | `/agent/appium/{port}/probe-session` route | Probe session create/delete failed |
 | `INTERNAL_ERROR` | route catch-all | Agent-side state corruption or unclassified adapter failure |
 
 ## Open contract questions / known gaps
