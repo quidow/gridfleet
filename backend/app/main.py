@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Query, Response
+from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +47,7 @@ from app.routers import (
     webhooks,
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
+from app.security.dependencies import require_any_auth
 from app.services import auth as auth_service
 from app.services import device_health, device_service, host_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
@@ -248,29 +249,31 @@ app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 
 app.include_router(auth.router)
-app.include_router(admin_appium_nodes.router)
-app.include_router(bulk.router)  # Must be before devices.router for /api/devices/bulk/* route precedence
-app.include_router(devices.router)
-app.include_router(nodes.router)
-app.include_router(grid.router)
-app.include_router(hosts.router)
-app.include_router(host_terminal.router)
-app.include_router(sessions.router)
-app.include_router(events.router)
-app.include_router(webhooks.router)
-app.include_router(device_groups.router)
-app.include_router(runs.router)
-app.include_router(plugins.router)
-app.include_router(analytics.router)
-app.include_router(lifecycle.router)
-app.include_router(settings.router)
-app.include_router(driver_pack_authoring.router)
-app.include_router(driver_pack_templates.router)
-app.include_router(driver_pack_export.router)
-app.include_router(driver_packs.router)
-app.include_router(driver_pack_uploads.router)
-app.include_router(host_driver_pack_features.router)
-app.include_router(agent_driver_packs.router)
+app.include_router(admin_appium_nodes.router, dependencies=[Depends(require_any_auth)])
+app.include_router(
+    bulk.router, dependencies=[Depends(require_any_auth)]
+)  # Must be before devices.router for /api/devices/bulk/* route precedence
+app.include_router(devices.router, dependencies=[Depends(require_any_auth)])
+app.include_router(nodes.router, dependencies=[Depends(require_any_auth)])
+app.include_router(grid.router, dependencies=[Depends(require_any_auth)])
+app.include_router(hosts.router, dependencies=[Depends(require_any_auth)])
+app.include_router(host_terminal.router, dependencies=[Depends(require_any_auth)])
+app.include_router(sessions.router, dependencies=[Depends(require_any_auth)])
+app.include_router(events.router, dependencies=[Depends(require_any_auth)])
+app.include_router(webhooks.router, dependencies=[Depends(require_any_auth)])
+app.include_router(device_groups.router, dependencies=[Depends(require_any_auth)])
+app.include_router(runs.router, dependencies=[Depends(require_any_auth)])
+app.include_router(plugins.router, dependencies=[Depends(require_any_auth)])
+app.include_router(analytics.router, dependencies=[Depends(require_any_auth)])
+app.include_router(lifecycle.router, dependencies=[Depends(require_any_auth)])
+app.include_router(settings.router, dependencies=[Depends(require_any_auth)])
+app.include_router(driver_pack_authoring.router, dependencies=[Depends(require_any_auth)])
+app.include_router(driver_pack_templates.router, dependencies=[Depends(require_any_auth)])
+app.include_router(driver_pack_export.router, dependencies=[Depends(require_any_auth)])
+app.include_router(driver_packs.router, dependencies=[Depends(require_any_auth)])
+app.include_router(driver_pack_uploads.router, dependencies=[Depends(require_any_auth)])
+app.include_router(host_driver_pack_features.router, dependencies=[Depends(require_any_auth)])
+app.include_router(agent_driver_packs.router, dependencies=[Depends(require_any_auth)])
 
 
 @app.get("/health/live", response_model=LiveHealthRead)
@@ -296,7 +299,7 @@ async def metrics(db: DbDep) -> Response:
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/api/availability")
+@app.get("/api/availability", dependencies=[Depends(require_any_auth)])
 async def check_availability(
     db: DbDep,
     platform_id: str = Query(...),
