@@ -241,7 +241,7 @@ async def _process_delivery(
             retryable=True,
         )
         return
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
         await _record_failure(
             delivery_id,
             session_factory,
