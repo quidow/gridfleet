@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.devices.services import test_data as test_data_service
 from app.errors import PackDrainingError, _http_error_code
 from app.models.appium_node import AppiumDesiredState
 from app.models.device import Device, DeviceHold, DeviceType
@@ -63,7 +64,6 @@ from app.services import (
     run_reservation_service,
     session_viability,
     settings_registry,
-    test_data_service,
 )
 from app.services import (
     control_plane_leader as control_plane_leader_module,
