@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import hmac
-import json
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.cookies import CookieError, SimpleCookie
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import jwt
+
 from app.config import settings
+
+_ALGORITHM = "HS256"
 
 if TYPE_CHECKING:
     from starlette.datastructures import Headers
@@ -100,29 +102,10 @@ def machine_password() -> str:
     return settings.machine_auth_password or ""
 
 
-def _base64url_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
-def _base64url_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(f"{value}{padding}")
-
-
-def _json_dumps(payload: dict[str, Any]) -> bytes:
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
-def _sign_payload(encoded_payload: str) -> str:
-    secret = cast("str", settings.auth_session_secret)
-    signature = hmac.new(secret.encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256).digest()
-    return _base64url_encode(signature)
-
-
 def issue_session() -> tuple[str, SessionState]:
     username = operator_username()
     now = datetime.now(UTC)
-    expires_at = datetime.fromtimestamp(now.timestamp() + settings.auth_session_ttl_sec, tz=UTC)
+    expires_at = now + timedelta(seconds=settings.auth_session_ttl_sec)
     csrf_token = secrets.token_urlsafe(24)
     payload = {
         "sub": username,
@@ -130,9 +113,8 @@ def issue_session() -> tuple[str, SessionState]:
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
-    encoded_payload = _base64url_encode(_json_dumps(payload))
-    signature = _sign_payload(encoded_payload)
-    token = f"v1.{encoded_payload}.{signature}"
+    secret = cast("str", settings.auth_session_secret)
+    token = jwt.encode(payload, secret, algorithm=_ALGORITHM)
     session = SessionState(
         enabled=True,
         authenticated=True,
@@ -144,22 +126,16 @@ def issue_session() -> tuple[str, SessionState]:
 
 
 def _decode_session_payload(token: str) -> dict[str, Any] | None:
+    secret = cast("str", settings.auth_session_secret)
     try:
-        version, encoded_payload, signature = token.split(".", 2)
-    except ValueError:
+        return jwt.decode(
+            token,
+            secret,
+            algorithms=[_ALGORITHM],
+            options={"require": ["sub", "csrf", "exp"]},
+        )
+    except jwt.InvalidTokenError:
         return None
-    if version != "v1":
-        return None
-    expected_signature = _sign_payload(encoded_payload)
-    if not hmac.compare_digest(signature, expected_signature):
-        return None
-    try:
-        payload = json.loads(_base64url_decode(encoded_payload))
-    except (ValueError, json.JSONDecodeError, binascii.Error):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return payload
 
 
 def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
@@ -196,8 +172,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
     if not isinstance(username, str) or not username:
         return SessionState(True, False, None, None, None)
     if not isinstance(csrf_token, str) or not csrf_token:
-        return SessionState(True, False, None, None, None)
-    if expires_at <= datetime.now(UTC):
         return SessionState(True, False, None, None, None)
     expected_username = operator_username()
     if not hmac.compare_digest(username, expected_username):

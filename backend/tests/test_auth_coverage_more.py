@@ -1,7 +1,7 @@
 import base64
-import json
 from datetime import UTC, datetime, timedelta
 
+import jwt as _pyjwt
 import pytest
 from starlette.datastructures import Headers
 
@@ -43,37 +43,38 @@ def test_validate_process_configuration_and_path_helpers(monkeypatch: pytest.Mon
 
 def test_session_decode_and_browser_session_reject_invalid_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_auth(monkeypatch)
+    secret = "session-secret"
     token, _ = auth.issue_session()
-    version, encoded, signature = token.split(".", 2)
-    assert version == "v1"
+    # JWT tokens are 3 base64url segments separated by dots (header.payload.signature)
+    parts = token.split(".")
+    assert len(parts) == 3
 
     assert auth._decode_session_payload("bad-token") is None
-    assert auth._decode_session_payload(f"v2.{encoded}.{signature}") is None
-    assert auth._decode_session_payload(f"v1.{encoded}.wrong") is None
-    assert auth._decode_session_payload(f"v1.not-base64.{signature}") is None
+    assert auth._decode_session_payload("not.a.jwt.at.all") is None
+    # Tampered signature
+    head, body, sig = token.split(".")
+    assert auth._decode_session_payload(f"{head}.{body}.{sig[:-2]}AA") is None
 
-    list_payload = auth._base64url_encode(json.dumps(["not", "dict"]).encode())
-    assert auth._decode_session_payload(f"v1.{list_payload}.{auth._sign_payload(list_payload)}") is None
-
-    missing_fields = auth._base64url_encode(json.dumps({"sub": "operator"}).encode())
-    missing_token = f"v1.{missing_fields}.{auth._sign_payload(missing_fields)}"
+    # Missing required claim (no csrf) → None
+    missing_csrf_token = _pyjwt.encode({"sub": "operator", "exp": 9999999999}, secret, algorithm="HS256")
+    assert auth._decode_session_payload(missing_csrf_token) is None
     assert (
         auth.resolve_browser_session_from_headers(
-            Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={missing_token}"})
+            Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={missing_csrf_token}"})
         ).authenticated
         is False
     )
 
-    expired = auth._base64url_encode(
-        json.dumps(
-            {
-                "sub": "operator",
-                "csrf": "token",
-                "exp": int((datetime.now(UTC) - timedelta(seconds=1)).timestamp()),
-            }
-        ).encode()
+    # Expired token → None
+    expired_token = _pyjwt.encode(
+        {
+            "sub": "operator",
+            "csrf": "token",
+            "exp": int((datetime.now(UTC) - timedelta(seconds=1)).timestamp()),
+        },
+        secret,
+        algorithm="HS256",
     )
-    expired_token = f"v1.{expired}.{auth._sign_payload(expired)}"
     assert (
         auth.resolve_browser_session_from_headers(
             Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={expired_token}"})
@@ -81,16 +82,16 @@ def test_session_decode_and_browser_session_reject_invalid_payloads(monkeypatch:
         is False
     )
 
-    wrong_user = auth._base64url_encode(
-        json.dumps(
-            {
-                "sub": "other",
-                "csrf": "token",
-                "exp": int((datetime.now(UTC) + timedelta(minutes=1)).timestamp()),
-            }
-        ).encode()
+    # Wrong username → rejected in resolve_browser_session_from_headers
+    wrong_user_token = _pyjwt.encode(
+        {
+            "sub": "other",
+            "csrf": "token",
+            "exp": int((datetime.now(UTC) + timedelta(minutes=1)).timestamp()),
+        },
+        secret,
+        algorithm="HS256",
     )
-    wrong_user_token = f"v1.{wrong_user}.{auth._sign_payload(wrong_user)}"
     assert (
         auth.resolve_browser_session_from_headers(
             Headers({"cookie": f"{auth.SESSION_COOKIE_NAME}={wrong_user_token}"})
