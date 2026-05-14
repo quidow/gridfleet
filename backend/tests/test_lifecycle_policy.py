@@ -10,11 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.device_event import DeviceEvent, DeviceEventType
+from app.models.device_intent import DeviceIntent
 from app.models.host import Host
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from app.services import device_health
 from app.services import lifecycle_policy as lifecycle_policy_module
+from app.services.intent_service import IntentService
+from app.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
 from app.services.lifecycle_policy import (
     DeferredStopOutcome,
     attempt_auto_recovery,
@@ -361,6 +364,73 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     assert policy["excluded_from_run"] is False
     event_types = await _event_types_for_device(db_session, device.id)
     assert DeviceEventType.lifecycle_recovered in event_types
+
+
+@pytest.mark.db
+async def test_auto_recovery_revokes_stale_health_failure_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-recover-stale-intents",
+        connection_target="policy-recover-stale-intents",
+        name="Recovering Stale Intent Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        reason="health failure",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+            ),
+            IntentRegistration(
+                source=f"health_failure:recovery:{device.id}",
+                axis=RECOVERY,
+                payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": "Node health failure"},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    with patch(
+        "app.services.session_viability.run_session_viability_probe",
+        new_callable=AsyncMock,
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        },
+    ):
+        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+
+    assert recovered is True
+    sources = set(
+        (await db_session.execute(select(DeviceIntent.source).where(DeviceIntent.source.like(f"%:{device.id}"))))
+        .scalars()
+        .all()
+    )
+    assert f"health_failure:node:{device.id}" not in sources
+    assert f"health_failure:recovery:{device.id}" not in sources
+    assert f"auto_recovery:node:{device.id}" in sources
+    assert f"auto_recovery:recovery:{device.id}" in sources
 
 
 async def test_recovery_rejoin_publishes_availability_event(

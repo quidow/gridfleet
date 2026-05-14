@@ -257,6 +257,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         device.session_viability_status = None
         device.session_viability_error = None
         try:
+            await db.flush()
             await revoke_intents_and_reconcile(
                 db,
                 device_id=device.id,

@@ -1389,7 +1389,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
     auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
-    auto_db = SimpleNamespace(commit=AsyncMock())
+    auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     with (
         patch("app.routers.devices_control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
         patch("app.routers.devices_control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
@@ -1518,7 +1518,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         recovery_allowed=False,
         recovery_blocked_reason="Node health failure",
     )
-    db = SimpleNamespace(commit=AsyncMock())
+    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     revoke = AsyncMock()
     start_node = AsyncMock()
 
@@ -2637,7 +2637,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
-    reconnect_db = SimpleNamespace(commit=AsyncMock())
+    reconnect_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     # Phase 2: inner HTTPException(400) propagates unchanged (was incorrectly wrapped as 502)
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=reconnect_device)),
