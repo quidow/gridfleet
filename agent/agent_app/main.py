@@ -24,7 +24,6 @@ from agent_app.appium_process import (
     RuntimeMissingError,
     RuntimeNotInstalledError,
     StartupTimeoutError,
-    sanitize_appium_driver_capabilities,
 )
 from agent_app.capabilities import (
     capabilities_refresh_loop,
@@ -294,11 +293,6 @@ class AppiumStopRequest(BaseModel):
     port: int
 
 
-class AppiumProbeRequest(BaseModel):
-    capabilities: dict[str, Any]
-    timeout_sec: int = 120
-
-
 class PluginConfig(BaseModel):
     name: str
     version: str
@@ -367,31 +361,6 @@ def _release_for_pack(request: Request, pack_id: str) -> str | None:
         if getattr(pack, "id", None) == pack_id:
             return str(getattr(pack, "release", ""))
     return None
-
-
-def _probe_failure_detail(response: httpx.Response, *, fallback: str) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        text = response.text.strip()
-        return text or fallback
-
-    if isinstance(payload, dict):
-        value = payload.get("value")
-        if isinstance(value, dict):
-            message = value.get("message")
-            if isinstance(message, str) and message:
-                return message
-            error = value.get("error")
-            if isinstance(error, str) and error:
-                return error
-        detail = payload.get("detail")
-        if isinstance(detail, str) and detail:
-            return detail
-        message = payload.get("message")
-        if isinstance(message, str) and message:
-            return message
-    return fallback
 
 
 def _grid_node_service_for(node_id: str) -> GridNodeServiceProtocol:
@@ -713,85 +682,6 @@ async def stop_appium(req: AppiumStopRequest) -> dict[str, Any]:
 @app.get("/agent/appium/{port}/status")
 async def appium_status(port: int) -> dict[str, Any]:
     return await appium_mgr.status(port)
-
-
-@app.post("/agent/appium/{port}/probe-session")
-async def probe_appium_session(port: int, req: AppiumProbeRequest) -> dict[str, Any]:
-    try:
-        base_url = appium_mgr.loopback_origin_for_managed_port(port)
-    except DeviceNotFoundError as exc:
-        raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(exc)) from exc
-
-    payload = {
-        "capabilities": {
-            "alwaysMatch": sanitize_appium_driver_capabilities(req.capabilities),
-            "firstMatch": [{}],
-        }
-    }
-
-    client = get_shared_http_client()
-    create_url = f"{base_url}/session"
-    try:
-        create_resp = await client.post(create_url, json=payload, timeout=req.timeout_sec)
-    except httpx.TimeoutException as exc:
-        raise http_exc(
-            status_code=504,
-            code=AgentErrorCode.PROBE_FAILED,
-            message=f"Appium probe timed out: {exc}",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise http_exc(
-            status_code=502,
-            code=AgentErrorCode.PROBE_FAILED,
-            message=f"Appium probe failed: {exc}",
-        ) from exc
-
-    if create_resp.status_code >= 400:
-        detail = _probe_failure_detail(create_resp, fallback="Session create failed")
-        raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
-
-    try:
-        data = create_resp.json()
-    except ValueError:
-        raise http_exc(
-            status_code=502,
-            code=AgentErrorCode.PROBE_FAILED,
-            message="Session create returned invalid JSON",
-        ) from None
-
-    session_id = data.get("sessionId")
-    if not session_id and isinstance(data.get("value"), dict):
-        session_id = data["value"].get("sessionId")
-    if not isinstance(session_id, str) or not session_id:
-        raise http_exc(
-            status_code=502,
-            code=AgentErrorCode.PROBE_FAILED,
-            message="Session create did not return a session id",
-        )
-
-    try:
-        delete_resp = await client.delete(f"{base_url}/session/{session_id}", timeout=req.timeout_sec)
-    except httpx.TimeoutException as exc:
-        raise http_exc(
-            status_code=504,
-            code=AgentErrorCode.PROBE_FAILED,
-            message=f"Session cleanup timed out: {exc}",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise http_exc(
-            status_code=502,
-            code=AgentErrorCode.PROBE_FAILED,
-            message=f"Session created but cleanup failed: {exc}",
-        ) from exc
-
-    if delete_resp.status_code >= 400:
-        detail = _probe_failure_detail(
-            delete_resp,
-            fallback=f"Session created but cleanup failed ({delete_resp.status_code})",
-        )
-        raise http_exc(status_code=502, code=AgentErrorCode.PROBE_FAILED, message=detail)
-
-    return {"ok": True}
 
 
 @app.get("/agent/appium/{port}/logs")

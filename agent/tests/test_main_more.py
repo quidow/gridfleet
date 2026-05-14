@@ -3,11 +3,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
-
 from agent_app.main import (
     _latest_desired,
-    _probe_failure_detail,
     _release_for_pack,
     _stop_grid_node_supervisors_for_shutdown,
     app,
@@ -54,44 +51,6 @@ async def test_release_for_pack_returns_release_when_matching() -> None:
     pack_cls = type("Pack", (), {"id": "target", "release": "2.0"})
     request.app.state.pack_state_loop = type("Loop", (), {"latest_desired_packs": [pack_cls()]})()
     assert _release_for_pack(request, "target") == "2.0"
-
-
-def test_probe_failure_detail_json_value_error_uses_text() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.side_effect = ValueError
-    response.text = "   \nplain text\n   "
-    assert _probe_failure_detail(response, fallback="fallback") == "plain text"
-
-
-def test_probe_failure_detail_json_empty_text_uses_fallback() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.side_effect = ValueError
-    response.text = "   \n   "
-    assert _probe_failure_detail(response, fallback="fallback") == "fallback"
-
-
-async def test_probe_failure_detail_uses_detail_field() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.return_value = {"detail": "detail string"}
-    assert _probe_failure_detail(response, fallback="fallback") == "detail string"
-
-
-async def test_probe_failure_detail_uses_message_field() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.return_value = {"message": "msg"}
-    assert _probe_failure_detail(response, fallback="fallback") == "msg"
-
-
-async def test_probe_failure_detail_empty_message_string() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.return_value = {"value": {"message": ""}, "detail": ""}
-    assert _probe_failure_detail(response, fallback="fallback") == "fallback"
-
-
-async def test_probe_failure_detail_error_string_in_value() -> None:
-    response = MagicMock(spec=httpx.Response)
-    response.json.return_value = {"value": {"error": "err"}}
-    assert _probe_failure_detail(response, fallback="fallback") == "err"
 
 
 async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:

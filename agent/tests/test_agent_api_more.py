@@ -2,16 +2,13 @@ import asyncio
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Protocol, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from httpx import Response as HttpxResponse
 
 from agent_app.main import (
     _get_network_devices,
-    _probe_failure_detail,
     app,
     appium_mgr,
     lifespan,
@@ -63,28 +60,6 @@ async def test_lifespan_refreshes_and_cleans_up_background_tasks() -> None:
     refresh.assert_awaited_once()
     shutdown.assert_awaited_once()
     stop_event.set()
-
-
-def test_probe_failure_detail_prefers_rich_payloads_and_fallbacks() -> None:
-    response = MagicMock(spec=HttpxResponse)
-    response.json.return_value = {"value": {"message": "nested message"}}
-    assert _probe_failure_detail(response, fallback="fallback") == "nested message"
-
-    response.json.return_value = {"value": {"error": "nested error"}}
-    assert _probe_failure_detail(response, fallback="fallback") == "nested error"
-
-    response.json.return_value = {"detail": "detail text"}
-    assert _probe_failure_detail(response, fallback="fallback") == "detail text"
-
-    response.json.return_value = {"message": "message text"}
-    assert _probe_failure_detail(response, fallback="fallback") == "message text"
-
-    response.json.return_value = {"unexpected": True}
-    assert _probe_failure_detail(response, fallback="fallback") == "fallback"
-
-    response.json.side_effect = ValueError
-    response.text = "plain text"
-    assert _probe_failure_detail(response, fallback="fallback") == "plain text"
 
 
 class _FakeAdapter:
@@ -223,74 +198,6 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert resp.json() == {"success": True, "state": "reconnecting", "detail": ""}
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5556})]
-
-
-async def test_probe_session_covers_remaining_error_paths(client: AsyncClient) -> None:
-    with patch.object(appium_mgr, "require_managed_running_port"):
-        create_response = MagicMock(spec=HttpxResponse, status_code=400)
-        create_response.json.return_value = {"detail": "bad create"}
-
-        mock_http_client = MagicMock()
-        mock_http_client.__aenter__.return_value = mock_http_client
-        mock_http_client.__aexit__.return_value = False
-        mock_http_client.post = AsyncMock(return_value=create_response)
-
-        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-            resp = await client.post(
-                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
-            )
-
-        assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail["code"] == "PROBE_FAILED"
-        assert detail["message"] == "bad create"
-
-        create_response = MagicMock(spec=HttpxResponse, status_code=200)
-        create_response.json.side_effect = ValueError
-        mock_http_client.post = AsyncMock(return_value=create_response)
-        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-            resp = await client.post(
-                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
-            )
-        assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail["code"] == "PROBE_FAILED"
-        assert "invalid JSON" in detail["message"]
-
-        create_response = MagicMock(spec=HttpxResponse, status_code=200)
-        create_response.json.return_value = {"value": {}}
-        mock_http_client.post = AsyncMock(return_value=create_response)
-        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-            resp = await client.post(
-                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
-            )
-        assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail["code"] == "PROBE_FAILED"
-        assert "session id" in detail["message"]
-
-        create_response = MagicMock(spec=HttpxResponse, status_code=200)
-        create_response.json.return_value = {"sessionId": "session-123"}
-        mock_http_client.post = AsyncMock(return_value=create_response)
-        mock_http_client.delete = AsyncMock(side_effect=httpx.ReadTimeout("slow", request=MagicMock()))
-        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-            resp = await client.post(
-                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
-            )
-        assert resp.status_code == 504
-        detail = resp.json()["detail"]
-        assert detail["code"] == "PROBE_FAILED"
-        assert "cleanup timed out" in detail["message"]
-
-        mock_http_client.delete = AsyncMock(side_effect=httpx.HTTPError("cleanup boom"))
-        with patch("agent_app.main.httpx.AsyncClient", return_value=mock_http_client):
-            resp = await client.post(
-                "/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}}
-            )
-        assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail["code"] == "PROBE_FAILED"
-        assert "cleanup failed" in detail["message"]
 
 
 async def test_appium_logs_caps_requested_lines(client: AsyncClient) -> None:
