@@ -12,6 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics import router as analytics
+from app.appium_nodes import exception_handlers as appium_node_exception_handlers
+from app.appium_nodes import routers as appium_node_routers
+from app.appium_nodes import services as appium_node_services
+from app.appium_nodes.services.heartbeat import shutdown_background_tasks
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -38,17 +42,14 @@ from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
 from app.routers import (
-    admin_appium_nodes,
     bulk,
     device_groups,
     devices,
     lifecycle,
-    nodes,
     runs,
     sessions,
 )
 from app.services import device_health, device_service
-from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
@@ -56,12 +57,7 @@ from app.services.data_cleanup import data_cleanup_loop
 from app.services.device_connectivity import device_connectivity_loop
 from app.services.device_readiness import is_ready_for_use_async
 from app.services.fleet_capacity import fleet_capacity_collector_loop
-from app.services.heartbeat import (
-    heartbeat_loop,
-    shutdown_background_tasks,
-)
 from app.services.intent_reconciler import device_intent_reconciler_loop
-from app.services.node_health import node_health_loop
 from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
@@ -78,6 +74,9 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
+appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
+heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
+node_health_loop = appium_node_services.node_health.node_health_loop
 
 
 async def _reopen_agent_http_pool() -> None:
@@ -232,7 +231,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
                 asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
                 asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
-                asyncio.create_task(appium_reconciler_loop(), name="appium_reconciler_loop"),
+                asyncio.create_task(
+                    appium_reconciler_loop(),
+                    name="appium_reconciler_loop",
+                ),
                 asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
             ]
         watcher_task = asyncio.create_task(
@@ -270,14 +272,15 @@ app = FastAPI(title="GridFleet", version="0.1.0", lifespan=lifespan)
 app.add_middleware(StaticPathsAuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
+appium_node_exception_handlers.register(app)
 
 app.include_router(auth_router_module.router)
-app.include_router(admin_appium_nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
     bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
 app.include_router(devices.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside the WS handler

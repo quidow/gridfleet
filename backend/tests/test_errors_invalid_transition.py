@@ -2,6 +2,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.errors import InvalidTransitionError, register_exception_handlers
 from app.services.node_service_types import NodeManagerError
 
@@ -10,6 +11,7 @@ from app.services.node_service_types import NodeManagerError
 def app() -> FastAPI:
     application = FastAPI()
     register_exception_handlers(application)
+    appium_node_exception_handlers.register(application)
 
     @application.get("/_test-invalid-transition")
     async def _trigger() -> None:

@@ -10,7 +10,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.observability import get_logger
-from app.services.node_service_types import NodeManagerError
 
 logger = get_logger(__name__)
 
@@ -225,15 +224,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             message=exc.message,
             request_id=request_id_from_request(request),
             details=exc.details,
-        )
-
-    @app.exception_handler(NodeManagerError)
-    async def handle_node_manager_error(request: Request, exc: NodeManagerError) -> JSONResponse:
-        return error_response(
-            status_code=400,
-            code="VALIDATION_ERROR",
-            message=str(exc),
-            request_id=request_id_from_request(request),
         )
 
     @app.exception_handler(RequestValidationError)
