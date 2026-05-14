@@ -10,6 +10,7 @@ class AgentCommConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="",
         populate_by_name=True,
+        loc_by_alias=False,
         extra="ignore",
     )
 

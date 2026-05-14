@@ -79,6 +79,10 @@ class Settings(BaseSettings):
             validated_agent = AgentCommConfig(**agent_kwargs)
             for key in agent_kwargs:
                 setattr(agent_settings, key, getattr(validated_agent, key))
+        else:
+            validated_agent = AgentCommConfig()
+            for key in _AGENT_COMM_FIELD_NAMES:
+                setattr(agent_settings, key, getattr(validated_agent, key))
 
     @property
     def auth_enabled(self) -> bool:
@@ -152,6 +156,10 @@ class Settings(BaseSettings):
     def agent_auth_username(self, value: str | None) -> None:
         agent_settings.agent_auth_username = value
 
+    @agent_auth_username.deleter
+    def agent_auth_username(self) -> None:
+        agent_settings.agent_auth_username = None
+
     @property
     def agent_auth_password(self) -> str | None:
         return agent_settings.agent_auth_password
@@ -159,6 +167,10 @@ class Settings(BaseSettings):
     @agent_auth_password.setter
     def agent_auth_password(self, value: str | None) -> None:
         agent_settings.agent_auth_password = value
+
+    @agent_auth_password.deleter
+    def agent_auth_password(self) -> None:
+        agent_settings.agent_auth_password = None
 
     @property
     def agent_terminal_token(self) -> str | None:
@@ -168,6 +180,10 @@ class Settings(BaseSettings):
     def agent_terminal_token(self, value: str | None) -> None:
         agent_settings.agent_terminal_token = value
 
+    @agent_terminal_token.deleter
+    def agent_terminal_token(self) -> None:
+        agent_settings.agent_terminal_token = None
+
     @property
     def agent_terminal_scheme(self) -> Literal["ws", "wss"]:
         return agent_settings.agent_terminal_scheme
@@ -175,6 +191,10 @@ class Settings(BaseSettings):
     @agent_terminal_scheme.setter
     def agent_terminal_scheme(self, value: Literal["ws", "wss"]) -> None:
         agent_settings.agent_terminal_scheme = value
+
+    @agent_terminal_scheme.deleter
+    def agent_terminal_scheme(self) -> None:
+        agent_settings.agent_terminal_scheme = "ws"
 
 
 settings = Settings()
