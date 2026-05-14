@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm import http_pool as agent_http_pool_module
 from app.analytics import router as analytics
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -51,7 +52,6 @@ from app.routers import (
     sessions,
 )
 from app.services import device_health, device_service, host_service
-from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
@@ -164,7 +164,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _validate_online_agent_contracts(db)
     _validate_leader_keepalive_settings()
 
-    await agent_http_pool.reopen()
+    await agent_http_pool_module.agent_http_pool.reopen()
     event_bus.register_handler(settings_service.handle_system_event)
     event_bus.register_handler(webhook_dispatcher.handle_system_event)
     await event_bus.start()
@@ -234,7 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_service.shutdown()
         await control_plane_leader.release()
         await event_bus.shutdown()
-        await agent_http_pool.close()
+        await agent_http_pool_module.agent_http_pool.close()
         await grid_service.close()
         await close_session_viability_client()
         await engine.dispose()
