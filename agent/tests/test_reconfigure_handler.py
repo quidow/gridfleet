@@ -31,7 +31,7 @@ def test_appium_start_request_accepts_orchestration_metadata() -> None:
 
 
 def test_reconfigure_request_serializes_run_id() -> None:
-    from agent_app.reconfigure_handler import AppiumReconfigureRequest
+    from agent_app.appium.schemas import AppiumReconfigureRequest
 
     run_id = uuid4()
     request: AppiumReconfigureRequest = AppiumReconfigureRequest(

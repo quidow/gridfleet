@@ -25,6 +25,7 @@ from agent_app.appium.process import (
     RuntimeNotInstalledError,
     StartupTimeoutError,
 )
+from agent_app.appium.schemas import AppiumReconfigureRequest
 from agent_app.capabilities import (
     capabilities_refresh_loop,
     get_capabilities_snapshot,
@@ -56,7 +57,6 @@ from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugin_manager import get_installed_plugins, sync_plugins
-from agent_app.reconfigure_handler import AppiumReconfigureRequest
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import get_tool_status
