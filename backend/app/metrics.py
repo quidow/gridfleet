@@ -20,20 +20,13 @@ deletes this file entirely.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING
-
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from sqlalchemy import column, func, select, table
 
 from app.core.metrics import (
     GaugeRefresher,
     register_gauge_refresher,
 )
-from app.core.metrics import (
-    refresh_system_gauges as _core_refresh_system_gauges,
-)
-from app.jobs.models import Job
+from app.core.metrics import refresh_system_gauges as _core_refresh_system_gauges
 from app.metrics_recorders import (
     ACTIVE_SESSIONS,
     ACTIVE_SSE_CONNECTIONS,
@@ -65,53 +58,19 @@ from app.metrics_recorders import (
     record_webhook_delivery,
     set_ip_ping_consecutive_failures,
 )
-from app.models.session import Session, SessionStatus
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-DEVICE_RESERVATIONS = table(
-    "device_reservations",
-    column("device_id"),
-    column("released_at"),
-    column("excluded_until"),
-)
 
 
-async def refresh_system_gauges_legacy(db: AsyncSession) -> None:
+async def refresh_system_gauges_legacy(db: object) -> None:
     """Legacy cross-domain aggregator.
 
-    Identical to the pre-Phase-0a ``refresh_system_gauges`` body. Reads
-    from :class:`Job`, :class:`Session`, :class:`event_bus`, and the
-    ``device_reservations`` table to update four gauges in a single
-    function call. Stays canonical for ``app/main.py``'s ``/metrics``
-    handler until the last contributing domain migrates and Phase 14
-    flips the cutover to :func:`app.core.metrics.refresh_system_gauges`.
+    Kept as a no-op compatibility symbol through Phase 16. The canonical
+    gauge dispatcher is :func:`app.core.metrics.refresh_system_gauges`.
     """
-    await _core_refresh_system_gauges(db)
-    pending_jobs_result = await db.execute(select(func.count()).select_from(Job).where(Job.status == "pending"))
-    active_sessions_result = await db.execute(
-        select(func.count())
-        .select_from(Session)
-        .where(
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
-        )
-    )
-    PENDING_JOBS.set(int(pending_jobs_result.scalar_one()))
-    ACTIVE_SESSIONS.set(int(active_sessions_result.scalar_one()))
-    cooldown_result = await db.execute(
-        select(func.count(func.distinct(DEVICE_RESERVATIONS.c.device_id)))
-        .select_from(DEVICE_RESERVATIONS)
-        .where(DEVICE_RESERVATIONS.c.released_at.is_(None))
-        .where(DEVICE_RESERVATIONS.c.excluded_until.is_not(None))
-        .where(DEVICE_RESERVATIONS.c.excluded_until > datetime.now(UTC))
-    )
-    DEVICES_IN_COOLDOWN.set(int(cooldown_result.scalar_one() or 0))
+    del db
 
 
 # Backward-compat alias for callers still importing the pre-Phase-0a name.
-refresh_system_gauges = refresh_system_gauges_legacy
+refresh_system_gauges = _core_refresh_system_gauges
 
 
 def render_metrics() -> bytes:
