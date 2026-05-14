@@ -1,7 +1,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from agent_app.plugin_manager import get_installed_plugins, install_plugin, sync_plugins
+from agent_app.plugins.manager import get_installed_plugins, install_plugin, sync_plugins
 
 
 class _FakeProc:
@@ -21,9 +21,9 @@ async def test_get_installed_plugins_parses_nested_payload() -> None:
     proc = _FakeProc(0, stdout=b'{"installed":{"execute-driver":{"version":"1.0.0","installed":true}}}')
 
     with (
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=proc),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc),
     ):
         plugins = await get_installed_plugins()
 
@@ -34,10 +34,10 @@ async def test_install_plugin_uses_npm_source() -> None:
     proc = _FakeProc(0, stdout=b"installed")
 
     with (
-        patch("agent_app.plugin_manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
-        patch("agent_app.plugin_manager._find_appium", return_value="/usr/local/bin/appium"),
-        patch("agent_app.plugin_manager._build_env", return_value={"PATH": "/usr/bin"}),
-        patch("agent_app.plugin_manager.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
+        patch("agent_app.plugins.manager.get_installed_plugins", new_callable=AsyncMock, return_value=[]),
+        patch("agent_app.plugins.manager._find_appium", return_value="/usr/local/bin/appium"),
+        patch("agent_app.plugins.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.plugins.manager.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
     ):
         result = await install_plugin("execute-driver", "1.0.0", "npm:@appium/execute-driver-plugin")
 
@@ -55,7 +55,7 @@ async def test_install_plugin_uses_npm_source() -> None:
 async def test_sync_plugins_installs_updates_and_removes() -> None:
     with (
         patch(
-            "agent_app.plugin_manager.get_installed_plugins",
+            "agent_app.plugins.manager.get_installed_plugins",
             new_callable=AsyncMock,
             return_value=[
                 {"name": "execute-driver", "version": "0.9.0"},
@@ -63,12 +63,12 @@ async def test_sync_plugins_installs_updates_and_removes() -> None:
             ],
         ),
         patch(
-            "agent_app.plugin_manager.install_plugin",
+            "agent_app.plugins.manager.install_plugin",
             new_callable=AsyncMock,
             return_value={"success": True, "message": "updated"},
         ) as install,
         patch(
-            "agent_app.plugin_manager.uninstall_plugin",
+            "agent_app.plugins.manager.uninstall_plugin",
             new_callable=AsyncMock,
             return_value={"success": True, "message": "removed"},
         ) as uninstall,

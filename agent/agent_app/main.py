@@ -48,7 +48,7 @@ from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 from agent_app.pack.state import AdapterLoaderFn, PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
-from agent_app.plugin_manager import get_installed_plugins, sync_plugins
+from agent_app.plugins.manager import get_installed_plugins, sync_plugins
 from agent_app.registration import registration_loop
 from agent_app.terminal_ws import handle_terminal
 from agent_app.tools_manager import get_tool_status
