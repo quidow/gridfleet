@@ -5,9 +5,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from app.hosts.models import HostStatus, OSType
+from app.hosts.service_versioning import AgentVersionStatus
 from app.models.device import ConnectionType, DeviceType
 from app.schemas.device import DeviceRead
-from app.services.host_versioning import AgentVersionStatus
 
 
 class HostCreate(BaseModel):
