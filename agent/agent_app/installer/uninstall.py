@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_app.installer.install import _service_file_path
+from agent_app.installer.install import LegacyInstallDetectedError, _service_file_path, detect_legacy_install
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,6 +58,9 @@ def uninstall(
     remove_config_dir: bool = True,
 ) -> UninstallResult:
     resolved_os = os_name or platform.system()
+    legacy = detect_legacy_install()
+    if legacy is not None:
+        raise LegacyInstallDetectedError(legacy)
     service_file = _service_file_path(config, resolved_os, operator)
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)

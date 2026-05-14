@@ -11,6 +11,11 @@ from agent_app.installer.uninstall import UninstallResult, uninstall
 _LINUX_OPERATOR = OperatorIdentity(login="ops", uid=1000, home=Path("/home/ops"))
 
 
+@pytest.fixture(autouse=True)
+def _patch_legacy_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("agent_app.installer.install._LEGACY_PATHS", (tmp_path / "nope",))
+
+
 def _make_config(tmp_path: Path) -> InstallConfig:
     return InstallConfig(
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),

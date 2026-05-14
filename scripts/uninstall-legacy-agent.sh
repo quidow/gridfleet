@@ -29,7 +29,12 @@ if [ "$OS" = "Linux" ]; then
         kill -9 $AGENT_PID 2>/dev/null || true
     fi
 elif [ "$OS" = "Darwin" ]; then
-    PLIST_PATH="$HOME/Library/LaunchAgents/com.gridfleet.agent.plist"
+    if [ -n "${SUDO_USER:-}" ]; then
+        OP_HOME=$(eval echo "~${SUDO_USER}")
+    else
+        OP_HOME="$HOME"
+    fi
+    PLIST_PATH="${OP_HOME}/Library/LaunchAgents/com.gridfleet.agent.plist"
     if [ -f "$PLIST_PATH" ]; then
         launchctl unload "$PLIST_PATH" 2>/dev/null || true
         rm "$PLIST_PATH"
