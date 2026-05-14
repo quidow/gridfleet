@@ -49,7 +49,7 @@ async def test_session_viability_restore_handles_external_reservation(
     appium_node = AppiumNode(
         device_id=device.id,
         port=9999,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         desired_state=AppiumDesiredState.running,
         desired_port=9999,
         pid=0,
@@ -61,13 +61,16 @@ async def test_session_viability_restore_handles_external_reservation(
 
     probe_started = asyncio.Event()
     external_done = asyncio.Event()
+    observed_grid_url: str | None = None
 
     async def fake_probe(
-        db: AsyncSession,
-        device_arg: Device,
         capabilities: dict[str, Any],
         timeout_sec: int,
+        *,
+        grid_url: str | None = None,
     ) -> tuple[bool, str | None]:
+        nonlocal observed_grid_url
+        observed_grid_url = grid_url
         probe_started.set()
         await external_done.wait()
         return True, None
@@ -78,7 +81,7 @@ async def test_session_viability_restore_handles_external_reservation(
     async def fake_get_caps(*_a: object, **_kw: object) -> dict[str, Any]:
         return {"platformName": "Android"}
 
-    monkeypatch.setattr(session_viability, "probe_session_via_agent_node", fake_probe)
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", fake_get_caps)
 
@@ -100,6 +103,7 @@ async def test_session_viability_restore_handles_external_reservation(
         external_done.set()
 
     await asyncio.gather(run_probe(), reserve_externally())
+    assert observed_grid_url == "http://node-grid:4444/wd/hub"
 
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()

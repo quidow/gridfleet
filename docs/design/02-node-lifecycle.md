@@ -179,14 +179,15 @@ sequenceDiagram
     autonumber
     participant L as node_health_loop
     participant Probe as _check_node_health
-    participant Agent as Host agent
+    participant Grid as Selenium Grid
     participant Process as _process_node_health
     participant Restart as restart_node_via_agent
     participant Pg as Postgres
 
     L->>Probe: probe each running AppiumNode
-    Probe->>Agent: POST /agent/appium/{port}/probe-session
-    Agent-->>Probe: ack / refused / indeterminate
+    Probe->>Grid: POST /session with gridfleet:probeSession=true
+    Probe->>Grid: DELETE /session/{sessionId}
+    Grid-->>Probe: ack / refused / indeterminate
     Probe-->>Process: result
     alt indeterminate
         Process-->>L: no DB mutation

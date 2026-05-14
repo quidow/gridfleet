@@ -1,4 +1,4 @@
-"""Typed projection of agent probe responses into a tri-state result."""
+"""Typed projection of agent status responses into a tri-state result."""
 
 from __future__ import annotations
 
@@ -18,12 +18,3 @@ def from_status_response(payload: dict[str, Any] | None) -> ProbeResult:
     if payload.get("running") is True:
         return ProbeResult(status="ack")
     return ProbeResult(status="refused", detail="Appium not running")
-
-
-def from_probe_session_response(result: tuple[bool, str | None]) -> ProbeResult:
-    healthy, error = result
-    if healthy:
-        return ProbeResult(status="ack")
-    if isinstance(error, str) and error.startswith("Probe session failed (HTTP "):
-        return ProbeResult(status="indeterminate", detail=error)
-    return ProbeResult(status="refused", detail=error)

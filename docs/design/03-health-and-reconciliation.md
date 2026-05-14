@@ -64,10 +64,10 @@ Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. T
 | `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.state` (recovery only), `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.operational_state` (cross-link) | `Host.status` (offline/online) |
 | `control_plane_leader_keepalive` | 5 s | `control_plane_leader_heartbeats` | `control_plane_leader_heartbeats.last_heartbeat_at` | leader liveness row |
 | `control_plane_leader_watcher` | 5 s | `control_plane_leader_heartbeats` | terminates stale lock-holder backend only | stale-leader preemption |
-| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/probe-session` or `/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
+| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/status`, Grid `/status`, Grid WebDriver probe session | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
 | `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link) | `Device.device_checks_*` |
 | `session_sync_loop` | 5 s | Grid `/status` | `Session` rows, `Device.operational_state` (busy↔available) | `Session.state`, run-claim transitions |
-| `session_viability_loop` | 60 s wake / per-device 3600 s | Agent `/agent/appium/{port}/probe-session` | `Device.session_viability_*`, `Device.operational_state` (cross-link) | `Device.session_viability_*` |
+| `session_viability_loop` | 60 s wake / per-device 3600 s | Grid WebDriver probe session | `Device.session_viability_*`, `Device.operational_state` (cross-link) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
@@ -99,7 +99,7 @@ Loops that consume probes **must** branch on `result.status` explicitly:
 
 Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
-`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). `appium_probe_session` distinguishes between Appium-side errors ("Probe session returned an invalid payload") and HTTP-shaped errors ("Probe session failed (HTTP 503)"); the consumer maps the HTTP-shaped ones to indeterminate via `agent_probe_result.from_probe_session_response` (`node_health.py`).
+`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). Session-creating probes use Selenium Grid, not the agent: `probe_session_via_grid` creates a WebDriver session through the node's `grid_url` (falling back to `grid.hub_url` for callers without a node), tags it with `gridfleet:probeSession=true`, and deletes it through the hub. Agent `/status` remains a process liveness check only.
 
 ## Idempotency rules
 

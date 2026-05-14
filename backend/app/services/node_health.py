@@ -27,9 +27,8 @@ from app.services import (
     grid_service,
     lifecycle_policy,
 )
-from app.services.agent_operations import appium_probe_session as fetch_appium_probe_session
 from app.services.agent_operations import appium_status as fetch_appium_status
-from app.services.agent_probe_result import ProbeResult, from_probe_session_response, from_status_response
+from app.services.agent_probe_result import ProbeResult, from_status_response
 from app.services.appium_reconciler_agent import require_management_host
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.services.device_event_service import record_event
@@ -39,7 +38,11 @@ from app.services.intent_service import register_intents_and_reconcile
 from app.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.services.lifecycle_incident_service import record_lifecycle_incident
 from app.services.node_service_types import NodeManagerError
-from app.services.session_viability import build_probe_capabilities
+from app.services.session_viability import (
+    build_probe_capabilities,
+    grid_probe_response_to_result,
+    probe_session_via_grid,
+)
 from app.services.settings_service import settings_service
 
 logger = get_logger(__name__)
@@ -114,15 +117,12 @@ async def _check_node_health(
 
     try:
         if probe_capabilities is not None:
-            result = await fetch_appium_probe_session(
-                host.ip,
-                host.agent_port,
-                node.port,
-                capabilities=probe_capabilities,
-                timeout_sec=NODE_HEALTH_PROBE_TIMEOUT_SEC,
-                http_client_factory=httpx.AsyncClient,
+            result = await probe_session_via_grid(
+                probe_capabilities,
+                NODE_HEALTH_PROBE_TIMEOUT_SEC,
+                grid_url=node.grid_url,
             )
-            return from_probe_session_response(result)
+            return grid_probe_response_to_result(result)
         payload = await fetch_appium_status(
             host.ip,
             host.agent_port,

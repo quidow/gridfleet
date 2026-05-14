@@ -9,7 +9,6 @@ from sqlalchemy.orm import selectinload
 
 from app.database import async_session
 from app.models.device import Device, DeviceOperationalState
-from app.models.host import Host
 from app.observability import get_logger, observe_background_loop
 from app.services import (
     capability_service,
@@ -17,7 +16,7 @@ from app.services import (
     device_health,
     device_locking,
 )
-from app.services.agent_operations import appium_probe_session
+from app.services.agent_probe_result import ProbeResult
 from app.services.device_readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_probe_constants import PROBE_TEST_NAME
@@ -224,8 +223,29 @@ def build_probe_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int) -> tuple[bool, str | None]:
-    base = settings_service.get("grid.hub_url").rstrip("/")
+def grid_probe_response_to_result(result: tuple[bool, str | None]) -> ProbeResult:
+    ok, detail = result
+    if ok:
+        return ProbeResult(status="ack")
+    if detail is None:
+        return ProbeResult(status="refused")
+    infrastructure_markers = (
+        "Session create request failed:",
+        "Session created but cleanup failed:",
+        "Session created but cleanup failed (",
+    )
+    if detail.startswith(infrastructure_markers):
+        return ProbeResult(status="indeterminate", detail=detail)
+    return ProbeResult(status="refused", detail=detail)
+
+
+async def probe_session_via_grid(
+    capabilities: dict[str, Any],
+    timeout_sec: int,
+    *,
+    grid_url: str | None = None,
+) -> tuple[bool, str | None]:
+    base = (grid_url or settings_service.get("grid.hub_url")).rstrip("/")
     client = _get_grid_probe_client()
     try:
         create_resp = await client.post(
@@ -261,30 +281,6 @@ async def probe_session_via_grid(capabilities: dict[str, Any], timeout_sec: int)
     return True, None
 
 
-async def probe_session_via_agent_node(
-    db: AsyncSession,
-    device: Device,
-    capabilities: dict[str, Any],
-    timeout_sec: int,
-) -> tuple[bool, str | None]:
-    node = device.appium_node
-    if node is None or not node.observed_running:
-        return False, "Appium node is not running"
-    if device.host_id is None:
-        return False, "Device has no management host"
-    host = await db.get(Host, device.host_id)
-    if host is None:
-        return False, "Device management host was not found"
-    return await appium_probe_session(
-        host.ip,
-        host.agent_port,
-        node.port,
-        capabilities=capabilities,
-        timeout_sec=timeout_sec,
-        timeout=timeout_sec,
-    )
-
-
 async def run_session_viability_probe(
     db: AsyncSession,
     device: Device,
@@ -318,7 +314,8 @@ async def run_session_viability_probe(
     try:
         config_changed = _clear_session_viability_from_config(device)
         timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
-        if not device.appium_node or not device.appium_node.observed_running:
+        node = device.appium_node
+        if not node or not node.observed_running:
             state = await _write_session_viability(
                 db,
                 device,
@@ -342,7 +339,7 @@ async def run_session_viability_probe(
         await db.commit()
 
         capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
-        ok, error = await probe_session_via_agent_node(db, device, capabilities, timeout_sec)
+        ok, error = await probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
 
         state = await _write_session_viability(
             db,

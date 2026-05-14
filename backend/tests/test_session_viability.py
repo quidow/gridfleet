@@ -19,7 +19,7 @@ from app.services.session_viability import (
     _should_run_scheduled_probe,
     get_session_viability,
     get_session_viability_control_plane_state,
-    probe_session_via_agent_node,
+    grid_probe_response_to_result,
     probe_session_via_grid,
     record_session_viability_result,
     run_session_viability_probe,
@@ -56,7 +56,7 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
     node = AppiumNode(
         device_id=device.id,
         port=4729,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         desired_state=AppiumDesiredState.stopped,
         desired_port=None,
         pid=None,
@@ -122,10 +122,10 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.services.session_viability.appium_probe_session",
+            "app.services.session_viability.probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
-        ),
+        ) as probe_mock,
     ):
         result = await run_session_viability_probe(db_session, loaded_device, checked_by="manual")
 
@@ -138,6 +138,11 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
     assert persisted["status"] == "passed"
     assert persisted["last_succeeded_at"] == persisted["last_attempted_at"]
     assert loaded_device.operational_state == DeviceOperationalState.available
+    probe_mock.assert_awaited_once()
+    probe_capabilities = probe_mock.await_args.args[0]
+    assert probe_capabilities["platformName"] == "Android"
+    assert probe_capabilities["gridfleet:probeSession"] is True
+    assert probe_capabilities["gridfleet:testName"] == session_viability.PROBE_TEST_NAME
 
 
 async def test_recovery_session_viability_probe_allows_offline_device(
@@ -187,7 +192,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.services.session_viability.appium_probe_session",
+            "app.services.session_viability.probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),
@@ -224,7 +229,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     node = AppiumNode(
         device_id=device.id,
         port=4723,
-        grid_url="http://hub:4444",
+        grid_url="http://node-grid:4444/wd/hub",
         active_connection_target="emulator-5554",
         desired_state=AppiumDesiredState.running,
         desired_port=4723,
@@ -240,7 +245,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     loaded_device.appium_node = loaded_node
 
     with patch(
-        "app.services.session_viability.appium_probe_session",
+        "app.services.session_viability.probe_session_via_grid",
         new_callable=AsyncMock,
         return_value=(True, None),
     ) as probe_mock:
@@ -248,9 +253,11 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
 
     assert result["status"] == "passed"
     assert probe_mock.await_args is not None
-    capabilities = probe_mock.await_args.kwargs["capabilities"]
+    capabilities = probe_mock.await_args.args[0]
     assert capabilities["appium:udid"] == "emulator-5554"
     assert capabilities["appium:gridfleet:deviceId"] == str(device.id)
+    assert capabilities["gridfleet:probeSession"] is True
+    assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
 
 
 async def test_run_session_viability_probe_rejects_non_available_device(
@@ -374,6 +381,47 @@ async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
         timeout=5,
     )
     mock_client.delete.assert_awaited_once_with("http://hub:4444/wd/hub/session/session-1", timeout=5)
+
+
+async def test_probe_session_via_grid_uses_explicit_node_grid_url() -> None:
+    create_response = MagicMock(spec=httpx.Response, status_code=200)
+    create_response.json.return_value = {"value": {"sessionId": "session-1"}}
+    delete_response = MagicMock(spec=httpx.Response, status_code=200)
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=create_response)
+    mock_client.delete = AsyncMock(return_value=delete_response)
+
+    with (
+        patch("app.services.session_viability.settings_service.get", return_value="http://global-hub:4444"),
+        patch("app.services.session_viability._get_grid_probe_client", return_value=mock_client),
+    ):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "iOS"},
+            timeout_sec=5,
+            grid_url="http://node-hub:4444/wd/hub",
+        )
+
+    assert ok is True
+    assert error is None
+    mock_client.post.assert_awaited_once_with(
+        "http://node-hub:4444/wd/hub/session",
+        json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}},
+        timeout=5,
+    )
+    mock_client.delete.assert_awaited_once_with("http://node-hub:4444/wd/hub/session/session-1", timeout=5)
+
+
+def test_grid_probe_response_to_result_maps_all_shapes() -> None:
+    assert grid_probe_response_to_result((True, None)).status == "ack"
+    assert grid_probe_response_to_result((False, None)).status == "refused"
+
+    refused = grid_probe_response_to_result((False, "device offline"))
+    assert refused.status == "refused"
+    assert refused.detail == "device offline"
+
+    indeterminate = grid_probe_response_to_result((False, "Session create request failed: ConnectError"))
+    assert indeterminate.status == "indeterminate"
+    assert indeterminate.detail == "Session create request failed: ConnectError"
 
 
 def test_session_viability_small_helpers_cover_error_shapes() -> None:
@@ -551,19 +599,18 @@ async def test_probe_session_via_grid_cleanup_failure_paths() -> None:
     assert error == "Session created but cleanup failed: down"
 
 
-async def test_probe_session_via_agent_node_rejects_missing_runtime_pieces(
+async def test_run_session_viability_probe_rejects_missing_running_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
     device = Device(
-        id=uuid.uuid4(),
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         identity_scheme="android_serial",
         identity_scope="host",
-        identity_value="probe-agent-001",
-        connection_target="probe-agent-001",
-        name="Probe Agent Device",
+        identity_value="probe-no-node",
+        connection_target="probe-no-node",
+        name="No Node Probe Device",
         os_version="14",
         host_id=db_host.id,
         operational_state=DeviceOperationalState.available,
@@ -571,25 +618,17 @@ async def test_probe_session_via_agent_node_rejects_missing_runtime_pieces(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.appium_node = None
+    db_session.add(device)
+    await db_session.commit()
 
-    ok, error = await probe_session_via_agent_node(db_session, device, {}, 5)
-    assert (ok, error) == (False, "Appium node is not running")
+    loaded_device = await db_session.get(Device, device.id)
+    assert loaded_device is not None
+    loaded_device.appium_node = None
 
-    device.appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid",
-        pid=1,
-        active_connection_target="probe-agent-001",
-    )
-    device.host_id = None
-    ok, error = await probe_session_via_agent_node(db_session, device, {}, 5)
-    assert (ok, error) == (False, "Device has no management host")
+    result = await run_session_viability_probe(db_session, loaded_device, checked_by="manual")
 
-    device.host_id = uuid.uuid4()
-    ok, error = await probe_session_via_agent_node(db_session, device, {}, 5)
-    assert (ok, error) == (False, "Device management host was not found")
+    assert result["status"] == "failed"
+    assert result["error"] == "Appium node is not running"
 
 
 async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(
@@ -682,7 +721,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     monkeypatch.setattr(session_viability, "set_operational_state", AsyncMock())
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
-    monkeypatch.setattr(session_viability, "probe_session_via_agent_node", AsyncMock(return_value=(False, None)))
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
     handler = AsyncMock()
     session_viability.configure_health_failure_handler(handler)

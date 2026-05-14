@@ -12,7 +12,17 @@ type JsonObject = dict[str, JsonValue]
 type SettingValue = Any
 type ControlPlaneValue = Any
 type AsyncTaskFactory = Callable[..., Coroutine[object, object, None]]
-type ProbeSessionFn = Callable[[JsonObject, int], Awaitable[tuple[bool, str | None]]]
+
+
+class ProbeSessionFn(Protocol):
+    def __call__(
+        self,
+        capabilities: JsonObject,
+        timeout_sec: int,
+        *,
+        grid_url: str | None = None,
+    ) -> Awaitable[tuple[bool, str | None]]:
+        raise NotImplementedError
 
 
 class AsyncSessionContextManager(Protocol):

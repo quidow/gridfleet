@@ -157,14 +157,20 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         "app.services.device_verification_execution.capability_service.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
     )
+    probe_session = AsyncMock(return_value=(False, "probe failed"))
     started, error = await execution.run_probe(
         _job(),
         db_session,
         existing,
-        probe_session_fn=AsyncMock(return_value=(False, "probe failed")),
+        probe_session_fn=probe_session,
     )
     assert started is running_node
     assert error == "probe failed"
+    probe_session.assert_awaited_once_with(
+        {"platformName": "Android"},
+        120,
+        grid_url="http://grid",
+    )
 
 
 async def test_save_verified_context_and_cleanup_error_paths(

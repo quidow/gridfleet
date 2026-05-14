@@ -3,13 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from httpx import Response as HttpxResponse
 
-from agent_app.appium_process import DeviceNotFoundError
-from agent_app.error_codes import AgentErrorCode
 from agent_app.main import app, appium_mgr
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
@@ -402,131 +398,10 @@ async def test_appium_logs(client: AsyncClient) -> None:
     get_logs.assert_called_once_with(4723, lines=2)
 
 
-async def test_probe_appium_session(client: AsyncClient) -> None:
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.return_value = {"value": {"sessionId": "session-123"}}
-    delete_response = MagicMock(spec=HttpxResponse, status_code=200)
-
-    mock_http_client = MagicMock()
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    mock_http_client.delete = AsyncMock(return_value=delete_response)
-
-    with (
-        patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
-    ):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-
-    assert resp.status_code == 200
-    assert resp.json()["ok"] is True
-    mock_http_client.post.assert_awaited_once_with(
-        "http://127.0.0.1:4723/session",
-        json={"capabilities": {"alwaysMatch": {"platformName": "Android"}, "firstMatch": [{}]}},
-        timeout=120,
-    )
-
-
-async def test_probe_appium_session_maps_managed_port_race_to_not_found(client: AsyncClient) -> None:
-    with patch.object(
-        appium_mgr,
-        "loopback_origin_for_managed_port",
-        side_effect=DeviceNotFoundError("No managed Appium process is running on port 4723"),
-    ):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
+async def test_probe_appium_session_route_is_not_available(client: AsyncClient) -> None:
+    resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
 
     assert resp.status_code == 404
-    detail = resp.json()["detail"]
-    assert detail["code"] == AgentErrorCode.DEVICE_NOT_FOUND
-
-
-async def test_probe_appium_session_strips_gridfleet_routing_metadata(client: AsyncClient) -> None:
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.return_value = {"value": {"sessionId": "session-123"}}
-    delete_response = MagicMock(spec=HttpxResponse, status_code=200)
-
-    mock_http_client = MagicMock()
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    mock_http_client.delete = AsyncMock(return_value=delete_response)
-
-    capabilities = {
-        "platformName": "roku",
-        "appium:automationName": "Roku",
-        "appium:ip": "192.168.1.2",
-        "appium:password": "secret",
-        "appium:udid": "192.168.1.2",
-        "gridfleet:probeSession": True,
-        "gridfleet:testName": "__gridfleet_probe__",
-        "appium:gridfleet:deviceId": "device-1",
-        "appium:gridfleet:deviceName": "Roku Stick",
-        "appium:deviceName": "Roku Stick",
-        "appium:platform": "roku_network",
-        "appium:device_type": "real_device",
-        "appium:os_version": "15.1.4",
-        "appium:manufacturer": "Roku",
-        "appium:model": "Streaming Stick 4K",
-    }
-
-    with (
-        patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
-    ):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": capabilities})
-
-    assert resp.status_code == 200
-    mock_http_client.post.assert_awaited_once_with(
-        "http://127.0.0.1:4723/session",
-        json={
-            "capabilities": {
-                "alwaysMatch": {
-                    "platformName": "roku",
-                    "appium:automationName": "Roku",
-                    "appium:ip": "192.168.1.2",
-                    "appium:password": "secret",
-                    "appium:udid": "192.168.1.2",
-                },
-                "firstMatch": [{}],
-            }
-        },
-        timeout=120,
-    )
-
-
-async def test_probe_appium_session_returns_gateway_error_on_cleanup_failure(client: AsyncClient) -> None:
-    create_response = MagicMock(spec=HttpxResponse, status_code=200)
-    create_response.json.return_value = {"value": {"sessionId": "session-123"}}
-    delete_response = MagicMock(spec=HttpxResponse, status_code=500)
-    delete_response.json.return_value = {"value": {"message": "delete failed"}}
-
-    mock_http_client = MagicMock()
-    mock_http_client.post = AsyncMock(return_value=create_response)
-    mock_http_client.delete = AsyncMock(return_value=delete_response)
-
-    with (
-        patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
-    ):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-
-    assert resp.status_code == 502
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert detail["message"] == "delete failed"
-
-
-async def test_probe_appium_session_returns_timeout_status(client: AsyncClient) -> None:
-    mock_http_client = MagicMock()
-    mock_http_client.post = AsyncMock(side_effect=httpx.ReadTimeout("slow", request=MagicMock()))
-
-    with (
-        patch.object(appium_mgr, "require_managed_running_port"),
-        patch("agent_app.main.get_shared_http_client", return_value=mock_http_client),
-    ):
-        resp = await client.post("/agent/appium/4723/probe-session", json={"capabilities": {"platformName": "Android"}})
-
-    assert resp.status_code == 504
-    detail = resp.json()["detail"]
-    assert detail["code"] == "PROBE_FAILED"
-    assert "timed out" in detail["message"]
 
 
 async def test_list_plugins(client: AsyncClient) -> None:
@@ -621,11 +496,3 @@ async def test_health_includes_version_guidance(client: AsyncClient) -> None:
         "agent_update_available": True,
     }
     clear_version_guidance()
-
-
-@pytest.mark.asyncio
-async def test_probe_appium_session_rejects_unmanaged_port(client: AsyncClient) -> None:
-    resp = await client.post("/agent/appium/6553/probe-session", json={"capabilities": {"platformName": "Android"}})
-
-    assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == AgentErrorCode.DEVICE_NOT_FOUND
