@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import binascii
 import hmac
 import secrets
 from dataclasses import dataclass
@@ -21,17 +19,6 @@ if TYPE_CHECKING:
 
 SESSION_COOKIE_NAME = "gridfleet_session"
 CSRF_HEADER_NAME = "x-csrf-token"
-AUTH_STATE_EXEMPT_PATHS = {
-    "/api/auth/login",
-    "/api/auth/session",
-}
-AUTH_OPEN_PATHS = {
-    "/health/live",
-    "/health/ready",
-    "/api/health",
-}
-PROTECTED_PREFIXES = ("/api/", "/agent/", "/docs", "/redoc")
-PROTECTED_EXACT_PATHS = {"/metrics", "/openapi.json"}
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -70,20 +57,6 @@ def validate_process_configuration() -> None:
 
 def is_auth_enabled() -> bool:
     return bool(settings.auth_enabled)
-
-
-def is_protected_path(path: str) -> bool:
-    if path in AUTH_OPEN_PATHS or path in AUTH_STATE_EXEMPT_PATHS:
-        return False
-    if path in PROTECTED_EXACT_PATHS:
-        return True
-    return any(path.startswith(prefix) for prefix in PROTECTED_PREFIXES)
-
-
-def requires_csrf_check(path: str, method: str) -> bool:
-    if method.upper() not in MUTATING_METHODS:
-        return False
-    return path not in AUTH_STATE_EXEMPT_PATHS
 
 
 def operator_username() -> str:
@@ -185,26 +158,6 @@ def resolve_browser_session_from_headers(headers: Headers) -> SessionState:
     return resolve_browser_session_from_token(token)
 
 
-def resolve_request_auth(headers: Headers) -> RequestAuthResult:
-    if not is_auth_enabled():
-        return RequestAuthResult(mode="disabled")
-
-    machine_auth = _authenticate_basic_auth(headers)
-    if machine_auth is not None:
-        return RequestAuthResult(mode="machine", username=machine_auth)
-
-    browser_session = resolve_browser_session_from_headers(headers)
-    if browser_session.authenticated:
-        return RequestAuthResult(
-            mode="browser",
-            username=browser_session.username,
-            csrf_token=browser_session.csrf_token,
-            expires_at=browser_session.expires_at,
-        )
-
-    return RequestAuthResult(mode="unauthenticated")
-
-
 def require_valid_csrf(headers: Headers, csrf_token: str | None) -> bool:
     if not csrf_token:
         return False
@@ -248,29 +201,6 @@ def clear_session_cookie(response: Response) -> None:
         samesite="lax",
         path="/",
     )
-
-
-def _authenticate_basic_auth(headers: Headers) -> str | None:
-    if not is_auth_enabled():
-        return None
-    authorization = headers.get("authorization")
-    if not authorization:
-        return None
-    scheme, _, encoded = authorization.partition(" ")
-    if scheme.lower() != "basic" or not encoded:
-        return None
-    try:
-        decoded = base64.b64decode(encoded).decode("utf-8")
-    except (ValueError, UnicodeDecodeError, binascii.Error):
-        return None
-    username, separator, password = decoded.partition(":")
-    if not separator:
-        return None
-    expected_username = machine_username()
-    expected_password = machine_password()
-    if not (hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)):
-        return None
-    return username
 
 
 def _read_cookie(headers: Headers, name: str) -> str | None:

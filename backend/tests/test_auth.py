@@ -547,7 +547,6 @@ def test_auth_token_and_cookie_guard_branches(auth_settings: dict[str, str], mon
 
     monkeypatch.setattr(auth, "cookie_parser", _bad_cookie_parser)
     assert auth._read_cookie(Headers({"cookie": "broken=cookie"}), auth.SESSION_COOKIE_NAME) is None
-    assert auth._authenticate_basic_auth(Headers({"authorization": "Basic not-base64"})) is None
 
 
 def test_check_machine_credentials_match(monkeypatch: pytest.MonkeyPatch) -> None:
