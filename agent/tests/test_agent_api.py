@@ -20,6 +20,8 @@ from agent_app.pack.adapter_types import (
 )
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.pack.manifest import DesiredPack  # noqa: TC001 - contextmanager signature is runtime-inspected
+from agent_app.plugins.dependencies import get_installed_plugins_dep, sync_plugins_dep
+from agent_app.tools.dependencies import get_tool_status_dep
 
 
 class _AdapterContext(Protocol):
@@ -439,23 +441,28 @@ async def test_probe_appium_session_route_is_not_available(client: AsyncClient) 
 
 
 async def test_list_plugins(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.plugins.router.get_installed_plugins",
-        new_callable=AsyncMock,
-        return_value=[{"name": "execute-driver", "version": "1.0.0"}],
-    ):
+    async def _fake() -> list[dict[str, str]]:
+        return [{"name": "execute-driver", "version": "1.0.0"}]
+
+    app.dependency_overrides[get_installed_plugins_dep] = _fake
+    try:
         resp = await client.get("/agent/plugins")
+    finally:
+        app.dependency_overrides.pop(get_installed_plugins_dep, None)
 
     assert resp.status_code == 200
     assert resp.json() == [{"name": "execute-driver", "version": "1.0.0"}]
 
 
 async def test_sync_plugins(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.plugins.router.sync_plugins",
-        new_callable=AsyncMock,
-        return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}},
-    ) as sync:
+    captured: list[list[dict[str, object]]] = []
+
+    async def _fake_sync(configs: list[dict[str, object]]) -> dict[str, object]:
+        captured.append(configs)
+        return {"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}
+
+    app.dependency_overrides[sync_plugins_dep] = lambda: _fake_sync
+    try:
         resp = await client.post(
             "/agent/plugins/sync",
             json={
@@ -468,10 +475,12 @@ async def test_sync_plugins(client: AsyncClient) -> None:
                 ]
             },
         )
+    finally:
+        app.dependency_overrides.pop(sync_plugins_dep, None)
 
     assert resp.status_code == 200
     assert resp.json()["installed"] == ["execute-driver"]
-    sync.assert_awaited_once_with(
+    assert captured == [
         [
             {
                 "name": "execute-driver",
@@ -480,25 +489,22 @@ async def test_sync_plugins(client: AsyncClient) -> None:
                 "package": None,
             }
         ]
-    )
+    ]
 
 
 async def test_agent_tools_status(client: AsyncClient) -> None:
-    with patch(
-        "agent_app.tools.router.get_tool_status",
-        new_callable=AsyncMock,
-        return_value={
-            "node": "24.14.1",
-            "node_provider": "fnm",
-            "go_ios": "1.0.207",
-        },
-    ) as status:
+    async def _fake() -> dict[str, object]:
+        return {"node": "24.14.1", "node_provider": "fnm", "go_ios": "1.0.207"}
+
+    app.dependency_overrides[get_tool_status_dep] = _fake
+    try:
         resp = await client.get("/agent/tools/status")
+    finally:
+        app.dependency_overrides.pop(get_tool_status_dep, None)
 
     assert resp.status_code == 200
     assert resp.json()["node_provider"] == "fnm"
     assert resp.json()["go_ios"] == "1.0.207"
-    status.assert_awaited_once_with()
 
 
 async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:
