@@ -6,7 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from agent_app.appium.schemas import AppiumStartRequest, AppiumStopRequest
-from agent_app.pack.schemas import NormalizeDeviceRequest
+from agent_app.pack.schemas import FeatureActionRequest, NormalizeDeviceRequest
+from agent_app.plugins.schemas import PluginConfig
 
 
 def _valid_start_payload() -> dict[str, object]:
@@ -70,3 +71,58 @@ def test_normalize_device_rejects_platform_id_with_pattern_violation() -> None:
             platform_id="bad id with spaces",
             raw_input={},
         )
+
+
+def test_appium_stop_accepts_valid_port() -> None:
+    AppiumStopRequest(port=4723)
+
+
+def test_normalize_device_accepts_valid_payload() -> None:
+    NormalizeDeviceRequest(
+        pack_id="appium-uiautomator2",
+        pack_release="1.0.0",
+        platform_id="android",
+        raw_input={},
+    )
+
+
+def test_feature_action_rejects_blank_pack_id() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="", args={})
+
+
+def test_feature_action_rejects_pack_id_with_path_traversal() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="../etc/passwd", args={})
+
+
+def test_feature_action_accepts_valid_pack_id() -> None:
+    FeatureActionRequest(pack_id="appium-uiautomator2", args={})
+
+
+def test_plugin_config_rejects_path_traversal() -> None:
+    with pytest.raises(ValidationError):
+        PluginConfig(name="../etc/passwd", version="1.0.0", source="npm")
+
+
+def test_plugin_config_rejects_double_dot() -> None:
+    with pytest.raises(ValidationError):
+        PluginConfig(name="..", version="1.0.0", source="npm")
+
+
+def test_plugin_config_rejects_uppercase() -> None:
+    with pytest.raises(ValidationError):
+        PluginConfig(name="UPPERCASE-PLUGIN", version="1.0.0", source="npm")
+
+
+def test_plugin_config_rejects_leading_underscore() -> None:
+    with pytest.raises(ValidationError):
+        PluginConfig(name="_hidden", version="1.0.0", source="npm")
+
+
+def test_plugin_config_accepts_scoped_name() -> None:
+    PluginConfig(name="@appium/plugin-name", version="1.0.0", source="npm")
+
+
+def test_plugin_config_accepts_plain_name() -> None:
+    PluginConfig(name="appium-uiautomator2-driver", version="1.0.0", source="npm")
