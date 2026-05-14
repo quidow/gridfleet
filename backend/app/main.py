@@ -19,6 +19,7 @@ from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.config import freeze_background_loops_enabled
+from app.core.metrics import refresh_system_gauges
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.database import async_session as session_factory
 from app.database import engine
@@ -36,20 +37,20 @@ from app.hosts import router_terminal as host_terminal
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.jobs import queue as job_queue
-from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
+from app.metrics import CONTENT_TYPE_LATEST, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.observability import configure_logging, get_logger
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
-from app.routers import runs, sessions
+from app.routers import runs
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
 from app.services.run_reaper import run_reaper_loop
-from app.services.session_sync import session_sync_loop
-from app.services.session_viability import close as close_session_viability_client
-from app.services.session_viability import session_viability_loop
+from app.sessions import router as sessions_router
+from app.sessions import service_sync as session_service_sync
+from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
@@ -73,6 +74,9 @@ device_service = device_services.service
 fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 property_refresh_loop = device_services.property_refresh.property_refresh_loop
+session_sync_loop = session_service_sync.session_sync_loop
+session_viability_loop = session_service_viability.session_viability_loop
+close_session_viability_client = session_service_viability.close
 
 
 async def _reopen_agent_http_pool() -> None:
@@ -280,7 +284,7 @@ app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside the WS handler
-app.include_router(sessions.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
@@ -319,7 +323,7 @@ async def health(db: DbDep) -> JSONResponse:
 
 @app.get("/metrics")
 async def metrics(db: DbDep) -> Response:
-    await refresh_system_gauges_legacy(db)
+    await refresh_system_gauges(db)
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 

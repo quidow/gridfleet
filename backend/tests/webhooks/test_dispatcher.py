@@ -298,7 +298,11 @@ async def test_process_delivery_5xx_marks_failed_with_jittered_retry(
         assert d.attempts == 1
         assert d.last_http_status == 503
         assert d.next_retry_at is not None
-        assert before + timedelta(seconds=1.0) <= d.next_retry_at <= before + timedelta(seconds=3.0)
+        assert d.last_attempt_at is not None
+        assert before <= d.last_attempt_at
+        assert (
+            d.last_attempt_at + timedelta(seconds=1.0) <= d.next_retry_at <= d.last_attempt_at + timedelta(seconds=3.0)
+        )
 
 
 @pytest.mark.db

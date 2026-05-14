@@ -276,8 +276,9 @@ async def _record_failure(
         delivery = await db.get(WebhookDelivery, delivery_id)
         if delivery is None:
             return
+        now = utcnow()
         delivery.attempts += 1
-        delivery.last_attempt_at = utcnow()
+        delivery.last_attempt_at = now
         delivery.last_error = error
         delivery.last_http_status = http_status
 
@@ -288,7 +289,7 @@ async def _record_failure(
         else:
             delivery.status = "failed"
             delay = _compute_retry_delay(delivery.attempts)
-            delivery.next_retry_at = utcnow() + timedelta(seconds=delay)
+            delivery.next_retry_at = now + timedelta(seconds=delay)
             metric_status = "failed"
         await db.commit()
     record_webhook_delivery(metric_status)
