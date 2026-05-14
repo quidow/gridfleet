@@ -185,21 +185,18 @@ async def pack_device_lifecycle_route(
 
 @router.post("/features/{feature_id}/actions/{action_id}")
 async def feature_action_route(
-    request: Request,
     feature_id: str,
     action_id: str,
     body: FeatureActionRequest,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
 ) -> dict[str, Any]:
-    adapter_registry: AdapterRegistry | None = getattr(request.app.state, "adapter_registry", None)
     adapter = adapter_registry.get_current(body.pack_id) if adapter_registry is not None else None
     if adapter is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {body.pack_id!r}")
 
-    host_identity: HostIdentity | None = getattr(request.app.state, "host_identity", None)
-    host_id_value = host_identity.get() if host_identity is not None else ""
-
     ctx = _FeatureActionContext(
-        host_id=host_id_value or "",
+        host_id=host_id,
         device_identity_value=body.device_identity_value or "",
     )
     result = await dispatch_feature_action(adapter, feature_id, action_id, body.args, ctx)
