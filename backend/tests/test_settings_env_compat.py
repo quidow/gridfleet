@@ -10,10 +10,13 @@ tests can construct via ``AuthConfig(auth_enabled=True)`` and
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.agent_comm.config import AgentCommConfig
 from app.auth.config import AuthConfig
+from app.packs.config import PacksConfig
 
 
 def test_auth_config_accepts_field_name_kwargs() -> None:
@@ -149,3 +152,47 @@ def test_settings_agent_terminal_setter_updates_agent_settings() -> None:
         assert settings.agent_terminal_token == "terminal-token"
     finally:
         settings.agent_terminal_token = original
+
+
+def test_packs_config_accepts_field_name_kwargs() -> None:
+    cfg = PacksConfig(driver_pack_storage_dir="/tmp/field-packs")
+    assert cfg.driver_pack_storage_dir == Path("/tmp/field-packs")
+
+
+def test_packs_config_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIDFLEET_DRIVER_PACK_STORAGE_DIR", "/tmp/env-packs")
+
+    cfg = PacksConfig()
+    assert cfg.driver_pack_storage_dir == Path("/tmp/env-packs")
+
+
+def test_packs_config_accepts_alias_kwargs() -> None:
+    cfg = PacksConfig(GRIDFLEET_DRIVER_PACK_STORAGE_DIR="/tmp/alias-packs")
+    assert cfg.driver_pack_storage_dir == Path("/tmp/alias-packs")
+
+
+def test_settings_forwards_pack_storage_kwargs_to_packs_settings() -> None:
+    from app.core.config import Settings
+    from app.packs import packs_settings
+
+    original = packs_settings.model_dump()
+    try:
+        settings = Settings(driver_pack_storage_dir=Path("/tmp/settings-packs"))
+        assert packs_settings.driver_pack_storage_dir == Path("/tmp/settings-packs")
+        assert settings.driver_pack_storage_dir == Path("/tmp/settings-packs")
+    finally:
+        for key, value in original.items():
+            setattr(packs_settings, key, value)
+
+
+def test_settings_pack_storage_setter_updates_packs_settings() -> None:
+    from app.core.config import settings
+    from app.packs import packs_settings
+
+    original = packs_settings.driver_pack_storage_dir
+    try:
+        settings.driver_pack_storage_dir = Path("/tmp/setter-packs")
+        assert packs_settings.driver_pack_storage_dir == Path("/tmp/setter-packs")
+        assert settings.driver_pack_storage_dir == Path("/tmp/setter-packs")
+    finally:
+        settings.driver_pack_storage_dir = original

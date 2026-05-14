@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.models.driver_pack import (
+from app.packs.manifest import Manifest
+from app.packs.models import (
     DriverPack,
     DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
     PackState,
 )
-from app.pack.manifest import Manifest
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

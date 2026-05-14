@@ -34,19 +34,34 @@ from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.observability import configure_logging, get_logger
+from app.packs.routers import (
+    agent_state as agent_driver_packs,
+)
+from app.packs.routers import (
+    authoring as driver_pack_authoring,
+)
+from app.packs.routers import (
+    catalog as driver_packs,
+)
+from app.packs.routers import (
+    export as driver_pack_export,
+)
+from app.packs.routers import (
+    host_features as host_driver_pack_features,
+)
+from app.packs.routers import (
+    templates as driver_pack_templates,
+)
+from app.packs.routers import (
+    uploads as driver_pack_uploads,
+)
+from app.packs.services.drain import pack_drain_loop
 from app.plugins import router as plugins
 from app.routers import (
     admin_appium_nodes,
-    agent_driver_packs,
     bulk,
     device_groups,
     devices,
-    driver_pack_authoring,
-    driver_pack_export,
-    driver_pack_templates,
-    driver_pack_uploads,
-    driver_packs,
-    host_driver_pack_features,
     lifecycle,
     nodes,
     runs,
@@ -67,7 +82,6 @@ from app.services.heartbeat import (
 )
 from app.services.intent_reconciler import device_intent_reconciler_loop
 from app.services.node_health import node_health_loop
-from app.services.pack_drain import pack_drain_loop
 from app.services.property_refresh import property_refresh_loop
 from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
