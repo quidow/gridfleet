@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import importlib
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,7 +11,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_comm import http_pool as agent_http_pool_module
 from app.analytics import router as analytics
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
@@ -29,7 +29,6 @@ from app.health import check_liveness, check_readiness
 from app.hosts import router as hosts
 from app.hosts import router_terminal as host_terminal
 from app.hosts import service as host_service
-from app.hosts import service_hardware_telemetry, service_resource_telemetry
 from app.hosts.models import Host, HostStatus
 from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
@@ -85,8 +84,26 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-hardware_telemetry_loop = service_hardware_telemetry.hardware_telemetry_loop
-host_resource_telemetry_loop = service_resource_telemetry.host_resource_telemetry_loop
+
+
+async def _reopen_agent_http_pool() -> None:
+    agent_http_pool_module = importlib.import_module("app.agent_comm.http_pool")
+    await agent_http_pool_module.agent_http_pool.reopen()
+
+
+async def _close_agent_http_pool() -> None:
+    agent_http_pool_module = importlib.import_module("app.agent_comm.http_pool")
+    await agent_http_pool_module.agent_http_pool.close()
+
+
+async def hardware_telemetry_loop() -> None:
+    service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
+    await service_hardware_telemetry.hardware_telemetry_loop()
+
+
+async def host_resource_telemetry_loop() -> None:
+    service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
+    await service_resource_telemetry.host_resource_telemetry_loop()
 
 
 def _freeze_background_loops() -> bool:
@@ -166,7 +183,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _validate_online_agent_contracts(db)
     _validate_leader_keepalive_settings()
 
-    await agent_http_pool_module.agent_http_pool.reopen()
+    await _reopen_agent_http_pool()
     event_bus.register_handler(settings_service.handle_system_event)
     event_bus.register_handler(webhook_dispatcher.handle_system_event)
     await event_bus.start()
@@ -236,7 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await settings_service.shutdown()
         await control_plane_leader.release()
         await event_bus.shutdown()
-        await agent_http_pool_module.agent_http_pool.close()
+        await _close_agent_http_pool()
         await grid_service.close()
         await close_session_viability_client()
         await engine.dispose()
