@@ -1,20 +1,9 @@
-"""Typed projection of agent status responses into a tri-state result."""
+import sys
+from typing import TYPE_CHECKING
 
-from __future__ import annotations
+from app.agent_comm import probe_result as _probe_result
 
-from dataclasses import dataclass
-from typing import Any, Literal
+if TYPE_CHECKING:
+    from app.agent_comm.probe_result import *  # noqa: F403
 
-
-@dataclass(frozen=True)
-class ProbeResult:
-    status: Literal["ack", "refused", "indeterminate"]
-    detail: str | None = None
-
-
-def from_status_response(payload: dict[str, Any] | None) -> ProbeResult:
-    if payload is None:
-        return ProbeResult(status="indeterminate", detail="agent unreachable or non-2xx")
-    if payload.get("running") is True:
-        return ProbeResult(status="ack")
-    return ProbeResult(status="refused", detail="Appium not running")
+sys.modules[__name__] = _probe_result

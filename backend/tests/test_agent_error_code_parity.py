@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENT_FILE = REPO_ROOT / "agent" / "agent_app" / "error_codes.py"
-BACKEND_FILE = REPO_ROOT / "backend" / "app" / "services" / "agent_error_codes.py"
+BACKEND_FILE = REPO_ROOT / "backend" / "app" / "agent_comm" / "error_codes.py"
 
 
 def _load(module_name: str, path: Path) -> ModuleType:
