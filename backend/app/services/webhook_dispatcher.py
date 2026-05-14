@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from tenacity import RetryCallState, Retrying
+from tenacity.wait import wait_exponential_jitter
 
 from app.metrics import record_webhook_delivery
 from app.models.system_event import SystemEvent
@@ -22,6 +24,15 @@ if TYPE_CHECKING:
     from app.services.event_bus import Event
 
 logger = get_logger(__name__)
+
+
+_RETRY_WAITER = wait_exponential_jitter(initial=1, exp_base=4, jitter=2, max=64)
+
+
+def _compute_retry_delay(attempt_number: int) -> float:
+    state = RetryCallState(retry_object=Retrying(), fn=None, args=(), kwargs={})
+    state.attempt_number = attempt_number
+    return float(_RETRY_WAITER(state))
 
 
 def _is_retryable_exception(exc: BaseException) -> bool:

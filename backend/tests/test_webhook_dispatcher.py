@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.webhook_delivery import WebhookDelivery
 from app.services.event_bus import event_bus
-from app.services.webhook_dispatcher import _is_retryable_exception, run_pending_webhook_deliveries_once
+from app.services.webhook_dispatcher import (
+    _compute_retry_delay,
+    _is_retryable_exception,
+    run_pending_webhook_deliveries_once,
+)
 
 
 def _make_response(*, status_code: int = 200) -> MagicMock:
@@ -137,3 +141,19 @@ def _status_error(code: int) -> httpx.HTTPStatusError:
 )
 def test_is_retryable_exception(exc: BaseException, expected: bool) -> None:
     assert _is_retryable_exception(exc) is expected
+
+
+def test_compute_retry_delay_bounds() -> None:
+    # initial=1, exp_base=4, jitter=2, max=64
+    # attempt 1: base = 1,  delay ∈ [1.0, 3.0]
+    # attempt 2: base = 4,  delay ∈ [4.0, 6.0]
+    # attempt 3: base = 16, delay ∈ [16.0, 18.0]
+    # attempt 4+: capped at 64
+    iterations = 50
+
+    for _ in range(iterations):
+        assert 1.0 <= _compute_retry_delay(1) <= 3.0
+        assert 4.0 <= _compute_retry_delay(2) <= 6.0
+        assert 16.0 <= _compute_retry_delay(3) <= 18.0
+        assert _compute_retry_delay(4) <= 64.0
+        assert _compute_retry_delay(10) <= 64.0
