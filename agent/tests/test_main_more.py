@@ -174,7 +174,8 @@ async def test_normalize_device_route_no_adapter_registry() -> None:
             json={"pack_id": "p", "pack_release": "1", "platform_id": "x", "raw_input": {}},
         )
     assert resp.status_code == 404
-    assert "No adapter loaded" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "NO_ADAPTER"
+    assert "No adapter loaded" in resp.json()["detail"]["message"]
 
 
 async def test_feature_action_route_no_adapter() -> None:
@@ -187,7 +188,8 @@ async def test_feature_action_route_no_adapter() -> None:
             json={"pack_id": "unknown", "args": {}, "device_identity_value": None},
         )
     assert resp.status_code == 404
-    assert "No adapter loaded" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "NO_ADAPTER"
+    assert "No adapter loaded" in resp.json()["detail"]["message"]
 
 
 async def test_pack_device_lifecycle_route_no_adapter_registry() -> None:

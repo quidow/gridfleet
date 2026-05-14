@@ -152,7 +152,8 @@ async def test_feature_action_route_returns_404_when_adapter_absent(empty_regist
         )
 
     assert resp.status_code == 404
-    assert "no-such-pack" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "NO_ADAPTER"
+    assert "no-such-pack" in resp.json()["detail"]["message"]
 
 
 @pytest.mark.asyncio
