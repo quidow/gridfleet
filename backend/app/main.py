@@ -15,7 +15,6 @@ from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
 from app.appium_nodes import services as appium_node_services
-from app.appium_nodes.services.heartbeat import shutdown_background_tasks
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -77,6 +76,7 @@ SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
 appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
 heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
 node_health_loop = appium_node_services.node_health.node_health_loop
+shutdown_background_tasks = appium_node_services.heartbeat.shutdown_background_tasks
 
 
 async def _reopen_agent_http_pool() -> None:
