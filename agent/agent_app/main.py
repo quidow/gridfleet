@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agent_app.api_auth import BasicAuthMiddleware
@@ -50,7 +50,7 @@ from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.plugins.router import router as plugins_router
 from agent_app.registration import registration_loop
-from agent_app.terminal.ws import handle_terminal
+from agent_app.terminal.router import router as terminal_router
 from agent_app.tools.router import router as tools_router
 
 configure_logging()
@@ -257,6 +257,7 @@ app.include_router(host_router)
 app.include_router(appium_router)
 app.include_router(plugins_router)
 app.include_router(tools_router)
+app.include_router(terminal_router)
 
 
 class GridNodeReregisterRequest(BaseModel):
@@ -541,8 +542,3 @@ async def normalize_device_route(request: Request, req: NormalizeDeviceRequest) 
     if result is None:
         raise HTTPException(status_code=404, detail=f"No adapter loaded for pack {req.pack_id!r}")
     return result
-
-
-@app.websocket("/agent/terminal")
-async def agent_terminal(ws: WebSocket) -> None:
-    await handle_terminal(ws)
