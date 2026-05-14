@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
 from app.config import settings
-from app.database import get_db
+from app.dependencies import AdminDep, DbDep  # noqa: TC001 - FastAPI dependency annotations evaluated at runtime.
 from app.models.driver_pack import DriverPack
 from app.schemas.driver_pack import PackOut
-from app.services.auth_dependencies import require_admin
 from app.services.pack_ingest_service import (
     PackIngestConflictError,
     PackIngestValidationError,
@@ -22,9 +19,6 @@ from app.services.pack_template_service import (
     list_templates,
     load_template,
 )
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
@@ -55,7 +49,7 @@ class FromTemplateBody(BaseModel):
 
 @router.get("/templates", response_model=TemplatesList)
 async def get_templates(
-    _username: str = Depends(require_admin),
+    _username: AdminDep,
 ) -> TemplatesList:
     descriptors = list_templates()
     return TemplatesList(
@@ -80,8 +74,8 @@ async def get_templates(
 async def create_from_template(
     template_id: str,
     body: FromTemplateBody,
-    _username: str = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    _username: AdminDep,
+    session: DbDep,
 ) -> PackOut:
     existing = await session.get(DriverPack, body.pack_id)
     if existing is not None:
