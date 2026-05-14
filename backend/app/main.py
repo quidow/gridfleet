@@ -43,11 +43,11 @@ from app.observability import configure_logging, get_logger
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
 from app.plugins import router as plugins
-from app.routers import runs
+from app.runs import router as runs_router
+from app.runs import service_reaper as run_service_reaper
 from app.services.control_plane_leader import control_plane_leader
 from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
 from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
-from app.services.run_reaper import run_reaper_loop
 from app.sessions import router as sessions_router
 from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
@@ -74,6 +74,7 @@ device_service = device_services.service
 fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 property_refresh_loop = device_services.property_refresh.property_refresh_loop
+run_reaper_loop = run_service_reaper.run_reaper_loop
 session_sync_loop = session_service_sync.session_sync_loop
 session_viability_loop = session_service_viability.session_viability_loop
 close_session_viability_client = session_service_viability.close
@@ -288,7 +289,7 @@ app.include_router(sessions_router.router, dependencies=[Depends(auth_dependenci
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(runs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(runs_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
