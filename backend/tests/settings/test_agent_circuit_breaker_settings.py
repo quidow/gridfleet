@@ -6,7 +6,7 @@ import pytest
 
 from app.services import agent_circuit_breaker as breaker_module
 from app.services.agent_circuit_breaker import AgentCircuitBreaker, CircuitState
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ from app.services import control_plane_state_store
 from app.services.agent_operations import pack_device_telemetry as fetch_pack_device_telemetry
 from app.services.device_event_service import record_event
 from app.services.event_bus import queue_event_for_session
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

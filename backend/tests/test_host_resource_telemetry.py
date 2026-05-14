@@ -7,7 +7,7 @@ import pytest
 
 from app.models.host_resource_sample import HostResourceSample
 from app.services import host_resource_telemetry
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

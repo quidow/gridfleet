@@ -35,7 +35,7 @@ async def test_host_offline_cascade_queues_all_events(
 
     monkeypatch.setattr("app.services.heartbeat._ping_agent", AsyncMock(return_value=_DEAD_RESULT))
     monkeypatch.setattr(
-        "app.services.settings_service.settings_service.get",
+        "app.settings.service.settings_service.get",
         lambda key: 1 if key == "general.max_missed_heartbeats" else 60,
     )
     monkeypatch.setattr("app.services.heartbeat.assert_current_leader", AsyncMock())

@@ -24,8 +24,8 @@ from app.services import webhook_dispatcher
 from app.services.agent_circuit_breaker import agent_circuit_breaker
 from app.services.event_bus import event_bus
 from app.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
-from app.services.settings_registry import SETTINGS_REGISTRY, resolve_default
-from app.services.settings_service import settings_service
+from app.settings import settings_service
+from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.shutdown import shutdown_coordinator
 from tests.helpers import create_host
 

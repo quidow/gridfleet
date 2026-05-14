@@ -16,7 +16,7 @@ from app.models.session import Session, SessionStatus
 from app.observability import get_logger, observe_background_loop
 from app.services import grid_service
 from app.services.session_filters import exclude_non_test_sessions
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

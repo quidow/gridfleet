@@ -12,7 +12,7 @@ from app.models.device import Device, DeviceOperationalState
 from app.models.host import Host
 from app.services import node_health
 from app.services.agent_probe_result import ProbeResult
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]

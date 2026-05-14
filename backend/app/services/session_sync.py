@@ -23,7 +23,7 @@ from app.services.lifecycle_state_machine import DeviceStateMachine
 from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.session_viability import PROBE_TEST_NAME
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"

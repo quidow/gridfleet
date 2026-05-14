@@ -12,7 +12,7 @@ import pytest
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.services.node_service_types import RemoteStartResult
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device
 
 if TYPE_CHECKING:

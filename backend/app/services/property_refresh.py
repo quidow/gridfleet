@@ -9,7 +9,7 @@ from app.models.host import Host, HostStatus
 from app.observability import get_logger, observe_background_loop
 from app.services.agent_operations import get_pack_device_properties
 from app.services.pack_discovery_service import refresh_device_properties as pack_refresh_device_properties
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "property_refresh"

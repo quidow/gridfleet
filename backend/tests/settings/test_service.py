@@ -7,8 +7,8 @@ from sqlalchemy import select
 
 from app import main
 from app.config import settings as process_settings
-from app.models.setting import Setting
-from app.services.settings_service import settings_service
+from app.settings import settings_service
+from app.settings.models import Setting
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

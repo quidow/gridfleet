@@ -59,9 +59,9 @@ from app.schemas.run import (
     RunRead,
     SessionCounts,
 )
-from app.schemas.setting import SettingsBulkUpdate, SettingUpdate
 from app.services.cursor_pagination import CursorPage, CursorPaginationError
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
+from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

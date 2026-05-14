@@ -21,7 +21,7 @@ from app.services.device_readiness import is_ready_for_use_async, readiness_erro
 from app.services.device_state import ready_operational_state, set_operational_state
 from app.services.session_probe_constants import PROBE_TEST_NAME
 from app.services.session_viability_types import SessionViabilityCheckedBy
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 __all__ = ["PROBE_TEST_NAME"]
 

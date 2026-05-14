@@ -45,7 +45,6 @@ from app.routers import (
     plugins,
     runs,
     sessions,
-    settings,
     webhooks,
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
@@ -76,7 +75,8 @@ from app.services.run_reaper import run_reaper_loop
 from app.services.session_sync import session_sync_loop
 from app.services.session_viability import close as close_session_viability_client
 from app.services.session_viability import session_viability_loop
-from app.services.settings_service import settings_service, validate_leader_keepalive_settings
+from app.settings import router as settings
+from app.settings import settings_service, validate_leader_keepalive_settings
 from app.shutdown import shutdown_coordinator
 
 configure_logging()

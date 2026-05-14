@@ -10,7 +10,7 @@ from app.models.device import (
 )
 from app.services import hardware_telemetry
 from app.services.event_bus import event_bus
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device_record, create_host
 
 

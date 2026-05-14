@@ -623,7 +623,7 @@ async def test_list_devices_filter_hardware_telemetry_state(
     unsupported_device.hardware_telemetry_reported_at = datetime.now(UTC)
     await db_session.commit()
 
-    from app.services.settings_service import settings_service
+    from app.settings import settings_service
 
     settings_service._cache["general.hardware_telemetry_stale_timeout_sec"] = 60
 

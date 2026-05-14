@@ -10,7 +10,7 @@ from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.host import Host
 from app.services import device_locking, heartbeat
 from app.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]

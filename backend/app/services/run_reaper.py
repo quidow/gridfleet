@@ -10,7 +10,7 @@ from app.models.test_run import TERMINAL_STATES, RunState, TestRun
 from app.observability import get_logger, observe_background_loop
 from app.services import run_service
 from app.services.control_plane_leader import LeadershipLost, assert_current_leader
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "run_reaper"

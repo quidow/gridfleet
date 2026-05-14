@@ -87,7 +87,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     import app.database as database_module
     import app.services.event_bus as event_bus_module
-    import app.services.settings_service as settings_service_module
+    import app.settings.service as settings_service_module
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
@@ -174,7 +174,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
 
     import app.database as database_module
     import app.services.event_bus as event_bus_module
-    import app.services.settings_service as settings_service_module
+    import app.settings.service as settings_service_module
 
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
@@ -221,7 +221,7 @@ async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch:
 
     import app.database as database_module
     import app.services.event_bus as event_bus_module
-    import app.services.settings_service as settings_service_module
+    import app.settings.service as settings_service_module
 
     monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
@@ -283,7 +283,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
 
     import app.database as database_module
     import app.services.event_bus as event_bus_module
-    import app.services.settings_service as settings_service_module
+    import app.settings.service as settings_service_module
 
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)

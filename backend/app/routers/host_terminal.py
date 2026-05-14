@@ -8,7 +8,7 @@ from app.config import settings
 from app.database import async_session
 from app.services import auth, host_service, host_terminal_audit
 from app.services.host_terminal_proxy import proxy_terminal_session
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 logger = logging.getLogger(__name__)

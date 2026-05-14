@@ -43,7 +43,7 @@ from app.services.heartbeat_outcomes import (
     HeartbeatPingResult,
 )
 from app.services.host_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory
 
 logger = get_logger(__name__)

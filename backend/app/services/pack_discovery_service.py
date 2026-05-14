@@ -17,7 +17,7 @@ from app.services.device_identity import (
     non_host_scoped_clause,
 )
 from app.services.device_identity_conflicts import ensure_device_payload_identity_available
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

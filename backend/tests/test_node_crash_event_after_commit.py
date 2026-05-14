@@ -119,7 +119,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
     event_bus_capture.clear()
 
     monkeypatch.setattr(
-        "app.services.settings_service.settings_service.get",
+        "app.settings.service.settings_service.get",
         lambda key: 1 if key == "general.node_max_failures" else 30,
     )
 

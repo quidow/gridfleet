@@ -40,7 +40,7 @@ from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHoo
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"

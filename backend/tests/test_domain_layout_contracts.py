@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "analytics": ("config", "models", "router", "schemas", "service"),
+    "settings": ("config", "models", "registry", "router", "schemas", "service", "service_config"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -22,6 +23,13 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "AnalyticsCapacitySnapshot",
         "AnalyticsCapacitySnapshot",
     ),
+    "app.routers.settings": ("app.settings.router", "router", "router"),
+    "app.services.settings_registry": ("app.settings.registry", "SETTINGS_REGISTRY", "SETTINGS_REGISTRY"),
+    "app.services.settings_service": ("app.settings.service", "settings_service", "settings_service"),
+    "app.services.config_service": ("app.settings.service_config", "get_device_config", "get_device_config"),
+    "app.schemas.setting": ("app.settings.schemas", "SettingRead", "SettingRead"),
+    "app.models.setting": ("app.settings.models", "Setting", "Setting"),
+    "app.models.config_audit_log": ("app.settings.models", "ConfigAuditLog", "ConfigAuditLog"),
 }
 
 

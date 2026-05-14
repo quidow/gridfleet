@@ -619,7 +619,7 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
 
 
 async def test_hosts_capabilities_reports_terminal_flag(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.services.settings_service import settings_service
+    from app.settings import settings_service
 
     # Default is False
     monkeypatch.setitem(settings_service._cache, "agent.enable_web_terminal", False)

@@ -7,7 +7,7 @@ from typing import Any
 
 from app.observability import get_logger
 from app.services.event_bus import event_bus
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 

@@ -24,7 +24,7 @@ from app.models.host import Host, HostStatus, OSType
 from app.services import appium_node_resource_service, appium_reconciler_agent
 from app.services.appium_reconciler_allocation import APPIUM_PORT_CAPABILITY, candidate_ports, reserve_appium_port
 from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:

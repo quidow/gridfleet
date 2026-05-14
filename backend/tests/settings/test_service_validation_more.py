@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import settings_service as settings_module
-from app.services.settings_registry import SettingDefinition
+from app.settings import service as settings_module
+from app.settings.registry import SettingDefinition
 
 
 def test_settings_service_validation_and_normalization_edges(monkeypatch: pytest.MonkeyPatch) -> None:

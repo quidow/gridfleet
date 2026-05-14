@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy import func, select
 
 from app.models.appium_node import AppiumNode
-from app.models.config_audit_log import ConfigAuditLog
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState
 from app.models.device_reservation import DeviceReservation
 from app.models.driver_pack import DriverPack, DriverPackPlatform, DriverPackRelease
@@ -18,13 +17,13 @@ from app.models.host_pack_installation import HostPackDoctorResult, HostPackInst
 from app.models.host_runtime_installation import HostRuntimeInstallation
 from app.models.host_terminal_session import HostTerminalSession
 from app.models.session import Session, SessionStatus
-from app.models.setting import Setting
 from app.models.test_run import RunState, TestRun
 from app.seeding.context import SeedContext
 from app.seeding.scenarios import full_demo
 from app.seeding.scenarios.full_demo import apply_full_demo
 from app.services import device_presenter
-from app.services.settings_registry import SETTINGS_REGISTRY
+from app.settings.models import ConfigAuditLog, Setting
+from app.settings.registry import SETTINGS_REGISTRY
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,7 @@ from app.services.session_viability import (
     grid_probe_response_to_result,
     probe_session_via_grid,
 )
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"

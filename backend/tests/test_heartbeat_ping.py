@@ -18,7 +18,7 @@ async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.
             return True
         raise KeyError(key)
 
-    monkeypatch.setattr("app.services.settings_service.settings_service.get", fake_setting)
+    monkeypatch.setattr("app.settings.service.settings_service.get", fake_setting)
     with patch(
         "app.services.heartbeat.agent_health",
         new=AsyncMock(return_value={"status": "ok", "version": "1.2.3"}),

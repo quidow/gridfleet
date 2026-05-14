@@ -21,7 +21,7 @@ async def test_hardware_health_changed_queues_after_commit(
     _, device = await seed_host_and_device(db_session, identity="hardware-warning-1")
     event_bus_capture.clear()
     monkeypatch.setattr(
-        "app.services.settings_service.settings_service.get",
+        "app.settings.service.settings_service.get",
         lambda key: 1 if key == "general.hardware_telemetry_consecutive_samples" else 40,
     )
 
@@ -54,7 +54,7 @@ async def test_hardware_health_changed_dropped_on_rollback(
     _, device = await seed_host_and_device(db_session, identity="hardware-rollback-1")
     event_bus_capture.clear()
     monkeypatch.setattr(
-        "app.services.settings_service.settings_service.get",
+        "app.settings.service.settings_service.get",
         lambda key: 1 if key == "general.hardware_telemetry_consecutive_samples" else 40,
     )
 

@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = logging.getLogger(__name__)
 

@@ -39,7 +39,7 @@ from app.services.agent_operations import get_tool_status as get_agent_tool_stat
 from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.services.event_bus import event_bus
 from app.services.pack_status_service import get_host_driver_pack_status
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])

@@ -28,7 +28,7 @@ def test_normalize_agent_version_setting_empty_value_returns_none() -> None:
 
 
 def test_agent_recommended_version_setting_is_registered() -> None:
-    from app.services.settings_registry import SETTINGS_REGISTRY
+    from app.settings.registry import SETTINGS_REGISTRY
 
     definition = SETTINGS_REGISTRY["agent.recommended_version"]
 

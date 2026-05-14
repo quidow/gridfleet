@@ -799,7 +799,7 @@ def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> N
 
 
 def _stub_settings(monkeypatch: pytest.MonkeyPatch, *, threshold: int, timeout: float, count: int) -> None:
-    from app.services.settings_service import settings_service
+    from app.settings import settings_service
 
     monkeypatch.setattr(
         settings_service,

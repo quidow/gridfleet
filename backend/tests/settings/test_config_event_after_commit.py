@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.schemas.host import HostRegister
-from app.services import config_service, host_service
+from app.services import host_service
+from app.settings import service_config as config_service
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 if TYPE_CHECKING:
@@ -36,11 +37,11 @@ async def test_approve_host_queues_status_changed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services.settings_service import settings_service as _ss
+    from app.settings import settings_service as _ss
 
     real_settings_get = _ss.get
     monkeypatch.setattr(
-        "app.services.settings_service.settings_service.get",
+        "app.settings.service.settings_service.get",
         lambda key: False if key == "agent.auto_accept_hosts" else real_settings_get(key),
     )
 

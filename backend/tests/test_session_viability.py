@@ -25,7 +25,7 @@ from app.services.session_viability import (
     run_session_viability_probe,
     set_session_viability_control_plane_entry,
 )
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

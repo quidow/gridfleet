@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.services import settings_registry
-from app.services.settings_registry import SETTINGS_REGISTRY
+from app.settings import registry as settings_registry
+from app.settings.registry import SETTINGS_REGISTRY
 
 
 @pytest.mark.parametrize(

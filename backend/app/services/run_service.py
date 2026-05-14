@@ -47,7 +47,7 @@ from app.services.intent_types import (
     IntentRegistration,
 )
 from app.services.pack_platform_resolver import assert_runnable
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = logging.getLogger(__name__)
 

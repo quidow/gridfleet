@@ -31,7 +31,7 @@ from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from app.services.node_service_types import NodeManagerError
 from app.services.pack_platform_catalog import platform_has_lifecycle_action
 from app.services.pack_platform_resolver import resolve_pack_platform
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,7 @@ from app.schemas.run import (
 )
 from app.services import run_service
 from app.services.cursor_pagination import CursorPaginationError
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 

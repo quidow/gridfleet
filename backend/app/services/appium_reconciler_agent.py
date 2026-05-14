@@ -67,7 +67,7 @@ from app.services.pack_capability_service import (
 from app.services.pack_platform_catalog import device_is_virtual
 from app.services.pack_platform_resolver import assert_runnable, resolve_pack_platform
 from app.services.pack_start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

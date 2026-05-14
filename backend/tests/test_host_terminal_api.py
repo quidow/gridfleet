@@ -9,7 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.config import settings as process_settings
 from app.main import app
 from app.models.host import Host, HostStatus, OSType
-from app.services.settings_service import settings_service
+from app.settings import settings_service
 
 
 def _configure_terminal(
