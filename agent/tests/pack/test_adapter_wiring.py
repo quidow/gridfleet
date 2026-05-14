@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from agent_app.appium_process import AppiumProcessManager
+from agent_app.appium.process import AppiumProcessManager
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,

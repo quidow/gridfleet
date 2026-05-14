@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent_app.appium_process import DeviceNotFoundError
+from agent_app.appium.process import DeviceNotFoundError
 from agent_app.main import AppiumStartRequest, app
 
 

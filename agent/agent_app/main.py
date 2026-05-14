@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from agent_app import __version__
 from agent_app.api_auth import BasicAuthMiddleware
-from agent_app.appium_process import (
+from agent_app.appium.process import (
     AlreadyRunningError,
     AppiumProcessManager,
     DeviceNotFoundError,

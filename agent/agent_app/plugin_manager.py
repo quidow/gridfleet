@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Any
 
-from agent_app.appium_process import _build_env
+from agent_app.appium.process import _build_env
 from agent_app.tool_paths import find_appium as _find_appium
 
 logger = logging.getLogger(__name__)

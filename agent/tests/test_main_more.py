@@ -104,7 +104,7 @@ async def test_reregister_grid_node_not_found() -> None:
 async def test_start_appium_invalid_payload_error() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    from agent_app.appium_process import InvalidStartPayloadError
+    from agent_app.appium.process import InvalidStartPayloadError
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with patch(
