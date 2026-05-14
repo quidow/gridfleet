@@ -20,6 +20,7 @@ MIGRATED_DOMAINS: frozenset[str] = frozenset(
         "grid",
         "plugins",
         "agent_comm",
+        "hosts",
     }
 )
 
@@ -94,6 +95,20 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/services/agent_reconfigure_delivery.py",
         "app/services/agent_snapshot.py",
         "app/models/agent_reconfigure_outbox.py",
+        "app/routers/hosts.py",
+        "app/routers/host_terminal.py",
+        "app/services/host_service.py",
+        "app/services/host_diagnostics.py",
+        "app/services/host_resource_telemetry.py",
+        "app/services/host_terminal_audit.py",
+        "app/services/host_terminal_proxy.py",
+        "app/services/host_versioning.py",
+        "app/services/hardware_telemetry.py",
+        "app/schemas/host.py",
+        "app/models/host.py",
+        "app/models/host_resource_sample.py",
+        "app/models/host_terminal_session.py",
+        "app/models/host_plugin_runtime_status.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the

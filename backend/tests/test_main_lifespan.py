@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import signal
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
@@ -48,6 +51,19 @@ class FakeSessionFactory:
 
 async def _forever() -> None:
     await asyncio.Event().wait()
+
+
+def test_main_imports_in_fresh_interpreter() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _setting_value(key: str) -> int:

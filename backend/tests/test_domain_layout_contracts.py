@@ -29,6 +29,19 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "reconfigure_delivery",
         "snapshot",
     ),
+    "hosts": (
+        "models",
+        "router",
+        "router_terminal",
+        "schemas",
+        "service",
+        "service_diagnostics",
+        "service_hardware_telemetry",
+        "service_resource_telemetry",
+        "service_terminal_audit",
+        "service_terminal_proxy",
+        "service_versioning",
+    ),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -96,6 +109,48 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
         "app.agent_comm.models",
         "AgentReconfigureOutbox",
         "AgentReconfigureOutbox",
+    ),
+    "app.schemas.host": ("app.hosts.schemas", "HostRead", "HostRead"),
+    "app.models.host": ("app.hosts.models", "Host", "Host"),
+    "app.models.host_resource_sample": ("app.hosts.models", "HostResourceSample", "HostResourceSample"),
+    "app.models.host_terminal_session": ("app.hosts.models", "HostTerminalSession", "HostTerminalSession"),
+    "app.models.host_plugin_runtime_status": (
+        "app.hosts.models",
+        "HostPluginRuntimeStatus",
+        "HostPluginRuntimeStatus",
+    ),
+    "app.routers.hosts": ("app.hosts.router", "router", "router"),
+    "app.routers.host_terminal": ("app.hosts.router_terminal", "router", "router"),
+    "app.services.host_service": ("app.hosts.service", "get_host", "get_host"),
+    "app.services.host_diagnostics": (
+        "app.hosts.service_diagnostics",
+        "get_host_diagnostics",
+        "get_host_diagnostics",
+    ),
+    "app.services.host_resource_telemetry": (
+        "app.hosts.service_resource_telemetry",
+        "host_resource_telemetry_loop",
+        "host_resource_telemetry_loop",
+    ),
+    "app.services.host_terminal_audit": (
+        "app.hosts.service_terminal_audit",
+        "open_session",
+        "open_session",
+    ),
+    "app.services.host_terminal_proxy": (
+        "app.hosts.service_terminal_proxy",
+        "proxy_terminal_session",
+        "proxy_terminal_session",
+    ),
+    "app.services.host_versioning": (
+        "app.hosts.service_versioning",
+        "get_agent_version_status",
+        "get_agent_version_status",
+    ),
+    "app.services.hardware_telemetry": (
+        "app.hosts.service_hardware_telemetry",
+        "hardware_telemetry_loop",
+        "hardware_telemetry_loop",
     ),
 }
 
