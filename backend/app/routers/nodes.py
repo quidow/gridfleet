@@ -1,9 +1,9 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.dependencies import DbDep
 from app.models.appium_node import AppiumDesiredState, AppiumNode
 from app.models.device import Device, DeviceHold
 from app.observability import get_logger
@@ -43,7 +43,7 @@ async def _assert_device_verified(db: AsyncSession, device: Device, *, action: s
 
 
 @router.post("/{device_id}/node/start", response_model=AppiumNodeRead)
-async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def start_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
@@ -64,7 +64,7 @@ async def start_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -
 
 
 @router.post("/{device_id}/node/stop", response_model=AppiumNodeRead)
-async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     node: AppiumNode | None = device.appium_node
@@ -77,7 +77,7 @@ async def stop_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
-async def restart_node(device_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> AppiumNode:
+async def restart_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
