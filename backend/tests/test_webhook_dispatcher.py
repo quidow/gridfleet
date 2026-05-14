@@ -4,12 +4,19 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.webhook_delivery import WebhookDelivery
 from app.services.event_bus import event_bus
-from app.services.webhook_dispatcher import run_pending_webhook_deliveries_once
+from app.services.webhook_dispatcher import (
+    _compute_retry_delay,
+    _is_retryable_exception,
+    _process_delivery,
+    _record_failure,
+    run_pending_webhook_deliveries_once,
+)
 
 
 def _make_response(*, status_code: int = 200) -> MagicMock:
@@ -111,3 +118,218 @@ async def test_webhook_delivery_failures_persist_retries_and_exhaustion(
         else:
             assert delivery["status"] == "exhausted"
             assert delivery["attempts"] == 3
+
+
+def _status_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.test/")
+    response = httpx.Response(code, request=request)
+    return httpx.HTTPStatusError("err", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (httpx.ConnectError("boom"), True),
+        (httpx.ReadTimeout("slow"), True),
+        (_status_error(500), True),
+        (_status_error(502), True),
+        (_status_error(503), True),
+        (_status_error(400), False),
+        (_status_error(401), False),
+        (_status_error(404), False),
+        (_status_error(422), False),
+        (httpx.InvalidURL("nope"), False),
+    ],
+)
+def test_is_retryable_exception(exc: BaseException, expected: bool) -> None:
+    assert _is_retryable_exception(exc) is expected
+
+
+def test_compute_retry_delay_bounds() -> None:
+    # initial=1, exp_base=4, jitter=2, max=64
+    # attempt 1: base = 1,  delay ∈ [1.0, 3.0]
+    # attempt 2: base = 4,  delay ∈ [4.0, 6.0]
+    # attempt 3: base = 16, delay ∈ [16.0, 18.0]
+    # attempt 4+: capped at 64
+    iterations = 50
+
+    for _ in range(iterations):
+        assert 1.0 <= _compute_retry_delay(1) <= 3.0
+        assert 4.0 <= _compute_retry_delay(2) <= 6.0
+        assert 16.0 <= _compute_retry_delay(3) <= 18.0
+        assert _compute_retry_delay(4) <= 64.0
+        assert _compute_retry_delay(10) <= 64.0
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_retryable_marks_failed_with_next_retry(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    before = datetime.now(UTC)
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="boom",
+        http_status=502,
+        retryable=True,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "failed"
+        assert delivery.attempts == 1
+        assert delivery.last_error == "boom"
+        assert delivery.last_http_status == 502
+        assert delivery.next_retry_at is not None
+        assert before <= delivery.next_retry_at <= before + timedelta(seconds=4.0)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_not_retryable_exhausts_immediately(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="bad request",
+        http_status=400,
+        retryable=False,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "exhausted"
+        assert delivery.attempts == 1
+        assert delivery.last_http_status == 400
+        assert delivery.next_retry_at is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_record_failure_retryable_at_max_attempts_exhausts(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    # Pre-bump attempts so the next failure crosses max_attempts.
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        delivery.attempts = delivery.max_attempts - 1
+        await db.commit()
+
+    await _record_failure(
+        seeded_pending_delivery.id,
+        test_session_factory,
+        error="still failing",
+        http_status=503,
+        retryable=True,
+    )
+    async with test_session_factory() as db:
+        delivery = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert delivery is not None
+        assert delivery.status == "exhausted"
+        assert delivery.attempts == delivery.max_attempts
+        assert delivery.next_retry_at is None
+
+
+# ---------------------------------------------------------------------------
+# _process_delivery integration tests
+# ---------------------------------------------------------------------------
+
+
+def _mock_response(status_code: int) -> httpx.Response:
+    request = httpx.Request("POST", "https://example.test/")
+    return httpx.Response(status_code, request=request)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_process_delivery_2xx_marks_delivered(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post.return_value = _mock_response(200)
+    await _process_delivery(seeded_pending_delivery.id, test_session_factory, client)
+    async with test_session_factory() as db:
+        d = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert d is not None
+        assert d.status == "delivered"
+        assert d.attempts == 1
+        assert d.last_http_status == 200
+        assert d.next_retry_at is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_process_delivery_4xx_exhausts_immediately(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post.return_value = _mock_response(404)
+    await _process_delivery(seeded_pending_delivery.id, test_session_factory, client)
+    async with test_session_factory() as db:
+        d = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert d is not None
+        assert d.status == "exhausted"
+        assert d.attempts == 1
+        assert d.last_http_status == 404
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_process_delivery_5xx_marks_failed_with_jittered_retry(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post.return_value = _mock_response(503)
+    before = datetime.now(UTC)
+    await _process_delivery(seeded_pending_delivery.id, test_session_factory, client)
+    async with test_session_factory() as db:
+        d = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert d is not None
+        assert d.status == "failed"
+        assert d.attempts == 1
+        assert d.last_http_status == 503
+        assert d.next_retry_at is not None
+        assert before + timedelta(seconds=1.0) <= d.next_retry_at <= before + timedelta(seconds=3.0)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_process_delivery_timeout_is_retryable(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post.side_effect = httpx.ReadTimeout("slow")
+    await _process_delivery(seeded_pending_delivery.id, test_session_factory, client)
+    async with test_session_factory() as db:
+        d = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert d is not None
+        assert d.status == "failed"
+        assert d.attempts == 1
+        assert d.last_http_status is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_process_delivery_invalid_url_exhausts(
+    test_session_factory: async_sessionmaker,
+    seeded_pending_delivery: WebhookDelivery,
+) -> None:
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.post.side_effect = httpx.InvalidURL("bad")
+    await _process_delivery(seeded_pending_delivery.id, test_session_factory, client)
+    async with test_session_factory() as db:
+        d = await db.get(WebhookDelivery, seeded_pending_delivery.id)
+        assert d is not None
+        assert d.status == "exhausted"
+        assert d.attempts == 1
+        assert d.last_http_status is None

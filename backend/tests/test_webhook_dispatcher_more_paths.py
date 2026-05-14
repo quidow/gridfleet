@@ -242,6 +242,50 @@ async def test_process_delivery_success_and_failure_paths(monkeypatch: pytest.Mo
     )
 
 
+async def test_handle_system_event_no_matching_webhooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Line 77: system_event found but no enabled webhook subscribes to the event type."""
+
+    class _ScalarResult:
+        def scalar_one_or_none(self) -> SimpleNamespace:
+            return SimpleNamespace(id=uuid.uuid4(), type="device.created")
+
+        def scalars(self) -> "_ScalarResult":
+            return self
+
+        def all(self) -> list[object]:
+            # Return a webhook that does NOT subscribe to "device.created"
+            return [SimpleNamespace(id=uuid.uuid4(), enabled=True, event_types=["webhook.test"])]
+
+    call_count = 0
+
+    async def _execute(_stmt: object) -> _ScalarResult:
+        nonlocal call_count
+        call_count += 1
+        return _ScalarResult()
+
+    db = _Db()
+    db.execute = AsyncMock(side_effect=_execute)
+    monkeypatch.setattr(webhook_dispatcher, "_session_factory", _Factory(db))
+    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
+    # Two executes: one for SystemEvent lookup, one for Webhook list
+    assert call_count == 2
+    db.commit.assert_not_awaited()
+
+
+async def test_process_delivery_delivery_gone_returns_early() -> None:
+    """Line 210: delivery row is None at the start of _process_delivery — silent early exit."""
+    db = _Db()  # no values → db.get returns None on first call
+    await webhook_dispatcher._process_delivery(uuid.uuid4(), _Factory(db), MagicMock())
+    db.commit.assert_not_awaited()
+
+
+async def test_record_failure_delivery_gone_returns_early() -> None:
+    """Line 279: delivery row is None inside _record_failure — silent early exit."""
+    db = _Db()  # no values → db.get returns None
+    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="gone", http_status=None, retryable=True)
+    db.commit.assert_not_awaited()
+
+
 async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     metric = MagicMock()
     monkeypatch.setattr(webhook_dispatcher, "record_webhook_delivery", metric)
@@ -255,7 +299,7 @@ async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.Mon
         next_retry_at=None,
     )
     db = _Db(delivery)
-    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="down", http_status=None)
+    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="down", http_status=None, retryable=True)
     assert delivery.status == "failed"
     assert delivery.next_retry_at is not None
     metric.assert_called_with("failed")
@@ -269,7 +313,9 @@ async def test_record_failure_failed_and_exhausted_paths(monkeypatch: pytest.Mon
         last_http_status=None,
         next_retry_at=None,
     )
-    await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(_Db(exhausted)), error="down", http_status=503)
+    await webhook_dispatcher._record_failure(
+        uuid.uuid4(), _Factory(_Db(exhausted)), error="down", http_status=503, retryable=True
+    )
     assert exhausted.status == "exhausted"
     assert exhausted.next_retry_at is None
     metric.assert_called_with("exhausted")

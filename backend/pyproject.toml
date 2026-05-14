@@ -21,6 +21,8 @@ dependencies = [
     "pyyaml==6.0.3",
     "packaging>=26.2",
     "python-multipart>=0.0.28",
+    "tenacity>=9.0,<10",
+    "PyJWT>=2.10,<3",
 ]
 
 [project.urls]
