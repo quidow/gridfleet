@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID  # noqa: TC003 - Pydantic resolves this field annotation at runtime.
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]+$"
 
 
 class AppiumReconfigureRequest(BaseModel):
@@ -13,9 +15,9 @@ class AppiumReconfigureRequest(BaseModel):
 
 
 class AppiumStartRequest(BaseModel):
-    connection_target: str
-    port: int
-    grid_url: str
+    connection_target: str = Field(min_length=1, max_length=512)
+    port: int = Field(ge=1024, le=65535)
+    grid_url: str = Field(min_length=1)
     plugins: list[str] | None = None
     extra_caps: dict[str, Any] | None = None
     stereotype_caps: dict[str, Any] | None = None
@@ -27,8 +29,8 @@ class AppiumStartRequest(BaseModel):
     ip_address: str | None = None
     session_override: bool = True
     headless: bool = True
-    pack_id: str
-    platform_id: str
+    pack_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
+    platform_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
     appium_platform_name: str | None = None
     workaround_env: dict[str, str] | None = None
     insecure_features: list[str] = []
@@ -38,4 +40,4 @@ class AppiumStartRequest(BaseModel):
 
 
 class AppiumStopRequest(BaseModel):
-    port: int
+    port: int = Field(ge=1024, le=65535)

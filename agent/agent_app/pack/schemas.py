@@ -6,17 +6,19 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]+$"
+
 
 class FeatureActionRequest(BaseModel):
-    pack_id: str
+    pack_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
     args: dict[str, Any] = {}
     device_identity_value: str | None = None
 
 
 class NormalizeDeviceRequest(BaseModel):
-    pack_id: str
-    pack_release: str
-    platform_id: str
+    pack_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
+    pack_release: str = Field(min_length=1)
+    platform_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
     raw_input: dict[str, Any]
 
 
