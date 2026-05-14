@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.events import event_bus
+from app.jobs.models import Job
 from app.models.device_reservation import DeviceReservation
-from app.models.job import Job
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from tests.helpers import create_device_record

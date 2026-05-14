@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import NoResultFound
 
-from app.models.job import Job
+from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
+from app.jobs.models import Job
 from app.observability import get_logger
 from app.services import device_locking, lifecycle_policy
-from app.services.job_status_constants import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

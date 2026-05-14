@@ -2,15 +2,15 @@ import uuid
 from typing import Any
 
 from app.database import async_session
-from app.models.job import Job
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
+from app.jobs import queue as job_queue
+from app.jobs.models import Job
 from app.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.services.device_verification_job_state import (
     new_job,
     public_snapshot,
 )
 from app.services.device_verification_runner import run_persisted_verification_job
-from app.services.job_kind_constants import JOB_KIND_DEVICE_VERIFICATION
-from app.services.job_queue import create_job, delete_jobs_by_kind
 from app.services.pack_platform_resolver import assert_runnable
 from app.type_defs import SessionFactory
 
@@ -30,7 +30,7 @@ async def start_verification_job(
 
     job_uuid = uuid.uuid4()
     async with session_factory() as db:
-        row = await create_job(
+        row = await job_queue.create_job(
             db,
             kind=JOB_KIND_DEVICE_VERIFICATION,
             payload={"mode": "create", "data": data.model_dump(mode="json")},
@@ -48,7 +48,7 @@ async def start_existing_device_verification_job(
 ) -> dict[str, Any]:
     job_uuid = uuid.uuid4()
     async with session_factory() as db:
-        row = await create_job(
+        row = await job_queue.create_job(
             db,
             kind=JOB_KIND_DEVICE_VERIFICATION,
             payload={
@@ -81,7 +81,7 @@ async def get_verification_job(
 
 async def clear_verification_jobs(session_factory: SessionFactory = async_session) -> None:
     async with session_factory() as db:
-        await delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
+        await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
 
 
 async def store_verification_job_for_test(
@@ -90,7 +90,7 @@ async def store_verification_job_for_test(
     session_factory: SessionFactory = async_session,
 ) -> None:
     async with session_factory() as db:
-        await create_job(
+        await job_queue.create_job(
             db,
             kind=JOB_KIND_DEVICE_VERIFICATION,
             payload={"mode": "create", "data": {}},

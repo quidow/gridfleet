@@ -6,11 +6,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
+from app.jobs.models import Job
 from app.models.device import DeviceHold, DeviceOperationalState
 from app.models.host import Host
-from app.models.job import Job
 from app.services import device_locking, maintenance_service
-from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio

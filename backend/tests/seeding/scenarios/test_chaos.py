@@ -2,10 +2,10 @@
 import pytest
 from sqlalchemy import select
 
+from app.jobs.models import Job
 from app.models.device import Device, DeviceHold, DeviceOperationalState
 from app.models.device_event import DeviceEvent, DeviceEventType
 from app.models.host import Host, HostStatus
-from app.models.job import Job
 from app.models.session import Session, SessionStatus
 from app.models.test_run import RunState, TestRun
 from app.seeding.context import SeedContext

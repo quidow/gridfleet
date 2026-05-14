@@ -16,6 +16,7 @@ MIGRATED_DOMAINS: frozenset[str] = frozenset(
         "settings",
         "webhooks",
         "events",
+        "jobs",
     }
 )
 
@@ -69,6 +70,10 @@ LEGACY_SHIM_FILES: frozenset[str] = frozenset(
         "app/services/event_catalog.py",
         "app/services/system_event_service.py",
         "app/models/system_event.py",
+        "app/services/job_queue.py",
+        "app/services/job_kind_constants.py",
+        "app/services/job_status_constants.py",
+        "app/models/job.py",
         # Phase 1 — ``app/core/config.py`` carries auth-forwarding
         # properties that import ``app.auth.auth_settings`` at the top
         # of the module. This breaks the "core-purity" rule for the

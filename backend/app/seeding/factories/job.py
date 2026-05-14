@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.models.job import Job
+from app.jobs.models import Job
 
 if TYPE_CHECKING:
     from app.seeding.context import SeedContext

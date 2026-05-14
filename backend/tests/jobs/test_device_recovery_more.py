@@ -4,8 +4,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from app.jobs.statuses import JOB_STATUS_FAILED
 from app.services import device_recovery_job
-from app.services.job_status_constants import JOB_STATUS_FAILED
 
 
 class RecoverySession:

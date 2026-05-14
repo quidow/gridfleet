@@ -14,6 +14,7 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "settings": ("config", "models", "registry", "router", "schemas", "service", "service_config"),
     "webhooks": ("config", "dispatcher", "models", "router", "schemas", "service"),
     "events": ("catalog", "config", "event_bus", "models", "router", "schemas", "schemas_catalog", "service_system"),
+    "jobs": ("config", "kinds", "models", "queue", "statuses"),
 }
 
 SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
@@ -45,6 +46,14 @@ SHIM_SENTINELS: dict[str, tuple[str, str, str]] = {
     "app.schemas.event": ("app.events.schemas", "SystemEventRead", "SystemEventRead"),
     "app.schemas.event_catalog": ("app.events.schemas_catalog", "EventCatalogRead", "EventCatalogRead"),
     "app.models.system_event": ("app.events.models", "SystemEvent", "SystemEvent"),
+    "app.services.job_queue": ("app.jobs.queue", "create_job", "create_job"),
+    "app.services.job_kind_constants": (
+        "app.jobs.kinds",
+        "JOB_KIND_DEVICE_VERIFICATION",
+        "JOB_KIND_DEVICE_VERIFICATION",
+    ),
+    "app.services.job_status_constants": ("app.jobs.statuses", "JOB_STATUS_PENDING", "JOB_STATUS_PENDING"),
+    "app.models.job": ("app.jobs.models", "Job", "Job"),
 }
 
 

@@ -1,5 +1,6 @@
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.events.models import SystemEvent
+from app.jobs.models import Job
 from app.models.agent_reconfigure_outbox import AgentReconfigureOutbox
 from app.models.appium_node import AppiumNode
 from app.models.appium_node_resource_claim import AppiumNodeResourceClaim
@@ -29,7 +30,6 @@ from app.models.host_plugin_runtime_status import HostPluginRuntimeStatus
 from app.models.host_resource_sample import HostResourceSample
 from app.models.host_runtime_installation import HostRuntimeInstallation
 from app.models.host_terminal_session import HostTerminalSession
-from app.models.job import Job
 from app.models.session import Session
 from app.models.test_run import TestRun
 from app.settings.models import ConfigAuditLog, Setting

@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
+from app.jobs import queue as job_queue
 from app.models.device import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.models.host import Host
-from app.services import device_locking, job_queue, maintenance_service
-from app.services.job_kind_constants import JOB_KIND_DEVICE_RECOVERY
-from app.services.job_status_constants import JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
+from app.services import device_locking, maintenance_service
 from tests.helpers import create_device, create_reserved_run
 
 pytestmark = pytest.mark.asyncio

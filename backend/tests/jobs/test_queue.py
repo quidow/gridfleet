@@ -9,8 +9,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.job import Job
-from app.services import job_queue
+from app.jobs import queue as job_queue
+from app.jobs.models import Job
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -58,11 +58,11 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
     await db_session.commit()
 
     with patch(
-        "app.services.job_queue.utcnow",
+        "app.jobs.queue.utcnow",
         return_value=datetime.now(UTC),
     ):
         with patch(
-            "app.services.job_queue.reset_snapshot_for_retry",
+            "app.jobs.queue.reset_snapshot_for_retry",
             return_value={"status": job_queue.JOB_STATUS_PENDING, "retried": True},
         ):
             count_verification = await job_queue.reset_stale_running_jobs(
@@ -133,7 +133,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     await db_session.commit()
 
     with patch(
-        "app.services.job_queue.run_persisted_verification_job",
+        "app.jobs.queue.run_persisted_verification_job",
         new=AsyncMock(),
     ) as verification_runner:
         assert (
@@ -146,7 +146,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     verification_runner.assert_awaited_once()
 
     with patch(
-        "app.services.job_queue.run_device_recovery_job",
+        "app.jobs.queue.run_device_recovery_job",
         new=AsyncMock(),
     ) as recovery_runner:
         assert (
@@ -190,13 +190,13 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
             yield session_factory
 
     with (
-        patch("app.services.job_queue.observe_background_loop", return_value=_Observation()),
-        patch("app.services.job_queue.reset_stale_running_jobs", new=AsyncMock()) as reset_jobs,
+        patch("app.jobs.queue.observe_background_loop", return_value=_Observation()),
+        patch("app.jobs.queue.reset_stale_running_jobs", new=AsyncMock()) as reset_jobs,
         patch(
-            "app.services.job_queue.run_pending_jobs_once",
+            "app.jobs.queue.run_pending_jobs_once",
             new=AsyncMock(side_effect=[False, RuntimeError("boom"), asyncio.CancelledError()]),
         ),
-        patch("app.services.job_queue.asyncio.sleep", new=AsyncMock()) as sleep,
+        patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
         await job_queue.durable_job_worker_loop(session_factory)

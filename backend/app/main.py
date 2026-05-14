@@ -22,6 +22,7 @@ from app.errors import register_exception_handlers
 from app.events import event_bus
 from app.events import router as events
 from app.health import check_liveness, check_readiness
+from app.jobs import queue as job_queue
 from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
@@ -66,7 +67,6 @@ from app.services.heartbeat import (
 )
 from app.services.host_resource_telemetry import host_resource_telemetry_loop
 from app.services.intent_reconciler import device_intent_reconciler_loop
-from app.services.job_queue import durable_job_worker_loop
 from app.services.node_health import node_health_loop
 from app.services.pack_drain import pack_drain_loop
 from app.services.property_refresh import property_refresh_loop
@@ -205,7 +205,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
                 asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
                 asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
-                asyncio.create_task(durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
+                asyncio.create_task(job_queue.durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
                 asyncio.create_task(
                     webhook_dispatcher.webhook_delivery_loop(session_factory),
                     name="webhook_dispatcher.webhook_delivery_loop",
