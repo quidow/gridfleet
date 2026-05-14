@@ -26,6 +26,8 @@ from app.services.intent_evaluator import (
 )
 from app.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
 
+assert_runnable = pack_platform_resolver.assert_runnable
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,7 +166,7 @@ async def serialize_device(
 
     blocked_reason: str | None = None
     try:
-        await pack_platform_resolver.assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
+        await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         blocked_reason = exc.code
 

@@ -31,6 +31,8 @@ from app.services.node_service_types import NodeManagerError
 from app.services.session_viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
 
+device_is_virtual = pack_platform_catalog.device_is_virtual
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,7 +70,7 @@ def _health_failure_detail(result: dict[str, Any]) -> str:
 
 
 def _device_health_timeout(device: Device) -> float | int:
-    if pack_platform_catalog.device_is_virtual(device):
+    if device_is_virtual(device):
         return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(settings_service.get("appium.startup_timeout_sec")) + 5)
     return 10
 

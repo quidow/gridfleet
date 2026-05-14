@@ -23,6 +23,8 @@ from app.services.device_identity_conflicts import (
 )
 from app.services.device_verification_job_state import set_stage, should_keep_verified_node_running
 
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
 if TYPE_CHECKING:
     import uuid
 
@@ -111,7 +113,7 @@ async def _payload_needs_host_resolution(
     try:
         device_type = payload.get("device_type")
         resolved_device_type = getattr(device_type, "value", None) or (str(device_type) if device_type else None)
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -141,7 +143,7 @@ async def resolve_host_derived_payload(
 
     if db is not None and payload.get("pack_id") and payload.get("platform_id"):
         try:
-            resolved_platform = await pack_platform_resolver.resolve_pack_platform(
+            resolved_platform = await resolve_pack_platform(
                 db,
                 pack_id=str(payload["pack_id"]),
                 platform_id=str(payload["platform_id"]),

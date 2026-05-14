@@ -33,6 +33,9 @@ from app.services.maintenance_service import enter_maintenance, exit_maintenance
 from app.services.node_service_types import NodeManagerError
 from app.settings import settings_service
 
+platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = 5
@@ -355,7 +358,7 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
         key = (device.pack_id, device.platform_id)
         if key not in lifecycle_cache:
             try:
-                resolved = await pack_platform_resolver.resolve_pack_platform(
+                resolved = await resolve_pack_platform(
                     db,
                     pack_id=device.pack_id,
                     platform_id=device.platform_id,
@@ -364,7 +367,7 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
                 lifecycle_cache[key] = resolved.lifecycle_actions
             except LookupError:
                 lifecycle_cache[key] = []
-        return pack_platform_catalog.platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
+        return platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
 
     eligible = []
     for d in devices:

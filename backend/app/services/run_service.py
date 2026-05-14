@@ -49,6 +49,8 @@ from app.services.intent_types import (
 )
 from app.settings import settings_service
 
+assert_runnable = pack_platform_resolver.assert_runnable
+
 logger = logging.getLogger(__name__)
 
 
@@ -405,7 +407,7 @@ async def _attempt_create_run(
     all_matched: list[Device] = []
 
     for req in data.requirements:
-        await pack_platform_resolver.assert_runnable(db, pack_id=req.pack_id, platform_id=req.platform_id)
+        await assert_runnable(db, pack_id=req.pack_id, platform_id=req.platform_id)
         already_ids = {device.id for device in all_matched}
         available = await _find_matching_devices(db, req, excluded_device_ids=already_ids)
         required_count = _minimum_required_count(req)

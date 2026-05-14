@@ -15,6 +15,8 @@ from app.services.device_identity import (
     parse_ip_from_connection_target,
 )
 
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
 logger = logging.getLogger(__name__)
 
 DeviceWriteInput = DeviceVerificationCreate | DeviceVerificationUpdate | DevicePatch
@@ -87,7 +89,7 @@ async def _platform_defaults_async(
     pass the behavior dict downstream without a second resolver call.
     """
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             session,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -380,7 +382,7 @@ async def prepare_device_create_payload_async(
     resolved_scheme: str | None = None
     resolved_scope: str | None = None
     try:
-        resolved_plat = await pack_platform_resolver.resolve_pack_platform(
+        resolved_plat = await resolve_pack_platform(
             session,
             pack_id=pack_id,
             platform_id=platform_id,
@@ -502,7 +504,7 @@ async def prepare_device_update_payload_async(
     resolved_scheme: str | None = None
     try:
         requested_device_type = getattr(data, "device_type", None) or device.device_type
-        resolved_plat = await pack_platform_resolver.resolve_pack_platform(
+        resolved_plat = await resolve_pack_platform(
             session,
             pack_id=next_pack_id,
             platform_id=next_platform_id,

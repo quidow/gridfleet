@@ -65,6 +65,16 @@ from app.services.node_service_common import (
 from app.services.node_service_types import NodeManagerError, NodePortConflictError, RemoteStartResult
 from app.settings import settings_service
 
+assert_runnable = pack_platform_resolver.assert_runnable
+build_pack_start_payload = pack_start_shim.build_pack_start_payload
+device_is_virtual = pack_platform_catalog.device_is_virtual
+render_default_capabilities = pack_capability.render_default_capabilities
+render_device_field_capabilities = pack_capability.render_device_field_capabilities
+render_stereotype = pack_capability.render_stereotype
+resolve_pack_for_device = pack_start_shim.resolve_pack_for_device
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+PackStartPayloadError = pack_start_shim.PackStartPayloadError
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -294,11 +304,11 @@ def build_agent_start_payload(
 
 
 async def _build_appium_default_pack_caps(db: AsyncSession, device: Device) -> dict[str, Any]:
-    resolved = pack_start_shim.resolve_pack_for_device(device)
+    resolved = resolve_pack_for_device(device)
     if resolved is None:
         return {}
     pack_id, platform_id = resolved
-    resolved_plat = await pack_platform_resolver.resolve_pack_platform(
+    resolved_plat = await resolve_pack_platform(
         db,
         pack_id=pack_id,
         platform_id=platform_id,
@@ -310,8 +320,8 @@ async def _build_appium_default_pack_caps(db: AsyncSession, device: Device) -> d
         "identity_value": getattr(device, "identity_value", None),
         "os_version": device.os_version,
     }
-    caps = pack_capability.render_default_capabilities(resolved_plat, device_context=device_context)
-    caps.update(pack_capability.render_device_field_capabilities(resolved_plat, device.device_config or {}))
+    caps = render_default_capabilities(resolved_plat, device_context=device_context)
+    caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
     return caps
 
 
@@ -327,7 +337,7 @@ async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payl
 
 def _agent_start_timeout(device: Device) -> float | int:
     base = int(settings_service.get("appium.startup_timeout_sec")) + 5
-    if pack_platform_catalog.device_is_virtual(device):
+    if device_is_virtual(device):
         return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
     return base
 
@@ -341,18 +351,16 @@ async def start_remote_node(
     agent_base: str,
     http_client_factory: AgentClientFactory,
 ) -> RemoteStartResult:
-    await pack_platform_resolver.assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
+    await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
 
     # Resolve stereotype once for both consumers (_build_session_aligned_start_caps
     # and build_pack_start_payload) to avoid duplicate DB queries.
-    resolved_pack = pack_start_shim.resolve_pack_for_device(device)
+    resolved_pack = resolve_pack_for_device(device)
     if resolved_pack is None:
         raise NodeManagerError(f"Device {device.id} has no driver pack platform")
-    stereotype = await pack_capability.render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
-    plat = await pack_platform_resolver.resolve_pack_platform(
-        db, pack_id=resolved_pack[0], platform_id=resolved_pack[1]
-    )
+    stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    plat = await resolve_pack_platform(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
     appium_platform_name = plat.appium_platform_name
     extra_caps = await _build_session_aligned_start_caps(
         db,
@@ -369,8 +377,8 @@ async def start_remote_node(
     )
     await _merge_appium_default_pack_caps(db, device, payload)
     try:
-        pack_overrides = await pack_start_shim.build_pack_start_payload(db, device=device, stereotype=stereotype)
-    except pack_start_shim.PackStartPayloadError as exc:
+        pack_overrides = await build_pack_start_payload(db, device=device, stereotype=stereotype)
+    except PackStartPayloadError as exc:
         raise NodeManagerError(str(exc)) from exc
     if pack_overrides is not None:
         payload["pack_id"] = pack_overrides["pack_id"]
@@ -437,10 +445,10 @@ async def _build_session_aligned_start_caps(
         manager_owned_keys=manager_owned_keys,
     )
     if stereotype is None:
-        resolved = pack_start_shim.resolve_pack_for_device(device)
+        resolved = resolve_pack_for_device(device)
         if resolved is not None:
             pack_id, platform_id = resolved
-            stereotype = await pack_capability.render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
+            stereotype = await render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
     if stereotype is not None:
         automation_name = stereotype.get("appium:automationName")
         if automation_name:
@@ -595,7 +603,7 @@ async def _start_for_node(
     resource_ports: dict[str, int] = {}
     needs_derived_data_path = False
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,

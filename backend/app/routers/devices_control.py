@@ -49,6 +49,9 @@ from app.services.device_identity import appium_connection_target
 from app.services.intent_service import revoke_intents_and_reconcile
 from app.services.session_viability_types import SessionViabilityCheckedBy
 
+platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
 router = APIRouter()
 
 
@@ -212,7 +215,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -220,7 +223,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         )
     except LookupError as exc:
         raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
-    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
+    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
         raise HTTPException(status_code=400, detail="Reconnect is not supported for this device platform")
     if device.connection_type.value != "network":
         raise HTTPException(status_code=400, detail="Reconnect is only supported for network-connected devices")
@@ -298,7 +301,7 @@ async def device_lifecycle_action(
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -306,7 +309,7 @@ async def device_lifecycle_action(
         )
     except LookupError as exc:
         raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
-    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, action):
+    if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
         raise HTTPException(
             status_code=400,
             detail=f"Lifecycle action {action} is not supported for this device platform",

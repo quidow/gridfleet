@@ -11,6 +11,8 @@ from app.packs.services import discovery as pack_discovery
 from app.services.agent_operations import get_pack_device_properties
 from app.settings import settings_service
 
+pack_refresh_device_properties = pack_discovery.refresh_device_properties
+
 logger = get_logger(__name__)
 LOOP_NAME = "property_refresh"
 
@@ -32,7 +34,7 @@ async def _refresh_all_properties() -> None:
 
             for device in devices:
                 try:
-                    await pack_discovery.refresh_device_properties(
+                    await pack_refresh_device_properties(
                         db,
                         device,
                         agent_get_pack_device_properties=get_pack_device_properties,

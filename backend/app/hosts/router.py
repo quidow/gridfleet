@@ -41,6 +41,8 @@ from app.services.device_identity_conflicts import DeviceIdentityConflictError
 from app.settings import settings_service
 from app.type_defs import AsyncTaskFactory
 
+get_host_driver_pack_status = pack_status.get_host_driver_pack_status
+
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 logger = logging.getLogger(__name__)
 get_agent_tool_status = agent_operations.get_tool_status
@@ -185,7 +187,7 @@ async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> pack_schemas.HostD
     host = await db.get(Host, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="host not found")
-    return pack_schemas.HostDriverPacksOut.model_validate(await pack_status.get_host_driver_pack_status(db, host_id))
+    return pack_schemas.HostDriverPacksOut.model_validate(await get_host_driver_pack_status(db, host_id))
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)

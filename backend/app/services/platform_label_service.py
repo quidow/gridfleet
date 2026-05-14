@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services import release_ordering as pack_release_ordering
 
+selected_release = pack_release_ordering.selected_release
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -32,7 +34,7 @@ async def load_platform_label_map(
     )
 
     for pack in result.scalars().all():
-        release = pack_release_ordering.selected_release(list(pack.releases), pack.current_release)
+        release = selected_release(list(pack.releases), pack.current_release)
         if release is None:
             continue
         for platform in release.platforms:

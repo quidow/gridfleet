@@ -14,6 +14,8 @@ from app.services.device_verification_job_state import (
 from app.services.device_verification_runner import run_persisted_verification_job
 from app.type_defs import SessionFactory
 
+assert_runnable = pack_platform_resolver.assert_runnable
+
 __all__ = [
     "run_persisted_verification_job",
 ]
@@ -26,7 +28,7 @@ async def start_verification_job(
     # Gate: ensure pack is runnable before creating verification job
     if data.pack_id is not None and data.platform_id is not None:
         async with session_factory() as db:
-            await pack_platform_resolver.assert_runnable(db, pack_id=data.pack_id, platform_id=data.platform_id)
+            await assert_runnable(db, pack_id=data.pack_id, platform_id=data.platform_id)
 
     job_uuid = uuid.uuid4()
     async with session_factory() as db:

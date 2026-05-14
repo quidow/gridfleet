@@ -42,6 +42,9 @@ from app.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHoo
 from app.services.lifecycle_state_machine_types import TransitionEvent
 from app.settings import settings_service
 
+platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
+
 logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
@@ -143,7 +146,7 @@ async def _get_device_health(
 
 async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -161,7 +164,7 @@ async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
 async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
     """Poll the agent for the pack-owned lifecycle state."""
     try:
-        resolved = await pack_platform_resolver.resolve_pack_platform(
+        resolved = await resolve_pack_platform(
             db,
             pack_id=device.pack_id,
             platform_id=device.platform_id,
@@ -169,7 +172,7 @@ async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
         )
     except LookupError:
         return None
-    if not pack_platform_catalog.platform_has_lifecycle_action(resolved.lifecycle_actions, "state"):
+    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "state"):
         return None
     host = device.host
     if host is None or device.connection_target is None:
