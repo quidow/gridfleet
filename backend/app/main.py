@@ -257,7 +257,7 @@ app.include_router(devices.router, dependencies=[Depends(require_any_auth)])
 app.include_router(nodes.router, dependencies=[Depends(require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(require_any_auth)])
-app.include_router(host_terminal.router, dependencies=[Depends(require_any_auth)])
+app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside the WS handler
 app.include_router(sessions.router, dependencies=[Depends(require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(require_any_auth)])
