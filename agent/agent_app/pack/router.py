@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
+from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
+    HostIdDep,
+    OptionalAdapterRegistryDep,
+    PackStateLoopDep,
+)
 from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
 from agent_app.pack.dispatch import (
     adapter_health_check,
@@ -42,16 +47,16 @@ def _release_for_pack(request: Request, pack_id: str) -> str | None:
 
 
 @router.get("/devices")
-async def pack_devices(request: Request) -> dict[str, Any]:
-    loop = getattr(request.app.state, "pack_state_loop", None)
-    desired = loop.latest_desired_packs if loop else None
-    adapter_registry = getattr(request.app.state, "adapter_registry", None)
-    host_identity = getattr(request.app.state, "host_identity", None)
-    host_id_value = host_identity.get() if host_identity is not None else None
+async def pack_devices(
+    pack_state_loop: PackStateLoopDep,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
+) -> dict[str, Any]:
+    desired = pack_state_loop.latest_desired_packs if pack_state_loop else None
     return await enumerate_pack_candidates(
         desired,
         adapter_registry=adapter_registry,
-        host_id=host_id_value or "",
+        host_id=host_id,
     )
 
 
