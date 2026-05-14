@@ -134,6 +134,11 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
     async def fake_async_session() -> AsyncGenerator[object, None]:
         yield yielded
 
+    # Phase 0b: database is a shim re-exporting from app.core.database; the
+    # canonical async_session lookup happens in app.core.database.
+    from app.core import database as core_database
+
+    monkeypatch.setattr(core_database, "async_session", fake_async_session)
     monkeypatch.setattr(database, "async_session", fake_async_session)
 
     generator = database.get_db()

@@ -10,13 +10,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import dependencies as auth_dependencies
+from app.auth import router as auth_router_module
+from app.auth import service as auth_service
 from app.config import freeze_background_loops_enabled
 from app.database import async_session as session_factory
 from app.database import engine
 from app.dependencies import DbDep
 from app.errors import register_exception_handlers
 from app.health import check_liveness, check_readiness
-from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
+from app.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges_legacy, render_metrics
 from app.middleware import RequestContextMiddleware, StaticPathsAuthMiddleware
 from app.models.host import Host, HostStatus
 from app.observability import configure_logging, get_logger
@@ -24,7 +27,6 @@ from app.routers import (
     admin_appium_nodes,
     agent_driver_packs,
     analytics,
-    auth,
     bulk,
     device_groups,
     devices,
@@ -47,8 +49,6 @@ from app.routers import (
     webhooks,
 )
 from app.schemas.health import HealthStatusRead, LiveHealthRead
-from app.security.dependencies import require_any_auth
-from app.services import auth as auth_service
 from app.services import device_health, device_service, host_service, webhook_dispatcher
 from app.services.agent_http_pool import agent_http_pool
 from app.services.appium_reconciler import appium_reconciler_loop
@@ -253,32 +253,32 @@ app.add_middleware(StaticPathsAuthMiddleware)
 app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 
-app.include_router(auth.router)
-app.include_router(admin_appium_nodes.router, dependencies=[Depends(require_any_auth)])
+app.include_router(auth_router_module.router)
+app.include_router(admin_appium_nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
-    bulk.router, dependencies=[Depends(require_any_auth)]
+    bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
-app.include_router(devices.router, dependencies=[Depends(require_any_auth)])
-app.include_router(nodes.router, dependencies=[Depends(require_any_auth)])
-app.include_router(grid.router, dependencies=[Depends(require_any_auth)])
-app.include_router(hosts.router, dependencies=[Depends(require_any_auth)])
+app.include_router(devices.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside the WS handler
-app.include_router(sessions.router, dependencies=[Depends(require_any_auth)])
-app.include_router(events.router, dependencies=[Depends(require_any_auth)])
-app.include_router(webhooks.router, dependencies=[Depends(require_any_auth)])
-app.include_router(device_groups.router, dependencies=[Depends(require_any_auth)])
-app.include_router(runs.router, dependencies=[Depends(require_any_auth)])
-app.include_router(plugins.router, dependencies=[Depends(require_any_auth)])
-app.include_router(analytics.router, dependencies=[Depends(require_any_auth)])
-app.include_router(lifecycle.router, dependencies=[Depends(require_any_auth)])
-app.include_router(settings.router, dependencies=[Depends(require_any_auth)])
-app.include_router(driver_pack_authoring.router, dependencies=[Depends(require_any_auth)])
-app.include_router(driver_pack_templates.router, dependencies=[Depends(require_any_auth)])
-app.include_router(driver_pack_export.router, dependencies=[Depends(require_any_auth)])
-app.include_router(driver_packs.router, dependencies=[Depends(require_any_auth)])
-app.include_router(driver_pack_uploads.router, dependencies=[Depends(require_any_auth)])
-app.include_router(host_driver_pack_features.router, dependencies=[Depends(require_any_auth)])
-app.include_router(agent_driver_packs.router, dependencies=[Depends(require_any_auth)])
+app.include_router(sessions.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(device_groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(runs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(lifecycle.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(driver_pack_authoring.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(driver_pack_templates.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(driver_pack_export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(driver_packs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(driver_pack_uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(host_driver_pack_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(agent_driver_packs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 
 
 @app.get("/health/live", response_model=LiveHealthRead)
@@ -300,11 +300,11 @@ async def health(db: DbDep) -> JSONResponse:
 
 @app.get("/metrics")
 async def metrics(db: DbDep) -> Response:
-    await refresh_system_gauges(db)
+    await refresh_system_gauges_legacy(db)
     return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/api/availability", dependencies=[Depends(require_any_auth)])
+@app.get("/api/availability", dependencies=[Depends(auth_dependencies.require_any_auth)])
 async def check_availability(
     db: DbDep,
     platform_id: str = Query(...),

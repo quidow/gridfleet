@@ -1,16 +1,9 @@
-from datetime import datetime
+"""Legacy import shim for Phase 1 backend domain-layout refactor.
 
-from pydantic import BaseModel
+Real implementation lives at ``app/auth/schemas.py``. Phase 16 deletes
+this shim once every caller migrates.
+"""
 
+from app.auth.schemas import AuthLoginRequest, AuthSessionRead
 
-class AuthLoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class AuthSessionRead(BaseModel):
-    enabled: bool
-    authenticated: bool
-    username: str | None
-    csrf_token: str | None
-    expires_at: datetime | None
+__all__ = ["AuthLoginRequest", "AuthSessionRead"]

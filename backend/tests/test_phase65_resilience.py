@@ -205,7 +205,7 @@ def test_build_engine_uses_configured_pool_settings() -> None:
         captured.update(kwargs)
         return object()
 
-    with patch("app.database.create_async_engine", side_effect=fake_create_async_engine):
+    with patch("app.core.database.create_async_engine", side_effect=fake_create_async_engine):
         original_pool_size = settings.db_pool_size
         original_max_overflow = settings.db_max_overflow
         try:

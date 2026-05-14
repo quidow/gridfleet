@@ -4,7 +4,7 @@ import jwt as _pyjwt
 import pytest
 from starlette.datastructures import Headers
 
-from app.services import auth
+from app.auth import service as auth
 
 
 def _enable_auth(monkeypatch: pytest.MonkeyPatch) -> None:

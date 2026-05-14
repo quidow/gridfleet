@@ -1,8 +1,10 @@
-"""Shared Annotated[Depends] aliases for FastAPI routes.
+"""Shared Annotated[Depends] aliases.
 
-Use these instead of repeating `dep: T = Depends(callable)` in route signatures.
-Cross-domain dependencies live here; domain-specific aliases live in
-`<domain>/dependencies.py`.
+Phase 1 of the backend domain-layout refactor moved ``AdminDep`` to
+``app/auth/dependencies.py`` (it wraps ``require_admin`` and now lives
+alongside the rest of the auth deps). This module keeps ``AdminDep`` as
+a legacy re-export so existing routers continue to compile until they
+migrate to ``from app.auth.dependencies import AdminDep``.
 """
 
 from __future__ import annotations
@@ -12,8 +14,9 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.services.auth_dependencies import require_admin
+from app.auth.dependencies import AdminDep
+from app.core.database import get_db
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
-AdminDep = Annotated[str, Depends(require_admin)]
+
+__all__ = ["AdminDep", "DbDep"]
