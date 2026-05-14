@@ -1,18 +1,21 @@
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode, AppiumNodeResourceClaim
+from app.devices.models import (
+    Device,
+    DeviceEvent,
+    DeviceGroup,
+    DeviceGroupMembership,
+    DeviceIntent,
+    DeviceIntentDirty,
+    DeviceReservation,
+    DeviceTestDataAuditLog,
+)
 from app.events.models import SystemEvent
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample, HostTerminalSession
 from app.jobs.models import Job
 from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat
 from app.models.control_plane_state_entry import ControlPlaneStateEntry
-from app.models.device import Device
-from app.models.device_event import DeviceEvent
-from app.models.device_group import DeviceGroup, DeviceGroupMembership
-from app.models.device_intent import DeviceIntent
-from app.models.device_intent_dirty import DeviceIntentDirty
-from app.models.device_reservation import DeviceReservation
-from app.models.device_test_data_audit_log import DeviceTestDataAuditLog
 from app.models.session import Session
 from app.models.test_run import TestRun
 from app.packs.models import (
