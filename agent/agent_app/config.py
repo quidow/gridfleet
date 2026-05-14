@@ -1,10 +1,12 @@
 import math
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
 class AgentSettings(BaseSettings):
+    environment: Literal["local", "dev", "staging", "prod"] = "local"
     manager_url: str = "http://localhost:8000"
     manager_auth_username: str | None = None
     manager_auth_password: str | None = None
