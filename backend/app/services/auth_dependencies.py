@@ -8,13 +8,14 @@ from app.services import auth as auth_module
 async def require_admin(request: Request) -> str:
     """Return the authenticated admin username; 403 if anonymous and auth is enforced.
 
-    Authentication is enforced upstream by `RequestContextMiddleware`; this dependency
-    re-checks the resolved username so an admin-only route fails closed when the
-    middleware is bypassed (e.g. test client without auth headers).
+    Authentication is enforced upstream by `require_any_auth` (FastAPI dependency on
+    every protected router include). That dependency mirrors the resolved username
+    into ``request.state.auth_username``; this dependency re-checks it so an
+    admin-only route fails closed if the upstream dependency was skipped.
     """
     if not auth_module.is_auth_enabled():
         return "anonymous-admin"
-    # `RequestContextMiddleware` stores auth_username in scope["state"] (a plain dict).
+    # `require_any_auth` writes auth_username into scope["state"] (a plain dict).
     # FastAPI's `request.state` is a `State` object backed by the same dict via
     # `scope["state"]`, so both access patterns are equivalent at runtime.
     username: str | None = None
