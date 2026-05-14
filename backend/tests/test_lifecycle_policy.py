@@ -31,6 +31,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 @pytest.fixture(autouse=True)
 def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
+    monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0, raising=False)
 
 
 async def _mark_device_available(
@@ -1522,21 +1523,34 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module._MACHINE, "transition", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
+    probe_order: list[str] = []
+    monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 1, raising=False)
+
+    async def probe_after_wait(*_args: object, **_kwargs: object) -> dict[str, str]:
+        probe_order.append("probe")
+        return {"status": "passed"}
+
     monkeypatch.setattr(
         lifecycle_policy_module.session_viability,
         "run_session_viability_probe",
-        AsyncMock(return_value={"status": "passed"}),
+        AsyncMock(side_effect=probe_after_wait),
     )
+
+    async def observe_node_running(*_args: object, **_kwargs: object) -> object:
+        probe_order.append("wait")
+        return SimpleNamespace(observed_running=True)
+
     monkeypatch.setattr(
         lifecycle_policy_module,
         "wait_for_node_running",
-        AsyncMock(return_value=None),
+        AsyncMock(side_effect=observe_node_running),
     )
 
     assert await attempt_auto_recovery(db, device, source="device_checks", reason="reconnected") is True  # type: ignore[arg-type]
     assert db.added
     lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
     lifecycle_policy_module._MACHINE.transition.assert_awaited()
+    assert probe_order == ["wait", "probe"]
 
     failing = SimpleNamespace(**device.__dict__)
     failing.id = uuid.uuid4()

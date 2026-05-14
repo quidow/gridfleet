@@ -79,6 +79,8 @@ build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy
 
 RECOVERY_PROBE_ATTEMPTS = 3
 RECOVERY_PROBE_RETRY_DELAY_SEC = 10
+RECOVERY_NODE_START_WAIT_TIMEOUT_SEC = 5
+RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 
 
 class DeferredStopOutcome(StrEnum):
@@ -572,8 +574,8 @@ async def attempt_auto_recovery(
         observed = await wait_for_node_running(
             db,
             device.appium_node.id,
-            timeout_sec=60,
-            poll_interval_sec=1.0,
+            timeout_sec=RECOVERY_NODE_START_WAIT_TIMEOUT_SEC,
+            poll_interval_sec=RECOVERY_NODE_START_WAIT_POLL_SEC,
         )
         if observed is None:
             logger.warning(
