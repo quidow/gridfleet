@@ -11,18 +11,20 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from agent_app.appium.process import (
+from agent_app.appium.exceptions import (
     AlreadyRunningError,
-    AppiumInvocation,
-    AppiumLaunchSpec,
-    AppiumProcessInfo,
-    AppiumProcessManager,
     DeviceNotFoundError,
     InvalidStartPayloadError,
     PortOccupiedError,
     RuntimeMissingError,
     RuntimeNotInstalledError,
     StartupTimeoutError,
+)
+from agent_app.appium.process import (
+    AppiumInvocation,
+    AppiumLaunchSpec,
+    AppiumProcessInfo,
+    AppiumProcessManager,
     _build_env,
     _find_java,
     _has_lifecycle_action,

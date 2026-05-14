@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, status
 
 from agent_app.appium import appium_mgr
-from agent_app.appium.process import (
+from agent_app.appium.exceptions import (
     AlreadyRunningError,
     DeviceNotFoundError,
     InvalidStartPayloadError,

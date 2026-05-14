@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from agent_app.appium.exceptions import RuntimeNotInstalledError
 from agent_app.appium.process import (
     AppiumInvocation,
     AppiumLaunchSpec,
     AppiumProcessManager,
-    RuntimeNotInstalledError,
     _build_env,
     resolve_appium_invocation_for_pack,
 )
