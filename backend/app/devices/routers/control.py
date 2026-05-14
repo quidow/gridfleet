@@ -6,7 +6,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import reconciler_agent as node_manager
-from app.appium_nodes.services.reconciler_agent import require_management_host
 from app.dependencies import DbDep
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
@@ -48,6 +47,7 @@ from app.services.session_viability_types import SessionViabilityCheckedBy
 
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
+require_management_host = node_manager.require_management_host
 revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
