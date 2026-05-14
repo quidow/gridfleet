@@ -44,6 +44,40 @@ def test_appium_start_rejects_pack_id_with_path_traversal() -> None:
         AppiumStartRequest(**payload)
 
 
+def test_appium_start_accepts_namespaced_pack_id() -> None:
+    payload = _valid_start_payload() | {"pack_id": "local/uiautomator2-android-real"}
+    AppiumStartRequest(**payload)
+
+
+def test_appium_start_accepts_two_segment_pack_id() -> None:
+    payload = _valid_start_payload() | {"pack_id": "acme/my-custom-driver"}
+    AppiumStartRequest(**payload)
+
+
+def test_appium_start_rejects_pack_id_with_double_dot_segment() -> None:
+    payload = _valid_start_payload() | {"pack_id": "local/../etc"}
+    with pytest.raises(ValidationError):
+        AppiumStartRequest(**payload)
+
+
+def test_appium_start_rejects_pack_id_with_trailing_slash() -> None:
+    payload = _valid_start_payload() | {"pack_id": "foo/"}
+    with pytest.raises(ValidationError):
+        AppiumStartRequest(**payload)
+
+
+def test_appium_start_rejects_pack_id_with_leading_slash() -> None:
+    payload = _valid_start_payload() | {"pack_id": "/foo"}
+    with pytest.raises(ValidationError):
+        AppiumStartRequest(**payload)
+
+
+def test_appium_start_rejects_pack_id_with_double_slash() -> None:
+    payload = _valid_start_payload() | {"pack_id": "foo//bar"}
+    with pytest.raises(ValidationError):
+        AppiumStartRequest(**payload)
+
+
 def test_appium_start_accepts_minimal_valid_payload() -> None:
     AppiumStartRequest(**_valid_start_payload())
 
@@ -73,6 +107,40 @@ def test_normalize_device_rejects_platform_id_with_pattern_violation() -> None:
         )
 
 
+def test_normalize_device_accepts_namespaced_pack_id() -> None:
+    NormalizeDeviceRequest(
+        pack_id="local/uiautomator2-android-real",
+        pack_release="1.0.0",
+        platform_id="android",
+        raw_input={},
+    )
+
+
+def test_normalize_device_rejects_pack_id_with_double_dot_segment() -> None:
+    with pytest.raises(ValidationError):
+        NormalizeDeviceRequest(
+            pack_id="local/../etc",
+            pack_release="1.0.0",
+            platform_id="android",
+            raw_input={},
+        )
+
+
+def test_normalize_device_rejects_pack_id_with_trailing_slash() -> None:
+    with pytest.raises(ValidationError):
+        NormalizeDeviceRequest(pack_id="foo/", pack_release="1.0.0", platform_id="android", raw_input={})
+
+
+def test_normalize_device_rejects_pack_id_with_leading_slash() -> None:
+    with pytest.raises(ValidationError):
+        NormalizeDeviceRequest(pack_id="/foo", pack_release="1.0.0", platform_id="android", raw_input={})
+
+
+def test_normalize_device_rejects_pack_id_with_double_slash() -> None:
+    with pytest.raises(ValidationError):
+        NormalizeDeviceRequest(pack_id="foo//bar", pack_release="1.0.0", platform_id="android", raw_input={})
+
+
 def test_appium_stop_accepts_valid_port() -> None:
     AppiumStopRequest(port=4723)
 
@@ -98,6 +166,30 @@ def test_feature_action_rejects_pack_id_with_path_traversal() -> None:
 
 def test_feature_action_accepts_valid_pack_id() -> None:
     FeatureActionRequest(pack_id="appium-uiautomator2", args={})
+
+
+def test_feature_action_accepts_namespaced_pack_id() -> None:
+    FeatureActionRequest(pack_id="local/uiautomator2-android-real", args={})
+
+
+def test_feature_action_rejects_pack_id_with_double_dot_segment() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="local/../etc", args={})
+
+
+def test_feature_action_rejects_pack_id_with_trailing_slash() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="foo/", args={})
+
+
+def test_feature_action_rejects_pack_id_with_leading_slash() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="/foo", args={})
+
+
+def test_feature_action_rejects_pack_id_with_double_slash() -> None:
+    with pytest.raises(ValidationError):
+        FeatureActionRequest(pack_id="foo//bar", args={})
 
 
 def test_plugin_config_rejects_path_traversal() -> None:

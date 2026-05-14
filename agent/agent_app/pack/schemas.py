@@ -4,21 +4,48 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]+$"
+# Single-segment identifiers: alphanumeric, underscores, dots, hyphens — no slashes.
+# Used for platform_id values like "android", "ios", "android_mobile", "android-emulator".
+_PLATFORM_ID_PATTERN = r"^[A-Za-z0-9_.\-]+$"
+
+# Structural pattern for pack IDs: slash-separated segments of valid chars.
+# Enforces no leading/trailing slashes and no consecutive slashes.
+# Traversal segments ("." or "..") are blocked by the field_validator below.
+_PACK_ID_STRUCTURAL_PATTERN = r"^[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*$"
+
+
+def _validate_no_dot_segments(v: str) -> str:
+    """Reject any segment that is exactly '.' or '..' (path traversal guard)."""
+    for segment in v.split("/"):
+        if segment in {".", ".."}:
+            msg = f"pack_id segment {segment!r} is not allowed"
+            raise ValueError(msg)
+    return v
 
 
 class FeatureActionRequest(BaseModel):
-    pack_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
+    pack_id: str = Field(min_length=1, pattern=_PACK_ID_STRUCTURAL_PATTERN)
     args: dict[str, Any] = {}
     device_identity_value: str | None = None
 
+    @field_validator("pack_id")
+    @classmethod
+    def pack_id_no_dot_segments(cls, v: str) -> str:
+        return _validate_no_dot_segments(v)
+
 
 class NormalizeDeviceRequest(BaseModel):
-    pack_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
+    pack_id: str = Field(min_length=1, pattern=_PACK_ID_STRUCTURAL_PATTERN)
     pack_release: str = Field(min_length=1)
-    platform_id: str = Field(min_length=1, pattern=_IDENTIFIER_PATTERN)
+    platform_id: str = Field(min_length=1, pattern=_PLATFORM_ID_PATTERN)
+
+    @field_validator("pack_id")
+    @classmethod
+    def pack_id_no_dot_segments(cls, v: str) -> str:
+        return _validate_no_dot_segments(v)
+
     raw_input: dict[str, Any]
 
 
