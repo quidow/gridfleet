@@ -33,7 +33,7 @@ from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.registration import registration_loop
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from fastapi import FastAPI
 
@@ -45,6 +45,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
+
+
+def _watchdog(
+    name: str,
+    restart: Callable[[], asyncio.Task[None]] | None = None,
+) -> Callable[[asyncio.Task[Any]], None]:
+    """Return a done_callback that logs unhandled exceptions from supervised tasks."""
+
+    def _cb(task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            logger.info("background task %s exited cleanly", name)
+            return
+        logger.error(
+            "background task %s crashed",
+            name,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        if restart is not None:
+            logger.info("restarting background task %s", name)
+            restart()
+
+    return _cb
 
 
 def _manager_auth() -> httpx.BasicAuth | None:
@@ -180,6 +205,7 @@ async def _stop_grid_node_supervisors_for_shutdown(
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await refresh_capabilities_snapshot()
     capabilities_task = asyncio.create_task(capabilities_refresh_loop(refresh_immediately=False))
+    capabilities_task.add_done_callback(_watchdog("capabilities_refresh"))
 
     host_identity = HostIdentity()
     runtime_registry = RuntimeRegistry()
@@ -198,13 +224,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host_identity.set(env_host_id)
         app.state.pack_state_loop_enabled = True
 
-    reg_task = asyncio.create_task(
-        registration_loop(
-            agent_settings.manager.manager_url,
-            agent_settings.core.agent_port,
-            host_identity,
+    reg_task: asyncio.Task[None]
+
+    def _start_registration_task() -> asyncio.Task[None]:
+        nonlocal reg_task
+        reg_task = asyncio.create_task(
+            registration_loop(
+                agent_settings.manager.manager_url,
+                agent_settings.core.agent_port,
+                host_identity,
+            )
         )
-    )
+        reg_task.add_done_callback(_watchdog("registration", _start_registration_task))
+        return reg_task
+
+    reg_task = _start_registration_task()
     appium_mgr.set_runtime_registry(runtime_registry)
     appium_mgr.set_adapter_registry(adapter_registry)
 
@@ -215,6 +249,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app, host_identity, backend_url, runtime_registry, adapter_registry, sidecar_supervisor
             )
         )
+        pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
     try:
         yield
