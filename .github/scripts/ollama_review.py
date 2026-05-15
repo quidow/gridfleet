@@ -181,10 +181,11 @@ def _ollama_post(
     """
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    timeout = int(os.environ.get("OLLAMA_REVIEW_TIMEOUT", "600"))
     log(
         "INFO",
         f"{label}: POST {url} model={payload.get('model')} "
-        f"req_bytes={len(data)} timeout=300s",
+        f"req_bytes={len(data)} timeout={timeout}s",
     )
     if DEBUG:
         log("DEBUG", f"{label} payload: {json.dumps(payload)[:4000]}")
@@ -192,7 +193,7 @@ def _ollama_post(
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8")
             elapsed = time.monotonic() - started
             log(

@@ -16,6 +16,7 @@ jobs:
   review:
     name: Ollama Review
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     if: ${{ !github.event.pull_request.draft }}
     steps:
       - name: Checkout
@@ -42,6 +43,7 @@ jobs:
           OLLAMA_URL: ${{ vars.OLLAMA_URL || 'https://ollama.com/api/chat' }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
           OLLAMA_REVIEW_DEBUG: ${{ vars.OLLAMA_REVIEW_DEBUG || '' }}
+          OLLAMA_REVIEW_TIMEOUT: ${{ vars.OLLAMA_REVIEW_TIMEOUT || '600' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
