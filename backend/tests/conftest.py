@@ -139,6 +139,14 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
             )
         )
     yield engine
+    # Drain event-bus handler tasks (and other control-plane background tasks)
+    # before DROP SCHEMA. After-commit handlers spawned during the test query
+    # tables in the per-test schema; if they outlive the test body they hold
+    # AccessShareLock that deadlocks the AccessExclusiveLock taken by
+    # DROP SCHEMA CASCADE. autouse reset_control_plane_state runs its
+    # post-yield shutdown LATER than this fixture's teardown, so we must
+    # shut services down here too.
+    await _shutdown_control_plane_services()
     async with engine.begin() as conn:
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
     await engine.dispose()
