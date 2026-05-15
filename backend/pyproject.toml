@@ -39,7 +39,7 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
-    "ruff>=0.15.12",
+    "ruff>=0.15.13",
 ]
 
 [tool.pytest.ini_options]
