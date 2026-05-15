@@ -135,6 +135,7 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
         host.capabilities = normalize_capabilities(data.capabilities)
         if data.host_info is not None:
             for field, value in data.host_info.model_dump(exclude_none=True).items():
+                assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
                 setattr(host, field, value)
         if host.status == HostStatus.offline:
             host.status = HostStatus.online
@@ -156,6 +157,7 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
     )
     if data.host_info is not None:
         for field, value in data.host_info.model_dump(exclude_none=True).items():
+            assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
             setattr(host, field, value)
     db.add(host)
     await db.flush()
