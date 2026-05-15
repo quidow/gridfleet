@@ -24,6 +24,8 @@ class LogShipperTask:
         host_id: UUID,
         boot_id: UUID,
         queue: asyncio.Queue[ShippedLogLine],
+        base_url: str = "",
+        auth: httpx.Auth | None = None,
         batch_size: int = 200,
         flush_interval_sec: float = 2.0,
         backoff_initial_sec: float = 1.0,
@@ -33,6 +35,8 @@ class LogShipperTask:
         self._host_id = host_id
         self._boot_id = boot_id
         self._queue = queue
+        self._base_url = base_url.rstrip("/")
+        self._auth = auth
         self._batch_size = batch_size
         self._flush_interval = flush_interval_sec
         self._backoff_initial = backoff_initial_sec
@@ -97,10 +101,14 @@ class LogShipperTask:
         while not self._stop.is_set():
             try:
                 payload = AgentLogBatch(boot_id=self._boot_id, lines=batch)
-                response = await self._client.post(
-                    f"/agent/{self._host_id}/log-batch",
-                    json=payload.model_dump(mode="json"),
-                )
+                if self._base_url:
+                    url = f"{self._base_url}/agent/{self._host_id}/log-batch"
+                else:
+                    url = f"/agent/{self._host_id}/log-batch"
+                if self._auth is None:
+                    response = await self._client.post(url, json=payload.model_dump(mode="json"))
+                else:
+                    response = await self._client.post(url, json=payload.model_dump(mode="json"), auth=self._auth)
             except Exception as exc:
                 logger.warning("log batch network error: %s", exc)
             else:

@@ -13,14 +13,17 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
 
 import httpx
 
+from agent_app import observability as agent_observability
 from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings, secret_value
 from agent_app.host.capabilities import capabilities_refresh_loop, refresh_capabilities_snapshot
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
+from agent_app.logs.shipper import LogShipperTask
 from agent_app.pack.adapter_loader import load_adapter
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
+BOOT_ID = uuid4()
 
 
 def _watchdog(
@@ -168,6 +172,31 @@ async def _start_pack_loop_when_ready(
     await loop.run_forever()
 
 
+async def _start_log_shipper_when_ready(
+    host_identity: HostIdentity,
+    backend_url: str,
+    *,
+    boot_id: UUID = BOOT_ID,
+) -> None:
+    if agent_observability.shipper_queue is None:
+        return
+    host_id_raw = await host_identity.wait()
+    try:
+        host_id = UUID(host_id_raw)
+    except ValueError:
+        logger.warning("log shipper disabled because host_id is not a UUID: %s", host_id_raw)
+        return
+    shipper = LogShipperTask(
+        client=get_shared_http_client(),
+        host_id=host_id,
+        boot_id=boot_id,
+        queue=agent_observability.shipper_queue,
+        base_url=backend_url,
+        auth=_manager_auth(),
+    )
+    await shipper.run()
+
+
 async def _stop_grid_node_supervisors_for_shutdown(
     manager: AppiumProcessManager,
     *,
@@ -243,6 +272,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     appium_mgr.set_adapter_registry(adapter_registry)
 
     pack_task: asyncio.Task[None] | None = None
+    log_shipper_task: asyncio.Task[None] | None = None
     if backend_url:
         pack_task = asyncio.create_task(
             _start_pack_loop_when_ready(
@@ -250,12 +280,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
+        log_shipper_task = asyncio.create_task(_start_log_shipper_when_ready(host_identity, backend_url))
+        log_shipper_task.add_done_callback(_watchdog("log_shipper"))
 
     try:
         yield
     finally:
         if pack_task is not None:
             pack_task.cancel()
+        if log_shipper_task is not None:
+            log_shipper_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
         await _stop_grid_node_supervisors_for_shutdown(appium_mgr)
