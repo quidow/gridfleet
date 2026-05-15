@@ -1224,7 +1224,7 @@ async def test_host_terminal_rejects_origin_and_unauthenticated_browser() -> Non
     assert unauthenticated_ws.close_codes == [1008]
 
 
-async def test_host_terminal_adapter_methods_and_proxy_error_path() -> None:
+async def test_host_terminal_adapter_methods_and_unexpected_proxy_error_propagates() -> None:
     host_id = uuid.uuid4()
     ws = _FakeHostTerminalWebSocket(origin="https://ok.test")
     host = SimpleNamespace(
@@ -1254,14 +1254,15 @@ async def test_host_terminal_adapter_methods_and_proxy_error_path() -> None:
         patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
         patch("app.hosts.router_terminal.agent_settings.agent_terminal_token", "token"),
     ):
-        await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError, match="proxy exploded"):
+            await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
 
     assert ws.accepted is True
     assert ws.sent == ["agent-output"]
     assert ws.close_codes == [1001, 1000]
     close_session.assert_awaited_once()
     assert close_session.await_args.kwargs["session_id"] == session_id
-    assert close_session.await_args.kwargs["close_reason"] == "proxy_error"
+    assert close_session.await_args.kwargs["close_reason"] == "unknown"
 
 
 def _control_device(**overrides: object) -> SimpleNamespace:

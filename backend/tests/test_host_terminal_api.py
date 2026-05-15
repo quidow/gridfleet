@@ -148,6 +148,46 @@ def test_terminal_route_proxies_online_host_and_audits_session(
     assert mock_db is not None
 
 
+def test_terminal_route_unexpected_proxy_exception_closes_with_error_code(
+    monkeypatch: pytest.MonkeyPatch, setup_database: AsyncEngine
+) -> None:
+    _configure_terminal(
+        monkeypatch,
+        enabled=True,
+        origins="http://testserver",
+        token="tkn",
+    )
+    online_host = Host(
+        hostname="online-host",
+        ip="10.0.0.6",
+        agent_port=5101,
+        os_type=OSType.linux,
+        status=HostStatus.online,
+    )
+    online_host.id = uuid.uuid4()
+    close_session = AsyncMock()
+
+    with (
+        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=online_host)),
+        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=AsyncMock(return_value=uuid.uuid4())),
+        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
+        patch("app.hosts.router_terminal.proxy_terminal_session", new=AsyncMock(side_effect=RuntimeError("boom"))),
+    ):
+        client = TestClient(app, raise_server_exceptions=False)
+        with (
+            client.websocket_connect(
+                f"/api/hosts/{online_host.id}/terminal",
+                headers={"origin": "http://testserver"},
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as exc_info,
+        ):
+            ws.receive_text()
+
+    assert exc_info.value.code == 1011
+    close_session.assert_awaited_once()
+    assert close_session.await_args.kwargs["close_reason"] == "unknown"
+
+
 def test_terminal_route_uses_configured_agent_websocket_scheme(
     monkeypatch: pytest.MonkeyPatch, setup_database: AsyncEngine
 ) -> None:
