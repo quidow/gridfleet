@@ -16,12 +16,14 @@ import HostDevicesPanel from '../components/hostDetail/HostDevicesPanel';
 import HostDriversPanel from '../components/hostDetail/HostDriversPanel';
 import HostPluginsPanel from '../components/hostDetail/HostPluginsPanel';
 import HostTerminalPanel from '../components/hostDetail/HostTerminalPanel';
+import HostLogsPanel from '../components/hostDetail/HostLogsPanel';
 import type { HostDetail as HostDetailType } from '../types';
 // HostDetail type alias avoids shadowing the default-exported component name
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'logs', label: 'Logs' },
   { id: 'devices', label: 'Devices' },
   { id: 'drivers', label: 'Drivers' },
   { id: 'plugins', label: 'Plugins' },
@@ -94,6 +96,8 @@ export default function HostDetail() {
           <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
         </div>
       )}
+
+      {tab === 'logs' && <HostLogsPanel hostId={id!} />}
 
       {tab === 'devices' && <HostDevicesPanel host={hostDetail} />}
 
