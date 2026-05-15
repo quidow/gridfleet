@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator, model_validator
 
 from app.devices.models import (
     ConnectionType,
@@ -234,6 +234,18 @@ class SessionRead(BaseModel):
     is_probe: bool = False
     probe_checked_by: str | None = None
 
+    @model_validator(mode="after")
+    def _derive_probe_fields(self) -> "SessionRead":
+        is_probe = self.test_name == PROBE_TEST_NAME
+        probe_checked_by: str | None = None
+        if is_probe and isinstance(self.requested_capabilities, dict):
+            raw = self.requested_capabilities.get(PROBE_CHECKED_BY_CAP_KEY)
+            if isinstance(raw, str):
+                probe_checked_by = raw
+        self.is_probe = is_probe
+        self.probe_checked_by = probe_checked_by
+        return self
+
 
 class SessionOutcomeHeatmapRow(BaseModel):
     timestamp: datetime
@@ -401,12 +413,6 @@ class SessionDetail(SessionRead):
     @classmethod
     def from_session(cls, session: Session, *, device_platform_label: str | None = None) -> "SessionDetail":
         device = session.device
-        is_probe = session.test_name == PROBE_TEST_NAME
-        probe_checked_by: str | None = None
-        if is_probe and isinstance(session.requested_capabilities, dict):
-            raw = session.requested_capabilities.get(PROBE_CHECKED_BY_CAP_KEY)
-            if isinstance(raw, str):
-                probe_checked_by = raw
         return cls(
             id=session.id,
             session_id=session.session_id,
@@ -422,8 +428,6 @@ class SessionDetail(SessionRead):
             error_type=session.error_type,
             error_message=session.error_message,
             run_id=session.run_id,
-            is_probe=is_probe,
-            probe_checked_by=probe_checked_by,
             device_id=session.device_id,
             device_name=device.name if device else None,
             device_pack_id=device.pack_id if device else None,

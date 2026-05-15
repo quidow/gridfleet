@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from app.devices.schemas.device import SessionDetail
+from app.devices.schemas.device import SessionDetail, SessionRead
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
@@ -43,3 +43,15 @@ def test_session_detail_real_session_is_not_probe() -> None:
     detail = SessionDetail.from_session(_build_real_session())
     assert detail.is_probe is False
     assert detail.probe_checked_by is None
+
+
+def test_session_read_from_attributes_marks_probe() -> None:
+    read = SessionRead.model_validate(_build_probe_session())
+    assert read.is_probe is True
+    assert read.probe_checked_by == "scheduled"
+
+
+def test_session_read_from_attributes_real_session() -> None:
+    read = SessionRead.model_validate(_build_real_session())
+    assert read.is_probe is False
+    assert read.probe_checked_by is None
