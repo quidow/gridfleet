@@ -4,10 +4,11 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_401, RESPONSES_404
 from app.devices.schemas.lifecycle import LifecycleIncidentListRead
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 
-router = APIRouter(prefix="/api/lifecycle", tags=["lifecycle"])
+router = APIRouter(prefix="/api/lifecycle", tags=["lifecycle"], responses={**RESPONSES_401, **RESPONSES_404})
 
 
 @router.get("/incidents", response_model=LifecycleIncidentListRead)

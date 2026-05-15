@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
@@ -20,7 +21,9 @@ from app.devices.services import verification as device_verification
 from app.devices.services.verification_job_state import public_snapshot
 from app.events import Event, event_bus
 
-router = APIRouter()
+DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
+
+router = APIRouter(responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
 
 
 async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:

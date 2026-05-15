@@ -6,8 +6,9 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from app.auth import service as auth
 from app.auth.schemas import AuthLoginRequest, AuthSessionRead
+from app.core.error_responses import RESPONSES_401
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"], responses={**RESPONSES_401})
 
 
 def _session_payload(session: auth.SessionState) -> dict[str, Any]:

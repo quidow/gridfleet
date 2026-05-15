@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.pagination import CursorPaginationError
 from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
@@ -19,7 +20,9 @@ SessionListRead = device_schemas.SessionListRead
 SessionRead = device_schemas.SessionRead
 SessionStatusUpdate = device_schemas.SessionStatusUpdate
 
-router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+SESSION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
+
+router = APIRouter(prefix="/api/sessions", tags=["sessions"], responses=SESSION_ERROR_RESPONSES)
 
 
 async def _session_details_with_labels(db: AsyncSession, sessions: list[Session]) -> list[SessionDetail]:

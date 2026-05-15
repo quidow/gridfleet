@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.schemas.device import (
     BulkAutoManageUpdate,
     BulkDeviceIds,
@@ -12,7 +13,9 @@ from app.devices.schemas.device import (
 )
 from app.devices.services import bulk as bulk_service
 
-router = APIRouter(prefix="/api/devices/bulk", tags=["bulk"])
+DEVICE_BULK_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+
+router = APIRouter(prefix="/api/devices/bulk", tags=["bulk"], responses=DEVICE_BULK_ERROR_RESPONSES)
 
 
 @router.post("/start-nodes", response_model=BulkOperationResult)

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.pagination import CursorPaginationError
 from app.devices.models import Device
@@ -27,7 +28,9 @@ from app.runs.schemas import (
 )
 from app.settings import settings_service
 
-router = APIRouter(prefix="/api/runs", tags=["runs"])
+RUN_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
+
+router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 
 
 def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -> datetime | None:

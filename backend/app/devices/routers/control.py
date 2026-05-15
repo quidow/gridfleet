@@ -10,6 +10,7 @@ from app.agent_comm.operations import pack_device_health as fetch_pack_device_he
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.errors import AgentCallError
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
@@ -41,7 +42,9 @@ require_management_host = node_manager.require_management_host
 revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
-router = APIRouter()
+DEVICE_CONTROL_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+
+router = APIRouter(responses=DEVICE_CONTROL_ERROR_RESPONSES)
 
 
 @router.post("/{device_id}/maintenance", response_model=DeviceRead)
