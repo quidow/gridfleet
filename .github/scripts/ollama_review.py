@@ -479,12 +479,6 @@ def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[
         ],
         "options": {"temperature": 0.1},
     }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        method="POST",
-    )
     raw = _ollama_post(url, payload, api_key, label="resolve-check")
     if raw is None:
         return set()
