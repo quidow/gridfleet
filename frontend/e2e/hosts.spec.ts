@@ -171,6 +171,54 @@ async function mockDefaultHostsSurface(page: Page) {
       bucket_minutes: 5,
     });
   });
+
+  await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/agent-logs', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await fulfillJson(route, {
+      lines: [
+        {
+          id: 'log-1',
+          ts: '2026-03-30T10:01:00Z',
+          boot_id: 'boot-1',
+          sequence_no: 1,
+          level: 'INFO',
+          logger_name: 'agent.lifespan',
+          message: 'shipper online',
+          extra: {},
+        },
+      ],
+      total: 1,
+      limit: 500,
+      offset: 0,
+    });
+  });
+
+  await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/events', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await fulfillJson(route, {
+      events: [
+        {
+          event_id: 'event-1',
+          ts: '2026-03-30T10:02:00Z',
+          type: 'host.status_changed',
+          data: {
+            host_id: 'host-1',
+            old_status: 'offline',
+            new_status: 'online',
+          },
+        },
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+  });
 }
 
 test.describe('Hosts page', () => {
@@ -632,6 +680,19 @@ test.describe('Hosts page', () => {
     await page.goto('/hosts/host-1?tab=bogus');
     await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Host Info')).toBeVisible();
+  });
+
+  test('host logs tab shows agent logs and host events', async ({ page }) => {
+    await page.goto('/hosts/host-1?tab=logs');
+    await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('shipper online')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Host events' }).click();
+    await expect(page).toHaveURL(/logs_tab=events/);
+    await expect(page.getByText('host.status_changed')).toBeVisible();
+
+    await page.getByRole('button', { name: 'host.status_changed' }).click();
+    await expect(page.getByText('"new_status": "online"')).toBeVisible();
   });
 
   test('diagnostics tab shows host resource telemetry charts', async ({ page }) => {
