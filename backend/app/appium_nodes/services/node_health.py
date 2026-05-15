@@ -4,7 +4,6 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import httpx
 from sqlalchemy import select
@@ -23,29 +22,20 @@ from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOp
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceEventType, DeviceOperationalState, DeviceType
+from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services import capability as capability_service
 from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
-from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.grid import service as grid_service
-from app.sessions.service_probes import ProbeSource, record_probe_session
-from app.sessions.service_viability import (
-    build_probe_capabilities,
-    grid_probe_response_to_result,
-    probe_session_via_grid,
-)
 from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
-NODE_HEALTH_PROBE_TIMEOUT_SEC = 15
 PROBE_CONCURRENCY_PER_HOST = 2
 
 
@@ -53,11 +43,9 @@ async def _bounded_check_node_health(
     semaphore: asyncio.Semaphore,
     node: AppiumNode,
     device: Device,
-    *,
-    probe_capabilities: dict[str, Any] | None,
 ) -> ProbeResult:
     async with semaphore:
-        return await _check_node_health(node, device, probe_capabilities=probe_capabilities)
+        return await _check_node_health(node, device)
 
 
 @dataclass(frozen=True)
@@ -67,60 +55,15 @@ class NodeHealthCheckRequest:
     observed_port: int
     observed_pid: int | None
     observed_active_connection_target: str | None
-    probe_capabilities: dict[str, Any] | None = None
 
 
-async def _should_probe_node_health(db: AsyncSession, device: Device) -> bool:
-    if (
-        device.pack_id == "appium-xcuitest"
-        and device.platform_id in {"ios", "tvos"}
-        and device.device_type == DeviceType.real_device
-    ):
-        return False
-    if (
-        device.device_type in {DeviceType.emulator, DeviceType.simulator}
-        or device.connection_type == ConnectionType.virtual
-    ):
-        return False
-    return (
-        device.operational_state == DeviceOperationalState.available
-        and device.hold is None
-        and await is_ready_for_use_async(db, device)
-    )
-
-
-async def _build_probe_capabilities_for_node(db: AsyncSession, device: Device) -> dict[str, Any] | None:
-    if not await _should_probe_node_health(db, device):
-        return None
-
-    try:
-        capabilities = await capability_service.get_device_capabilities(db, device)
-    except Exception:
-        logger.exception("Failed to build node health probe capabilities for device %s", device.id)
-        return None
-
-    return build_probe_capabilities(capabilities)
-
-
-async def _check_node_health(
-    node: AppiumNode,
-    device: Device,
-    *,
-    probe_capabilities: dict[str, Any] | None = None,
-) -> ProbeResult:
+async def _check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
     try:
         host = require_management_host(device, action="monitor Appium node health")
     except NodeManagerError:
         return ProbeResult(status="refused", detail="no management host")
 
     try:
-        if probe_capabilities is not None:
-            result = await probe_session_via_grid(
-                probe_capabilities,
-                NODE_HEALTH_PROBE_TIMEOUT_SEC,
-                grid_url=node.grid_url,
-            )
-            return grid_probe_response_to_result(result)
         payload = await fetch_appium_status(
             host.ip,
             host.agent_port,
@@ -152,17 +95,7 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
-    probe_capabilities: dict[str, Any] | None = None,
 ) -> None:
-    if probe_capabilities is not None:
-        await record_probe_session(
-            db,
-            device=device,
-            attempted_at=datetime.now(UTC),
-            result=result,
-            source=ProbeSource.node_health,
-            capabilities=probe_capabilities,
-        )
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None:
         # Node was deleted between the caller's lock_device and here. Bail out
@@ -406,7 +339,6 @@ async def _check_nodes(db: AsyncSession) -> None:
             observed_port=node.port,
             observed_pid=node.pid,
             observed_active_connection_target=node.active_connection_target,
-            probe_capabilities=await _build_probe_capabilities_for_node(db, node.device),
         )
         for node in nodes
     ]
@@ -419,7 +351,6 @@ async def _check_nodes(db: AsyncSession) -> None:
                 host_semaphores[request.device.host_id],
                 request.node,
                 request.device,
-                probe_capabilities=request.probe_capabilities,
             )
             for request in requests
         ]
@@ -451,7 +382,6 @@ async def _check_nodes(db: AsyncSession) -> None:
             observed_port=request.observed_port,
             observed_pid=request.observed_pid,
             observed_active_connection_target=request.observed_active_connection_target,
-            probe_capabilities=request.probe_capabilities,
         )
         await db.commit()
 

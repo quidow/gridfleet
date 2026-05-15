@@ -37,7 +37,6 @@ class ProbeSource(StrEnum):
     scheduled = "scheduled"
     manual = "manual"
     recovery = "recovery"
-    node_health = "node_health"
     verification = "verification"
 
 
