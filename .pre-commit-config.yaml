@@ -38,6 +38,13 @@ repos:
         pass_filenames: false
         files: ^agent/
 
+      - id: agent-schema-drift
+        name: agent schema drift check
+        entry: bash -c 'cd backend && uv run python scripts/check_agent_schemas.py'
+        language: system
+        pass_filenames: false
+        files: ^(agent/agent_app/.*\.py|backend/app/agent_comm/generated\.py|backend/scripts/(generate|check)_agent_schemas\.py)$
+
       - id: no-default-arg-depends
         name: forbid default-arg Depends() in routers
         entry: scripts/check_no_default_arg_depends.sh
