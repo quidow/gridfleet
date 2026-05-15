@@ -31,6 +31,62 @@ async def test_download_writes_and_verifies(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_download_and_verify_uses_base_url_kwarg(tmp_path: Path) -> None:
+    body = b"hello"
+    sha = hashlib.sha256(body).hexdigest()
+    seen_urls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, content=body, request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        target = await download_and_verify(
+            client=client,
+            pack_id="foo",
+            release="1.0.0",
+            expected_sha256=sha,
+            dest_dir=tmp_path,
+            base_url="http://backend.test",
+        )
+
+    assert seen_urls == ["http://backend.test/api/driver-packs/foo/releases/1.0.0/tarball"]
+    assert target.exists()
+    assert target.read_bytes() == body
+
+
+@pytest.mark.asyncio
+async def test_download_and_verify_passes_auth_and_timeout(tmp_path: Path) -> None:
+    body = b"hello"
+    sha = hashlib.sha256(body).hexdigest()
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth_header"] = request.headers.get("authorization")
+        captured["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, content=body, request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        await download_and_verify(
+            client=client,
+            pack_id="foo",
+            release="1.0.0",
+            expected_sha256=sha,
+            dest_dir=tmp_path,
+            base_url="http://backend.test",
+            auth=httpx.BasicAuth("u", "p"),
+            timeout=12.5,
+        )
+
+    assert captured["auth_header"] is not None
+    assert isinstance(captured["auth_header"], str)
+    assert captured["auth_header"].startswith("Basic ")
+    assert captured["timeout"] is not None
+
+
+@pytest.mark.asyncio
 async def test_download_rejects_sha_mismatch(tmp_path: Path) -> None:
     payload = b"vendor-tarball"
 

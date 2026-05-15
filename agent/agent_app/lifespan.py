@@ -94,14 +94,17 @@ def _build_adapter_loader(
             return
         runtime_dir = Path(env.appium_home)
         tarball_dir = runtime_dir / "tarballs"
-        async with httpx.AsyncClient(base_url=base, timeout=60.0, auth=_manager_auth()) as client:
-            tarball_path = await download_and_verify(
-                client=client,
-                pack_id=pack.id,
-                release=pack.release,
-                expected_sha256=pack.tarball_sha256,
-                dest_dir=tarball_dir,
-            )
+        client = get_shared_http_client()
+        tarball_path = await download_and_verify(
+            client=client,
+            pack_id=pack.id,
+            release=pack.release,
+            expected_sha256=pack.tarball_sha256,
+            dest_dir=tarball_dir,
+            base_url=base,
+            auth=_manager_auth(),
+            timeout=60.0,
+        )
         adapter = await load_adapter(
             pack_id=pack.id,
             release=pack.release,

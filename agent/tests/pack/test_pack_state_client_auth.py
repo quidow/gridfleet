@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from agent_app.config import agent_settings
+from agent_app.http_client import close as close_shared_http_client
 from agent_app.lifespan import HttpPackStateClient
 
 
@@ -20,6 +21,7 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 @pytest.mark.asyncio
 async def test_pack_state_client_sends_manager_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    await close_shared_http_client()
     monkeypatch.setattr(agent_settings.manager, "manager_auth_username", "machine")
     monkeypatch.setattr(agent_settings.manager, "manager_auth_password", "machine-secret")
     transport = RecordingTransport()
@@ -30,9 +32,12 @@ async def test_pack_state_client_sends_manager_basic_auth(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
 
-    client = HttpPackStateClient("http://manager.local", "00000000-0000-0000-0000-000000000001")
-    assert await client.fetch_desired() == {"packs": []}
-    await client.post_status({"host_id": "00000000-0000-0000-0000-000000000001"})
+    try:
+        client = HttpPackStateClient("http://manager.local", "00000000-0000-0000-0000-000000000001")
+        assert await client.fetch_desired() == {"packs": []}
+        await client.post_status({"host_id": "00000000-0000-0000-0000-000000000001"})
+    finally:
+        await close_shared_http_client()
 
     assert len(transport.requests) == 2
     for request in transport.requests:

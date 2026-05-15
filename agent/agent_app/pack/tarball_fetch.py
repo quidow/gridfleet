@@ -6,7 +6,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,6 +75,9 @@ async def download_and_verify(
     release: str,
     expected_sha256: str,
     dest_dir: Path,
+    base_url: str | None = None,
+    auth: httpx.Auth | None = None,
+    timeout: float | None = None,
 ) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = _tarball_target(dest_dir, pack_id, release)
@@ -88,7 +91,15 @@ async def download_and_verify(
             if _existing_target_matches(target, expected_sha256):
                 return target
 
-            response = await client.get(f"/api/driver-packs/{pack_id}/releases/{release}/tarball")
+            path = f"/api/driver-packs/{pack_id}/releases/{release}/tarball"
+            url = f"{base_url.rstrip('/')}{path}" if base_url else path
+            request_kwargs: dict[str, Any] = {}
+            if auth is not None:
+                request_kwargs["auth"] = auth
+            if timeout is not None:
+                request_kwargs["timeout"] = timeout
+
+            response = await client.get(url, **request_kwargs)
             response.raise_for_status()
             body = response.content
             actual = hashlib.sha256(body).hexdigest()
