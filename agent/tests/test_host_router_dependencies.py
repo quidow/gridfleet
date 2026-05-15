@@ -76,11 +76,11 @@ async def test_host_telemetry_uses_override(client: AsyncClient) -> None:
     try:
         resp = await client.get("/agent/host/telemetry")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "cpu_percent": 7.5,
-            "memory_used_mb": 1024,
-            "memory_total_mb": 8192,
-            "disk_percent": 12.0,
-        }
+        body = resp.json()
+        assert body["cpu_percent"] == 7.5
+        assert body["memory_used_mb"] == 1024
+        assert body["memory_total_mb"] == 8192
+        assert body["disk_percent"] == 12.0
+        assert body["extras"] == {}
     finally:
         app.dependency_overrides.pop(get_host_telemetry_dep, None)

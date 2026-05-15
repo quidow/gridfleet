@@ -98,7 +98,9 @@ async def test_reregister_grid_node_not_found() -> None:
     appium_mgr._grid_supervisors.clear()
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         resp = await client.post("/grid/node/missing/reregister", json={})
     assert resp.status_code == 404
     assert "No running grid node" in resp.json()["detail"]["message"]
@@ -109,7 +111,9 @@ async def test_start_appium_invalid_payload_error() -> None:
 
     from agent_app.appium.exceptions import InvalidStartPayloadError
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=InvalidStartPayloadError("bad payload"),
@@ -130,7 +134,8 @@ async def test_start_appium_invalid_payload_error() -> None:
 async def test_start_appium_generic_runtime_error() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=RuntimeError("boom"),
@@ -146,6 +151,8 @@ async def test_start_appium_generic_runtime_error() -> None:
                 },
             )
     assert resp.status_code == 500
+    assert resp.json()["detail"]["message"] == "Internal server error"
+    assert resp.json()["detail"]["message"] == "Internal server error"
 
 
 async def test_start_appium_unexpected_exception() -> None:

@@ -155,7 +155,7 @@ async def test_pack_device_health_and_telemetry_endpoints_cover_forwarding_and_4
         )
 
     assert resp.status_code == 200
-    assert resp.json()["battery_level_percent"] == 84
+    assert resp.json()["metrics"]["battery_level_percent"] == 84
     assert adapter.telemetry_calls == [("abc123", "abc123")]
 
     app.state.adapter_registry = AdapterRegistry()
@@ -206,7 +206,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {"success": True, "state": "reconnecting", "detail": ""}
+    assert resp.json() == {"success": True, "detail": "", "extras": {"state": "reconnecting"}}
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5556})]
 
 

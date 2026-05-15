@@ -208,7 +208,7 @@ async def test_pack_device_telemetry_dispatches_correctly(client: AsyncClient) -
         )
 
     assert resp.status_code == 200
-    assert resp.json()["battery_level_percent"] == 84
+    assert resp.json()["metrics"]["battery_level_percent"] == 84
     assert adapter.telemetry_calls == [("serial-1", "serial-1")]
 
 

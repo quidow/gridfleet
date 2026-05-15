@@ -61,7 +61,14 @@ async def enumerate_pack_candidates(
                 continue
             for raw in results:
                 for matching_platform in _matching_platforms(raw, pack.platforms):
-                    all_candidates.append(_candidate_payload(raw, pack_id=pack.id, platform_def=matching_platform))
+                    all_candidates.append(
+                        _candidate_payload(
+                            raw,
+                            pack_id=pack.id,
+                            pack_release=pack.release,
+                            platform_def=matching_platform,
+                        )
+                    )
             continue
 
         for platform_def in pack.platforms:
@@ -73,26 +80,42 @@ async def enumerate_pack_candidates(
                 continue
             for raw in results:
                 if _candidate_matches_platform(raw, platform_def):
-                    all_candidates.append(_candidate_payload(raw, pack_id=pack.id, platform_def=platform_def))
+                    all_candidates.append(
+                        _candidate_payload(raw, pack_id=pack.id, pack_release=pack.release, platform_def=platform_def)
+                    )
 
     return {"candidates": all_candidates}
 
 
-def _candidate_payload(raw: DiscoveryCandidate, *, pack_id: str, platform_def: DesiredPlatform) -> dict[str, Any]:
+def _candidate_payload(
+    raw: DiscoveryCandidate,
+    *,
+    pack_id: str,
+    pack_release: str,
+    platform_def: DesiredPlatform,
+) -> dict[str, Any]:
     payload: dict[str, Any] = dataclasses.asdict(raw)
     device_type = payload.get("detected_properties", {}).get("device_type")
     identity_scheme, identity_scope = platform_def.identity_for_device_type(
         device_type if isinstance(device_type, str) else None
     )
-    payload.setdefault("identity_scheme", identity_scheme)
-    payload.update(
-        {
-            "pack_id": pack_id,
-            "platform_id": platform_def.id,
-            "identity_scope": identity_scope,
-        }
-    )
-    return payload
+    detected_properties = payload.get("detected_properties")
+    device_type_value = ""
+    if isinstance(detected_properties, dict):
+        device_type_value = str(detected_properties.get("device_type") or "")
+    connection_target = str(payload.get("connection_target") or payload.get("identity_value") or "")
+    extras = dict(payload)
+    extras.setdefault("identity_scheme", identity_scheme)
+    extras["identity_scope"] = identity_scope
+    known = {"connection_target", "platform_id", "device_type", "pack_id", "pack_release"}
+    return {
+        "connection_target": connection_target,
+        "platform_id": platform_def.id,
+        "device_type": device_type_value,
+        "pack_id": pack_id,
+        "pack_release": pack_release,
+        "extras": {key: value for key, value in extras.items() if key not in known},
+    }
 
 
 def _matching_platforms(raw: DiscoveryCandidate, platform_defs: list[DesiredPlatform]) -> list[DesiredPlatform]:
@@ -151,19 +174,24 @@ def _normalized_device_to_candidate(
         if value
     }
     field_errors = [dataclasses.asdict(error) for error in normalized.field_errors]
-    return {
-        "pack_id": pack_id,
-        "platform_id": platform_id,
+    extras = {
         "identity_scheme": normalized.identity_scheme,
         "identity_scope": normalized.identity_scope,
         "identity_value": normalized.identity_value,
-        "connection_target": normalized.connection_target,
         "suggested_name": normalized.model or normalized.identity_value or normalized.connection_target,
         "detected_properties": detected_properties,
         "runnable": not field_errors,
         "missing_requirements": [],
         "field_errors": field_errors,
         "feature_status": [],
+    }
+    return {
+        "connection_target": normalized.connection_target,
+        "pack_id": pack_id,
+        "pack_release": "",
+        "platform_id": platform_id,
+        "device_type": normalized.device_type,
+        "extras": extras,
     }
 
 
@@ -188,13 +216,16 @@ async def pack_device_properties(
     for c in candidates:
         if c["pack_id"] != pack_id:
             continue
-        props = c.get("detected_properties") or {}
         if (
-            c.get("identity_value") == connection_target
+            _candidate_identity_value(c) == connection_target
             or c.get("connection_target") == connection_target
-            or props.get("connection_target") == connection_target
+            or _candidate_detected_properties(c).get("connection_target") == connection_target
         ):
-            return c
+            return {
+                "pack_id": str(c.get("pack_id", pack_id)),
+                "pack_release": str(c.get("pack_release", "")),
+                "properties": c,
+            }
     if desired_packs is None or adapter_registry is None:
         return None
 
@@ -227,9 +258,26 @@ async def pack_device_properties(
                 continue
             if normalized.field_errors:
                 continue
-            return _normalized_device_to_candidate(
+            candidate = _normalized_device_to_candidate(
                 normalized,
                 pack_id=pack.id,
                 platform_id=platform_def.id,
             )
+            candidate["pack_release"] = pack.release
+            return {"pack_id": pack.id, "pack_release": pack.release, "properties": candidate}
     return None
+
+
+def _candidate_identity_value(candidate: dict[str, Any]) -> object:
+    extras = candidate.get("extras")
+    if isinstance(extras, dict) and "identity_value" in extras:
+        return extras.get("identity_value")
+    return candidate.get("identity_value")
+
+
+def _candidate_detected_properties(candidate: dict[str, Any]) -> dict[str, Any]:
+    extras = candidate.get("extras")
+    if isinstance(extras, dict) and isinstance(extras.get("detected_properties"), dict):
+        return cast("dict[str, Any]", extras["detected_properties"])
+    detected = candidate.get("detected_properties")
+    return cast("dict[str, Any]", detected) if isinstance(detected, dict) else {}

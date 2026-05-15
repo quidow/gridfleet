@@ -73,11 +73,15 @@ class AppiumStopResponse(BaseModel):
 
 
 class AppiumStatusResponse(BaseModel):
-    """Shape varies — accept extras so OpenAPI captures the typed core only."""
+    """Status snapshot for a managed Appium process."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     port: int = Field(ge=1024, le=65535)
+    running: bool
+    pid: int | None = None
+    appium_status: dict[str, Any] | None = None
+    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppiumLogsResponse(BaseModel):

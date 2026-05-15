@@ -70,9 +70,13 @@ class AppiumStartResponse(BaseModel):
 
 class AppiumStatusResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    appium_status: Annotated[dict[str, Any] | None, Field(title="Appium Status")] = None
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
+    pid: Annotated[int | None, Field(title="Pid")] = None
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
+    running: Annotated[bool, Field(title="Running")]
 
 
 class AppiumStopRequest(BaseModel):
@@ -118,16 +122,17 @@ class GridNodeReregisterResponse(BaseModel):
 
 class HealthCheckResult(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     check_id: Annotated[str, Field(title="Check Id")]
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
     message: Annotated[str | None, Field(title="Message")] = None
     ok: Annotated[bool, Field(title="Ok")]
 
 
 class HealthResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     appium_processes: Annotated[dict[str, Any], Field(title="Appium Processes")]
     capabilities: Annotated[dict[str, Any], Field(title="Capabilities")]
@@ -142,8 +147,16 @@ class HealthResponse(BaseModel):
 
 class HostTelemetryResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    cpu_percent: Annotated[float | None, Field(title="Cpu Percent")] = None
+    disk_percent: Annotated[float | None, Field(title="Disk Percent")] = None
+    disk_total_gb: Annotated[float | None, Field(title="Disk Total Gb")] = None
+    disk_used_gb: Annotated[float | None, Field(title="Disk Used Gb")] = None
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
+    memory_total_mb: Annotated[int | None, Field(title="Memory Total Mb")] = None
+    memory_used_mb: Annotated[int | None, Field(title="Memory Used Mb")] = None
+    recorded_at: Annotated[str | None, Field(title="Recorded At")] = None
 
 
 class NormalizeDeviceRequest(BaseModel):
@@ -178,13 +191,19 @@ class NormalizeDeviceResponse(BaseModel):
 
 class PackDeviceCandidate(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    connection_target: Annotated[str, Field(title="Connection Target")]
+    device_type: Annotated[str, Field(title="Device Type")]
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
+    pack_id: Annotated[str, Field(title="Pack Id")]
+    pack_release: Annotated[str, Field(title="Pack Release")]
+    platform_id: Annotated[str, Field(title="Platform Id")]
 
 
 class PackDeviceHealthResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     checks: Annotated[list[HealthCheckResult] | None, Field(title="Checks")] = None
     healthy: Annotated[bool | None, Field(title="Healthy")]
@@ -192,27 +211,34 @@ class PackDeviceHealthResponse(BaseModel):
 
 class PackDeviceLifecycleResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     detail: Annotated[str | None, Field(title="Detail")] = None
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
     success: Annotated[bool, Field(title="Success")]
 
 
 class PackDevicePropertiesResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    pack_id: Annotated[str, Field(title="Pack Id")]
+    pack_release: Annotated[str, Field(title="Pack Release")]
+    properties: Annotated[dict[str, Any] | None, Field(title="Properties")] = None
 
 
 class PackDeviceTelemetryResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    metrics: Annotated[dict[str, Any] | None, Field(title="Metrics")] = None
+    pack_id: Annotated[str, Field(title="Pack Id")]
+    pack_release: Annotated[str, Field(title="Pack Release")]
 
 
 class PackDevicesResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     candidates: Annotated[list[PackDeviceCandidate] | None, Field(title="Candidates")] = None
 
