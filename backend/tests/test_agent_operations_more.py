@@ -270,7 +270,8 @@ async def test_appium_status_returns_none_for_non_200() -> None:
     assert payload is None
 
 
-async def test_appium_status_raises_for_invalid_payload() -> None:
+async def test_appium_status_returns_none_for_invalid_payload() -> None:
+    """appium_status is a None-on-failure endpoint: invalid payload -> None, not a raise."""
     client = StrictAgentClient(
         get_response=_response(
             "GET",
@@ -279,13 +280,13 @@ async def test_appium_status_raises_for_invalid_payload() -> None:
         )
     )
 
-    with pytest.raises(AgentUnreachableError, match="fetch Appium status failed"):
-        await agent_operations.appium_status(
-            "10.0.0.5",
-            5100,
-            4723,
-            http_client_factory=_strict_client_factory(client),
-        )
+    result = await agent_operations.appium_status(
+        "10.0.0.5",
+        5100,
+        4723,
+        http_client_factory=_strict_client_factory(client),
+    )
+    assert result is None
 
 
 async def test_agent_health_raises_response_error_for_non_200() -> None:

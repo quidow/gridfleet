@@ -192,10 +192,14 @@ async def agent_health(
     )
     _raise_for_status(response, host=host, action="health check")
     try:
-        model = HealthResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        HealthResponse.model_validate(raw)
     except PydanticValidationError:
         return None
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def agent_host_telemetry(
@@ -217,10 +221,14 @@ async def agent_host_telemetry(
     if response.status_code != 200:
         return None
     try:
-        model = HostTelemetryResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        HostTelemetryResponse.model_validate(raw)
     except PydanticValidationError:
         return None
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def appium_logs(
@@ -244,10 +252,16 @@ async def appium_logs(
     )
     _raise_for_status(response, host=host, action="fetch Appium logs")
     try:
-        model = AppiumLogsResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent fetch Appium logs failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        AppiumLogsResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent fetch Appium logs failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def appium_status(
@@ -270,10 +284,14 @@ async def appium_status(
     if response.status_code != 200:
         return None
     try:
-        model = AppiumStatusResponse.model_validate(response.json())
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent fetch Appium status failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        AppiumStatusResponse.model_validate(raw)
+    except PydanticValidationError:
+        return None
+    return raw
 
 
 async def appium_start(
@@ -345,10 +363,14 @@ async def agent_appium_reconfigure(
     )
     _raise_for_status(response, host=host, action="reconfigure Appium node")
     try:
-        model = AppiumReconfigureResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid JSON payload)") from exc
+    try:
+        AppiumReconfigureResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def grid_node_reregister(
@@ -372,7 +394,13 @@ async def grid_node_reregister(
     )
     _raise_for_status(response, host=host, action="re-register grid node")
     try:
-        model = GridNodeReregisterResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent grid node re-register failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        model = GridNodeReregisterResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(
             host, f"Agent grid node re-register failed on host {host} (invalid payload)"
@@ -417,14 +445,19 @@ async def list_plugins(
         timeout=timeout,
     )
     _raise_for_status(response, host=host, action="list plugins")
-    raw = response.json()
+    try:
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(host, f"Agent list plugins failed on host {host} (invalid JSON payload)") from exc
     if not isinstance(raw, list):
         return []
     try:
-        items = [PluginListItem.model_validate(it) for it in raw if isinstance(it, dict)]
+        for it in raw:
+            if isinstance(it, dict):
+                PluginListItem.model_validate(it)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent list plugins failed on host {host} (invalid plugin list)") from exc
-    return [it.model_dump(mode="json") for it in items]
+    return [it for it in raw if isinstance(it, dict)]
 
 
 async def sync_plugins(
@@ -447,10 +480,14 @@ async def sync_plugins(
     )
     _raise_for_status(response, host=host, action="sync plugins")
     try:
-        model = PluginSyncResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(host, f"Agent sync plugins failed on host {host} (invalid JSON payload)") from exc
+    try:
+        PluginSyncResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent sync plugins failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def get_tool_status(
@@ -471,10 +508,16 @@ async def get_tool_status(
     )
     _raise_for_status(response, host=host, action="fetch tool status")
     try:
-        model = ToolsStatusResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent fetch tool status failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        ToolsStatusResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent fetch tool status failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def get_pack_devices(
@@ -495,10 +538,16 @@ async def get_pack_devices(
     )
     _raise_for_status(response, host=host, action="list pack devices")
     try:
-        model = PackDevicesResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent list pack devices failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        PackDevicesResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent list pack devices failed on host {host} (invalid payload)") from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def get_pack_device_properties(
@@ -524,10 +573,14 @@ async def get_pack_device_properties(
         return None
     _raise_for_status(response, host=host, action="fetch pack device properties")
     try:
-        model = PackDevicePropertiesResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        PackDevicePropertiesResponse.model_validate(raw)
     except PydanticValidationError:
         return None
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def normalize_pack_device(
@@ -560,12 +613,18 @@ async def normalize_pack_device(
         return None
     _raise_for_status(response, host=host, action="normalize pack device")
     try:
-        model = NormalizeDeviceResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent normalize pack device failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        NormalizeDeviceResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(
             host, f"Agent normalize pack device failed on host {host} (invalid payload)"
         ) from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def pack_device_health(
@@ -613,12 +672,18 @@ async def pack_device_health(
     )
     _raise_for_status(response, host=host, action="fetch pack device health")
     try:
-        model = PackDeviceHealthResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent fetch pack device health failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        PackDeviceHealthResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(
             host, f"Agent fetch pack device health failed on host {host} (invalid payload)"
         ) from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def pack_device_telemetry(
@@ -657,10 +722,14 @@ async def pack_device_telemetry(
         return None
     _raise_for_status(response, host=host, action="fetch pack device telemetry")
     try:
-        model = PackDeviceTelemetryResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        PackDeviceTelemetryResponse.model_validate(raw)
     except PydanticValidationError:
         return None
-    return model.model_dump(mode="json")
+    return raw
 
 
 async def pack_device_lifecycle_action(
@@ -688,12 +757,18 @@ async def pack_device_lifecycle_action(
     )
     _raise_for_status(response, host=host, action=f"run pack device lifecycle action {action}")
     try:
-        model = PackDeviceLifecycleResponse.model_validate(response.json())
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(
+            host, f"Agent lifecycle action {action} failed on host {host} (invalid JSON payload)"
+        ) from exc
+    try:
+        PackDeviceLifecycleResponse.model_validate(raw)
     except PydanticValidationError as exc:
         raise AgentUnreachableError(
             host, f"Agent lifecycle action {action} failed on host {host} (invalid payload)"
         ) from exc
-    return model.model_dump(mode="json")
+    return raw
 
 
 def response_json_dict(response: httpx.Response) -> dict[str, Any]:
