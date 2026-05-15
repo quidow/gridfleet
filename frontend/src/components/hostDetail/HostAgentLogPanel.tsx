@@ -100,9 +100,9 @@ function levelStripe(level: string): string {
   switch (level) {
     case 'ERROR':
     case 'CRITICAL':
-      return 'border-red-500';
+      return 'border-danger-strong';
     case 'WARNING':
-      return 'border-amber-500';
+      return 'border-warning-strong';
     default:
       return 'border-border-subtle';
   }
