@@ -170,7 +170,7 @@ Key facts:
 - `hold = reserved` is the **run's** hold on a device, separate from any active session. It stays `reserved` between sessions while the run is alive.
 - `hold: null → reserved` happens when the run is created. `reserved → null` happens when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
 - `operational_state: available → busy` is the per-session flip done by `session_sync_loop`. The reverse sets operational state back to `available` or `offline` and leaves any reservation hold untouched.
-- `node_health_loop` skips reserved and busy devices: it only probes devices whose chip status is allocatable and whose operational state is `available` (`_should_probe_node_health` in `node_health.py`). So a device under a run is invisible to auto-restart while it is being driven.
+- `node_health_loop` polls Appium `/status` on every running node — reserved or busy included — because the probe is a process-liveness check, not a session probe. Auto-restart escalation still respects lifecycle policy (`auto_manage` off → restart suppressed).
 
 ### Run-routed Grid sessions
 

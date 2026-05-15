@@ -29,7 +29,7 @@ Readiness answers "is the saved configuration safe to start a node against?". It
 - Computed by `app.services.device_readiness.is_ready_for_use_async`.
 - Surfaces as the readiness badge (`Setup Required` / `Needs Verification` / `Verified`).
 
-Readiness is the **first gate** on every state-changing API call. `node_service.start_node` (`backend/app/services/node_service.py`) refuses to start a node when readiness fails. The lifecycle loop (`node_health._should_probe_node_health` in `node_health.py`) uses it to decide whether a device should be probed at all.
+Readiness is the **first gate** on every state-changing API call. `node_service.start_node` (`backend/app/services/node_service.py`) refuses to start a node when readiness fails.
 
 Readiness changes only when an operator-driven flow updates `verified_at` or readiness-impacting fields. There is no background loop that flips it.
 
