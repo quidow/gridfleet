@@ -2,6 +2,15 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.12.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.12.0...gridfleet-agent-v0.12.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **agent:** report user-data disk usage on macOS in decimal GB ([e63e213](https://github.com/quidow/gridfleet/commit/e63e213389aa9e8e74c2bc50b7ebdc800e170d06))
+* **agent:** silence httpx logger to break shipper feedback loop ([5762283](https://github.com/quidow/gridfleet/commit/576228354aa19118955734657ffa368bd54b78d1))
+* **agent:** silence shipper feedback loop and correct macOS disk reporting ([fd77ef6](https://github.com/quidow/gridfleet/commit/fd77ef6bc395d3530afbf3cc5d363509e8836188))
+
 ## [0.12.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.11.0...gridfleet-agent-v0.12.0) (2026-05-15)
 
 
