@@ -98,7 +98,10 @@ def _cpu_arch() -> str | None:
     return uname.machine or None
 
 
-_cached: dict[str, Any] | None = None
+# Zero- or one-entry list acts as a mutable singleton cache without
+# requiring ``global`` (which CodeQL's unused-global-variable rule
+# misreports as dead code).
+_cache: list[dict[str, Any]] = []
 
 
 def collect() -> dict[str, Any]:
@@ -108,9 +111,8 @@ def collect() -> dict[str, Any]:
     first call (e.g. ``psutil.disk_usage`` race during boot) does not freeze
     ``None`` for the process lifetime.
     """
-    global _cached
-    if _cached is not None:
-        return _cached
+    if _cache:
+        return _cache[0]
     snapshot: dict[str, Any] = {
         "os_version": _os_version(),
         "kernel_version": _kernel_version(),
@@ -121,5 +123,5 @@ def collect() -> dict[str, Any]:
         "total_disk_gb": _total_disk_gb(),
     }
     if all(v is not None for v in snapshot.values()):
-        _cached = snapshot
+        _cache.append(snapshot)
     return snapshot

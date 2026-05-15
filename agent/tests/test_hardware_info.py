@@ -6,7 +6,7 @@ from agent_app.host import hardware_info
 
 
 def _reset_cache() -> None:
-    hardware_info._cached = None
+    hardware_info._cache.clear()
 
 
 def test_collect_returns_expected_shape_on_darwin() -> None:
