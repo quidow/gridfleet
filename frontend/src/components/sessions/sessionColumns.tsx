@@ -3,6 +3,7 @@ import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import StatusBadge from '../StatusBadge';
 import PlatformIcon from '../PlatformIcon';
+import Badge from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
@@ -156,9 +157,7 @@ export function buildSessionColumns(
         if (s.is_probe) {
           return (
             <div className="space-y-0.5">
-              <span className="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
-                probe
-              </span>
+              <Badge tone="neutral" size="sm">probe</Badge>
               {s.probe_checked_by && (
                 <p className="text-xs text-text-3">{s.probe_checked_by}</p>
               )}
