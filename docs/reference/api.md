@@ -178,7 +178,7 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/sessions` | List recorded Appium sessions | filters: `device_id`, `status`, `platform`, `started_after`, `started_before`, `limit`, `offset`, `sort_by`, `sort_dir` | `{ items: SessionDetail[], total, limit, offset }` |
+| `GET` | `/api/sessions` | List recorded Appium sessions | filters: `device_id`, `status`, `platform`, `started_after`, `started_before`, `limit`, `offset`, `sort_by`, `sort_dir`, `include_probes` | `{ items: SessionDetail[], total, limit, offset }` |
 | `GET` | `/api/sessions/{session_id}` | Read one recorded session | path `session_id` | `SessionDetail` |
 | `POST` | `/api/sessions` | Create or register a tracked session attempt, including device-less setup failures | `SessionCreate` | `SessionRead` |
 | `PATCH` | `/api/sessions/{session_id}/status` | Write final session status from an external test harness | `SessionStatusUpdate` | `SessionRead` |
@@ -196,6 +196,13 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 - `error_message`
 
 `SessionRead` / `SessionDetail` now return the same setup-attempt fields alongside the existing session metadata. `requested_capabilities` is validated with a 32 KB serialized size limit.
+
+`SessionDetail` also exposes:
+
+- `is_probe` (bool, default `false`) — true when the row represents a diagnostic probe session (session viability, node health, or device verification). Identified by `test_name == "__gridfleet_probe__"`.
+- `probe_checked_by` (string, optional) — probe source: `scheduled`, `manual`, `recovery`, `node_health`, or `verification`. Sourced from `requested_capabilities["gridfleet:probeCheckedBy"]`.
+
+`GET /api/sessions` and `GET /api/devices/{device_id}/sessions` accept `include_probes` (bool, default `false`). When omitted, probe sessions are hidden. Setting `include_probes=true` returns probes alongside real sessions. Probe rows never count toward success-rate, throughput, utilization, error breakdown, or heatmap analytics regardless of this flag.
 
 Run requirements use driver-pack platform identity:
 

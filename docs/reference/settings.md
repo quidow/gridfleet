@@ -55,6 +55,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |
 | `reservations.reaper_interval_sec` | `reservations` | `int` | `15` | `GRIDFLEET_RUN_REAPER_INTERVAL_SEC` | `5..300` | Interval for the stale-run reaper loop |
 | `retention.sessions_days` | `retention` | `int` | `90` | none | `1..3650` | Delete completed sessions older than N days |
+| `retention.probe_sessions_days` | `retention` | `int` | `7` | none | `1..3650` | Delete probe session rows (diagnostic only) older than N days; separate window from `retention.sessions_days` |
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |
 | `retention.device_events_days` | `retention` | `int` | `90` | none | `1..3650` | Delete device incident events older than N days |
 | `retention.agent_reconfigure_outbox_days` | `retention` | `int` | `7` | none | `1..3650` | Delete delivered or abandoned agent reconfigure outbox rows older than N days |
