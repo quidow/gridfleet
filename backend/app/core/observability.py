@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
@@ -17,7 +18,7 @@ from app.core.database import async_session
 from app.core.metrics_recorders import record_background_loop_error, record_background_loop_run
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Callable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,8 @@ class _ControlPlaneStateStore(Protocol):
     async def get_value(self, db: AsyncSession, namespace: str, key: str) -> object: ...
 
     async def set_value(self, db: AsyncSession, namespace: str, key: str, value: dict[str, Any]) -> None: ...
+
+    async def set_many(self, db: AsyncSession, namespace: str, values: Mapping[str, dict[str, Any]]) -> None: ...
 
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -230,7 +233,16 @@ def build_background_loop_snapshot(
     }
 
 
-async def _write_background_loop_state(
+# Per-process in-memory snapshot of the latest background-loop heartbeats.
+# The leader-owned flusher (see ``background_loop_flush_loop``) periodically
+# UPSERTs this whole map into the control-plane state table in a single round
+# trip, instead of letting every loop cycle hit the database twice. Non-leader
+# workers never run the loops so their map stays empty and they flush nothing.
+_in_memory_snapshots: dict[str, dict[str, Any]] = {}
+_in_memory_dirty: bool = False
+
+
+def _update_loop_snapshot(
     loop_name: str,
     *,
     interval_seconds: float,
@@ -240,39 +252,112 @@ async def _write_background_loop_state(
     error_at: datetime | None = None,
     error: str | None = None,
 ) -> None:
-    async with async_session() as db:
-        control_plane_state_store = _control_plane_state_store()
-        previous = await control_plane_state_store.get_value(db, LOOP_HEARTBEAT_NAMESPACE, loop_name)
-        snapshot = dict(previous) if isinstance(previous, dict) else {}
-        reference_time = succeeded_at or error_at or started_at or _now()
+    global _in_memory_dirty
+    previous = _in_memory_snapshots.get(loop_name, {})
+    snapshot = dict(previous)
+    reference_time = succeeded_at or error_at or started_at or _now()
 
-        snapshot.update(
-            {
-                "loop_name": loop_name,
-                "owner": _PROCESS_OWNER,
-                "interval_seconds": interval_seconds,
-                "next_expected_at": (reference_time + timedelta(seconds=interval_seconds)).isoformat(),
-            }
-        )
-        if started_at is not None:
-            snapshot["last_started_at"] = started_at.isoformat()
-        if succeeded_at is not None:
-            snapshot["last_succeeded_at"] = succeeded_at.isoformat()
-            snapshot["last_error_at"] = None
-            snapshot["last_error"] = None
-        if duration_seconds is not None:
-            snapshot["last_duration_seconds"] = duration_seconds
-        if error_at is not None:
-            snapshot["last_error_at"] = error_at.isoformat()
-        if error is not None:
-            snapshot["last_error"] = error[:500]
+    snapshot.update(
+        {
+            "loop_name": loop_name,
+            "owner": _PROCESS_OWNER,
+            "interval_seconds": interval_seconds,
+            "next_expected_at": (reference_time + timedelta(seconds=interval_seconds)).isoformat(),
+        }
+    )
+    if started_at is not None:
+        snapshot["last_started_at"] = started_at.isoformat()
+    if succeeded_at is not None:
+        snapshot["last_succeeded_at"] = succeeded_at.isoformat()
+        snapshot["last_error_at"] = None
+        snapshot["last_error"] = None
+    if duration_seconds is not None:
+        snapshot["last_duration_seconds"] = duration_seconds
+    if error_at is not None:
+        snapshot["last_error_at"] = error_at.isoformat()
+    if error is not None:
+        snapshot["last_error"] = error[:500]
 
-        await control_plane_state_store.set_value(db, LOOP_HEARTBEAT_NAMESPACE, loop_name, snapshot)
-        await db.commit()
+    _in_memory_snapshots[loop_name] = snapshot
+    _in_memory_dirty = True
 
 
 async def schedule_background_loop(loop_name: str, interval_seconds: float) -> None:
-    await _write_background_loop_state(loop_name, interval_seconds=interval_seconds)
+    """Seed an in-memory snapshot for ``loop_name`` so a flush picks it up.
+
+    Kept ``async`` for call-site backward compatibility with callers that
+    historically awaited a DB write.
+    """
+    _update_loop_snapshot(loop_name, interval_seconds=interval_seconds)
+
+
+def reset_background_loop_snapshots() -> None:
+    """Clear the in-memory snapshot cache. Test-only entrypoint."""
+    global _in_memory_dirty
+    _in_memory_snapshots.clear()
+    _in_memory_dirty = False
+
+
+def current_background_loop_snapshots() -> dict[str, dict[str, Any]]:
+    """Return a shallow copy of the in-memory snapshots. Test-only entrypoint."""
+    return {name: dict(value) for name, value in _in_memory_snapshots.items()}
+
+
+async def flush_background_loop_snapshots(
+    session_factory: Callable[[], Any] | None = None,
+) -> int:
+    """Batch-flush in-memory background-loop snapshots to the state table.
+
+    Returns the number of loop entries written. A single UPSERT covers all
+    loops, so the call costs one DB round trip regardless of how many loops
+    are active or how fast they cycle.
+    """
+    global _in_memory_dirty
+    if not _in_memory_dirty or not _in_memory_snapshots:
+        return 0
+    snapshot_copy: dict[str, dict[str, Any]] = {name: dict(value) for name, value in _in_memory_snapshots.items()}
+    _in_memory_dirty = False
+    control_plane_state_store = _control_plane_state_store()
+    session_cm = session_factory() if session_factory is not None else async_session()
+    try:
+        async with session_cm as db:
+            await control_plane_state_store.set_many(db, LOOP_HEARTBEAT_NAMESPACE, snapshot_copy)
+            await db.commit()
+    except Exception:
+        # Re-mark dirty so the next flush retries the data we just dropped.
+        _in_memory_dirty = True
+        raise
+    return len(snapshot_copy)
+
+
+async def background_loop_flush_loop(
+    session_factory: Callable[[], Any] | None = None,
+    *,
+    interval_provider: Callable[[], float] | None = None,
+) -> None:
+    """Periodic flusher started by the leader. Cancels on task cancellation.
+
+    ``interval_provider`` defaults to reading
+    ``general.background_loop_flush_interval_sec`` from the settings cache; tests
+    override it for deterministic intervals.
+    """
+    while True:
+        try:
+            await flush_background_loop_snapshots(session_factory)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger = get_logger(__name__)
+            logger.exception("background_loop_flush_failed")
+        interval = float(interval_provider() if interval_provider else _default_flush_interval())
+        await asyncio.sleep(interval)
+
+
+def _default_flush_interval() -> float:
+    # Lazily import via importlib to avoid a circular dependency at module load
+    # time (app.settings imports app.core.observability for the logger).
+    settings_service = importlib.import_module("app.settings").settings_service
+    return float(settings_service.get("general.background_loop_flush_interval_sec"))
 
 
 @dataclass
@@ -284,7 +369,7 @@ class BackgroundLoopObservation:
     async def cycle(self) -> AsyncGenerator[None, None]:
         started_at = _now()
         started_monotonic = perf_counter()
-        await _write_background_loop_state(
+        _update_loop_snapshot(
             self.loop_name,
             interval_seconds=self.interval_seconds,
             started_at=started_at,
@@ -299,7 +384,7 @@ class BackgroundLoopObservation:
             except Exception as exc:
                 finished_at = _now()
                 duration = perf_counter() - started_monotonic
-                await _write_background_loop_state(
+                _update_loop_snapshot(
                     self.loop_name,
                     interval_seconds=self.interval_seconds,
                     started_at=started_at,
@@ -312,7 +397,7 @@ class BackgroundLoopObservation:
             else:
                 finished_at = _now()
                 duration = perf_counter() - started_monotonic
-                await _write_background_loop_state(
+                _update_loop_snapshot(
                     self.loop_name,
                     interval_seconds=self.interval_seconds,
                     started_at=started_at,
