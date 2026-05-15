@@ -27,6 +27,37 @@ OLLAMA_RETRIABLE = (
     ConnectionError,
 )
 
+DEBUG = os.environ.get("OLLAMA_REVIEW_DEBUG", "").lower() in {"1", "true", "yes"}
+
+
+def log(level: str, msg: str) -> None:
+    sys.stderr.write(f"[{level}] {msg}\n")
+    sys.stderr.flush()
+
+
+def _fmt_ns(ns: int | None) -> str:
+    if not ns:
+        return "?"
+    return f"{ns / 1e9:.2f}s"
+
+
+def log_ollama_stats(label: str, data: dict[str, Any]) -> None:
+    """Print model/timing/token stats from an Ollama chat response."""
+    total = data.get("total_duration")
+    load = data.get("load_duration")
+    prompt_tok = data.get("prompt_eval_count")
+    prompt_dur = data.get("prompt_eval_duration")
+    out_tok = data.get("eval_count")
+    out_dur = data.get("eval_duration")
+    done_reason = data.get("done_reason") or data.get("finish_reason")
+    log(
+        "INFO",
+        f"{label} stats: total={_fmt_ns(total)} load={_fmt_ns(load)} "
+        f"prompt_tokens={prompt_tok} prompt_dur={_fmt_ns(prompt_dur)} "
+        f"completion_tokens={out_tok} completion_dur={_fmt_ns(out_dur)} "
+        f"done_reason={done_reason}",
+    )
+
 
 def env(name: str, *, required: bool = True, default: str | None = None) -> str:
     value = os.environ.get(name, default)
@@ -150,18 +181,42 @@ def _ollama_post(
     """
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    log(
+        "INFO",
+        f"{label}: POST {url} model={payload.get('model')} "
+        f"req_bytes={len(data)} timeout=300s",
+    )
+    if DEBUG:
+        log("DEBUG", f"{label} payload: {json.dumps(payload)[:4000]}")
     for attempt in range(1, attempts + 1):
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
-                return resp.read().decode("utf-8")
+                body = resp.read().decode("utf-8")
+            elapsed = time.monotonic() - started
+            log(
+                "INFO",
+                f"{label}: ok in {elapsed:.1f}s, resp_bytes={len(body)} attempt={attempt}",
+            )
+            if DEBUG:
+                log("DEBUG", f"{label} response: {body[:4000]}")
+            return body
         except urllib.error.HTTPError as e:
-            sys.stderr.write(f"{label}: HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:500]}\n")
+            err = e.read().decode("utf-8", "replace")[:500]
+            log("ERROR", f"{label}: HTTP {e.code} after {time.monotonic() - started:.1f}s: {err}")
             return None
         except OLLAMA_RETRIABLE as e:
-            sys.stderr.write(f"{label} attempt {attempt}/{attempts} failed: {type(e).__name__}: {e}\n")
+            log(
+                "WARN",
+                f"{label} attempt {attempt}/{attempts} failed after "
+                f"{time.monotonic() - started:.1f}s: {type(e).__name__}: {e}",
+            )
             if attempt < attempts:
-                time.sleep(2 ** attempt)
+                backoff = 2 ** attempt
+                log("INFO", f"{label}: sleeping {backoff}s before retry")
+                time.sleep(backoff)
+    log("ERROR", f"{label}: exhausted {attempts} attempts")
     return None
 
 
@@ -238,6 +293,11 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
     user_content = f"Review this diff:\n\n```diff\n{patch}\n```"
     if docs:
         user_content = f"{docs}\n\n---\n\n{user_content}"
+    log(
+        "INFO",
+        f"review prompt: model={model} patch_chars={len(patch)} "
+        f"docs_chars={len(docs)} user_chars={len(user_content)}",
+    )
 
     payload = {
         "model": model,
@@ -256,17 +316,25 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        sys.stderr.write(f"ollama returned non-JSON body:\n{body[:1000]}\n")
+        log("ERROR", f"review: outer body non-JSON: {body[:1000]}")
         sys.exit(1)
+    log_ollama_stats("review", data)
     content = data.get("message", {}).get("content", "")
     if not content:
-        sys.stderr.write(f"ollama returned no content: {body[:500]}\n")
+        log("ERROR", f"review: no message.content: {body[:500]}")
         sys.exit(1)
+    log("INFO", f"review: content_chars={len(content)}")
     try:
-        return json.loads(content)
+        parsed = json.loads(content)
     except json.JSONDecodeError:
-        sys.stderr.write(f"ollama content was not JSON:\n{content[:1000]}\n")
+        log("WARN", f"review: content was not JSON, using as summary: {content[:500]}")
         return {"summary": content[:2000], "comments": []}
+    log(
+        "INFO",
+        f"review: parsed {len(parsed.get('comments') or [])} comments, "
+        f"summary_chars={len(parsed.get('summary') or '')}",
+    )
+    return parsed
 
 
 def _normalize(text: str) -> str:
@@ -479,21 +547,25 @@ def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[
         ],
         "options": {"temperature": 0.1},
     }
+    log("INFO", f"resolve-check: asking model about {len(threads)} live thread(s)")
     raw = _ollama_post(url, payload, api_key, label="resolve-check")
     if raw is None:
         return set()
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        sys.stderr.write(f"resolve-check non-JSON body: {raw[:500]}\n")
+        log("ERROR", f"resolve-check: non-JSON body: {raw[:500]}")
         return set()
+    log_ollama_stats("resolve-check", data)
     content = data.get("message", {}).get("content", "")
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
-        sys.stderr.write(f"resolve-check JSON parse failed: {content[:500]}\n")
+        log("WARN", f"resolve-check: content not JSON: {content[:500]}")
         return set()
-    return {x for x in (parsed.get("resolved") or []) if isinstance(x, str)}
+    resolved = {x for x in (parsed.get("resolved") or []) if isinstance(x, str)}
+    log("INFO", f"resolve-check: model marked {len(resolved)}/{len(threads)} as addressed")
+    return resolved
 
 
 def resolve_thread(thread_id: str, token: str) -> bool:
@@ -585,10 +657,16 @@ def main() -> None:
         resolved_threads = []
 
     eligible = parse_diff_positions(patch)
+    log(
+        "INFO",
+        f"diff: {len(patch)} chars, {len(eligible)} file(s) with "
+        f"{sum(len(v) for v in eligible.values())} commentable line(s)",
+    )
     identifiers = extract_identifiers(patch)
     if identifiers:
-        print(f"context7 lookups: {identifiers}")
+        log("INFO", f"context7 lookups: {identifiers}")
     docs = fetch_context7_docs(identifiers)
+    log("INFO", f"context7: {len(docs)} chars of reference docs assembled")
     review = call_ollama(patch, docs)
     post_review(review, eligible, resolved_threads)
 

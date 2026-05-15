@@ -41,6 +41,7 @@ jobs:
           OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'gpt-oss:120b' }}
           OLLAMA_URL: ${{ vars.OLLAMA_URL || 'https://ollama.com/api/chat' }}
           CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+          OLLAMA_REVIEW_DEBUG: ${{ vars.OLLAMA_REVIEW_DEBUG || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
