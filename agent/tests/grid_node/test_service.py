@@ -347,6 +347,31 @@ async def test_service_node_payload_with_session() -> None:
     await service.stop()
 
 
+def test_service_node_payload_caps_max_sessions_at_one_with_multiple_slots() -> None:
+    # A grid node maps to one physical device. Multiple slots (e.g. Android
+    # native + chrome) advertise alternate capability profiles, not additional
+    # concurrency — `maxSessions` must stay 1 so the hub does not dispatch a
+    # second session to a device that is already busy.
+    config = GridNodeConfig(
+        node_id="node-1",
+        node_uri="http://127.0.0.1:5555",
+        appium_upstream="http://127.0.0.1:4723",
+        slots=[
+            Slot(id="native", stereotype=Stereotype(caps={"platformName": "Android"})),
+            Slot(id="chrome", stereotype=Stereotype(caps={"platformName": "Android", "browserName": "chrome"})),
+        ],
+        hub_publish_url="tcp://127.0.0.1:4442",
+        hub_subscribe_url="tcp://127.0.0.1:4443",
+        heartbeat_sec=5.0,
+        session_timeout_sec=300.0,
+        proxy_timeout_sec=30.0,
+    )
+    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer())
+    payload = service._node_payload()
+    assert payload["maxSessions"] == 1
+    assert len(payload["slots"]) == 2
+
+
 @pytest.mark.asyncio
 async def test_service_heartbeat_when_drain_and_all_free_requests_stop() -> None:
     bus = RecordingBus()

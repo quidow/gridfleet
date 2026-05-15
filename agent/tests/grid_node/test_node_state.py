@@ -116,7 +116,10 @@ def test_reserve_matches_nested_capability_subset() -> None:
     assert reservation.slot_id == "s1"
 
 
-def test_android_native_and_chrome_slots_can_be_reserved_independently() -> None:
+def test_android_chrome_slot_cannot_be_reserved_while_native_slot_is_held() -> None:
+    # A grid node represents one physical device. Android nodes advertise a
+    # native and a chrome slot for capability routing, but the device can only
+    # run one Appium session at a time, so the second reservation must fail.
     state = NodeState(
         slots=[
             _slot("native", platformName="Android"),
@@ -125,6 +128,20 @@ def test_android_native_and_chrome_slots_can_be_reserved_independently() -> None
         now=lambda: 10.0,
     )
     native = state.reserve({"platformName": "Android"})
-    chrome = state.reserve({"platformName": "Android", "browserName": "Chrome"})
     assert native.slot_id == "native"
+    with pytest.raises(NoFreeSlotError):
+        state.reserve({"platformName": "Android", "browserName": "Chrome"})
+
+
+def test_android_chrome_slot_reservable_after_native_slot_release() -> None:
+    state = NodeState(
+        slots=[
+            _slot("native", platformName="Android"),
+            _slot("chrome", platformName="Android", browserName="Chrome"),
+        ],
+        now=lambda: 10.0,
+    )
+    native = state.reserve({"platformName": "Android"})
+    state.abort(native.id)
+    chrome = state.reserve({"platformName": "Android", "browserName": "Chrome"})
     assert chrome.slot_id == "chrome"

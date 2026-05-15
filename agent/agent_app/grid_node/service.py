@@ -325,12 +325,17 @@ class GridNodeService:
         # Field names + types match Selenium 4.x `NodeStatus.fromJson`:
         # `maxSessions` (positive int), `heartbeatPeriod` and `sessionTimeout` in
         # milliseconds, `osInfo` map of strings, `availability` enum string.
+        # `maxSessions` is the node-wide concurrency limit, not the slot count.
+        # A grid node represents one physical device; slots advertise alternate
+        # capability profiles (e.g. native + chrome on Android) but the device
+        # can only run one Appium session at a time, so the hub must cap
+        # concurrent dispatches at 1.
         return {
             "nodeId": self.config.node_id,
             "externalUri": self.config.node_uri,
             "version": _GRID_NODE_VERSION,
             "osInfo": _OS_INFO,
-            "maxSessions": len(self.config.slots),
+            "maxSessions": 1,
             "sessionTimeout": int(self.config.session_timeout_sec * 1000),
             "slots": slot_payloads,
             "availability": availability,

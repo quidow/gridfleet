@@ -77,6 +77,13 @@ class NodeState:
             raise NoMatchingSlotError(f"no slot matches capabilities: {caps!r}")
         if self._drain:
             raise NoFreeSlotError("node is draining")
+        # A grid node represents one physical device. When the node advertises
+        # multiple slots (e.g. Android native + chrome) they are alternate
+        # capability profiles for the same device — only one session can run
+        # at a time. Reject if any slot is already held, regardless of which
+        # stereotype the new request matches.
+        if any(runtime.state != "FREE" for runtime in self._slots):
+            raise NoFreeSlotError(f"node has an active reservation or session: {caps!r}")
         for runtime in matching:
             if runtime.state == "FREE":
                 reservation_id = str(uuid4())
