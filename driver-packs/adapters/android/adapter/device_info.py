@@ -59,7 +59,8 @@ def model_name(props: dict[str, str]) -> str:
 def software_versions(props: dict[str, str]) -> dict[str, str]:
     versions: dict[str, str] = {}
     fire_os = props.get("fireos_marketing_version") or props.get("fireos_version_name", "").split(" (", 1)[0]
-    fire_os_compat = props.get("fireos_version", "")
+    fire_os_compat_raw = props.get("fireos_version", "")
+    fire_os_compat = fire_os_compat_raw.split(".", 1)[0] if fire_os_compat_raw else ""
     if fire_os:
         versions["fire_os"] = fire_os
         if fire_os_compat and fire_os_compat != fire_os:

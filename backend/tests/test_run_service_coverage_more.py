@@ -150,6 +150,38 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
     assert run_service._format_requirement_count(req) == "allocation=all_available, min_count=1"
 
 
+async def test_find_matching_devices_matches_firetv_routing_major(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allocator matches Fire TV via routing major even when display version is the long marketing string."""
+    wanted = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Fire TV Stick 4K",
+        identity_value="firetv-route-guard",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        os_version="6",
+        os_version_display="6.7.1.1",
+        operational_state=DeviceOperationalState.available,
+    )
+    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", AsyncMock(return_value=True))
+
+    req = DeviceRequirement(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        os_version="6",
+        allocation="all_available",
+        min_count=1,
+    )
+
+    matches = await run_service._find_matching_devices(db_session, req)
+
+    assert wanted.id in {device.id for device in matches}
+
+
 async def test_run_listing_cursor_and_state_transition_branches(db_session: AsyncSession) -> None:
     older = TestRun(name="older", state=RunState.preparing, requirements=[], ttl_minutes=10, heartbeat_timeout_sec=30)
     active = TestRun(name="active", state=RunState.active, requirements=[], ttl_minutes=10, heartbeat_timeout_sec=30)

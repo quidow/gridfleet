@@ -128,6 +128,7 @@ class NormalizedDevice:
     connection_type: str
     os_version: str
     field_errors: list[FieldError]
+    os_version_display: str | None = None
     manufacturer: str = ""
     model: str = ""
     model_number: str = ""

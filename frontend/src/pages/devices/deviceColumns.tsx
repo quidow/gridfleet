@@ -278,13 +278,13 @@ export function buildDeviceColumns(ctx: DeviceColumnContext): DataTableColumn<De
       render: (device) => <PlatformIcon platformId={device.platform_id} platformLabel={device.platform_label} />,
     },
     {
-      key: 'os_version',
+      key: 'os_version_display',
       header: 'OS',
-      sortKey: 'os_version',
+      sortKey: 'os_version_display',
       width: '5rem',
       className: 'devices-table-optional-narrow font-mono tabular-nums text-text-2 whitespace-nowrap',
       headerClassName: 'devices-table-optional-narrow',
-      render: (device) => device.os_version,
+      render: (device) => device.os_version_display ?? device.os_version,
     },
     {
       key: 'device_type',

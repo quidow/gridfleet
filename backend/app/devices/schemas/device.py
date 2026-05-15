@@ -47,6 +47,7 @@ class DeviceCreate(BaseModel):
     identity_value: str | None = None
     connection_target: str | None = None
     os_version: str
+    os_version_display: str | None = None
     host_id: uuid.UUID
     device_type: DeviceType
     connection_type: ConnectionType
@@ -68,6 +69,7 @@ class DeviceUpdate(BaseModel):
     identity_value: str | None = None
     connection_target: str | None = None
     os_version: str | None = None
+    os_version_display: str | None = None
     host_id: uuid.UUID | None = None
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
@@ -101,6 +103,7 @@ class DeviceVerificationCreate(BaseModel):
     connection_target: str | None = None
     name: str
     os_version: str = "unknown"
+    os_version_display: str | None = None
     host_id: uuid.UUID
     tags: DeviceTags | None = None
     manufacturer: str | None = None
@@ -125,6 +128,7 @@ class DeviceVerificationUpdate(BaseModel):
     connection_target: str | None = None
     name: str | None = None
     os_version: str | None = None
+    os_version_display: str | None = None
     host_id: uuid.UUID
     tags: DeviceTags | None = None
     manufacturer: str | None = None
@@ -346,6 +350,7 @@ class DeviceRead(BaseModel):
     connection_target: str | None
     name: str
     os_version: str
+    os_version_display: str | None = None
     host_id: uuid.UUID
     operational_state: DeviceOperationalState
     hold: DeviceHold | None

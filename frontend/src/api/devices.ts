@@ -28,6 +28,7 @@ export async function fetchDevices(params?: {
   device_type?: DeviceType;
   connection_type?: ConnectionType;
   os_version?: string;
+  os_version_display?: string;
   search?: string;
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;
@@ -43,6 +44,7 @@ export type DeviceSortBy =
   | 'device_type'
   | 'connection_type'
   | 'os_version'
+  | 'os_version_display'
   | 'host'
   | 'status'
   | 'created_at';
@@ -56,6 +58,7 @@ export async function fetchDevicesPaginated(params: {
   device_type?: DeviceType;
   connection_type?: ConnectionType;
   os_version?: string;
+  os_version_display?: string;
   search?: string;
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;

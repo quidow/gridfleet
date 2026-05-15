@@ -57,6 +57,7 @@ export type DeviceSortKey =
   | 'device_type'
   | 'connection_type'
   | 'os_version'
+  | 'os_version_display'
   | 'host'
   | 'status';
 

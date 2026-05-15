@@ -205,7 +205,7 @@ export default function Devices() {
           onHardwareTelemetryStateFilterChange={controller.setHardwareTelemetryStateFilter}
           osVersionFilter={controller.osVersionFilter}
           onOsVersionFilterChange={controller.setOsVersionFilter}
-          osVersions={controller.osVersions}
+          osVersions={controller.osDisplayVersions}
           search={controller.search}
           onSearchChange={controller.setSearch}
           onClear={controller.hasFilters ? controller.clearFilters : undefined}

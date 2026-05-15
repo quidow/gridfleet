@@ -290,6 +290,7 @@ def _resolve_create_payload_fields(
         connection_behavior=connection_behavior,
     )
     payload.setdefault("os_version", data.os_version or "unknown")
+    payload.setdefault("os_version_display", None)
     payload["device_type"] = resolved_device_type
     payload["connection_type"] = resolved_connection_type
     payload["ip_address"] = (
@@ -299,6 +300,7 @@ def _resolve_create_payload_fields(
     )
     if normalized is not None:
         payload["os_version"] = normalized.get("os_version") or payload["os_version"]
+        payload["os_version_display"] = normalized.get("os_version_display") or payload.get("os_version_display")
         if normalized.get("device_type"):
             resolved_device_type = DeviceType(normalized["device_type"])
             payload["device_type"] = resolved_device_type

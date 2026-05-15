@@ -330,6 +330,7 @@ def _restore_create_payload_fields(device: Device, payload: dict[str, Any]) -> N
         "connection_target",
         "name",
         "os_version",
+        "os_version_display",
         "manufacturer",
         "model",
         "model_number",

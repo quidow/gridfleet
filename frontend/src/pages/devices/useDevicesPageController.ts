@@ -61,7 +61,7 @@ export function useDevicesPageController() {
     'hardware_telemetry_state',
     HARDWARE_TELEMETRY_STATES,
   );
-  const osVersionFilter = searchParams.get('os_version') ?? '';
+  const osVersionFilter = searchParams.get('os_version_display') ?? '';
   const search = searchParams.get('search') ?? '';
 
   const sharedFilters = {
@@ -69,7 +69,7 @@ export function useDevicesPageController() {
     platform_id: platformFilter || undefined,
     device_type: deviceTypeFilter || undefined,
     connection_type: connectionTypeFilter || undefined,
-    os_version: osVersionFilter || undefined,
+    os_version_display: osVersionFilter || undefined,
     search: search || undefined,
     hardware_health_status: hardwareHealthStatusFilter || undefined,
     hardware_telemetry_state: hardwareTelemetryStateFilter || undefined,
@@ -96,6 +96,10 @@ export function useDevicesPageController() {
   );
   const osVersions = useMemo(
     () => [...new Set(triageBase.map((device) => device.os_version))].sort(),
+    [triageBase],
+  );
+  const osDisplayVersions = useMemo(
+    () => [...new Set(triageBase.map((device) => device.os_version_display ?? device.os_version))].sort(),
     [triageBase],
   );
 
@@ -186,7 +190,7 @@ export function useDevicesPageController() {
   }
 
   function updateOsVersionFilter(next: string) {
-    updateSearchParam('os_version', next);
+    updateSearchParam('os_version_display', next);
   }
 
   function updateHardwareHealthStatusFilter(next: HardwareHealthStatus | '') {
@@ -235,6 +239,7 @@ export function useDevicesPageController() {
     hostMap,
     hostOptions,
     osVersions,
+    osDisplayVersions,
     packIdFilter,
     setPackIdFilter: updatePackIdFilter,
     platformFilter,

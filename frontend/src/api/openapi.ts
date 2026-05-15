@@ -2519,6 +2519,8 @@ export interface components {
             orchestration: components["schemas"]["DeviceOrchestrationRead"];
             /** Os Version */
             os_version: string;
+            /** Os Version Display */
+            os_version_display?: string | null;
             /** Pack Id */
             pack_id: string;
             /** Platform Id */
@@ -2612,6 +2614,8 @@ export interface components {
             needs_attention?: boolean | null;
             /** Os Version */
             os_version?: string | null;
+            /** Os Version Display */
+            os_version_display?: string | null;
             /** Pack Id */
             pack_id?: string | null;
             /** Platform Id */
@@ -2844,6 +2848,8 @@ export interface components {
             operational_state: components["schemas"]["DeviceOperationalState"];
             /** Os Version */
             os_version: string;
+            /** Os Version Display */
+            os_version_display?: string | null;
             /** Pack Id */
             pack_id: string;
             /** Platform Id */
@@ -3001,6 +3007,8 @@ export interface components {
              * @default unknown
              */
             os_version: string;
+            /** Os Version Display */
+            os_version_display?: string | null;
             /** Pack Id */
             pack_id: string;
             /** Platform Id */
@@ -3070,6 +3078,8 @@ export interface components {
             name?: string | null;
             /** Os Version */
             os_version?: string | null;
+            /** Os Version Display */
+            os_version_display?: string | null;
             /** Pack Id */
             pack_id?: string | null;
             /** Platform Id */
@@ -6645,11 +6655,12 @@ export interface operations {
                 device_type?: components["schemas"]["DeviceType"] | null;
                 connection_type?: components["schemas"]["ConnectionType"] | null;
                 os_version?: string | null;
+                os_version_display?: string | null;
                 search?: string | null;
                 hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
                 hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
-                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "host" | "status" | "operational_state" | "hold" | "created_at";
+                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "hold" | "created_at";
                 sort_dir?: "asc" | "desc";
             };
             header?: never;

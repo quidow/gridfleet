@@ -70,10 +70,34 @@ def assert_validation_error_for_field(detail: object, field: str) -> None:
     assert any(isinstance(entry, dict) and tuple(entry.get("loc", ())) == ("body", field) for entry in detail)
 
 
+_KNOWN_DEVICE_PAYLOAD_KEYS = frozenset(
+    {
+        "host_id",
+        "identity_value",
+        "connection_target",
+        "name",
+        "pack_id",
+        "platform_id",
+        "identity_scheme",
+        "identity_scope",
+        "os_version",
+        "tags",
+        "auto_manage",
+        "device_type",
+        "connection_type",
+        "ip_address",
+        "roku_password",
+        "verified",
+        "operational_state",
+    }
+)
+
+
 async def _create_device(db_session: AsyncSession, host_id: str, **overrides: object) -> Device:
     payload: dict[str, object] = device_payload(host_id, **overrides)
     if payload.get("device_type") == "emulator" and payload.get("platform_id") == "android_mobile":
         payload["platform_id"] = "android_mobile"
+    extra = {key: value for key, value in payload.items() if key not in _KNOWN_DEVICE_PAYLOAD_KEYS}
     return await create_device_record(
         db_session,
         host_id=host_id,
@@ -93,6 +117,7 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         roku_password=payload.get("roku_password"),
         verified=bool(payload.get("verified", True)),
         operational_state=str(payload.get("operational_state", "offline")),
+        **extra,
     )
 
 
@@ -1789,6 +1814,112 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
     body = response.json()
     assert body["readiness_state"] == "setup_required"
     assert body["missing_setup_fields"] == ["api_token"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_exposes_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="firetv-display",
+        connection_target="firetv-display",
+        name="Fire TV Stick 4K",
+        os_version="6",
+        os_version_display="6.7.1.1",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-display",
+        connection_target="android-display",
+        name="Android Device",
+        os_version="14",
+    )
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+    by_name = {item["name"]: item for item in data}
+    assert by_name["Fire TV Stick 4K"]["os_version"] == "6"
+    assert by_name["Fire TV Stick 4K"]["os_version_display"] == "6.7.1.1"
+    assert by_name["Android Device"]["os_version"] == "14"
+    assert by_name["Android Device"]["os_version_display"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_devices_sort_by_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    for idx, display in enumerate(["6.7.1.1", "6.1.0", "6.5.0"], start=1):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"firetv-sort-{idx}",
+            connection_target=f"firetv-sort-{idx}",
+            name=f"Fire TV Sort {idx}",
+            os_version="6",
+            os_version_display=display,
+        )
+
+    resp = await client.get(
+        "/api/devices",
+        params={"sort_by": "os_version_display", "sort_dir": "asc"},
+    )
+    assert resp.status_code == 200
+    displays = [item["os_version_display"] for item in resp.json() if item.get("os_version_display")]
+    assert displays == sorted(displays)
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_os_version_display(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    for idx, display in enumerate(["6.7.1.1", "6.1.0"], start=1):
+        await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"firetv-filter-{idx}",
+            connection_target=f"firetv-filter-{idx}",
+            name=f"Fire TV Filter {idx}",
+            os_version="6",
+            os_version_display=display,
+        )
+
+    resp = await client.get("/api/devices", params={"os_version_display": "6.7.1.1"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["os_version_display"] == "6.7.1.1"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_os_version_display_falls_back_to_os_version(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """When os_version_display is NULL, filter coalesces to os_version for matching."""
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-coalesce-1",
+        connection_target="android-coalesce-1",
+        name="Android Coalesce 1",
+        os_version="14",
+    )
+    await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="android-coalesce-2",
+        connection_target="android-coalesce-2",
+        name="Android Coalesce 2",
+        os_version="15",
+    )
+
+    resp = await client.get("/api/devices", params={"os_version_display": "14"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [item["name"] for item in data] == ["Android Coalesce 1"]
 
 
 def test_backend_sanitize_log_value_strips_control_characters() -> None:

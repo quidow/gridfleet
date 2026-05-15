@@ -13,6 +13,7 @@ DeviceSortBy = Literal[
     "device_type",
     "connection_type",
     "os_version",
+    "os_version_display",
     "host",
     "status",
     "operational_state",
@@ -34,6 +35,7 @@ class DeviceGroupFilters(BaseModel):
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
     os_version: str | None = None
+    os_version_display: str | None = None
     hardware_health_status: HardwareHealthStatus | None = None
     hardware_telemetry_state: HardwareTelemetryState | None = None
     needs_attention: bool | None = None
