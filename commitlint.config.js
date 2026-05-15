@@ -42,6 +42,6 @@ export default {
       ["backend", "agent", "frontend", "testkit", "docker", "ci", "docs", "deps", "deps-dev", "main"],
     ],
     "subject-min-length": [2, "always", 10],
-    "subject-case": [2, "always", "lower-case"],
+    "subject-case": [2, "never", ["sentence-case", "start-case", "pascal-case", "upper-case"]],
   },
 };
