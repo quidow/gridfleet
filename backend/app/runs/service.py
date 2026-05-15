@@ -12,7 +12,6 @@ from app.runs.service_allocator import (
     create_run,
 )
 from app.runs.service_lifecycle import (
-    _get_run_for_update,
     cancel_run,
     complete_run,
     expire_run,
@@ -37,7 +36,6 @@ from app.runs.service_query import (
     _older_than_cursor,
     build_run_read,
     fetch_session_counts,
-    get_run,
     hydrate_reserved_device_info,
     hydrate_reserved_device_infos,
     list_runs,
@@ -45,6 +43,8 @@ from app.runs.service_query import (
     mark_reserved_device_info_includes_unavailable,
     parse_includes,
 )
+from app.runs.service_reservation import get_run
+from app.runs.service_reservation import get_run_for_update as _get_run_for_update
 from app.runs.service_reservation_lookup import (
     _reserved_entry_for_device,
     _reserved_entry_is_excluded,

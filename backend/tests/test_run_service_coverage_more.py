@@ -495,7 +495,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
 
     monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.record_ci_preparation_failed", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.maintenance_service.enter_maintenance", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}._enter_maintenance", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_health.update_device_checks", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 

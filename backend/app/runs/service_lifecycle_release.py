@@ -6,47 +6,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.devices.services.lifecycle_policy as lifecycle_policy
 from app.devices import locking as device_locking
-from app.devices import schemas as device_schemas
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
-from app.devices.services import (
-    capability,
-    intent_types,
-    lifecycle_incidents,
-    lifecycle_policy,
-    maintenance,
-    platform_label,
-    readiness,
-    state,
+from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_FORCED_RELEASE,
+    IntentRegistration,
 )
-from app.devices.services import (
-    intent as intent_service,
-)
+from app.devices.services.state import ready_operational_state, set_hold, set_operational_state
 from app.grid import service as grid_service
-from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import TestRun
 from app.sessions.models import Session, SessionStatus
-
-assert_runnable = pack_platform_resolver.assert_runnable
-GRID_ROUTING = intent_types.GRID_ROUTING
-NODE_PROCESS = intent_types.NODE_PROCESS
-PRIORITY_COOLDOWN = intent_types.PRIORITY_COOLDOWN
-PRIORITY_FORCED_RELEASE = intent_types.PRIORITY_FORCED_RELEASE
-PRIORITY_RUN_ROUTING = intent_types.PRIORITY_RUN_ROUTING
-RECOVERY = intent_types.RECOVERY
-RESERVATION = intent_types.RESERVATION
-IntentRegistration = intent_types.IntentRegistration
-DeviceLifecyclePolicySummaryState = device_schemas.DeviceLifecyclePolicySummaryState
-is_ready_for_use_async = readiness.is_ready_for_use_async
-ready_operational_state = state.ready_operational_state
-set_hold = state.set_hold
-set_operational_state = state.set_operational_state
-capability_service = capability
-register_intents_and_reconcile = intent_service.register_intents_and_reconcile
-revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
-lifecycle_incident_service = lifecycle_incidents
-maintenance_service = maintenance
-platform_label_service = platform_label
 
 logger = logging.getLogger(__name__)
 

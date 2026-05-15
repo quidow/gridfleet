@@ -1,4 +1,3 @@
-import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -7,56 +6,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
-from app.devices import schemas as device_schemas
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
-from app.devices.services import (
-    capability,
-    intent_types,
-    lifecycle_incidents,
-    maintenance,
-    platform_label,
-    readiness,
-    state,
+from app.devices.services import health as device_health
+from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent_types import (
+    GRID_ROUTING,
+    PRIORITY_RUN_ROUTING,
+    IntentRegistration,
 )
-from app.devices.services import (
-    health as device_health,
-)
-from app.devices.services import (
-    intent as intent_service,
-)
+from app.devices.services.platform_label import load_platform_label_map
+from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.state import set_hold
 from app.events import queue_event_for_session
-from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
     DeviceRequirement,
     ReservedDeviceInfo,
     RunCreate,
 )
-from app.runs.service_query import get_run
+from app.runs.service_reservation import get_run
 from app.settings import settings_service
-
-assert_runnable = pack_platform_resolver.assert_runnable
-GRID_ROUTING = intent_types.GRID_ROUTING
-NODE_PROCESS = intent_types.NODE_PROCESS
-PRIORITY_COOLDOWN = intent_types.PRIORITY_COOLDOWN
-PRIORITY_FORCED_RELEASE = intent_types.PRIORITY_FORCED_RELEASE
-PRIORITY_RUN_ROUTING = intent_types.PRIORITY_RUN_ROUTING
-RECOVERY = intent_types.RECOVERY
-RESERVATION = intent_types.RESERVATION
-IntentRegistration = intent_types.IntentRegistration
-DeviceLifecyclePolicySummaryState = device_schemas.DeviceLifecyclePolicySummaryState
-is_ready_for_use_async = readiness.is_ready_for_use_async
-ready_operational_state = state.ready_operational_state
-set_hold = state.set_hold
-set_operational_state = state.set_operational_state
-capability_service = capability
-register_intents_and_reconcile = intent_service.register_intents_and_reconcile
-revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
-lifecycle_incident_service = lifecycle_incidents
-maintenance_service = maintenance
-platform_label_service = platform_label
-
-logger = logging.getLogger(__name__)
 
 
 class _UnmetRequirementError(Exception):
@@ -233,7 +203,7 @@ async def _attempt_create_run(
             raise _UnmetRequirementError(req, len(available))
         all_matched.extend(_select_matching_devices(req, available))
 
-    label_map = await platform_label_service.load_platform_label_map(
+    label_map = await load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in all_matched),
     )
