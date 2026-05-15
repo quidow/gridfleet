@@ -64,10 +64,6 @@ async def _run_node_health_with_gate(
         return ProbeResult(status="refused")
 
     with (
-        patch(
-            "app.appium_nodes.services.node_health._build_probe_capabilities_for_node",
-            new=AsyncMock(return_value=None),
-        ),
         patch("app.appium_nodes.services.node_health._check_node_health", side_effect=unhealthy_probe),
         patch("app.appium_nodes.services.node_health.grid_service.get_grid_status", new=AsyncMock(return_value={})),
         patch("app.appium_nodes.services.node_health.grid_service.available_node_device_ids", return_value=set()),

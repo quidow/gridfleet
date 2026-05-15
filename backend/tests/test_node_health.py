@@ -13,7 +13,7 @@ from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health as node_health
-from app.appium_nodes.services.node_health import _check_node_health, _check_nodes, _should_probe_node_health
+from app.appium_nodes.services.node_health import _check_node_health, _check_nodes
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
@@ -435,7 +435,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
     assert node_key not in await get_node_health_control_plane_state(db_session)
 
 
-async def test_available_verified_node_uses_probe_session(db_session: AsyncSession, db_host: Host) -> None:
+async def test_available_verified_node_uses_status_check(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
@@ -468,95 +468,15 @@ async def test_available_verified_node_uses_probe_session(db_session: AsyncSessi
 
     with (
         patch(
-            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
+            "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
-            return_value={"platformName": "Android"},
-        ),
-        patch(
-            "app.appium_nodes.services.node_health.probe_session_via_grid",
-            new_callable=AsyncMock,
-            return_value=(True, None),
-        ) as probe_mock,
-        patch("app.appium_nodes.services.node_health.fetch_appium_status", new_callable=AsyncMock) as status_mock,
+            return_value={"running": True, "port": 4729},
+        ) as status_mock,
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         await _check_nodes(db_session)
 
-    probe_mock.assert_awaited_once()
-    probe_capabilities = probe_mock.await_args.args[0]
-    assert probe_capabilities["platformName"] == "Android"
-    assert probe_capabilities["gridfleet:probeSession"] is True
-    assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
-    status_mock.assert_not_awaited()
-
-
-async def test_node_health_probe_writes_probe_session_row(db_session: AsyncSession, db_host: Host) -> None:
-    from sqlalchemy import select
-
-    from app.sessions.models import Session, SessionStatus
-    from app.sessions.probe_constants import PROBE_TEST_NAME
-    from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
-
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="nh-probe-row",
-        connection_target="nh-probe-row",
-        name="Node Health Probe Row Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        verified_at=datetime.now(UTC),
-    )
-    db_session.add(device)
-    await db_session.flush()
-
-    node = AppiumNode(
-        device_id=device.id,
-        port=4729,
-        grid_url="http://node-grid:4444/wd/hub",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4729,
-        pid=1,
-        active_connection_target="target",
-    )
-    db_session.add(node)
-    await db_session.commit()
-
-    with (
-        patch(
-            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
-            new_callable=AsyncMock,
-            return_value={"platformName": "Android"},
-        ),
-        patch(
-            "app.appium_nodes.services.node_health.probe_session_via_grid",
-            new_callable=AsyncMock,
-            return_value=(True, None),
-        ),
-        patch("app.appium_nodes.services.node_health.fetch_appium_status", new_callable=AsyncMock),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await _check_nodes(db_session)
-
-    rows = (
-        (
-            await db_session.execute(
-                select(Session).where(Session.device_id == device.id, Session.test_name == PROBE_TEST_NAME)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    row = rows[0]
-    assert row.status is SessionStatus.passed
-    assert row.requested_capabilities is not None
-    assert row.requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "node_health"
+    status_mock.assert_awaited_once()
 
 
 async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_host: Host) -> None:
@@ -592,12 +512,6 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
 
     with (
         patch(
-            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
-            new_callable=AsyncMock,
-            return_value={"platformName": "iOS"},
-        ) as capabilities_mock,
-        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
-        patch(
             "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4734},
@@ -606,37 +520,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
     ):
         await _check_nodes(db_session)
 
-    capabilities_mock.assert_not_awaited()
-    probe_mock.assert_not_awaited()
     status_mock.assert_awaited_once()
-
-
-@pytest.mark.parametrize("platform_id", ["ios", "tvos"])
-async def test_real_apple_node_health_probe_gate_is_disabled(
-    db_session: AsyncSession,
-    db_host: Host,
-    platform_id: str,
-) -> None:
-    device = Device(
-        pack_id="appium-xcuitest",
-        platform_id=platform_id,
-        identity_scheme="apple_udid",
-        identity_scope="global",
-        identity_value=f"{platform_id}-probe-gate",
-        connection_target=f"{platform_id}-probe-gate",
-        name="Probe Gate Apple Device",
-        os_version="26.4.2",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network if platform_id == "tvos" else ConnectionType.usb,
-        verified_at=datetime.now(UTC),
-    )
-
-    with patch(
-        "app.appium_nodes.services.node_health.is_ready_for_use_async", new_callable=AsyncMock, return_value=True
-    ):
-        assert await _should_probe_node_health(db_session, device) is False
 
 
 async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host: Host) -> None:
@@ -671,7 +555,6 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
     await db_session.commit()
 
     with (
-        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
         patch(
             "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
@@ -681,7 +564,6 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
     ):
         await _check_nodes(db_session)
 
-    probe_mock.assert_not_awaited()
     status_mock.assert_awaited_once()
 
 
@@ -717,7 +599,6 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
     await db_session.commit()
 
     with (
-        patch("app.appium_nodes.services.node_health.probe_session_via_grid", new_callable=AsyncMock) as probe_mock,
         patch(
             "app.appium_nodes.services.node_health.fetch_appium_status",
             new_callable=AsyncMock,
@@ -727,7 +608,6 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
     ):
         await _check_nodes(db_session)
 
-    probe_mock.assert_not_awaited()
     status_mock.assert_awaited_once()
 
 
@@ -790,13 +670,8 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
     both_started = asyncio.Event()
     release_checks = asyncio.Event()
 
-    async def fake_check_node_health(
-        node: AppiumNode,
-        device: Device,
-        *,
-        probe_capabilities: dict[str, object] | None = None,
-    ) -> ProbeResult:
-        _ = device, probe_capabilities
+    async def fake_check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
+        _ = device
         started_ports.add(node.port)
         if len(started_ports) == 2:
             both_started.set()
@@ -805,11 +680,6 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         return ProbeResult(status="ack")
 
     with (
-        patch(
-            "app.appium_nodes.services.node_health.capability_service.get_device_capabilities",
-            new_callable=AsyncMock,
-            return_value={"platformName": "Android"},
-        ),
         patch("app.appium_nodes.services.node_health._check_node_health", side_effect=fake_check_node_health),
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
@@ -858,7 +728,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "boom")),
     ):
-        result = await _check_node_health(node, device, probe_capabilities=None)
+        result = await _check_node_health(node, device)
 
     assert result.status == "indeterminate"
 
@@ -881,7 +751,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentResponseError(db_host.ip, "boom", http_status=503)),
     ):
-        result = await _check_node_health(node, device, probe_capabilities=None)
+        result = await _check_node_health(node, device)
 
     assert result.status == "indeterminate"
 
@@ -904,7 +774,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=CircuitOpenError(db_host.ip, retry_after_seconds=10.0)),
     ):
-        result = await _check_node_health(node, device, probe_capabilities=None)
+        result = await _check_node_health(node, device)
 
     assert result.status == "indeterminate"
 
@@ -925,7 +795,7 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
         active_connection_target="target",
     )
 
-    result = await _check_node_health(node, device, probe_capabilities=None)
+    result = await _check_node_health(node, device)
     assert result.status == "refused"
 
 
@@ -947,7 +817,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value={"running": True}),
     ):
-        result = await _check_node_health(node, device, probe_capabilities=None)
+        result = await _check_node_health(node, device)
 
     assert result.status == "ack"
 
@@ -974,88 +844,9 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value=None),
     ):
-        result = await _check_node_health(node, device, probe_capabilities=None)
+        result = await _check_node_health(node, device)
 
     assert result.status == "indeterminate"
-
-
-async def test_check_node_health_probe_path_returns_none_on_http_error(db_session: AsyncSession, db_host: Host) -> None:
-    """Grid transport failures are indeterminate, not confirmed unhealthy probes."""
-    device = _build_tristate_device(db_host, "nh-tristate-http-probe")
-    db_session.add(device)
-    await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4736,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4736,
-        pid=1,
-        active_connection_target="target",
-    )
-
-    with patch(
-        "app.appium_nodes.services.node_health.probe_session_via_grid",
-        AsyncMock(
-            return_value=(False, "Session create request failed: ConnectError while calling http://hub:4444/session")
-        ),
-    ):
-        result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
-
-    assert result.status == "indeterminate"
-
-
-async def test_check_node_health_probe_path_returns_false_on_genuine_failure(
-    db_session: AsyncSession, db_host: Host
-) -> None:
-    """A definitive probe failure (Appium-side) keeps the False result so the
-    node_health loop still records it and eventually escalates."""
-    device = _build_tristate_device(db_host, "nh-tristate-probe-fail")
-    db_session.add(device)
-    await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4737,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4737,
-        pid=1,
-        active_connection_target="target",
-    )
-
-    with patch(
-        "app.appium_nodes.services.node_health.probe_session_via_grid",
-        AsyncMock(return_value=(False, "device offline")),
-    ):
-        result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
-
-    assert result.status == "refused"
-
-
-async def test_check_node_health_grid_probe_path_returns_ack(db_session: AsyncSession, db_host: Host) -> None:
-    device = _build_tristate_device(db_host, "nh-grid-probe-ack")
-    db_session.add(device)
-    await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4738,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4738,
-        pid=1,
-        active_connection_target="target",
-    )
-
-    probe_mock = AsyncMock(return_value=(True, None))
-    with patch("app.appium_nodes.services.node_health.probe_session_via_grid", probe_mock):
-        result = await _check_node_health(node, device, probe_capabilities={"platformName": "Android"})
-
-    assert result.status == "ack"
-    probe_mock.assert_awaited_once_with(
-        {"platformName": "Android"},
-        15,
-        grid_url="http://hub:4444",
-    )
 
 
 async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: AsyncSession, db_host: Host) -> None:
@@ -1323,27 +1114,6 @@ async def test_node_health_recovery_clears_pending_stop(
     assert len(incidents) == 1
     detail = (incidents[0].details or {}).get("detail") or ""
     assert "resumed healthy operation" in detail.lower()
-
-
-async def test_build_probe_capabilities_handles_capability_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    device = Device(
-        id=uuid.uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="nh-probe-error",
-        connection_target="nh-probe-error",
-        name="Probe Error",
-        os_version="14",
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    monkeypatch.setattr(node_health, "_should_probe_node_health", AsyncMock(return_value=True))
-    monkeypatch.setattr(node_health.capability_service, "get_device_capabilities", AsyncMock(side_effect=RuntimeError))
-
-    assert await node_health._build_probe_capabilities_for_node(AsyncMock(), device) is None
 
 
 async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch) -> None:

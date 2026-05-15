@@ -99,7 +99,6 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     db = AsyncMock()
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
-    monkeypatch.setattr(node_health, "_build_probe_capabilities_for_node", AsyncMock(return_value={}))
     monkeypatch.setattr(node_health, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
     monkeypatch.setattr(node_health.grid_service, "get_grid_status", AsyncMock(return_value={}))
     monkeypatch.setattr(node_health.grid_service, "available_node_device_ids", Mock(return_value=set()))

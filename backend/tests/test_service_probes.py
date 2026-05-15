@@ -42,7 +42,6 @@ def test_probe_source_values() -> None:
     assert ProbeSource.scheduled.value == "scheduled"
     assert ProbeSource.manual.value == "manual"
     assert ProbeSource.recovery.value == "recovery"
-    assert ProbeSource.node_health.value == "node_health"
     assert ProbeSource.verification.value == "verification"
 
 
@@ -106,7 +105,7 @@ async def test_record_probe_session_refused_writes_failed_row(
         device=device,
         attempted_at=datetime.now(UTC),
         result=ProbeResult(status="refused", detail="no slots"),
-        source=ProbeSource.node_health,
+        source=ProbeSource.recovery,
         capabilities={},
     )
     await db_session.commit()
@@ -115,7 +114,7 @@ async def test_record_probe_session_refused_writes_failed_row(
     assert written.error_type == "probe_refused"
     assert written.error_message == "no slots"
     assert written.requested_capabilities is not None
-    assert written.requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "node_health"
+    assert written.requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "recovery"
 
 
 @pytest.mark.db
