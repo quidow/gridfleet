@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from agent_app.host.dependencies import (
     get_capabilities_snapshot_dep,
     get_host_telemetry_dep,
+    get_registered_flag,
     get_version_guidance_payload,
 )
 from agent_app.main import app
@@ -47,6 +48,24 @@ async def test_health_uses_version_guidance_override(client: AsyncClient) -> Non
         assert resp.json()["version_guidance"] == fake_guidance
     finally:
         app.dependency_overrides.pop(get_version_guidance_payload, None)
+
+
+async def test_health_includes_registered_flag(client: AsyncClient) -> None:
+    app.dependency_overrides[get_registered_flag] = lambda: False
+    try:
+        resp = await client.get("/agent/health")
+        assert resp.status_code == 200
+        assert resp.json()["registered"] is False
+    finally:
+        app.dependency_overrides.pop(get_registered_flag, None)
+
+    app.dependency_overrides[get_registered_flag] = lambda: True
+    try:
+        resp = await client.get("/agent/health")
+        assert resp.status_code == 200
+        assert resp.json()["registered"] is True
+    finally:
+        app.dependency_overrides.pop(get_registered_flag, None)
 
 
 async def test_host_telemetry_uses_override(client: AsyncClient) -> None:

@@ -134,6 +134,7 @@ class HealthResponse(BaseModel):
     hostname: Annotated[str, Field(title="Hostname")]
     missing_prerequisites: Annotated[list[str], Field(title="Missing Prerequisites")]
     os_type: Annotated[str, Field(title="Os Type")]
+    registered: Annotated[bool, Field(title="Registered")]
     status: Annotated[str, Field(title="Status")]
     version: Annotated[str, Field(title="Version")]
     version_guidance: Annotated[dict[str, Any], Field(title="Version Guidance")]

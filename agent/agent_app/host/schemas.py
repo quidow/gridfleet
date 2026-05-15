@@ -16,6 +16,7 @@ class HealthResponse(BaseModel):
     hostname: str
     os_type: str
     version: str
+    registered: bool
     missing_prerequisites: list[str]
     capabilities: dict[str, Any]
     appium_processes: dict[str, Any]
