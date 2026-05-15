@@ -24,3 +24,7 @@ def exclude_non_success_metric_sessions(stmt: Select[Any]) -> Select[Any]:
             Session.run_id.is_not(None),
         )
     )
+
+
+def only_probe_sessions(stmt: Select[Any]) -> Select[Any]:
+    return exclude_reserved_sessions(stmt).where(Session.test_name == PROBE_TEST_NAME)
