@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
+import type { components } from '../../api/openapi';
 
 const BUCKET_MINUTES = 60;
 const VIEW_W = 600;
@@ -8,6 +9,7 @@ const PAD_TOP = 6;
 const PAD_BOT = 6;
 
 type Tone = 'healthy' | 'warn' | 'critical';
+type SeriesPoint = components['schemas']['FleetCapacityTimelinePoint'];
 
 interface LiveFleetHealthPoint {
   devices_total: number;
@@ -46,10 +48,49 @@ function linePath(points: { x: number; y: number }[]): string {
   ].join(' ');
 }
 
-function reachablePct(point: LiveFleetHealthPoint): number {
+function seriesPct(point: SeriesPoint): number | null {
+  if (!point.has_data) return null;
   if (!point.devices_total) return 0;
   const reachable = Math.max(0, point.devices_total - point.devices_offline - point.devices_maintenance);
   return (reachable / point.devices_total) * 100;
+}
+
+function livePct(point: LiveFleetHealthPoint): number | null {
+  if (!point.devices_total) return null;
+  const reachable = Math.max(0, point.devices_total - point.devices_offline - point.devices_maintenance);
+  return (reachable / point.devices_total) * 100;
+}
+
+interface Segment {
+  linePath: string;
+  areaPath: string;
+}
+
+function buildSegments(percentages: (number | null)[], stepX: number, usableH: number): Segment[] {
+  const segments: Segment[] = [];
+  let current: { x: number; y: number }[] = [];
+  const flush = () => {
+    if (current.length >= 2) {
+      const path = linePath(current);
+      const first = current[0]!;
+      const last = current[current.length - 1]!;
+      segments.push({
+        linePath: path,
+        areaPath: `${path} L ${last.x.toFixed(2)} ${VIEW_H} L ${first.x.toFixed(2)} ${VIEW_H} Z`,
+      });
+    }
+    current = [];
+  };
+  for (let i = 0; i < percentages.length; i += 1) {
+    const value = percentages[i];
+    if (value === null || value === undefined) {
+      flush();
+      continue;
+    }
+    current.push({ x: i * stepX, y: PAD_TOP + (1 - value / 100) * usableH });
+  }
+  flush();
+  return segments;
 }
 
 export default function FleetHealthHistory({ livePoint }: FleetHealthHistoryProps) {
@@ -57,37 +98,39 @@ export default function FleetHealthHistory({ livePoint }: FleetHealthHistoryProp
 
   const chart = useMemo(() => {
     const series = data?.series ?? [];
-    const percentages = series.map((p) => reachablePct(p));
+    const percentages: (number | null)[] = series.map((p) => seriesPct(p));
     if (livePoint && livePoint.devices_total > 0) {
-      percentages.push(reachablePct(livePoint));
+      percentages.push(livePct(livePoint));
     }
 
-    if (percentages.length < 2) {
+    const realValues = percentages.filter((value): value is number => value !== null);
+    if (realValues.length === 0) {
       return { hasData: false as const };
     }
 
     const usableH = VIEW_H - PAD_TOP - PAD_BOT;
-    const stepX = VIEW_W / (percentages.length - 1);
-    const points = percentages.map((v, i) => ({
-      x: i * stepX,
-      y: PAD_TOP + (1 - v / 100) * usableH,
-    }));
+    const stepX = percentages.length > 1 ? VIEW_W / (percentages.length - 1) : VIEW_W;
+    const segments = buildSegments(percentages, stepX, usableH);
 
-    const tracePath = linePath(points);
-    const areaPath = `${tracePath} L ${VIEW_W} ${VIEW_H} L 0 ${VIEW_H} Z`;
-
-    const last = percentages[percentages.length - 1] ?? 0;
-    const avg = percentages.reduce((a, b) => a + b, 0) / percentages.length;
-    const lastPoint = points[points.length - 1]!;
+    let lastIndex = -1;
+    for (let i = percentages.length - 1; i >= 0; i -= 1) {
+      if (percentages[i] !== null) {
+        lastIndex = i;
+        break;
+      }
+    }
+    const lastPct = lastIndex >= 0 ? (percentages[lastIndex] as number) : 0;
+    const lastX = lastIndex >= 0 ? lastIndex * stepX : 0;
+    const lastY = PAD_TOP + (1 - lastPct / 100) * usableH;
+    const avg = realValues.reduce((a, b) => a + b, 0) / realValues.length;
 
     return {
       hasData: true as const,
-      linePath: tracePath,
-      areaPath,
-      lastPct: last,
+      segments,
+      lastPct,
       avgPct: avg,
-      lastX: lastPoint.x,
-      lastY: lastPoint.y,
+      lastX,
+      lastY,
       midY: PAD_TOP + usableH * 0.5,
     };
   }, [data, livePoint]);
@@ -165,16 +208,20 @@ export default function FleetHealthHistory({ livePoint }: FleetHealthHistoryProp
             vectorEffect="non-scaling-stroke"
           />
 
-          <path d={chart.areaPath} fill={`url(#${gradientId})`} />
-          <path
-            d={chart.linePath}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
+          {chart.segments.map((segment, idx) => (
+            <g key={idx}>
+              <path d={segment.areaPath} fill={`url(#${gradientId})`} />
+              <path
+                d={segment.linePath}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            </g>
+          ))}
           <circle
             cx={chart.lastX}
             cy={chart.lastY}
