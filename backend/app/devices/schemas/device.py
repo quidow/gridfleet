@@ -15,6 +15,8 @@ from app.devices.models import (
     HardwareHealthStatus,
 )
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 DeviceTags = dict[str, str]
@@ -229,6 +231,8 @@ class SessionRead(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     run_id: uuid.UUID | None = None
+    is_probe: bool = False
+    probe_checked_by: str | None = None
 
 
 class SessionOutcomeHeatmapRow(BaseModel):
@@ -397,6 +401,12 @@ class SessionDetail(SessionRead):
     @classmethod
     def from_session(cls, session: Session, *, device_platform_label: str | None = None) -> "SessionDetail":
         device = session.device
+        is_probe = session.test_name == PROBE_TEST_NAME
+        probe_checked_by: str | None = None
+        if is_probe and isinstance(session.requested_capabilities, dict):
+            raw = session.requested_capabilities.get(PROBE_CHECKED_BY_CAP_KEY)
+            if isinstance(raw, str):
+                probe_checked_by = raw
         return cls(
             id=session.id,
             session_id=session.session_id,
@@ -412,6 +422,8 @@ class SessionDetail(SessionRead):
             error_type=session.error_type,
             error_message=session.error_message,
             run_id=session.run_id,
+            is_probe=is_probe,
+            probe_checked_by=probe_checked_by,
             device_id=session.device_id,
             device_name=device.name if device else None,
             device_pack_id=device.pack_id if device else None,
