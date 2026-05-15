@@ -23,6 +23,28 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 
+def test_fleet_capacity_timeline_point_defaults_has_data_true() -> None:
+    from app.analytics.schemas import FleetCapacityTimelinePoint
+
+    point = FleetCapacityTimelinePoint(
+        timestamp=datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
+        total_capacity_slots=0,
+        active_sessions=0,
+        queued_requests=0,
+        rejected_unfulfilled_sessions=0,
+        available_capacity_slots=0,
+        inferred_demand=0,
+        hosts_total=0,
+        hosts_online=0,
+        devices_total=0,
+        devices_available=0,
+    )
+    assert point.has_data is True
+
+    synthetic = point.model_copy(update={"has_data": False})
+    assert synthetic.has_data is False
+
+
 def _grid_status(*, active_sessions: int, queued_requests: int) -> dict[str, object]:
     slots = [{"session": {"sessionId": f"sess-{idx}"}} for idx in range(active_sessions)]
     return {
