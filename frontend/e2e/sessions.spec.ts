@@ -221,8 +221,9 @@ test.describe('Sessions page', () => {
     await expect(page.getByText('__gridfleet_probe__')).toHaveCount(0);
     await expect(page.getByText('probe', { exact: true })).toHaveCount(0);
 
-    await page.getByLabel('Include probe sessions').check();
+    await page.getByLabel('Include probe sessions').click();
     await expect(page).toHaveURL(/include_probes=1/);
+    await expect(page.getByLabel('Include probe sessions')).toBeChecked();
     await expect(page.getByText('probe', { exact: true })).toBeVisible();
     await expect(page.getByText('scheduled')).toBeVisible();
   });
