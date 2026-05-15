@@ -29,6 +29,7 @@ from app.hosts.schemas import (
     HostCreate,
     HostDetail,
     HostDiagnosticsRead,
+    HostEventsPage,
     HostRead,
     HostRegister,
     HostResourceTelemetryResponse,
@@ -36,6 +37,7 @@ from app.hosts.schemas import (
     IntakeCandidateRead,
 )
 from app.hosts.service_agent_logs import query_logs
+from app.hosts.service_host_events import query_host_events
 from app.packs import schemas as pack_schemas
 from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
@@ -227,6 +229,32 @@ async def get_agent_logs(
         since=since,
         until=until,
         q=q,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/{host_id}/events",
+    response_model=HostEventsPage,
+    summary="Persisted backend events scoped to a host",
+)
+async def get_host_events(
+    host_id: uuid.UUID,
+    db: DbDep,
+    types: Annotated[str | None, Query()] = None,
+    since: Annotated[datetime | None, Query()] = None,
+    until: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> HostEventsPage:
+    type_list = [token.strip() for token in types.split(",") if token.strip()] if types else None
+    return await query_host_events(
+        db,
+        host_id=host_id,
+        types=type_list,
+        since=since,
+        until=until,
         limit=limit,
         offset=offset,
     )
