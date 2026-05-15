@@ -24,7 +24,9 @@ Activate component virtualenvs with `uv sync --extra dev` (or the variants below
 uv run ruff format --check app/ tests/
 uv run ruff check app/ tests/
 uv run mypy app/                          # strict mypy + pydantic plugin
-uv run pytest -q -n auto                  # parallel via pytest-xdist
+uv run pytest -q -n auto                  # parallel via pytest-xdist (~3 min full suite)
+# When debugging cross-file failures (xdist state leak), run halves separately — surfaces failures ~2× faster:
+#   /bin/ls tests/ | grep "^test_.*\.py$" | head -130 | sed "s|^|tests/|" | xargs uv run pytest -n auto --tb=line -q
 uv run pytest -q tests/test_devices_api.py::test_name   # single test
 uv run alembic upgrade head               # apply migrations
 uv run alembic revision --autogenerate -m "msg"
@@ -90,6 +92,10 @@ There are two distinct config surfaces. Do not conflate them:
 
 See `docs/reference/environment.md` and `docs/reference/settings.md` before adding a new knob.
 
+**Per-domain `BaseSettings` pattern.** Each domain config (`app/<domain>/config.py`) uses `model_config = SettingsConfigDict(env_prefix="", populate_by_name=True, extra="ignore")` with per-field `Field(alias="GRIDFLEET_…")` to preserve ops-facing env-var names. `populate_by_name=True` is **mandatory** — tests construct via field-name kwargs (`AuthConfig(auth_enabled=True)`); without it Pydantic silently drops the kwarg and the test gets the default value.
+
+**Domain config singletons must be reset between tests.** `tests/conftest.py:reset_control_plane_state` snapshots `auth_settings`, `agent_settings`, `packs_settings` and restores at teardown. Adding a new per-domain singleton means extending that fixture; otherwise test mutations leak across the xdist suite (typical symptom: routes return 401 instead of 404 because a stale `auth_enabled=True` persists).
+
 ### Driver-pack model (the most important architectural rule)
 **Core orchestration must stay driver-agnostic.** Platform-specific behavior — discovery probes, readiness fields, lifecycle actions, capability defaults, health labels — lives in driver-pack manifests under `driver-packs/curated/` and adapter wheels under `driver-packs/adapters/`.
 
@@ -134,8 +140,8 @@ Off by default for local dev. When `GRIDFLEET_AUTH_ENABLED=true`:
 - **Strict typing:** `mypy --strict` on both backend and agent. Pydantic plugin is enabled.
 - **Ruff lint set:** `E,F,W,I,N,UP,B,A,SIM,TCH,RUF,ANN`. SQLAlchemy `Mapped[]` columns under domain model packages are exempt from `TCH003` because runtime types are required.
 - **Tests:** pytest-asyncio in `auto` mode. Backend uses `pytest-xdist` (`-n auto`); the `db` marker means "needs the real test database". Frontend unit = Vitest, frontend e2e = Playwright with mocked + live configs.
-- **Pre-commit** (`.pre-commit-config.yaml`) runs ruff format + lint + mypy on the affected component. Install hooks once with `pre-commit install`.
-- **Conventional Commits:** all commits must use the format `type(scope): description`. Types follow conventional commits, plus `deps` for dependency updates that should be visible to release-please. Scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`, `deps-dev`, `main`. Use `!` for breaking changes: `feat(backend)!: description`. Enforced by commitlint in CI.
+- **Pre-commit** (`.pre-commit-config.yaml`) runs ruff format + lint + mypy on **both** backend and agent regardless of which component changed. Install hooks once with `pre-commit install`. Both venvs must exist: `cd backend && uv sync --extra dev && cd ../agent && uv sync --extra dev` — otherwise hooks fail silently with `Failed to spawn: ruff`.
+- **Conventional Commits:** all commits must use the format `type(scope): description`. Types follow conventional commits, plus `deps` for dependency updates that should be visible to release-please. Scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`, `deps-dev`, `main`. Use `!` for breaking changes: `feat(backend)!: description`. Enforced by commitlint in CI. **Subject must be lower-case** (`feat(backend): foo`, not `feat(backend): Foo`). **Release-managed scopes** (`backend`, `agent`, `frontend`) reject types other than `feat`, `fix`, `perf`, `deps`, or breaking-change marker — `test`, `refactor`, `chore`, `docs` on those scopes fail the commit-msg hook.
 - **Versioning:** each component versions independently via release-please. Per-component CHANGELOGs live at `<component>/CHANGELOG.md`. Root `CHANGELOG.md` is a project highlights file. See `docs/reference/release-policy.md`.
 - **No real lab data in commits:** no real device IDs, hostnames, credentials, screenshots from private labs, or DB dumps (`CONTRIBUTING.md`).
 
