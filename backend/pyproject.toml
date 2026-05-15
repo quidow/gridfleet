@@ -81,6 +81,7 @@ quote-style = "double"
 
 [tool.coverage.run]
 source = ["app"]
+omit = ["app/agent_comm/generated.py"]
 
 [tool.coverage.report]
 fail_under = 99.0
