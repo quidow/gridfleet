@@ -19,7 +19,7 @@ async def test_watchdog_logs_exception(caplog: pytest.LogCaptureFixture) -> None
     task.add_done_callback(_watchdog("boom_task"))
 
     with caplog.at_level(logging.ERROR, logger="agent_app.lifespan"), pytest.raises(RuntimeError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)
 
     matching = [record for record in caplog.records if "boom_task" in record.getMessage() and record.exc_info]
     assert matching, "watchdog must log the task name and traceback"
@@ -35,7 +35,7 @@ async def test_watchdog_ignores_cancellation() -> None:
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)
 
 
 @pytest.mark.asyncio
@@ -54,6 +54,6 @@ async def test_watchdog_restarts_when_callback_provided() -> None:
     task.add_done_callback(_watchdog("restart_task", _restart))
 
     with pytest.raises(RuntimeError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)
 
     assert restarted is True
