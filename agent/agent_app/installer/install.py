@@ -49,6 +49,13 @@ class HealthCheckCallable(Protocol):
 
 
 @dataclass(frozen=True)
+class PathShimResult:
+    path: Path
+    created: bool
+    warning: str | None = None
+
+
+@dataclass(frozen=True)
 class InstallResult:
     config_env: Path
     service_file: Path
@@ -56,6 +63,7 @@ class InstallResult:
     health: HealthCheckResult | None = None
     registration: RegistrationCheckResult | None = None
     linger_warning: str | None = None
+    path_shim: PathShimResult | None = None
 
 
 def resolve_bin_path(*, executable: Path | None = None) -> str:
@@ -108,6 +116,44 @@ class LegacyInstallDetectedError(RuntimeError):
         )
         super().__init__(message)
         self.path = path
+
+
+def path_shim_location(operator: OperatorIdentity) -> Path:
+    return operator.home / ".local" / "bin" / "gridfleet-agent"
+
+
+def ensure_path_shim(config: InstallConfig, operator: OperatorIdentity) -> PathShimResult:
+    link = path_shim_location(operator)
+    target = Path(config.resolved_bin_path)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        current_target = Path(os.readlink(link))
+        if current_target == target:
+            return PathShimResult(path=link, created=True)
+        link.unlink()
+    elif link.exists():
+        return PathShimResult(
+            path=link,
+            created=False,
+            warning=(
+                f"{link} already exists and is not a symlink; leaving it untouched. "
+                "Remove it manually if you want `gridfleet-agent` on PATH."
+            ),
+        )
+    link.symlink_to(target)
+    return PathShimResult(path=link, created=True)
+
+
+def remove_path_shim(config: InstallConfig, operator: OperatorIdentity) -> bool:
+    link = path_shim_location(operator)
+    if not link.is_symlink():
+        return False
+    target = os.readlink(link)
+    agent_prefix = str(Path(config.agent_dir)) + os.sep
+    if target == config.resolved_bin_path or target.startswith(agent_prefix):
+        link.unlink()
+        return True
+    return False
 
 
 def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
@@ -165,10 +211,13 @@ def install_no_start(
         raise RuntimeError(f"Unsupported OS: {resolved_os}")
     os.chmod(service_file, 0o600)
 
+    shim = ensure_path_shim(config, operator)
+
     return InstallResult(
         config_env=Path(config.config_env_path),
         service_file=service_file,
         started=False,
+        path_shim=shim,
     )
 
 
@@ -350,4 +399,5 @@ def install_with_start(
         health=health,
         registration=registration,
         linger_warning=linger_warning,
+        path_shim=result.path_shim,
     )

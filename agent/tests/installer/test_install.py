@@ -10,12 +10,16 @@ from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import (
     HealthCheckResult,
     InstallResult,
+    PathShimResult,
     RegistrationCheckResult,
     _service_file_path,
+    ensure_path_shim,
     install_no_start,
     install_with_start,
+    path_shim_location,
     poll_agent_health,
     poll_manager_registration,
+    remove_path_shim,
     resolve_bin_path,
 )
 from agent_app.installer.plan import InstallConfig, ToolDiscovery
@@ -37,8 +41,15 @@ def _make_operator(
     uid: int = 4242,
     home: Path | None = None,
 ) -> OperatorIdentity:
-    """Build a deterministic OperatorIdentity for tests."""
-    return OperatorIdentity(login=login, uid=uid, home=home or Path("/tmp"))
+    """Build a deterministic OperatorIdentity for tests.
+
+    Callers must pass a tmp_path-rooted home — install_no_start now writes a
+    PATH shim under home/.local/bin, and leaving the default at /tmp/ would
+    mutate shared state on the test host.
+    """
+    if home is None:
+        raise AssertionError("_make_operator requires home=tmp_path/...")
+    return OperatorIdentity(login=login, uid=uid, home=home)
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +116,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -121,6 +132,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(
         config_env=Path(config.config_env_path),
         service_file=tmp_path / ".config/systemd/user/gridfleet-agent.service",
         started=False,
+        path_shim=PathShimResult(path=tmp_path / ".local/bin/gridfleet-agent", created=True),
     )
     assert (Path(config.agent_dir) / "runtimes").is_dir()
     assert Path(config.config_env_path).read_text().startswith("AGENT_MANAGER_URL=https://manager.example.com\n")
@@ -139,7 +151,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
         config_dir=str(tmp_path / "etc/gridfleet-agent"),
         user="gridfleet",
     )
-    operator = OperatorIdentity(login="gridfleet", uid=1001, home=Path("/home/gridfleet"))
+    operator = OperatorIdentity(login="gridfleet", uid=1001, home=tmp_path / "home/gridfleet")
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -193,7 +205,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
 
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    operator = _make_operator(config, login=config.user)
+    operator = _make_operator(config, login=config.user, home=tmp_path)
     executable = Path(config.venv_bin_dir) / "gridfleet-agent"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
@@ -654,3 +666,104 @@ def test_install_no_start_creates_darwin_log_dir(monkeypatch: pytest.MonkeyPatch
 
     log_dir = home / "Library/Logs/gridfleet-agent"
     assert log_dir.is_dir()
+
+
+def test_ensure_path_shim_creates_symlink_to_resolved_bin(tmp_path: Path) -> None:
+    bin_path = tmp_path / "agent/venv/bin/gridfleet-agent"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), bin_path=str(bin_path))
+    operator = _make_operator(config, home=tmp_path / "home")
+
+    result = ensure_path_shim(config, operator)
+
+    expected = tmp_path / "home/.local/bin/gridfleet-agent"
+    assert result == PathShimResult(path=expected, created=True)
+    assert expected.is_symlink()
+    assert Path(os.readlink(expected)) == bin_path
+
+
+def test_ensure_path_shim_is_idempotent(tmp_path: Path) -> None:
+    bin_path = tmp_path / "agent/venv/bin/gridfleet-agent"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), bin_path=str(bin_path))
+    operator = _make_operator(config, home=tmp_path / "home")
+
+    first = ensure_path_shim(config, operator)
+    second = ensure_path_shim(config, operator)
+
+    assert first == second
+    assert first.path.is_symlink()
+
+
+def test_ensure_path_shim_replaces_stale_symlink(tmp_path: Path) -> None:
+    bin_path = tmp_path / "agent/venv/bin/gridfleet-agent"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), bin_path=str(bin_path))
+    operator = _make_operator(config, home=tmp_path / "home")
+    stale_target = tmp_path / "elsewhere/gridfleet-agent"
+    stale_target.parent.mkdir(parents=True)
+    stale_target.write_text("#!/bin/sh\n")
+    link = path_shim_location(operator)
+    link.parent.mkdir(parents=True)
+    link.symlink_to(stale_target)
+
+    result = ensure_path_shim(config, operator)
+
+    assert result.created is True
+    assert Path(os.readlink(link)) == bin_path
+
+
+def test_ensure_path_shim_refuses_to_overwrite_regular_file(tmp_path: Path) -> None:
+    bin_path = tmp_path / "agent/venv/bin/gridfleet-agent"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), bin_path=str(bin_path))
+    operator = _make_operator(config, home=tmp_path / "home")
+    link = path_shim_location(operator)
+    link.parent.mkdir(parents=True)
+    link.write_text("custom user script\n")
+
+    result = ensure_path_shim(config, operator)
+
+    assert result.created is False
+    assert result.warning is not None
+    assert "not a symlink" in result.warning
+    assert link.read_text() == "custom user script\n"
+
+
+def test_remove_path_shim_removes_owned_symlink(tmp_path: Path) -> None:
+    bin_path = tmp_path / "agent/venv/bin/gridfleet-agent"
+    bin_path.parent.mkdir(parents=True)
+    bin_path.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"), bin_path=str(bin_path))
+    operator = _make_operator(config, home=tmp_path / "home")
+    ensure_path_shim(config, operator)
+    link = path_shim_location(operator)
+
+    assert remove_path_shim(config, operator) is True
+    assert not link.exists()
+
+
+def test_remove_path_shim_preserves_foreign_symlink(tmp_path: Path) -> None:
+    foreign_target = tmp_path / "other/gridfleet-agent"
+    foreign_target.parent.mkdir(parents=True)
+    foreign_target.write_text("#!/bin/sh\n")
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"))
+    operator = _make_operator(config, home=tmp_path / "home")
+    link = path_shim_location(operator)
+    link.parent.mkdir(parents=True)
+    link.symlink_to(foreign_target)
+
+    assert remove_path_shim(config, operator) is False
+    assert link.is_symlink()
+    assert Path(os.readlink(link)) == foreign_target
+
+
+def test_remove_path_shim_returns_false_when_missing(tmp_path: Path) -> None:
+    config = InstallConfig(agent_dir=str(tmp_path / "agent"))
+    operator = _make_operator(config, home=tmp_path / "home")
+
+    assert remove_path_shim(config, operator) is False

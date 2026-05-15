@@ -146,6 +146,8 @@ Install paths (defaults; override with `--agent-dir`, `--config-dir`):
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/systemd/user/gridfleet-agent.service` | journald (user instance) |
 | macOS | `~/Library/Application Support/gridfleet-agent` | `~/Library/Application Support/gridfleet-agent/config` | `~/Library/LaunchAgents/com.gridfleet.agent.plist` | `~/Library/Logs/gridfleet-agent/{stdout,stderr}.log` |
 
+`install` also creates a `~/.local/bin/gridfleet-agent` symlink pointing at the dedicated venv so `gridfleet-agent status / update / uninstall` work without typing the full venv path. Add `~/.local/bin` to your `PATH` if it is not there already (`export PATH="$HOME/.local/bin:$PATH"`). If a non-symlink file already exists at that path the installer leaves it untouched and prints a warning. `uninstall` removes the symlink only when it still points into the agent's `agent_dir`.
+
 ## Logs and service control
 
 ### Linux

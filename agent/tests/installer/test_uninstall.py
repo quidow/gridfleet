@@ -50,6 +50,7 @@ def test_uninstall_linux_stops_disables_removes_files_and_reloads(
         removed_service_file=True,
         removed_agent_dir=True,
         removed_config_dir=True,
+        removed_path_shim=False,
     )
     assert commands == [
         (["systemctl", "--user", "stop", "gridfleet-agent"], False),

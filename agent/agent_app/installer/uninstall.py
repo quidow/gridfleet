@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agent_app.installer.install import LegacyInstallDetectedError, _service_file_path, detect_legacy_install
+from agent_app.installer.install import (
+    LegacyInstallDetectedError,
+    _service_file_path,
+    detect_legacy_install,
+    remove_path_shim,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,6 +27,7 @@ class UninstallResult:
     removed_service_file: bool
     removed_agent_dir: bool
     removed_config_dir: bool
+    removed_path_shim: bool = False
 
 
 def _run_command(command: list[str], *, check: bool = True) -> None:
@@ -77,6 +83,8 @@ def uninstall(
     if resolved_os == "Linux":
         run_command(["systemctl", "--user", "daemon-reload"], check=True)
 
+    removed_path_shim = remove_path_shim(config, operator)
+
     removed_agent_dir = False
     if remove_agent_dir and agent_dir.exists():
         shutil.rmtree(agent_dir)
@@ -92,4 +100,5 @@ def uninstall(
         removed_service_file=removed_service_file,
         removed_agent_dir=removed_agent_dir,
         removed_config_dir=removed_config_dir,
+        removed_path_shim=removed_path_shim,
     )
