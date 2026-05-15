@@ -129,6 +129,7 @@ beforeEach(() => {
       hosts_online: 1,
       active_sessions: 0,
       queued_requests: 0,
+      has_data: true,
     },
     {
       bucket_start: 't1',
@@ -140,6 +141,7 @@ beforeEach(() => {
       hosts_online: 1,
       active_sessions: 0,
       queued_requests: 0,
+      has_data: true,
     },
   ];
   mockUseDevices.mockReturnValue(makeQueryResult(defaultDevices()));
