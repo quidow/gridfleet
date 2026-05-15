@@ -11,10 +11,15 @@ from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.hosts.models import Host
 from app.runs import service as run_service
+from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device, create_reserved_run
+
+RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
+RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
+RUN_LOOKUP_MODULE = "app.runs.service_reservation_lookup"
 
 
 async def test_run_service_include_and_hydration_error_branches(
@@ -40,9 +45,9 @@ async def test_run_service_include_and_hydration_error_branches(
         os_version=device.os_version,
     )
 
-    monkeypatch.setattr("app.runs.service.config_service.get_device_config", AsyncMock(side_effect=RuntimeError))
+    monkeypatch.setattr("app.runs.service_query.config_service.get_device_config", AsyncMock(side_effect=RuntimeError))
     monkeypatch.setattr(
-        "app.runs.service.capability_service.get_device_capabilities",
+        "app.runs.service_query.capability_service.get_device_capabilities",
         AsyncMock(side_effect=ValueError),
     )
 
@@ -126,7 +131,7 @@ async def test_find_matching_devices_filters_os_tags_and_allocation(
         operational_state=DeviceOperationalState.available,
         tags={"pool": "regression"},
     )
-    monkeypatch.setattr("app.runs.service._readiness_for_match", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", AsyncMock(return_value=True))
 
     req = DeviceRequirement(
         pack_id="appium-uiautomator2",
@@ -210,10 +215,10 @@ async def test_run_terminal_transition_paths(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.runs.service._clear_desired_grid_run_id_for_run", AsyncMock())
-    monkeypatch.setattr("app.runs.service._release_devices", AsyncMock(return_value=[]))
-    monkeypatch.setattr("app.runs.service._complete_deferred_stops_post_commit", AsyncMock())
-    monkeypatch.setattr("app.runs.service.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.runs.service_lifecycle._clear_desired_grid_run_id_for_run", AsyncMock())
+    monkeypatch.setattr("app.runs.service_lifecycle._release_devices", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.runs.service_lifecycle._complete_deferred_stops_post_commit", AsyncMock())
+    monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", lambda *args, **kwargs: None)
 
     active = TestRun(
         name="complete-me",
@@ -287,7 +292,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert run_service.get_reservation_context_for_device(run, uuid.uuid4()) == (run, None)
 
     monkeypatch.setattr(
-        "app.runs.service.revoke_intents_and_reconcile",
+        f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile",
         AsyncMock(),
     )
     excluded = await run_service.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
@@ -307,7 +312,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert entry.exclusion_reason is None
     assert await run_service.restore_device_to_run(db_session, device.id, commit=False) is excluded
 
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     committed_excluded = await run_service.exclude_device_from_run(db_session, device.id, reason="missing lock")
     assert committed_excluded is not None
     committed_restored = await run_service.restore_device_to_run(db_session, device.id)
@@ -333,9 +338,9 @@ async def test_cooldown_device_guard_paths(
         "general.device_cooldown_max_sec": 30,
         "general.device_cooldown_escalation_threshold": 3,
     }
-    monkeypatch.setattr("app.runs.service.settings_service.get", lambda key: settings[key])
-    monkeypatch.setattr("app.runs.service.register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr("app.runs.service.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.settings_service.get", lambda key: settings[key])
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="ttl_seconds"):
         await run_service.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=31)
@@ -351,7 +356,7 @@ async def test_cooldown_device_guard_paths(
 
     run.state = RunState.active
     await db_session.commit()
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     with pytest.raises(ValueError, match="Device not found"):
         await run_service.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=5)
 
@@ -363,11 +368,11 @@ async def test_cooldown_device_guard_paths(
         operational_state=DeviceOperationalState.available,
     )
     await db_session.commit()
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(return_value=other_device))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=other_device))
     with pytest.raises(ValueError, match="not actively reserved"):
         await run_service.cooldown_device(db_session, run.id, other_device.id, reason="flaky", ttl_seconds=5)
 
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
     excluded_until, count, escalated, threshold = await run_service.cooldown_device(
         db_session,
         run.id,
@@ -404,7 +409,7 @@ async def test_release_devices_branches_and_session_counts(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.runs.service.grid_service.terminate_grid_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=False))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
     pending_ids = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
     assert pending_ids == [device.id]
@@ -441,7 +446,7 @@ async def test_mark_running_sessions_released_success_path(
     db_session.add(session)
     await db_session.commit()
 
-    monkeypatch.setattr("app.runs.service.grid_service.terminate_grid_session", AsyncMock(return_value=True))
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=True))
     await run_service._mark_running_sessions_released(
         db_session,
         run,
@@ -488,11 +493,11 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         operational_state=DeviceOperationalState.available,
     )
 
-    monkeypatch.setattr("app.runs.service.revoke_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr("app.runs.service.lifecycle_policy_actions.record_ci_preparation_failed", AsyncMock())
-    monkeypatch.setattr("app.runs.service.maintenance_service.enter_maintenance", AsyncMock())
-    monkeypatch.setattr("app.runs.service.device_health.update_device_checks", AsyncMock())
-    monkeypatch.setattr("app.runs.service.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
+    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.record_ci_preparation_failed", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}._enter_maintenance", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_health.update_device_checks", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="message is required"):
         await run_service.report_preparation_failure(db_session, run.id, device.id, message="  ")
@@ -505,14 +510,14 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
     monkeypatch.setattr(
-        "app.runs.service.settings_service.get",
+        f"{RUN_FAILURES_MODULE}.settings_service.get",
         lambda key: {
             "general.device_cooldown_max_sec": 60,
             "general.device_cooldown_escalation_threshold": 1,
         }[key],
     )
-    monkeypatch.setattr("app.runs.service.register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr("app.runs.service.lifecycle_policy_actions.exclude_run_if_needed", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.exclude_run_if_needed", AsyncMock())
     escalated_until, count, escalated, threshold = await run_service.cooldown_device(
         db_session,
         refreshed.id,
@@ -537,7 +542,7 @@ async def test_report_preparation_failure_missing_device_path(
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="prep-missing-run", devices=[device], state=RunState.active)
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
 
     with pytest.raises(ValueError, match="Device not found"):
         await run_service.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
@@ -582,7 +587,7 @@ async def test_release_devices_unusual_restore_branches(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.runs.service.grid_service.terminate_grid_session", AsyncMock(return_value=True))
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=True))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
     pending = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
 
@@ -608,9 +613,9 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
     )
     db = AsyncMock()
     db.commit = AsyncMock()
-    monkeypatch.setattr("app.runs.service._mark_running_sessions_released", AsyncMock())
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}._mark_running_sessions_released", AsyncMock())
     monkeypatch.setattr(
-        "app.runs.service.device_locking.lock_devices",
+        f"{RUN_RELEASE_MODULE}.device_locking.lock_devices",
         AsyncMock(
             return_value=[
                 SimpleNamespace(
@@ -631,7 +636,7 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
 
 
 async def test_report_preparation_failure_missing_and_terminal_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.runs.service.get_run", AsyncMock(return_value=None))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.get_run", AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Run not found"):
         await run_service.report_preparation_failure(AsyncMock(), uuid.uuid4(), uuid.uuid4(), message="bad")
 
@@ -643,7 +648,7 @@ async def test_report_preparation_failure_missing_and_terminal_run(monkeypatch: 
         ttl_minutes=10,
         heartbeat_timeout_sec=30,
     )
-    monkeypatch.setattr("app.runs.service.get_run", AsyncMock(return_value=terminal))
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.get_run", AsyncMock(return_value=terminal))
     with pytest.raises(ValueError, match="terminal run"):
         await run_service.report_preparation_failure(AsyncMock(), terminal.id, uuid.uuid4(), message="bad")
 
@@ -652,7 +657,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
     assert run_service._reserved_entry_is_excluded(
         SimpleNamespace(excluded=True, excluded_until=datetime.now(UTC) + timedelta(minutes=1))
     )
-    monkeypatch.setattr("app.runs.service.settings_service.get", lambda key: 10)
+    monkeypatch.setattr("app.runs.service_allocator.settings_service.get", lambda key: 10)
     with pytest.raises(ValueError, match="exceeds maximum"):
         run_service._resolve_run_options(
             SimpleNamespace(ttl_minutes=20, heartbeat_timeout_sec=None),
@@ -677,9 +682,9 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
         async def get(self, *_args: object, **_kwargs: object) -> object | None:
             return None
 
-    monkeypatch.setattr("app.runs.service.lifecycle_policy.complete_deferred_stop_if_session_ended", AsyncMock())
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.lifecycle_policy.complete_deferred_stop_if_session_ended", AsyncMock())
     await run_service._complete_deferred_stops_post_commit(DeferredSession(), [missing_device_id])  # type: ignore[arg-type]
-    run_service.lifecycle_policy.complete_deferred_stop_if_session_ended.assert_not_awaited()
+    run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended.assert_not_awaited()
 
 
 async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -687,9 +692,9 @@ async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monk
     active = SimpleNamespace(device_id=uuid.uuid4(), released_at=None)
     run = SimpleNamespace(id=uuid.uuid4(), device_reservations=[released, active])
     db = AsyncMock()
-    monkeypatch.setattr("app.runs.service.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     revoke = AsyncMock()
-    monkeypatch.setattr("app.runs.service.revoke_intents_and_reconcile", revoke)
+    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.revoke_intents_and_reconcile", revoke)
 
     await run_service._clear_desired_grid_run_id_for_run(db, run=run, caller="run_completed")
 

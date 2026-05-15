@@ -40,7 +40,7 @@ async def test_create_run_rechecks_readiness_after_lock(
             await asyncio.wait_for(allow_reservation.wait(), timeout=2.0)
         return result
 
-    monkeypatch.setattr(run_service, "_readiness_for_match", gated_readiness)
+    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", gated_readiness)
 
     async def create_run() -> None:
         async with db_session_maker() as session:

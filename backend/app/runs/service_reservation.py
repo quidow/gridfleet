@@ -59,6 +59,18 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
     return result.scalar_one_or_none()
 
 
+async def get_run_for_update(db: AsyncSession, run_id: uuid.UUID) -> TestRun | None:
+    stmt = (
+        select(TestRun)
+        .where(TestRun.id == run_id)
+        .options(selectinload(TestRun.device_reservations).selectinload(DeviceReservation.device))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_device_reservation_with_entry(
     db: AsyncSession,
     device_id: uuid.UUID,

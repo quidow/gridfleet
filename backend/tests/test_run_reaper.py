@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
 
@@ -130,7 +131,7 @@ async def test_expire_run_deletes_active_grid_session(
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
 
     await run_service.expire_run(db_session, run, "Heartbeat timeout")
 

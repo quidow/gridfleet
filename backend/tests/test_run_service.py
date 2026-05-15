@@ -9,6 +9,7 @@ from app.devices.services.lifecycle_policy import handle_health_failure
 from app.grid import service as grid_service
 from app.hosts.models import Host
 from app.runs import service as run_service
+from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 
@@ -141,7 +142,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     call_log: list[str] = []
 
     real_release = run_service._release_devices
-    real_helper = run_service.lifecycle_policy.complete_deferred_stop_if_session_ended
+    real_helper = run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended
 
     async def _spy_release(*args: object, **kwargs: object) -> list:
         # Marker is recorded AFTER awaiting the real implementation so the
@@ -160,9 +161,9 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     async def _fake_terminate(_session_id: str) -> bool:
         return True
 
-    monkeypatch.setattr(run_service, "_release_devices", _spy_release)
+    monkeypatch.setattr("app.runs.service_lifecycle._release_devices", _spy_release)
     monkeypatch.setattr(
-        run_service.lifecycle_policy,
+        run_lifecycle_release.lifecycle_policy,
         "complete_deferred_stop_if_session_ended",
         _spy_helper,
     )
