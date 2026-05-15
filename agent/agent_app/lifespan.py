@@ -180,7 +180,7 @@ async def _stop_grid_node_supervisors_for_shutdown(
     *,
     timeout_sec: float = GRID_NODE_SHUTDOWN_TIMEOUT_SEC,
 ) -> None:
-    supervisors = list(manager._grid_supervisors.items())
+    supervisors = manager.iter_grid_supervisors()
     if not supervisors:
         return
 
@@ -195,15 +195,15 @@ async def _stop_grid_node_supervisors_for_shutdown(
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        # Leave timed-out supervisor handles in `manager._grid_supervisors`
-        # so the immediate `appium_mgr.shutdown()` can re-attempt the stop.
+        # Leave timed-out supervisor handles registered so the immediate
+        # `appium_mgr.shutdown()` can re-attempt the stop.
         # `GridNodeSupervisorHandle.stop()` is idempotent (cancelled task is a
         # no-op on the second pass), so retrying is safe and orphans nothing.
         logger.warning("timed out stopping grid node supervisors during shutdown")
         return
     for result in results:
         if isinstance(result, int):
-            manager._grid_supervisors.pop(result, None)
+            manager.pop_grid_supervisor(result)
         elif isinstance(result, Exception):
             logger.warning("failed to stop grid node supervisor during shutdown", exc_info=result)
 

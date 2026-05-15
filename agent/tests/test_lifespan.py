@@ -31,10 +31,18 @@ class FailingSupervisor(RecordingSupervisor):
         raise RuntimeError("stop failed")
 
 
+class RecordingManager(SimpleNamespace):
+    def iter_grid_supervisors(self) -> list[tuple[int, RecordingSupervisor]]:
+        return list(self._grid_supervisors.items())
+
+    def pop_grid_supervisor(self, port: int) -> None:
+        self._grid_supervisors.pop(port, None)
+
+
 async def test_stop_grid_node_supervisors_for_shutdown_stops_all_and_clears_handles() -> None:
     first = RecordingSupervisor("first")
     second = RecordingSupervisor("second")
-    manager = SimpleNamespace(_grid_supervisors={4723: first, 4724: second})
+    manager = RecordingManager(_grid_supervisors={4723: first, 4724: second})
 
     await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=1.0)
 
@@ -46,7 +54,7 @@ async def test_stop_grid_node_supervisors_for_shutdown_stops_all_and_clears_hand
 async def test_stop_grid_node_supervisors_for_shutdown_keeps_failed_handles() -> None:
     failed = FailingSupervisor("failed")
     stopped = RecordingSupervisor("stopped")
-    manager = SimpleNamespace(_grid_supervisors={4723: failed, 4724: stopped})
+    manager = RecordingManager(_grid_supervisors={4723: failed, 4724: stopped})
 
     await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=1.0)
 

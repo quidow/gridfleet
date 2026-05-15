@@ -330,6 +330,16 @@ class AppiumProcessManager:
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
 
+    def iter_grid_supervisors(self) -> list[tuple[int, GridNodeSupervisorHandle]]:
+        """Snapshot of (port, supervisor) pairs; safe to iterate while mutating."""
+
+        return list(self._grid_supervisors.items())
+
+    def pop_grid_supervisor(self, port: int) -> None:
+        """Remove a supervisor entry by port. No-op if absent."""
+
+        self._grid_supervisors.pop(port, None)
+
     async def _read_stream(self, port: int, stream: asyncio.StreamReader, prefix: str) -> None:
         while True:
             line = await stream.readline()

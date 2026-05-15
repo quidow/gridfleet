@@ -20,6 +20,7 @@ async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -
     fast = MagicMock()
     manager = MagicMock()
     manager._grid_supervisors = {4723: slow, 4724: fast}
+    manager.iter_grid_supervisors.return_value = list(manager._grid_supervisors.items())
 
     await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=0.01)
 
