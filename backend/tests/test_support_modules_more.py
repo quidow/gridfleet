@@ -119,7 +119,10 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
         "app.core.health.get_background_loop_snapshots",
         AsyncMock(return_value={"heartbeat": {"owner": "x"}}),
     )
-    monkeypatch.setattr("app.core.health.loop_heartbeat_fresh", lambda snapshot, now: False)
+    monkeypatch.setattr(
+        "app.core.health.loop_heartbeat_fresh",
+        lambda snapshot, now, extra_grace_seconds=0.0: False,
+    )
 
     payload, status = await health.check_readiness(db)
 

@@ -19,8 +19,11 @@ from app.core.metrics_recorders import record_background_loop_error, record_back
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
+    from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 class _ControlPlaneStateStore(Protocol):
@@ -188,12 +191,26 @@ def parse_timestamp(raw: object) -> datetime | None:
         return None
 
 
-def loop_heartbeat_fresh(snapshot: dict[str, Any], *, now: datetime | None = None) -> bool:
+def loop_heartbeat_fresh(
+    snapshot: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    extra_grace_seconds: float = 0.0,
+) -> bool:
+    """Return True when ``snapshot["next_expected_at"]`` is still within grace.
+
+    ``extra_grace_seconds`` lets the caller account for the eventual-consistency
+    window between an in-memory heartbeat update and its batched DB flush.
+    Readiness probes pass the configured flush interval so a loop running
+    on-schedule is never reported stale just because the flusher has not yet
+    persisted the latest ``next_expected_at``.
+    """
     next_expected_at = parse_timestamp(snapshot.get("next_expected_at"))
     if next_expected_at is None:
         return False
     current_time = now or _now()
-    return current_time <= next_expected_at + timedelta(seconds=LOOP_HEARTBEAT_STALE_GRACE_SEC)
+    grace = timedelta(seconds=LOOP_HEARTBEAT_STALE_GRACE_SEC + max(extra_grace_seconds, 0.0))
+    return current_time <= next_expected_at + grace
 
 
 def _control_plane_state_store() -> _ControlPlaneStateStore:
@@ -304,7 +321,7 @@ def current_background_loop_snapshots() -> dict[str, dict[str, Any]]:
 
 
 async def flush_background_loop_snapshots(
-    session_factory: Callable[[], Any] | None = None,
+    session_factory: SessionFactory | None = None,
 ) -> int:
     """Batch-flush in-memory background-loop snapshots to the state table.
 
@@ -331,7 +348,7 @@ async def flush_background_loop_snapshots(
 
 
 async def background_loop_flush_loop(
-    session_factory: Callable[[], Any] | None = None,
+    session_factory: SessionFactory | None = None,
     *,
     interval_provider: Callable[[], float] | None = None,
 ) -> None:
@@ -353,11 +370,19 @@ async def background_loop_flush_loop(
         await asyncio.sleep(interval)
 
 
-def _default_flush_interval() -> float:
-    # Lazily import via importlib to avoid a circular dependency at module load
-    # time (app.settings imports app.core.observability for the logger).
+def current_background_loop_flush_interval_seconds() -> float:
+    """Read the active flush window from the settings registry.
+
+    Lazily imports ``app.settings`` via ``importlib`` so ``app/core/*`` modules
+    can call it without violating the core-purity import-graph guard
+    (``tests/test_import_graph.py``).
+    """
     settings_service = importlib.import_module("app.settings").settings_service
     return float(settings_service.get("general.background_loop_flush_interval_sec"))
+
+
+# Internal alias retained for the flush task default; tests stub it directly.
+_default_flush_interval = current_background_loop_flush_interval_seconds
 
 
 @dataclass

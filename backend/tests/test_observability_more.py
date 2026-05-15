@@ -244,3 +244,16 @@ def test_loop_heartbeat_freshness_signal_uses_next_expected_at() -> None:
     stale = {"next_expected_at": (now - timedelta(minutes=1)).isoformat()}
     assert observability.loop_heartbeat_fresh(fresh, now=now) is True
     assert observability.loop_heartbeat_fresh(stale, now=now) is False
+
+
+def test_loop_heartbeat_freshness_respects_extra_grace_window() -> None:
+    """A snapshot that is past the base grace but inside the flush window stays fresh."""
+    now = datetime.now(UTC)
+    base_grace = observability.LOOP_HEARTBEAT_STALE_GRACE_SEC
+    past_due = {"next_expected_at": (now - timedelta(seconds=base_grace + 5)).isoformat()}
+    # Without extra grace the snapshot is stale by 5s.
+    assert observability.loop_heartbeat_fresh(past_due, now=now) is False
+    # With a 15s flush-window cushion (the default) it is healthy again.
+    assert observability.loop_heartbeat_fresh(past_due, now=now, extra_grace_seconds=15.0) is True
+    # Negative values are clamped to zero so callers cannot tighten the window.
+    assert observability.loop_heartbeat_fresh(past_due, now=now, extra_grace_seconds=-100.0) is False
