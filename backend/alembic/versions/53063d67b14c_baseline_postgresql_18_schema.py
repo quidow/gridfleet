@@ -542,9 +542,9 @@ def upgrade() -> None:
         sa.Column("health_running", sa.Boolean(), nullable=True),
         sa.Column("health_state", sa.Text(), nullable=True),
         sa.CheckConstraint(
-            "desired_state = 'running' OR desired_port IS NULL", name="ck_appium_nodes_desired_port_requires_running"
+            "desired_state = 'running' OR desired_port IS NULL", name="desired_port_requires_running"
         ),
-        sa.CheckConstraint("desired_state IN ('running', 'stopped')", name="ck_appium_nodes_desired_state"),
+        sa.CheckConstraint("desired_state IN ('running', 'stopped')", name="desired_state"),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("device_id"),

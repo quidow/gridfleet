@@ -114,8 +114,8 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         sort_dir="desc",
         db=db,
     )
-    assert page.next_cursor == "next"
-    assert page.items[0].session_counts.running == 1
+    assert page["next_cursor"] == "next"
+    assert page["items"][0].session_counts.running == 1
 
     monkeypatch.setattr(runs.run_service, "list_runs", AsyncMock(return_value=([run], 1)))
     offset_page = await runs.list_runs(
@@ -131,8 +131,8 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         sort_dir="desc",
         db=db,
     )
-    assert offset_page.total == 1
-    assert offset_page.offset == 2
+    assert offset_page["total"] == 1
+    assert offset_page["offset"] == 2
 
     with pytest.raises(HTTPException) as invalid_date:
         await runs.list_runs(
@@ -236,7 +236,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     created = await runs.create_run(RunCreate(name="r", requirements=[]), include="config", db=db)
-    assert created.devices[0].unavailable_includes[0].reason == "device_not_found"
+    assert created["devices"][0].unavailable_includes[0].reason == "device_not_found"
 
     active = _run(RunState.active)
     monkeypatch.setattr(

@@ -20,10 +20,10 @@ class AppiumDesiredState(enum.StrEnum):
 class AppiumNode(Base):
     __tablename__ = "appium_nodes"
     __table_args__ = (
-        CheckConstraint("desired_state IN ('running', 'stopped')", name="ck_appium_nodes_desired_state"),
+        CheckConstraint("desired_state IN ('running', 'stopped')", name="desired_state"),
         CheckConstraint(
             "desired_state = 'running' OR desired_port IS NULL",
-            name="ck_appium_nodes_desired_port_requires_running",
+            name="desired_port_requires_running",
         ),
     )
 

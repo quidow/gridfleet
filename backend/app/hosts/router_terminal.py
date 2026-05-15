@@ -101,6 +101,10 @@ async def host_terminal(ws: WebSocket, host_id: uuid.UUID) -> None:
     ) as exc:
         logger.warning("terminal proxy closed: %s", exc)
         close_reason = "proxy_error"
+    except Exception:
+        logger.exception("terminal proxy crashed unexpectedly")
+        with contextlib.suppress(Exception):
+            await ws.close(code=status.WS_1011_INTERNAL_ERROR)
     finally:
         with contextlib.suppress(Exception):
             async with async_session() as db:

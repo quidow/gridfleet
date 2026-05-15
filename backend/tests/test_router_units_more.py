@@ -229,10 +229,10 @@ async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
             limit=5, device_id=None, cursor=None, direction="newer", db=db
         )
 
-    assert response.items == []
-    assert response.limit == 5
-    assert response.next_cursor == "next"
-    assert response.prev_cursor == "prev"
+    assert response["items"] == []
+    assert response["limit"] == 5
+    assert response["next_cursor"] == "next"
+    assert response["prev_cursor"] == "prev"
     list_incidents.assert_awaited_once_with(db, limit=5, device_id=None, cursor=None, direction="newer")
 
 
@@ -296,7 +296,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
             include="config",
             db=db,
         )
-    assert created.id == run.id
+    assert created["id"] == run.id
     hydrate.assert_awaited_once()
 
     with patch.object(driver_pack_export, "PackStorageService") as storage_cls:
@@ -572,7 +572,7 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
         select_mock.return_value.where.return_value = object()
         db = DummySession(execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
         response = await runs.create_run(RunCreate(name="r", requirements=[]), include="config", db=db)
-    assert response.id == run.id
+    assert response["id"] == run.id
     mark.assert_called_once()
     hydrate.assert_awaited_once()
 
@@ -831,8 +831,8 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             sort_dir="desc",
             db=object(),
         )
-    assert listed.total == 1
-    assert listed.items[0].session_id == "s1"
+    assert listed["total"] == 1
+    assert listed["items"][0]["session_id"] == "s1"
 
     cursor_request = SimpleNamespace(query_params={"cursor": "bad"})
     with patch(
@@ -881,8 +881,8 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             sort_dir="desc",
             db=object(),
         )
-    assert listed.next_cursor == "next"
-    assert listed.prev_cursor == "prev"
+    assert listed["next_cursor"] == "next"
+    assert listed["prev_cursor"] == "prev"
 
     with patch("app.sessions.router.session_service.get_session", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
@@ -1224,7 +1224,7 @@ async def test_host_terminal_rejects_origin_and_unauthenticated_browser() -> Non
     assert unauthenticated_ws.close_codes == [1008]
 
 
-async def test_host_terminal_adapter_methods_and_unexpected_proxy_error_propagates() -> None:
+async def test_host_terminal_adapter_methods_and_unexpected_proxy_error_closes_ws() -> None:
     host_id = uuid.uuid4()
     ws = _FakeHostTerminalWebSocket(origin="https://ok.test")
     host = SimpleNamespace(
@@ -1254,12 +1254,11 @@ async def test_host_terminal_adapter_methods_and_unexpected_proxy_error_propagat
         patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
         patch("app.hosts.router_terminal.agent_settings.agent_terminal_token", "token"),
     ):
-        with pytest.raises(RuntimeError, match="proxy exploded"):
-            await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
+        await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
 
     assert ws.accepted is True
     assert ws.sent == ["agent-output"]
-    assert ws.close_codes == [1001, 1000]
+    assert ws.close_codes == [1001, 1011, 1000]
     close_session.assert_awaited_once()
     assert close_session.await_args.kwargs["session_id"] == session_id
     assert close_session.await_args.kwargs["close_reason"] == "unknown"
@@ -2262,7 +2261,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
         assert (await webhooks.test_webhook(webhook_id, db=object()))["webhook_name"] == "alerts"
         publish.assert_awaited_once()
         deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
-        assert deliveries.total == 1
+        assert deliveries["total"] == 1
         with pytest.raises(HTTPException) as exc:
             await webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object())
         assert exc.value.status_code == 404
@@ -2303,8 +2302,8 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         patch("app.runs.router.settings_service.get", new=Mock(return_value="http://grid:4444")),
     ):
         created = await runs.create_run(payload, include=None, db=object())
-    assert created.id == run.id
-    assert created.grid_url == "http://grid:4444"
+    assert created["id"] == run.id
+    assert created["grid_url"] == "http://grid:4444"
 
     request = SimpleNamespace(query_params={})
     with pytest.raises(HTTPException) as exc:
@@ -2333,8 +2332,8 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
             sort_dir="desc",
             db=object(),
         )
-    assert listed.total == 1
-    assert listed.items[0].id == run.id
+    assert listed["total"] == 1
+    assert listed["items"][0].id == run.id
 
     cursor_request = SimpleNamespace(query_params={"cursor": "bad"})
     with patch(
@@ -2419,7 +2418,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
 
     with patch("app.runs.router.run_service.heartbeat", new=AsyncMock(return_value=run)):
         heartbeat = await runs.heartbeat(run_id, db=object())
-    assert heartbeat.state == run.state
+    assert heartbeat["state"] == run.state
 
     for call, service_name in ((runs.signal_ready, "signal_ready"), (runs.complete_run, "complete_run")):
         with (
@@ -2526,7 +2525,7 @@ async def test_devices_core_router_branches() -> None:
     )
     with patch("app.packs.routers.templates.list_templates", new=Mock(return_value=[descriptor])):
         templates = await driver_pack_templates.get_templates(_username="admin")
-    assert templates.templates[0].template_id == "android-real"
+    assert templates["templates"][0]["template_id"] == "android-real"
 
     with pytest.raises(HTTPException) as exc:
         await driver_pack_templates.create_from_template(
@@ -2794,8 +2793,8 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
         patch.object(runs.run_service, "build_run_read", new=Mock(return_value=read)),
     ):
         detail = await runs.get_run(run_id, db=object())
-    assert detail.id == run_id
-    assert detail.devices == []
+    assert detail["id"] == run_id
+    assert detail["devices"] == []
 
     for message, status_code in (
         ("run not found", 404),

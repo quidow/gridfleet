@@ -16,16 +16,6 @@ def test_alembic_migrations_have_single_head() -> None:
     assert len(heads) == 1, f"Expected one Alembic head, found {len(heads)}: {', '.join(heads)}"
 
 
-def test_alembic_history_is_single_baseline_revision() -> None:
-    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    script = ScriptDirectory.from_config(config)
-
-    revisions = list(script.walk_revisions())
-
-    assert len(revisions) == 1, f"Expected one baseline Alembic revision, found {len(revisions)}"
-    assert revisions[0].down_revision is None
-
-
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_postgresql_server_supports_uuidv7(db_session: AsyncSession) -> None:

@@ -64,6 +64,16 @@ CONSTRAINT_RENAMES: tuple[tuple[str, str, str], ...] = (
         "device_group_memberships_group_id_device_id_key",
         "device_group_memberships_group_id_key",
     ),
+    (
+        "appium_nodes",
+        "ck_appium_nodes_desired_state",
+        "appium_nodes_desired_state_check",
+    ),
+    (
+        "appium_nodes",
+        "ck_appium_nodes_desired_port_requires_running",
+        "appium_nodes_desired_port_requires_running_check",
+    ),
 )
 
 
@@ -75,7 +85,13 @@ def _rename_constraint_if_exists(table: str, old: str, new: str) -> None:
     op.execute(
         sa.text(
             "DO $$ BEGIN "
-            f"IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{old}') THEN "
+            "IF EXISTS ("
+            "SELECT 1 FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            f"WHERE c.conname = '{old}' AND t.relname = '{table}' "
+            "AND n.nspname = current_schema()"
+            ") THEN "
             f'EXECUTE \'ALTER TABLE "{table}" RENAME CONSTRAINT "{old}" TO "{new}"\'; '
             "END IF; END $$"
         )

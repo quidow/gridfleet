@@ -84,8 +84,8 @@ async def test_appium_nodes_has_desired_state_columns(alembic_session: AsyncSess
         assert cols["last_observed_at"]["nullable"] is True
 
         check_names = {c["name"] for c in insp.get_check_constraints("appium_nodes")}
-        assert "ck_appium_nodes_desired_state" in check_names
-        assert "ck_appium_nodes_desired_port_requires_running" in check_names
+        assert "appium_nodes_desired_state_check" in check_names
+        assert "appium_nodes_desired_port_requires_running_check" in check_names
 
     await alembic_session.run_sync(lambda s: _inspect(s.connection()))
 
@@ -99,7 +99,7 @@ async def test_check_constraint_definition_excludes_error(alembic_session: Async
             "FROM pg_constraint c "
             "JOIN pg_class t ON t.oid = c.conrelid "
             "JOIN pg_namespace n ON n.oid = t.relnamespace "
-            "WHERE c.conname = 'ck_appium_nodes_desired_state' "
+            "WHERE c.conname = 'appium_nodes_desired_state_check' "
             "AND t.relname = 'appium_nodes' "
             "AND n.nspname = current_schema()"
         )
@@ -121,7 +121,7 @@ async def test_check_constraint_requires_stopped_nodes_to_have_no_desired_port(
             "FROM pg_constraint c "
             "JOIN pg_class t ON t.oid = c.conrelid "
             "JOIN pg_namespace n ON n.oid = t.relnamespace "
-            "WHERE c.conname = 'ck_appium_nodes_desired_port_requires_running' "
+            "WHERE c.conname = 'appium_nodes_desired_port_requires_running_check' "
             "AND t.relname = 'appium_nodes' "
             "AND n.nspname = current_schema()"
         )
