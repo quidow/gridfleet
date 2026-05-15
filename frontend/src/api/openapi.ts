@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/{host_id}/log-batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ingest a batch of agent process log lines */
+        post: operations["ingest_agent_log_batch_agent__host_id__log_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/appium-nodes/{node_id}/clear-transition": {
         parameters: {
             query?: never;
@@ -1399,6 +1416,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hosts/{host_id}/agent-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paginated agent process logs for a host */
+        get: operations["get_agent_logs_api_hosts__host_id__agent_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts/{host_id}/approve": {
         parameters: {
             query?: never;
@@ -1501,6 +1535,23 @@ export interface paths {
          *     when the agent fails to respond — both raised by the dispatcher.
          */
         post: operations["invoke_feature_action_api_hosts__host_id__driver_packs__pack_id__features__feature_id__actions__action_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hosts/{host_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Persisted backend events scoped to a host */
+        get: operations["get_host_events_api_hosts__host_id__events_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2165,6 +2216,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentLogBatchIngest */
+        AgentLogBatchIngest: {
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Lines */
+            lines?: components["schemas"]["ShippedLogLineIngest"][];
+        };
+        /** AgentLogIngestResult */
+        AgentLogIngestResult: {
+            /** Accepted */
+            accepted: number;
+            /** Deduped */
+            deduped: number;
+        };
+        /** AgentLogLine */
+        AgentLogLine: {
+            /**
+             * Boot Id
+             * Format: uuid
+             */
+            boot_id: string;
+            /** Level */
+            level: string;
+            /** Logger Name */
+            logger_name: string;
+            /** Message */
+            message: string;
+            /** Sequence No */
+            sequence_no: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
+        /** AgentLogPage */
+        AgentLogPage: {
+            /** Has More */
+            has_more: boolean;
+            /** Lines */
+            lines: components["schemas"]["AgentLogLine"][];
+            /** Total */
+            total: number;
+        };
         /**
          * AgentVersionStatus
          * @enum {string}
@@ -3611,6 +3709,29 @@ export interface components {
             /** Runtimes */
             runtimes: components["schemas"]["HostRuntimeStatusOut"][];
         };
+        /** HostEventEntry */
+        HostEventEntry: {
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            /** Event Id */
+            event_id: string;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Type */
+            type: string;
+        };
+        /** HostEventsPage */
+        HostEventsPage: {
+            /** Events */
+            events: components["schemas"]["HostEventEntry"][];
+            /** Total */
+            total: number;
+        };
         /** HostHardwareInfo */
         HostHardwareInfo: {
             /** Cpu Arch */
@@ -4845,6 +4966,22 @@ export interface components {
             /** Settings */
             settings: components["schemas"]["SettingRead"][];
         };
+        /** ShippedLogLineIngest */
+        ShippedLogLineIngest: {
+            /** Level */
+            level: string;
+            /** Logger Name */
+            logger_name: string;
+            /** Message */
+            message: string;
+            /** Sequence No */
+            sequence_no: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+        };
         /** SystemEventRead */
         SystemEventRead: {
             /** Data */
@@ -5090,6 +5227,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_agent_log_batch_agent__host_id__log_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentLogBatchIngest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLogIngestResult"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -10012,6 +10184,80 @@ export interface operations {
             };
         };
     };
+    get_agent_logs_api_hosts__host_id__agent_logs_get: {
+        parameters: {
+            query?: {
+                level?: string | null;
+                q?: string | null;
+                since?: string | null;
+                until?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLogPage"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     approve_host_api_hosts__host_id__approve_post: {
         parameters: {
             query?: never;
@@ -10376,6 +10622,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeatureActionResultOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_host_events_api_hosts__host_id__events_get: {
+        parameters: {
+            query?: {
+                types?: string | null;
+                since?: string | null;
+                until?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostEventsPage"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
