@@ -1,5 +1,4 @@
 import asyncio
-import collections
 import contextlib
 import json
 import signal
@@ -1297,9 +1296,9 @@ def test_running_info_for_target_no_match() -> None:
 
 def test_trim_restart_attempts_with_explicit_now() -> None:
     manager = AppiumProcessManager()
-    attempts: dict[int, collections.deque[float]] = {}
+    attempts: dict[int, deque[float]] = {}
     now = 1000.0
-    attempts[4723] = collections.deque([now - 400, now - 10])
+    attempts[4723] = deque([now - 400, now - 10])
     history = manager._trim_restart_attempts(attempts, 4723, now=now)
     # Only entries within 300s window kept
     assert list(history) == [now - 10]
@@ -1460,7 +1459,7 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
     ):
         task = asyncio.create_task(manager._auto_restart_appium(4723, exit_code=1), name="auto_restart_4723")
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, timeout=1.0)
 
     # Backoff step should have advanced once
     assert manager._appium_restart_backoff_steps.get(4723, 0) >= 1
@@ -1517,7 +1516,7 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
         platform_id="android_mobile",
     )
     # Pre-seed logs so we can assert they are cleared on failure
-    manager._logs[4723] = collections.deque(["old log"], maxlen=10)
+    manager._logs[4723] = deque(["old log"], maxlen=10)
 
     proc = FakeProcess(pid=1234, stdout=_stream_with_lines("booting"))
 
@@ -1592,7 +1591,7 @@ async def test_stop_when_grid_idle_stops_when_no_session() -> None:
     manager._grid_supervisors[4723] = cast("Any", handle)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=1))
     manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._logs[4723] = collections.deque(["line"], maxlen=10)
+    manager._logs[4723] = deque(["line"], maxlen=10)
     manager._log_tasks[4723] = []
     manager._stop_pending_ports.add(4723)
     manager._launch_specs[4723] = AppiumLaunchSpec(
@@ -1659,7 +1658,7 @@ async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() ->
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
-    manager._logs[4723] = collections.deque(["log"], maxlen=10)
+    manager._logs[4723] = deque(["log"], maxlen=10)
     manager._log_tasks[4723] = [asyncio.create_task(asyncio.sleep(999))]
 
     with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("grid boom")):
@@ -1735,7 +1734,7 @@ async def test_stop_pending_task_cancelled_when_stop_is_current_task() -> None:
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
     manager._grid_supervisors[4723] = handle
     manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._logs[4723] = collections.deque(["line"], maxlen=10)
+    manager._logs[4723] = deque(["line"], maxlen=10)
     manager._log_tasks[4723] = []
 
     # Create a fake stop_pending task whose done_callback might fire during stop

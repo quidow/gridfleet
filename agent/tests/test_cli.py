@@ -13,8 +13,6 @@ from agent_app.installer.status import AgentStatus
 from agent_app.installer.update import DrainResult, UpdateResult
 from agent_app.installer.uv_runtime import UvRuntime
 
-_UvRuntime = UvRuntime
-
 if TYPE_CHECKING:
     import pytest
 

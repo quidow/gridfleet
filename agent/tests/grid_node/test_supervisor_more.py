@@ -96,7 +96,7 @@ async def test_supervisor_wait_until_running_raises_when_errored_before_running(
 @pytest.mark.asyncio
 async def test_supervisor_stop_before_running_sets_stopped() -> None:
     handle = start_grid_node_supervisor(
-        factory=lambda: RecordingService(),
+        factory=RecordingService,
         clock=FakeClock(),
         config=FakeConfig(heartbeat_sec=1.0),
     )

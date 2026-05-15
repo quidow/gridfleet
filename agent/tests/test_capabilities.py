@@ -178,7 +178,7 @@ async def test_capabilities_refresh_loop_sleeps_first_when_refresh_immediately_f
         await asyncio.wait_for(hit_sleep.wait(), timeout=2.0)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, timeout=1.0)
     refresh.assert_not_awaited()
 
 
@@ -203,5 +203,5 @@ async def test_capabilities_refresh_loop_exception_logged() -> None:
         await asyncio.wait_for(hit_sleep.wait(), timeout=2.0)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, timeout=1.0)
     refresh.assert_awaited()

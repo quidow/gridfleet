@@ -247,4 +247,4 @@ async def test_run_forever_catches_exception_and_sleeps() -> None:
     await asyncio.sleep(0.05)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)

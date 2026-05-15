@@ -11,7 +11,6 @@ def _driver(known_bad: list[str] | None = None, recommended: str | None = "3.6.0
 
 
 def test_recommended_server_rejects_known_bad() -> None:
-    server = _server(recommended="2.11.5")
     server = AppiumInstallable("npm", "appium", ">=2.5,<3", "2.11.5", known_bad=["2.11.5"])
     spec = resolve_runtime_spec(
         pack_id="appium-uiautomator2",
