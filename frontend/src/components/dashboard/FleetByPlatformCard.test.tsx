@@ -50,7 +50,7 @@ const mockUseDevices = vi.fn();
 const mockUseDriverPackCatalog = vi.fn();
 let mockFleetTimeline = [
   {
-    bucket_start: 't0',
+    timestamp: 't0',
     devices_total: 5,
     devices_available: 1,
     devices_offline: 1,
@@ -59,9 +59,10 @@ let mockFleetTimeline = [
     hosts_online: 1,
     active_sessions: 0,
     queued_requests: 0,
+    has_data: true,
   },
   {
-    bucket_start: 't1',
+    timestamp: 't1',
     devices_total: 5,
     devices_available: 1,
     devices_offline: 1,
@@ -70,6 +71,7 @@ let mockFleetTimeline = [
     hosts_online: 1,
     active_sessions: 0,
     queued_requests: 0,
+    has_data: true,
   },
 ];
 
@@ -120,7 +122,7 @@ function renderCard() {
 beforeEach(() => {
   mockFleetTimeline = [
     {
-      bucket_start: 't0',
+      timestamp: 't0',
       devices_total: 5,
       devices_available: 1,
       devices_offline: 1,
@@ -132,7 +134,7 @@ beforeEach(() => {
       has_data: true,
     },
     {
-      bucket_start: 't1',
+      timestamp: 't1',
       devices_total: 5,
       devices_available: 1,
       devices_offline: 1,
@@ -214,8 +216,8 @@ describe('FleetByPlatformCard with fleet health history', () => {
     mockFleetTimeline = [
       { ...mockFleetTimeline[0]!, devices_total: 5, devices_offline: 4, devices_maintenance: 0 },
       { ...mockFleetTimeline[1]!, devices_total: 5, devices_offline: 4, devices_maintenance: 0 },
-      { ...mockFleetTimeline[1]!, bucket_start: 't2', devices_total: 5, devices_offline: 1, devices_maintenance: 0 },
-      { ...mockFleetTimeline[1]!, bucket_start: 't3', devices_total: 5, devices_offline: 2, devices_maintenance: 0 },
+      { ...mockFleetTimeline[1]!, timestamp: 't2', devices_total: 5, devices_offline: 1, devices_maintenance: 0 },
+      { ...mockFleetTimeline[1]!, timestamp: 't3', devices_total: 5, devices_offline: 2, devices_maintenance: 0 },
     ];
     const { container } = renderCard();
 
