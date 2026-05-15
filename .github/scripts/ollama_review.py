@@ -289,6 +289,171 @@ def post_review(review: dict[str, Any], eligible: dict[str, set[int]]) -> None:
         sys.exit(1)
 
 
+BOT_LOGIN = "github-actions[bot]"
+
+
+def _graphql(query: str, variables: dict[str, Any], token: str) -> dict[str, Any]:
+    req = urllib.request.Request(
+        "https://api.github.com/graphql",
+        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.github+json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    if body.get("errors"):
+        sys.stderr.write(f"graphql errors: {body['errors']}\n")
+    return body
+
+
+def list_bot_threads(owner: str, name: str, pr_number: int, token: str) -> list[dict[str, Any]]:
+    query = """
+    query($owner:String!, $name:String!, $number:Int!) {
+      repository(owner:$owner, name:$name) {
+        pullRequest(number:$number) {
+          reviewThreads(first:100) {
+            nodes {
+              id isResolved isOutdated path line
+              comments(first:5) { nodes { author { login } body } }
+            }
+          }
+        }
+      }
+    }
+    """
+    data = _graphql(query, {"owner": owner, "name": name, "number": pr_number}, token)
+    nodes = (
+        data.get("data", {})
+        .get("repository", {})
+        .get("pullRequest", {})
+        .get("reviewThreads", {})
+        .get("nodes", [])
+    ) or []
+    out: list[dict[str, Any]] = []
+    for t in nodes:
+        if t.get("isResolved"):
+            continue
+        comments = ((t.get("comments") or {}).get("nodes")) or []
+        if not comments:
+            continue
+        first = comments[0]
+        author = ((first.get("author") or {}).get("login")) or ""
+        if author != BOT_LOGIN:
+            continue
+        out.append(
+            {
+                "id": t["id"],
+                "outdated": bool(t.get("isOutdated")),
+                "path": t.get("path"),
+                "line": t.get("line"),
+                "body": first.get("body", ""),
+            }
+        )
+    return out
+
+
+def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[str]:
+    if not threads:
+        return set()
+    url = env("OLLAMA_URL")
+    model = env("OLLAMA_MODEL")
+    api_key = env("OLLAMA_API_KEY")
+    items = "\n".join(
+        f"- id={t['id']} {t['path']}:{t['line']}: {(t['body'] or '')[:400]}" for t in threads
+    )
+    system = (
+        "You decide whether prior code-review concerns are addressed by a new diff. "
+        "Be conservative: if unsure, do NOT resolve. "
+        "Respond with ONLY JSON: {\"resolved\": [\"<thread id>\", ...]} listing the thread IDs "
+        "whose concern is clearly fixed in the new diff. No prose, no fences."
+    )
+    user = f"Open concerns:\n{items}\n\nNew diff:\n```diff\n{patch[:80_000]}\n```"
+    payload = {
+        "model": model,
+        "stream": False,
+        "format": "json",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "options": {"temperature": 0.1},
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError) as e:
+        sys.stderr.write(f"resolve-check ollama failed: {e}\n")
+        return set()
+    content = data.get("message", {}).get("content", "")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        sys.stderr.write(f"resolve-check JSON parse failed: {content[:500]}\n")
+        return set()
+    return {x for x in (parsed.get("resolved") or []) if isinstance(x, str)}
+
+
+def resolve_thread(thread_id: str, token: str) -> bool:
+    mutation = """
+    mutation($id:ID!) {
+      resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } }
+    }
+    """
+    try:
+        _graphql(mutation, {"id": thread_id}, token)
+        return True
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"resolve {thread_id}: HTTP {e.code}\n")
+        return False
+
+
+def reconcile_existing_threads(patch: str) -> None:
+    repo = env("REPO")
+    token = env("GH_TOKEN")
+    pr_number = int(env("PR_NUMBER"))
+    owner, name = repo.split("/", 1)
+
+    try:
+        threads = list_bot_threads(owner, name, pr_number, token)
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"list threads failed: HTTP {e.code}\n")
+        return
+    if not threads:
+        return
+
+    to_resolve: set[str] = set()
+    needs_model: list[dict[str, Any]] = []
+    for t in threads:
+        if t["outdated"]:
+            to_resolve.add(t["id"])
+        else:
+            needs_model.append(t)
+
+    if needs_model:
+        addressed = ask_model_for_resolutions(needs_model[:10], patch)
+        to_resolve.update(addressed)
+
+    resolved = 0
+    for tid in to_resolve:
+        if resolve_thread(tid, token):
+            resolved += 1
+    print(
+        f"reconcile: {len(threads)} open bot threads, "
+        f"{sum(1 for t in threads if t['outdated'])} outdated, "
+        f"{resolved} resolved"
+    )
+
+
 def main() -> None:
     try:
         with open("pr.patch", encoding="utf-8") as f:
@@ -304,6 +469,8 @@ def main() -> None:
     max_chars = 200_000
     if len(patch) > max_chars:
         patch = patch[:max_chars] + "\n\n[diff truncated]\n"
+
+    reconcile_existing_threads(patch)
 
     eligible = parse_diff_positions(patch)
     identifiers = extract_identifiers(patch)
