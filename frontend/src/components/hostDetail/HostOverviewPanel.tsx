@@ -56,7 +56,11 @@ export default function HostOverviewPanel({
         </div>
 
         <div className="flex flex-col gap-6">
-          <HostOverviewResourceStrip hostId={host.id} />
+          <HostOverviewResourceStrip
+            hostId={host.id}
+            totalMemoryMb={host.total_memory_mb ?? null}
+            totalDiskGb={host.total_disk_gb ?? null}
+          />
           <div className="rounded-lg border border-border bg-surface-1 p-5">
             <div className="mb-3 flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-text-3">Actions</h2>
