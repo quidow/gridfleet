@@ -2,6 +2,51 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.10.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.9.0...gridfleet-agent-v0.10.0) (2026-05-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** extract per-domain routers from main.py (PR #1 of 3) ([#218](https://github.com/quidow/gridfleet/issues/218))
+* **agent:** user-scope install without sudo ([#209](https://github.com/quidow/gridfleet/issues/209))
+* **agent:** remove direct appium probe session endpoint
+
+### Features
+
+* **agent:** add global exception handlers emitting ErrorEnvelope shape ([da2bc5a](https://github.com/quidow/gridfleet/commit/da2bc5a579f994d743fdf5f0b7bade15fd8bfd07))
+* **agent:** add openapi metadata and grouped settings ([#220](https://github.com/quidow/gridfleet/issues/220)) ([186e05b](https://github.com/quidow/gridfleet/commit/186e05b201e23512a46000396e80d1f8ed5748f2))
+* **agent:** bind AGENT_HOST_ID and AGENT_BACKEND_URL into per-domain settings ([d15f3e8](https://github.com/quidow/gridfleet/commit/d15f3e8c6ceaa7cfb2b5c18fd2095edb31c15751))
+* **agent:** close FastAPI best-practice gaps ([443372e](https://github.com/quidow/gridfleet/commit/443372ecf9defd976cc17f327cdf81a5d233c211))
+* **agent:** emit Retry-After on runtime start failures ([a8a0849](https://github.com/quidow/gridfleet/commit/a8a0849fbca367f6b5935f5c7ccb81909a7f3ed5))
+* **agent:** expose public grid supervisor accessors on AppiumProcessManager ([458e4a5](https://github.com/quidow/gridfleet/commit/458e4a5448d8b9e37a8499d04c9b120d4b997c5f))
+* **agent:** expose registration state in /agent/health response ([4dc6ed3](https://github.com/quidow/gridfleet/commit/4dc6ed3463a5bdf2bb99b922010aa1c8f804f749))
+* **agent:** extract per-domain routers from main.py (PR [#1](https://github.com/quidow/gridfleet/issues/1) of 3) ([#218](https://github.com/quidow/gridfleet/issues/218)) ([7d440bb](https://github.com/quidow/gridfleet/commit/7d440bb257c7af70009e7de1ddba2441dda9ae8c))
+* **agent:** per-domain dependencies.py for every router ([#228](https://github.com/quidow/gridfleet/issues/228)) ([146cac5](https://github.com/quidow/gridfleet/commit/146cac5878c08024a9f768c5ed6ead576cfff3e5))
+* **agent:** remove direct appium probe session endpoint ([9113719](https://github.com/quidow/gridfleet/commit/9113719583811738ad42056f7ec6c29d8b247de6))
+* **agent:** response_model + uniform metadata on every route ([#227](https://github.com/quidow/gridfleet/issues/227)) ([990472e](https://github.com/quidow/gridfleet/commit/990472ee71864610930d1f4dc6a901f6eb8e72e4))
+* **agent:** store credentials and tokens as SecretStr to prevent repr leakage ([c754391](https://github.com/quidow/gridfleet/commit/c754391c2c721a306aa1e9655349f605999f795d))
+* **agent:** supervise lifespan background tasks with crash-logging watchdog ([baec041](https://github.com/quidow/gridfleet/commit/baec04103d07f1192674de86d4ba858997a2fb28))
+* **agent:** tighten response models with typed cores and named extras fields ([fd591e3](https://github.com/quidow/gridfleet/commit/fd591e3918f2a7e9f8f07daf012c823f5ab28745))
+* **agent:** typed schemas + field constraints + per-domain exceptions ([#224](https://github.com/quidow/gridfleet/issues/224)) ([68fad2c](https://github.com/quidow/gridfleet/commit/68fad2ccf4b971325d29f85477c3b0128f5a64f0))
+* **agent:** user-scope install without sudo ([#209](https://github.com/quidow/gridfleet/issues/209)) ([bbef2e9](https://github.com/quidow/gridfleet/commit/bbef2e9055752d1c90a4e6e3a84e510c1dd770e7))
+* **agent:** validate pack-router query params via Annotated and shared regex ([73a4bf3](https://github.com/quidow/gridfleet/commit/73a4bf31d2913ff5d4752ca686317d8c2e663c56))
+* **agent:** wire routers to annotated dependencies ([#219](https://github.com/quidow/gridfleet/issues/219)) ([967bce0](https://github.com/quidow/gridfleet/commit/967bce0b286bb776a3449d498e1f455c6befe6f9))
+* **backend:** codegen Pydantic models from agent OpenAPI ([#235](https://github.com/quidow/gridfleet/issues/235)) ([8c70b5c](https://github.com/quidow/gridfleet/commit/8c70b5c1ca3baad63582e17030e54dbc76bc5503))
+
+
+### Bug Fixes
+
+* **agent:** cap grid node maxSessions at 1 per device ([#237](https://github.com/quidow/gridfleet/issues/237)) ([f3d1b26](https://github.com/quidow/gridfleet/commit/f3d1b2679da36835f75f1e2822c92573ede2630b))
+* **agent:** clear CodeQL warnings in tests ([589b715](https://github.com/quidow/gridfleet/commit/589b71564e3c732a32af32226fbedd39f0ae72db))
+* **agent:** harden uninstall against half-broken host state ([c069052](https://github.com/quidow/gridfleet/commit/c069052c7d40d2a3a485d6ebc1ebbe38fb23cdcf))
+* **agent:** keep adapter-fed pack responses permissive ([954a31a](https://github.com/quidow/gridfleet/commit/954a31a8b9c4a8a1e5d03188be44713d576e5a5d))
+* **agent:** retry 4xx registration failures with sanitized body logging ([8258c6c](https://github.com/quidow/gridfleet/commit/8258c6c7e468924926ca7a66f40011ac247fed8e))
+* **agent:** reuse shared httpx client for pack tarball downloads ([30de8eb](https://github.com/quidow/gridfleet/commit/30de8eb05037ea4f4c50b26d18af673277e5106f))
+* **agent:** silence CodeQL "statement has no effect" on bare await task ([f346f59](https://github.com/quidow/gridfleet/commit/f346f5998db1529274a9874dd19510fb2ed7889f))
+* **agent:** stop leaking raw RuntimeError messages from /agent/appium/start ([f74fd81](https://github.com/quidow/gridfleet/commit/f74fd81d4607f5db553492eb330430824939b433))
+* **agent:** wrap host telemetry in dep and thin sync_agent_plugins ([#230](https://github.com/quidow/gridfleet/issues/230)) ([5721f0c](https://github.com/quidow/gridfleet/commit/5721f0ca1456f1b69f3493c7aa9eb98c4d7d2328))
+* **main:** route probe sessions through grid ([#211](https://github.com/quidow/gridfleet/issues/211)) ([5f7ef90](https://github.com/quidow/gridfleet/commit/5f7ef9036492949ba0dfb756ae5c84a3f3a9bb8a))
+
 ## [0.9.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.8.0...gridfleet-agent-v0.9.0) (2026-05-13)
 
 
