@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -5,7 +6,7 @@ from agent_app.host import hardware_info
 
 
 def _reset_cache() -> None:
-    hardware_info.collect.cache_clear()
+    hardware_info._cached = None
 
 
 def test_collect_returns_expected_shape_on_darwin() -> None:
@@ -122,3 +123,77 @@ def test_collect_caches_result() -> None:
         hardware_info.collect()
 
     assert cpu_count.call_count == 1
+
+
+def test_collect_does_not_cache_partial_snapshot() -> None:
+    """A snapshot with any ``None`` field must not be memoized — retried next call."""
+    _reset_cache()
+    uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
+    vm = MagicMock(total=32 * 1024**3)
+    cpu_count = MagicMock(return_value=12)
+
+    with (
+        patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
+        patch("agent_app.host.hardware_info.platform.system", return_value="Darwin"),
+        patch("agent_app.host.hardware_info.psutil.virtual_memory", return_value=vm),
+        patch("agent_app.host.hardware_info.psutil.disk_usage", side_effect=OSError("transient")),
+        patch("agent_app.host.hardware_info.psutil.cpu_count", new=cpu_count),
+        patch(
+            "agent_app.host.hardware_info.subprocess.check_output",
+            side_effect=["macOS\n", "14.5\n", "Apple M2 Pro\n"] * 2,
+        ),
+    ):
+        first = hardware_info.collect()
+        second = hardware_info.collect()
+
+    assert first["total_disk_gb"] is None
+    assert second["total_disk_gb"] is None
+    assert cpu_count.call_count == 2
+
+
+def test_collect_handles_psutil_failures() -> None:
+    _reset_cache()
+    uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
+
+    with (
+        patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
+        patch("agent_app.host.hardware_info.platform.system", return_value="Darwin"),
+        patch("agent_app.host.hardware_info.psutil.virtual_memory", side_effect=OSError("vm fail")),
+        patch("agent_app.host.hardware_info.psutil.disk_usage", side_effect=OSError("disk fail")),
+        patch("agent_app.host.hardware_info.psutil.cpu_count", side_effect=OSError("cpu fail")),
+        patch(
+            "agent_app.host.hardware_info.subprocess.check_output",
+            side_effect=["macOS\n", "14.5\n", "Apple M2 Pro\n"],
+        ),
+    ):
+        info = hardware_info.collect()
+
+    assert info["total_memory_mb"] is None
+    assert info["total_disk_gb"] is None
+    assert info["cpu_cores"] is None
+    assert info["os_version"] == "macOS 14.5"
+    assert info["kernel_version"] == "Darwin 23.5.0"
+
+
+def test_collect_handles_subprocess_timeout() -> None:
+    _reset_cache()
+    uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
+    vm = MagicMock(total=32 * 1024**3)
+    disk = MagicMock(total=1024 * 1024**3)
+
+    with (
+        patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
+        patch("agent_app.host.hardware_info.platform.system", return_value="Darwin"),
+        patch("agent_app.host.hardware_info.psutil.virtual_memory", return_value=vm),
+        patch("agent_app.host.hardware_info.psutil.disk_usage", return_value=disk),
+        patch("agent_app.host.hardware_info.psutil.cpu_count", return_value=12),
+        patch(
+            "agent_app.host.hardware_info.subprocess.check_output",
+            side_effect=subprocess.TimeoutExpired(cmd="sw_vers", timeout=5),
+        ),
+    ):
+        info = hardware_info.collect()
+
+    assert info["os_version"] is None
+    assert info["cpu_model"] is None
+    assert info["cpu_cores"] == 12
