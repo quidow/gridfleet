@@ -270,7 +270,8 @@ async def test_appium_status_returns_none_for_non_200() -> None:
     assert payload is None
 
 
-async def test_appium_status_returns_empty_for_non_mapping_payload() -> None:
+async def test_appium_status_returns_none_for_invalid_payload() -> None:
+    """appium_status is a None-on-failure endpoint: invalid payload -> None, not a raise."""
     client = StrictAgentClient(
         get_response=_response(
             "GET",
@@ -279,14 +280,13 @@ async def test_appium_status_returns_empty_for_non_mapping_payload() -> None:
         )
     )
 
-    payload = await agent_operations.appium_status(
+    result = await agent_operations.appium_status(
         "10.0.0.5",
         5100,
         4723,
         http_client_factory=_strict_client_factory(client),
     )
-
-    assert payload is None
+    assert result is None
 
 
 async def test_agent_health_raises_response_error_for_non_200() -> None:
@@ -407,10 +407,10 @@ async def test_agent_reconfigure_and_grid_reregister_invalid_payloads() -> None:
         post_response=_response(
             "POST",
             "http://10.0.0.5:5100/agent/grid/node/demo/reregister",
-            payload={"grid_run_id": 123},
+            payload={"grid_run_id": "not-a-uuid"},
         )
     )
-    with pytest.raises(AgentUnreachableError, match="invalid grid_run_id"):
+    with pytest.raises(AgentUnreachableError, match="invalid payload"):
         await agent_operations.grid_node_reregister(
             "10.0.0.5",
             5100,
@@ -440,10 +440,14 @@ async def test_agent_reconfigure_and_grid_reregister_invalid_payloads() -> None:
 
 async def test_pack_device_health_includes_optional_probe_params() -> None:
     client = StrictAgentClient(
-        get_response=_response("GET", "http://10.0.0.5:5100/agent/pack/devices/demo/health", payload={"ok": True})
+        get_response=_response(
+            "GET",
+            "http://10.0.0.5:5100/agent/pack/devices/demo/health",
+            payload={"healthy": True, "checks": []},
+        )
     )
 
-    assert await agent_operations.pack_device_health(
+    result = await agent_operations.pack_device_health(
         "10.0.0.5",
         5100,
         "demo",
@@ -455,7 +459,8 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
         ip_ping_timeout_sec=1.5,
         ip_ping_count=3,
         http_client_factory=_strict_client_factory(client),
-    ) == {"ok": True}
+    )
+    assert result["healthy"] is True
     params = client.get_calls[0][1]["params"]
     assert params["connection_type"] == "network"
     assert params["ip_address"] == "10.0.0.9"
@@ -537,7 +542,7 @@ async def test_list_plugins_filters_non_dict_payload_entries() -> None:
         get_response=_response(
             "GET",
             "http://10.0.0.5:5100/agent/plugins",
-            payload=[{"name": "images"}, 123, {"name": "execute-driver"}],
+            payload=[{"name": "images", "version": "1.0.0"}, 123, {"name": "execute-driver", "version": "2.0.0"}],
         )
     )
 
@@ -547,7 +552,7 @@ async def test_list_plugins_filters_non_dict_payload_entries() -> None:
         http_client_factory=_strict_client_factory(client),
     )
 
-    assert payload == [{"name": "images"}, {"name": "execute-driver"}]
+    assert payload == [{"name": "images", "version": "1.0.0"}, {"name": "execute-driver", "version": "2.0.0"}]
 
 
 async def test_sync_plugins_endpoint_returns_valid_payload() -> None:

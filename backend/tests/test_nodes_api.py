@@ -267,6 +267,13 @@ async def test_restart_node_converges_immediately(
     await db_session.commit()
     remote_manager_client.get.return_value = _mock_agent_response(
         {
+            "status": "ok",
+            "hostname": "test-host",
+            "os_type": "linux",
+            "version": "1.0.0",
+            "missing_prerequisites": [],
+            "capabilities": {},
+            "version_guidance": {},
             "appium_processes": {
                 "running_nodes": [
                     {
@@ -276,7 +283,7 @@ async def test_restart_node_converges_immediately(
                         "platform_id": "android_mobile",
                     }
                 ]
-            }
+            },
         }
     )
     remote_manager_client.post.side_effect = [

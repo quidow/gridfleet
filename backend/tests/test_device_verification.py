@@ -1293,6 +1293,7 @@ async def test_android_network_verification_resolves_stable_identity_before_save
             "device_type": "real_device",
             "connection_type": "network",
             "ip_address": "192.168.1.55",
+            "field_errors": [],
         }
     )
 
