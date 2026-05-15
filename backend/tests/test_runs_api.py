@@ -15,6 +15,7 @@ from app.devices.services import health as device_health
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
+from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
@@ -107,7 +108,7 @@ async def test_find_matching_devices_filters_tags_before_readiness(
         readiness_checked.append(device.id)
         return True
 
-    monkeypatch.setattr(run_service, "_readiness_for_match", fake_readiness)
+    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", fake_readiness)
 
     devices = await run_service._find_matching_devices(
         db_session,
@@ -492,7 +493,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -536,7 +537,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     async def fake_terminate(_session_id: str) -> bool:
         return False
 
-    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -652,7 +653,7 @@ async def test_force_release_restores_busy_run_devices(
     async def fake_terminate(_session_id: str) -> bool:
         return True
 
-    monkeypatch.setattr(run_service.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200
@@ -1003,7 +1004,7 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
             return False
         return await original_readiness(db, device)
 
-    monkeypatch.setattr(run_service, "_readiness_for_match", flaky)
+    monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", flaky)
 
     resp = await client.post(
         "/api/runs",
