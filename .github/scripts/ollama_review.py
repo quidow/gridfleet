@@ -8,6 +8,7 @@ hunks are eligible for inline comments; others fall back to the summary.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -236,24 +237,60 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
         return {"summary": content[:2000], "comments": []}
 
 
-def post_review(review: dict[str, Any], eligible: dict[str, set[int]]) -> None:
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def is_duplicate_of_resolved(
+    path: str, line: int, body: str, resolved: list[dict[str, Any]], threshold: float = 0.7
+) -> bool:
+    """True if a resolved thread sits at the same (path, line) with a similar body."""
+    body_n = _normalize(body)
+    if not body_n:
+        return False
+    for r in resolved:
+        if r.get("path") != path or r.get("line") != line:
+            continue
+        other = _normalize(r.get("body") or "")
+        if not other:
+            continue
+        if other == body_n:
+            return True
+        ratio = difflib.SequenceMatcher(None, body_n, other).ratio()
+        if ratio >= threshold:
+            return True
+    return False
+
+
+def post_review(
+    review: dict[str, Any],
+    eligible: dict[str, set[int]],
+    resolved_threads: list[dict[str, Any]] | None = None,
+) -> None:
     repo = env("REPO")
     pr = env("PR_NUMBER")
     head_sha = env("PR_HEAD_SHA")
     token = env("GH_TOKEN")
 
+    resolved = resolved_threads or []
     inline: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    dedup_count = 0
     for c in review.get("comments", []) or []:
         path = c.get("path")
         line = c.get("line")
         body = (c.get("body") or "").strip()
         if not path or not isinstance(line, int) or not body:
             continue
+        if is_duplicate_of_resolved(path, line, body, resolved):
+            dedup_count += 1
+            continue
         if path in eligible and line in eligible[path]:
             inline.append({"path": path, "line": line, "side": "RIGHT", "body": body})
         else:
             skipped.append({"path": path, "line": line, "body": body})
+    if dedup_count:
+        print(f"dedup: dropped {dedup_count} comment(s) matching already-resolved threads")
 
     summary = (review.get("summary") or "").strip() or "Automated review by Ollama."
     body_parts = [f"**Ollama review** ({env('OLLAMA_MODEL')})", "", summary]
@@ -318,7 +355,9 @@ def list_bot_threads(owner: str, name: str, pr_number: int, token: str) -> list[
           reviewThreads(first:100) {
             nodes {
               id isResolved isOutdated path line
-              comments(first:5) { nodes { author { login } body } }
+              comments(first:5) {
+                nodes { databaseId author { login } body }
+              }
             }
           }
         }
@@ -335,8 +374,6 @@ def list_bot_threads(owner: str, name: str, pr_number: int, token: str) -> list[
     ) or []
     out: list[dict[str, Any]] = []
     for t in nodes:
-        if t.get("isResolved"):
-            continue
         comments = ((t.get("comments") or {}).get("nodes")) or []
         if not comments:
             continue
@@ -347,13 +384,36 @@ def list_bot_threads(owner: str, name: str, pr_number: int, token: str) -> list[
         out.append(
             {
                 "id": t["id"],
+                "resolved": bool(t.get("isResolved")),
                 "outdated": bool(t.get("isOutdated")),
                 "path": t.get("path"),
                 "line": t.get("line"),
                 "body": first.get("body", ""),
+                "first_comment_id": first.get("databaseId"),
             }
         )
     return out
+
+
+def post_thread_reply(repo: str, pr_number: int, comment_id: int, body: str, token: str) -> bool:
+    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments/{comment_id}/replies"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"body": body}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return 200 <= resp.status < 300
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"reply on {comment_id}: HTTP {e.code}\n")
+        return False
 
 
 def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[str]:
@@ -417,9 +477,13 @@ def resolve_thread(thread_id: str, token: str) -> bool:
         return False
 
 
-def reconcile_existing_threads(patch: str) -> None:
+def reconcile_existing_threads(patch: str) -> list[dict[str, Any]]:
+    """Resolve addressed bot threads. Returns ALL bot threads now resolved
+    (pre-existing + newly resolved this run) for dedup of new comments.
+    """
     repo = env("REPO")
     token = env("GH_TOKEN")
+    head_sha = env("PR_HEAD_SHA")
     pr_number = int(env("PR_NUMBER"))
     owner, name = repo.split("/", 1)
 
@@ -427,31 +491,41 @@ def reconcile_existing_threads(patch: str) -> None:
         threads = list_bot_threads(owner, name, pr_number, token)
     except urllib.error.HTTPError as e:
         sys.stderr.write(f"list threads failed: HTTP {e.code}\n")
-        return
+        return []
     if not threads:
-        return
+        return []
 
-    to_resolve: set[str] = set()
-    needs_model: list[dict[str, Any]] = []
-    for t in threads:
-        if t["outdated"]:
-            to_resolve.add(t["id"])
-        else:
-            needs_model.append(t)
+    open_threads = [t for t in threads if not t["resolved"]]
 
-    if needs_model:
-        addressed = ask_model_for_resolutions(needs_model[:10], patch)
-        to_resolve.update(addressed)
+    outdated_ids = {t["id"] for t in open_threads if t["outdated"]}
+    live = [t for t in open_threads if not t["outdated"]]
+    addressed_ids: set[str] = set()
+    if live:
+        addressed_ids = ask_model_for_resolutions(live[:10], patch)
 
-    resolved = 0
-    for tid in to_resolve:
+    by_id = {t["id"]: t for t in open_threads}
+    resolved_now: list[dict[str, Any]] = []
+    for tid in outdated_ids | addressed_ids:
+        t = by_id.get(tid)
+        if not t:
+            continue
+        comment_id = t.get("first_comment_id")
+        if comment_id:
+            reason = (
+                "Resolving automatically: target line is no longer in the diff."
+                if tid in outdated_ids
+                else f"Resolving automatically: appears addressed in {head_sha[:7]}."
+            )
+            post_thread_reply(repo, pr_number, int(comment_id), reason, token)
         if resolve_thread(tid, token):
-            resolved += 1
+            resolved_now.append(t)
+
     print(
-        f"reconcile: {len(threads)} open bot threads, "
-        f"{sum(1 for t in threads if t['outdated'])} outdated, "
-        f"{resolved} resolved"
+        f"reconcile: {len(open_threads)} open / {len(threads) - len(open_threads)} already-resolved bot threads, "
+        f"{len(outdated_ids)} outdated, {len(resolved_now)} resolved this run"
     )
+
+    return [t for t in threads if t["resolved"]] + resolved_now
 
 
 def main() -> None:
@@ -470,7 +544,7 @@ def main() -> None:
     if len(patch) > max_chars:
         patch = patch[:max_chars] + "\n\n[diff truncated]\n"
 
-    reconcile_existing_threads(patch)
+    resolved_threads = reconcile_existing_threads(patch)
 
     eligible = parse_diff_positions(patch)
     identifiers = extract_identifiers(patch)
@@ -478,7 +552,7 @@ def main() -> None:
         print(f"context7 lookups: {identifiers}")
     docs = fetch_context7_docs(identifiers)
     review = call_ollama(patch, docs)
-    post_review(review, eligible)
+    post_review(review, eligible, resolved_threads)
 
 
 if __name__ == "__main__":
