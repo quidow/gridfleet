@@ -73,12 +73,12 @@ async def list_webhook_deliveries(
     webhook_id: uuid.UUID,
     db: DbDep,
     limit: int = Query(10, ge=1, le=50),
-) -> WebhookDeliveryListRead:
+) -> dict[str, Any]:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
     items, total = await webhook_dispatcher.list_deliveries(db, webhook_id, limit=limit)
-    return WebhookDeliveryListRead(items=[WebhookDeliveryRead.model_validate(item) for item in items], total=total)
+    return {"items": items, "total": total}
 
 
 @router.post("/{webhook_id}/deliveries/{delivery_id}/retry", response_model=WebhookDeliveryRead)
@@ -86,11 +86,11 @@ async def retry_webhook_delivery(
     webhook_id: uuid.UUID,
     delivery_id: uuid.UUID,
     db: DbDep,
-) -> WebhookDeliveryRead:
+) -> object:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
     delivery = await webhook_dispatcher.retry_delivery(db, webhook_id, delivery_id)
     if delivery is None:
         raise HTTPException(status_code=404, detail="Webhook delivery not found")
-    return WebhookDeliveryRead.model_validate(delivery)
+    return delivery

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
@@ -51,20 +53,20 @@ class FromTemplateBody(BaseModel):
 @router.get("/templates", response_model=TemplatesList)
 async def get_templates(
     _username: AdminDep,
-) -> TemplatesList:
+) -> dict[str, Any]:
     descriptors = list_templates()
-    return TemplatesList(
-        templates=[
-            TemplateDescriptorOut(
-                template_id=descriptor.id,
-                display_name=descriptor.display_name,
-                target_driver_summary=descriptor.target_driver_summary,
-                source_pack_id=descriptor.source_pack_id,
-                prerequisite_host_tools=list(descriptor.prerequisite_host_tools),
-            )
+    return {
+        "templates": [
+            {
+                "template_id": descriptor.id,
+                "display_name": descriptor.display_name,
+                "target_driver_summary": descriptor.target_driver_summary,
+                "source_pack_id": descriptor.source_pack_id,
+                "prerequisite_host_tools": list(descriptor.prerequisite_host_tools),
+            }
             for descriptor in descriptors
         ]
-    )
+    }
 
 
 @router.post(

@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Query
 
@@ -16,13 +17,8 @@ async def get_lifecycle_incidents(
     device_id: uuid.UUID | None = Query(None),
     cursor: str | None = Query(None),
     direction: str = Query("older"),
-) -> LifecycleIncidentListRead:
+) -> dict[str, Any]:
     items, next_cursor, prev_cursor = await lifecycle_incident_service.list_lifecycle_incidents_paginated(
         db, limit=limit, device_id=device_id, cursor=cursor, direction=direction
     )
-    return LifecycleIncidentListRead(
-        items=items,
-        limit=limit,
-        next_cursor=next_cursor,
-        prev_cursor=prev_cursor,
-    )
+    return {"items": items, "limit": limit, "next_cursor": next_cursor, "prev_cursor": prev_cursor}
