@@ -11,9 +11,9 @@ from app.agent_comm import operations as agent_operations
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.type_defs import AsyncTaskFactory
+from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import presenter as device_presenter
-from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events import event_bus
 from app.hosts import service as host_service
 from app.hosts import service_diagnostics as host_diagnostics
