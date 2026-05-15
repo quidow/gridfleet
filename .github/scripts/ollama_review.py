@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -56,11 +57,12 @@ def parse_diff_positions(patch: str) -> dict[str, set[int]]:
 
 
 SYSTEM_PROMPT = """You are a senior code reviewer for the GridFleet repository (FastAPI backend, FastAPI agent, React frontend).
-You will receive a unified diff. Produce a focused, high-signal review.
+You will receive a unified diff, optionally preceded by reference docs fetched from Context7.
 
 Rules:
 - Only comment on real problems: bugs, race conditions, security issues, broken contracts, missing locks, type errors, test gaps, perf cliffs.
 - Do NOT comment on style, formatting, or restating what the code does.
+- When reference docs are present, treat them as ground truth for external libraries and tools. If reference docs do not cover a claim you'd make about an external dependency (version exists, action tag exists, function signature), do NOT raise it.
 - Each inline comment MUST target a line that was added or modified in the diff (a '+' line). Use the new-file line number.
 - Prefer fewer, sharper comments over many shallow ones. If the diff looks fine, return an empty comments list.
 
@@ -73,11 +75,128 @@ Respond with ONLY a JSON object, no prose, no markdown fences:
 }
 """
 
+PY_STDLIB = {
+    "os", "sys", "re", "json", "pathlib", "typing", "asyncio", "urllib", "subprocess",
+    "dataclasses", "enum", "collections", "datetime", "functools", "itertools", "time",
+    "logging", "__future__", "contextlib", "warnings", "inspect", "traceback", "io",
+    "math", "random", "hashlib", "base64", "secrets", "uuid", "tempfile", "shutil",
+    "glob", "argparse", "unittest", "abc", "copy", "string", "textwrap", "platform",
+    "threading", "queue", "signal", "socket", "struct", "array", "csv", "html", "xml",
+    "email", "http", "ssl", "decimal", "fractions", "weakref", "ast", "operator",
+}
 
-def call_ollama(patch: str) -> dict[str, Any]:
+
+def extract_identifiers(patch: str, limit: int = 6) -> list[tuple[str, str]]:
+    """Pull libraries/actions worth looking up from added lines in the diff."""
+    seen: set[tuple[str, str]] = set()
+    ordered: list[tuple[str, str]] = []
+
+    def add(kind: str, ident: str) -> None:
+        key = (kind, ident)
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(key)
+
+    for raw in patch.splitlines():
+        if not raw.startswith("+") or raw.startswith("+++"):
+            continue
+        line = raw[1:]
+        m = re.search(r"uses:\s*([\w.-]+/[\w.-]+)(?:/[^@\s]+)?@", line)
+        if m:
+            add("github-action", m.group(1))
+            continue
+        m = re.match(r"""\s*import\s+(?:[\w*{},\s]+\s+from\s+)?['"]([^'".][@\w/.-]+)['"]""", line)
+        if m:
+            pkg = m.group(1)
+            if pkg.startswith("@"):
+                parts = pkg.split("/", 2)
+                pkg = "/".join(parts[:2])
+            else:
+                pkg = pkg.split("/")[0]
+            add("npm", pkg)
+            continue
+        m = re.match(r"\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+)\s*$)", line.rstrip())
+        if m:
+            mod = (m.group(1) or m.group(2)).split(".")[0]
+            if mod and mod not in PY_STDLIB and not mod.startswith("_"):
+                add("python", mod)
+    return ordered[:limit]
+
+
+def _context7_get(url: str, api_key: str) -> bytes | None:
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except (urllib.error.URLError, TimeoutError) as e:
+        sys.stderr.write(f"context7 GET {url}: {e}\n")
+        return None
+
+
+def fetch_context7_docs(identifiers: list[tuple[str, str]]) -> str:
+    """Resolve each identifier via Context7 search and fetch a doc snippet."""
+    api_key = os.environ.get("CONTEXT7_API_KEY", "")
+    if not api_key or not identifiers:
+        return ""
+
+    blocks: list[str] = []
+    total = 0
+    max_total = 30_000
+
+    for kind, ident in identifiers:
+        if total >= max_total:
+            break
+        query = ident if kind != "github-action" else ident.split("/")[-1]
+        search_raw = _context7_get(
+            f"https://context7.com/api/v1/search?query={urllib.parse.quote(query)}",
+            api_key,
+        )
+        if not search_raw:
+            continue
+        try:
+            search = json.loads(search_raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            continue
+        results = search.get("results") or []
+        lib_id = None
+        for r in results:
+            candidate = r.get("id") or r.get("libraryId") or ""
+            if kind == "github-action" and ident.lower() in candidate.lower():
+                lib_id = candidate
+                break
+        if not lib_id and results:
+            lib_id = results[0].get("id") or results[0].get("libraryId")
+        if not lib_id:
+            continue
+        if not lib_id.startswith("/"):
+            lib_id = "/" + lib_id
+
+        docs_raw = _context7_get(
+            f"https://context7.com/api/v1{lib_id}?type=txt&tokens=2000",
+            api_key,
+        )
+        if not docs_raw:
+            continue
+        docs = docs_raw.decode("utf-8", "replace")[:8000]
+        block = f"### {kind}: {ident} ({lib_id})\n{docs}\n"
+        total += len(block)
+        blocks.append(block)
+        print(f"context7: fetched {kind}:{ident} -> {lib_id} ({len(docs)} chars)")
+
+    if not blocks:
+        return ""
+    return "## Reference docs (via Context7)\n\n" + "\n".join(blocks)
+
+
+def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
     url = env("OLLAMA_URL")
     model = env("OLLAMA_MODEL")
     api_key = env("OLLAMA_API_KEY")
+
+    user_content = f"Review this diff:\n\n```diff\n{patch}\n```"
+    if docs:
+        user_content = f"{docs}\n\n---\n\n{user_content}"
 
     payload = {
         "model": model,
@@ -85,7 +204,7 @@ def call_ollama(patch: str) -> dict[str, Any]:
         "format": "json",
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Review this diff:\n\n```diff\n{patch}\n```"},
+            {"role": "user", "content": user_content},
         ],
         "options": {"temperature": 0.2},
     }
@@ -187,7 +306,11 @@ def main() -> None:
         patch = patch[:max_chars] + "\n\n[diff truncated]\n"
 
     eligible = parse_diff_positions(patch)
-    review = call_ollama(patch)
+    identifiers = extract_identifiers(patch)
+    if identifiers:
+        print(f"context7 lookups: {identifiers}")
+    docs = fetch_context7_docs(identifiers)
+    review = call_ollama(patch, docs)
     post_review(review, eligible)
 
 
