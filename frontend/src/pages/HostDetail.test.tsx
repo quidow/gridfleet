@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi } from 'vitest';
 import HostDetail from './HostDetail';
@@ -95,6 +95,10 @@ vi.mock('../components/hostDetail/HostResourceTelemetryPanel', () => ({
   default: () => <section>Resource Telemetry</section>,
 }));
 
+vi.mock('../components/hostDetail/HostLogsPanel', () => ({
+  default: ({ hostId }: { hostId: string }) => <section>Host logs for {hostId}</section>,
+}));
+
 function renderHostDetail(path: string) {
   const client = new QueryClient();
   return render(
@@ -124,4 +128,18 @@ test('renders hardware fields on the overview tab', () => {
   expect(screen.getByText('arm64')).toBeInTheDocument();
   expect(screen.getByText('Apple M2 Pro')).toBeInTheDocument();
   expect(screen.getByText('12')).toBeInTheDocument();
+});
+
+test('renders host logs from query param', () => {
+  renderHostDetail('/hosts/host-1?tab=logs&logs_tab=events');
+
+  expect(screen.getByText('Host logs for host-1')).toBeInTheDocument();
+});
+
+test('switches to the host logs tab', () => {
+  renderHostDetail('/hosts/host-1');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Logs' }));
+
+  expect(screen.getByText('Host logs for host-1')).toBeInTheDocument();
 });

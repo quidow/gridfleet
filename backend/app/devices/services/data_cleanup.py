@@ -14,7 +14,7 @@ from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events import event_bus
-from app.hosts.models import HostResourceSample
+from app.hosts.models import HostAgentLogEntry, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings import settings_service
@@ -36,6 +36,7 @@ CleanupModel = (
     | type[DeviceTestDataAuditLog]
     | type[DeviceEvent]
     | type[HostResourceSample]
+    | type[HostAgentLogEntry]
     | type[AnalyticsCapacitySnapshot]
 )
 
@@ -76,6 +77,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
     test_data_audit_deleted = 0
     events_deleted = 0
     host_resource_samples_deleted = 0
+    agent_log_entries_deleted = 0
     capacity_snapshots_deleted = 0
     agent_reconfigure_outbox_deleted = 0
 
@@ -166,6 +168,17 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             cutoff=cutoff,
         )
 
+    agent_log_days: int = settings_service.get("retention.agent_log_days")
+    if agent_log_days > 0:
+        cutoff = now - timedelta(days=agent_log_days)
+        # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
+        agent_log_entries_deleted = await _delete_in_batches(
+            db,
+            model=HostAgentLogEntry,
+            timestamp_column=HostAgentLogEntry.received_at,
+            cutoff=cutoff,
+        )
+
     capacity_snapshots_days: int = settings_service.get("retention.capacity_snapshots_days")
     if capacity_snapshots_days > 0:
         cutoff = now - timedelta(days=capacity_snapshots_days)
@@ -178,13 +191,15 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
 
     logger.info(
         "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
-        "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, agent_reconfigure_outbox=%d",
+        "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
+        "agent_reconfigure_outbox=%d",
         sessions_deleted,
         probe_sessions_deleted,
         audit_deleted,
         test_data_audit_deleted,
         events_deleted,
         host_resource_samples_deleted,
+        agent_log_entries_deleted,
         capacity_snapshots_deleted,
         agent_reconfigure_outbox_deleted,
     )
@@ -197,6 +212,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             "test_data_audit_entries_deleted": test_data_audit_deleted,
             "device_events_deleted": events_deleted,
             "host_resource_samples_deleted": host_resource_samples_deleted,
+            "agent_log_entries_deleted": agent_log_entries_deleted,
             "capacity_snapshots_deleted": capacity_snapshots_deleted,
             "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
         },

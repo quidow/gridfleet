@@ -42,6 +42,7 @@ from app.events import router as events
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.hosts import router as hosts
+from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import router_terminal as host_terminal
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
@@ -313,6 +314,7 @@ app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_depen
 app.include_router(pack_routers.uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.host_features.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.agent_state.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(host_agent_logs.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 
 
 @app.get("/health/live", response_model=LiveHealthRead)

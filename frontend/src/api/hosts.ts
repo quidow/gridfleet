@@ -1,4 +1,5 @@
 import api from './client';
+import type { components } from './openapi';
 import type {
   DiscoveryConfirm,
   DiscoveryConfirmResult,
@@ -11,6 +12,26 @@ import type {
   HostToolStatus,
   IntakeCandidate,
 } from '../types';
+
+export type AgentLogPage = components['schemas']['AgentLogPage'];
+export type HostEventsPage = components['schemas']['HostEventsPage'];
+
+export interface AgentLogQuery {
+  level?: 'INFO' | 'WARNING' | 'ERROR';
+  q?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface HostEventsQuery {
+  types?: string[];
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
 
 export async function fetchHosts(): Promise<HostRead[]> {
   const { data } = await api.get('/hosts');
@@ -43,6 +64,21 @@ export async function fetchHostResourceTelemetry(
 
 export async function fetchHostToolStatus(id: string): Promise<HostToolStatus> {
   const { data } = await api.get(`/hosts/${id}/tools/status`);
+  return data;
+}
+
+export async function fetchHostAgentLogs(hostId: string, params: AgentLogQuery = {}): Promise<AgentLogPage> {
+  const { data } = await api.get<AgentLogPage>(`/hosts/${hostId}/agent-logs`, { params });
+  return data;
+}
+
+export async function fetchHostEvents(hostId: string, params: HostEventsQuery = {}): Promise<HostEventsPage> {
+  const { types, ...rest } = params;
+  const merged: Record<string, unknown> = { ...rest };
+  if (types && types.length > 0) {
+    merged.types = types.join(',');
+  }
+  const { data } = await api.get<HostEventsPage>(`/hosts/${hostId}/events`, { params: merged });
   return data;
 }
 

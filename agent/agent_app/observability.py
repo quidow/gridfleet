@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
@@ -7,8 +8,12 @@ from uuid import uuid4
 
 from starlette.datastructures import Headers, MutableHeaders
 
+from agent_app.logs.handlers import ShipperHandler
+
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+    from agent_app.logs.schemas import ShippedLogLine
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -17,6 +22,8 @@ _HTTP_METHOD: ContextVar[str | None] = ContextVar("agent_http_method", default=N
 _HTTP_PATH: ContextVar[str | None] = ContextVar("agent_http_path", default=None)
 _DEFAULT_RECORD_FACTORY = logging.getLogRecordFactory()
 _GRIDFLEET_AGENT_HANDLER_ATTR = "_gridfleet_agent_logging_handler"
+shipper_handler: ShipperHandler | None = None
+shipper_queue: asyncio.Queue[ShippedLogLine] | None = None
 
 
 def sanitize_log_value(value: object, *, max_length: int = 240) -> str:
@@ -56,6 +63,7 @@ def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
 
 
 def configure_logging(*, force: bool = False) -> None:
+    global shipper_handler, shipper_queue
     root_logger = logging.getLogger()
     if logging.getLogRecordFactory() is _record_factory and _has_gridfleet_logging_handler(root_logger) and not force:
         return
@@ -70,6 +78,12 @@ def configure_logging(*, force: bool = False) -> None:
 
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
+
+    shipper_queue = asyncio.Queue(maxsize=5000)
+    shipper_handler = ShipperHandler(queue=shipper_queue, min_level=logging.INFO)
+    setattr(shipper_handler, _GRIDFLEET_AGENT_HANDLER_ATTR, True)
+    root_logger.addHandler(shipper_handler)
+
     root_logger.setLevel(logging.INFO)
 
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):

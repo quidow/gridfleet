@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.schemas.device import DeviceRead
@@ -215,3 +215,49 @@ class IntakeCandidateRead(BaseModel):
     ip_address: str | None = None
     already_registered: bool = False
     registered_device_id: uuid.UUID | None = None
+
+
+class ShippedLogLineIngest(BaseModel):
+    ts: datetime
+    level: str = Field(min_length=1, max_length=16)
+    logger_name: str = Field(min_length=1, max_length=255)
+    message: str = Field(max_length=16384)
+    sequence_no: int = Field(ge=0)
+
+
+class AgentLogBatchIngest(BaseModel):
+    boot_id: uuid.UUID
+    lines: list[ShippedLogLineIngest] = Field(default_factory=list, max_length=2000)
+
+
+class AgentLogIngestResult(BaseModel):
+    accepted: int
+    deduped: int
+
+
+class AgentLogLine(BaseModel):
+    ts: datetime
+    level: str
+    logger_name: str
+    message: str
+    sequence_no: int
+    boot_id: uuid.UUID
+
+
+class AgentLogPage(BaseModel):
+    lines: list[AgentLogLine]
+    total: int
+    has_more: bool
+
+
+class HostEventEntry(BaseModel):
+    event_id: str
+    type: str
+    ts: datetime
+    data: dict[str, Any]
+
+
+class HostEventsPage(BaseModel):
+    events: list[HostEventEntry]
+    total: int
+    has_more: bool = False

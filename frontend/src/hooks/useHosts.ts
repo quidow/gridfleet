@@ -5,6 +5,8 @@ import {
   createHost,
   deleteHost,
   discoverDevices,
+  fetchHostAgentLogs,
+  fetchHostEvents,
   fetchIntakeCandidates,
   fetchHost,
   fetchHostResourceTelemetry,
@@ -14,6 +16,7 @@ import {
   getHostCapabilities,
   rejectHost,
 } from '../api/hosts';
+import type { AgentLogQuery, HostEventsQuery } from '../api/hosts';
 import type { DiscoveryConfirm, HostCreate } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
 
@@ -62,6 +65,30 @@ export function useHostToolStatus(id: string, enabled = true) {
     queryFn: () => fetchHostToolStatus(id),
     refetchInterval: connected ? 60_000 : 15_000,
     enabled: !!id && enabled,
+  });
+}
+
+export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
+  const { connected } = useEventStreamStatus();
+  return useQuery({
+    queryKey: ['host-agent-logs', hostId, filters],
+    queryFn: () => fetchHostAgentLogs(hostId, filters),
+    refetchInterval: connected ? 30_000 : 5_000,
+    refetchIntervalInBackground: false,
+    staleTime: 4_000,
+    enabled: Boolean(hostId),
+  });
+}
+
+export function useHostEvents(hostId: string, filters: HostEventsQuery) {
+  const { connected } = useEventStreamStatus();
+  return useQuery({
+    queryKey: ['host-events', hostId, filters],
+    queryFn: () => fetchHostEvents(hostId, filters),
+    refetchInterval: connected ? 30_000 : 5_000,
+    refetchIntervalInBackground: false,
+    staleTime: 4_000,
+    enabled: Boolean(hostId),
   });
 }
 

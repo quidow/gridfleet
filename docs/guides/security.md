@@ -64,6 +64,16 @@ The Backend provides event-based webhooks configured by Operators via the UI. Wh
 - You can provide an optional secret token when defining the webhook. GridFleet will compute an HMAC SHA-256 signature of the payload using this secret.
 - The target system must verify the `x-gridfleet-signature` header to ensure the payload is authentic and originated from your GridFleet instance.
 
+## Host Agent Logs
+
+Host agents ship their own process logs back to the manager for the Host Detail Logs tab. These records are operator diagnostics, not an audit log, and they are retained according to `retention.agent_log_days`.
+
+Treat shipped log lines as sensitive operational data:
+
+- Keep backend auth enabled before exposing the operator UI outside a trusted lab network.
+- Do not log credentials, tokens, customer identifiers, or private device data from agent code or driver-pack adapters.
+- Use `agent.log_ship_min_level` to reduce verbosity in shared environments. The default is `INFO`; `DEBUG` should be temporary and restricted.
+
 ## Host Web Terminal
 
 The host web terminal is an opt-in feature that exposes a PTY-backed shell on any host running the agent, reachable through the GridFleet UI. This is effectively remote code execution on the host, so enable it only when all of the following are true:

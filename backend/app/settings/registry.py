@@ -569,6 +569,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=5,
         max_value=600,
     ),
+    SettingDefinition(
+        key="agent.log_ship_min_level",
+        category="agent",
+        setting_type="string",
+        default="INFO",
+        description="Minimum log level the agent ships to backend storage",
+        env_var="GRIDFLEET_AGENT_LOG_SHIP_MIN_LEVEL",
+        allowed_values=["DEBUG", "INFO", "WARNING", "ERROR"],
+    ),
     # ── Reservations ──
     SettingDefinition(
         key="reservations.default_ttl_minutes",
@@ -661,6 +670,16 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Delete host resource telemetry older than N hours",
         min_value=1,
         max_value=720,
+    ),
+    SettingDefinition(
+        key="retention.agent_log_days",
+        category="retention",
+        setting_type="int",
+        default=7,
+        description="Days of agent-process log entries kept before pruning",
+        env_var="GRIDFLEET_AGENT_LOG_RETENTION_DAYS",
+        min_value=1,
+        max_value=30,
     ),
     SettingDefinition(
         key="retention.capacity_snapshots_days",
