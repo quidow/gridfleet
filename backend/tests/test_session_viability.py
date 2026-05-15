@@ -4,12 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
+from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
     _check_due_devices,
     _extract_session_error,
@@ -258,6 +262,121 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     assert capabilities["appium:gridfleet:deviceId"] == str(device.id)
     assert capabilities["gridfleet:probeSession"] is True
     assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
+
+
+async def test_run_session_viability_probe_writes_probe_row_on_ack(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-row-ack",
+        connection_target="probe-row-ack",
+        name="Probe Row Ack",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        verified_at=datetime.now(UTC),
+    )
+    node = AppiumNode(
+        device_id=None,
+        port=4723,
+        grid_url="http://node-grid:4444/wd/hub",
+        active_connection_target="probe-row-ack",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+    )
+    device.appium_node = node
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    with patch(
+        "app.sessions.service_viability.probe_session_via_grid",
+        new_callable=AsyncMock,
+        return_value=(True, None),
+    ):
+        await run_session_viability_probe(
+            db_session,
+            device,
+            checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        )
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Session).where(Session.device_id == device.id, Session.test_name == PROBE_TEST_NAME)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status is SessionStatus.passed
+    assert row.session_id.startswith("probe-")
+    assert row.requested_capabilities is not None
+    assert row.requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "scheduled"
+
+
+async def test_run_session_viability_probe_writes_probe_row_on_refusal(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-row-refuse",
+        connection_target="probe-row-refuse",
+        name="Probe Row Refuse",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        verified_at=datetime.now(UTC),
+    )
+    node = AppiumNode(
+        device_id=None,
+        port=4723,
+        grid_url="http://node-grid:4444/wd/hub",
+        active_connection_target="probe-row-refuse",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+    )
+    device.appium_node = node
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    with patch(
+        "app.sessions.service_viability.probe_session_via_grid",
+        new_callable=AsyncMock,
+        return_value=(False, "Session probe failed"),
+    ):
+        await run_session_viability_probe(
+            db_session,
+            device,
+            checked_by=session_viability.SessionViabilityCheckedBy.manual,
+        )
+
+    row = (
+        await db_session.execute(
+            select(Session).where(Session.device_id == device.id, Session.test_name == PROBE_TEST_NAME)
+        )
+    ).scalar_one()
+    assert row.status is SessionStatus.failed
+    assert row.error_type == "probe_refused"
+    assert row.error_message == "Session probe failed"
+    assert row.requested_capabilities is not None
+    assert row.requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "manual"
 
 
 async def test_run_session_viability_probe_rejects_non_available_device(

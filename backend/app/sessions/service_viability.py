@@ -18,6 +18,7 @@ from app.devices.services import health as device_health
 from app.devices.services import readiness as device_readiness
 from app.devices.services import state as device_state
 from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
 
@@ -49,6 +50,13 @@ __all__ = [
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
+
+_VIABILITY_PROBE_SOURCE_MAP: dict[SessionViabilityCheckedBy, ProbeSource] = {
+    SessionViabilityCheckedBy.scheduled: ProbeSource.scheduled,
+    SessionViabilityCheckedBy.manual: ProbeSource.manual,
+    SessionViabilityCheckedBy.recovery: ProbeSource.recovery,
+    SessionViabilityCheckedBy.verification: ProbeSource.verification,
+}
 logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
 is_ready_for_use_async = device_readiness.is_ready_for_use_async
@@ -365,6 +373,14 @@ async def run_session_viability_probe(
 
         capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
         ok, error = await probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+        await record_probe_session(
+            db,
+            device=device,
+            attempted_at=_parse_timestamp(attempted_at) or datetime.now(UTC),
+            result=grid_probe_response_to_result((ok, error)),
+            source=_VIABILITY_PROBE_SOURCE_MAP[checked_by],
+            capabilities=capabilities,
+        )
 
         state = await _write_session_viability(
             db,
