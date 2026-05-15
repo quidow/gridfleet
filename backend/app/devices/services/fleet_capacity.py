@@ -88,6 +88,10 @@ def _align_window_to_buckets(
     date_to: datetime,
     bucket_minutes: int,
 ) -> tuple[datetime, datetime]:
+    # Callers must validate date_from < date_to before invoking. The max(..., 1)
+    # below is a defensive floor: if a degenerate equal-bounds input ever slips
+    # past validation, the helper still emits a single bucket instead of an
+    # empty series that would silently break generate_series consumers.
     bucket = timedelta(minutes=bucket_minutes)
     bucket_seconds = bucket.total_seconds()
     aligned_from_index = math.floor(date_from.timestamp() / bucket_seconds)

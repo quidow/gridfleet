@@ -95,6 +95,24 @@ describe('FleetHealthHistory', () => {
     expect(screen.getByText('50')).toBeInTheDocument();
   });
 
+  it('anchors the single-point dot to the right edge of the chart', () => {
+    mockedHook.mockReturnValue({
+      data: {
+        date_from: '2026-04-18T08:00:00Z',
+        date_to: '2026-04-18T08:00:00Z',
+        bucket_minutes: 60,
+        series: [],
+      },
+    } as unknown as ReturnType<typeof useFleetCapacityTimeline>);
+
+    const { container } = render(
+      <FleetHealthHistory livePoint={{ devices_total: 2, devices_offline: 0, devices_maintenance: 0 }} />,
+    );
+    const circle = container.querySelector('circle');
+    expect(circle).not.toBeNull();
+    expect(Number(circle!.getAttribute('cx'))).toBeGreaterThan(0);
+  });
+
   it('pins the current value to the live point when provided', () => {
     mockedHook.mockReturnValue({
       data: {

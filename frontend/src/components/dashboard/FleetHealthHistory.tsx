@@ -120,7 +120,9 @@ export default function FleetHealthHistory({ livePoint }: FleetHealthHistoryProp
       }
     }
     const lastPct = lastIndex >= 0 ? (percentages[lastIndex] as number) : 0;
-    const lastX = lastIndex >= 0 ? lastIndex * stepX : 0;
+    // When only one real point exists, anchor it to the right edge — "now"
+    // semantics. With multiple points the index-based position is correct.
+    const lastX = percentages.length > 1 ? lastIndex * stepX : VIEW_W;
     const lastY = PAD_TOP + (1 - lastPct / 100) * usableH;
     const avg = realValues.reduce((a, b) => a + b, 0) / realValues.length;
 
