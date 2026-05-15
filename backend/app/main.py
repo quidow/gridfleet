@@ -19,7 +19,8 @@ from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.auth.middleware import StaticPathsAuthMiddleware
-from app.core.config import freeze_background_loops_enabled
+from app.core.config import DOCS_ENABLED_ENVIRONMENTS, freeze_background_loops_enabled
+from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
 from app.core.database import engine
 from app.core.dependencies import DbDep
@@ -267,7 +268,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 loop.remove_signal_handler(signum)
 
 
-app = FastAPI(title="GridFleet", version="0.1.0", lifespan=lifespan)
+def _fastapi_app_kwargs() -> dict[str, Any]:
+    app_kwargs: dict[str, Any] = {"title": "GridFleet", "version": "0.1.0", "lifespan": lifespan}
+    if process_settings.environment not in DOCS_ENABLED_ENVIRONMENTS:
+        app_kwargs["openapi_url"] = None
+    return app_kwargs
+
+
+app = FastAPI(**_fastapi_app_kwargs())
 # Starlette installs middlewares in reverse-add order: the most recently added
 # wraps the previous one. We want RequestContextMiddleware on the outside so it
 # binds request_id, error envelopes, and metrics around all responses — including

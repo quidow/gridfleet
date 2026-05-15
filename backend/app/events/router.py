@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.events import EVENT_CATEGORY_DISPLAY_NAMES, PUBLIC_EVENT_CATALOG, Event, event_bus
-from app.events.schemas import NotificationListRead, SystemEventRead
+from app.events.schemas import NotificationListRead
 from app.events.schemas_catalog import EventCatalogRead
 
 router = APIRouter(prefix="/api", tags=["events"])
@@ -88,12 +88,12 @@ async def get_notifications(
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     types: str | None = Query(None, description="Comma-separated event types to filter"),
-) -> NotificationListRead:
+) -> dict[str, Any]:
     type_filter = [t.strip() for t in types.split(",")] if types else None
     events, total = await event_bus.get_recent_events_persisted(limit=limit, offset=offset, event_types=type_filter)
-    return NotificationListRead(
-        items=[SystemEventRead(**event) for event in events],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
+    return {
+        "items": events,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

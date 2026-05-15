@@ -1,12 +1,13 @@
 import uuid
 from datetime import UTC, date, datetime, time
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.pagination import CursorPaginationError
 from app.devices.models import Device
@@ -27,7 +28,9 @@ from app.runs.schemas import (
 )
 from app.settings import settings_service
 
-router = APIRouter(prefix="/api/runs", tags=["runs"])
+RUN_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
+
+router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 
 
 def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -> datetime | None:
@@ -52,7 +55,7 @@ async def create_run(
     include: str | None = Query(
         None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
     ),
-) -> RunCreateResponse:
+) -> dict[str, Any]:
     includes = run_service.parse_includes(include, allowed={"config", "capabilities", "test_data"})
     if "capabilities" in includes:
         raise HTTPException(
@@ -98,16 +101,16 @@ async def create_run(
             pairs.append((info, device))
         await run_service.hydrate_reserved_device_infos(db, pairs, includes=includes)
 
-    return RunCreateResponse(
-        id=run.id,
-        name=run.name,
-        state=run.state,
-        devices=device_infos,
-        grid_url=settings_service.get("grid.hub_url"),
-        ttl_minutes=run.ttl_minutes,
-        heartbeat_timeout_sec=run.heartbeat_timeout_sec,
-        created_at=run.created_at,
-    )
+    return {
+        "id": run.id,
+        "name": run.name,
+        "state": run.state,
+        "devices": device_infos,
+        "grid_url": settings_service.get("grid.hub_url"),
+        "ttl_minutes": run.ttl_minutes,
+        "heartbeat_timeout_sec": run.heartbeat_timeout_sec,
+        "created_at": run.created_at,
+    }
 
 
 @router.get("", response_model=RunListRead)
@@ -123,7 +126,7 @@ async def list_runs(
     offset: int = Query(0, ge=0),
     sort_by: Literal["name", "state", "devices", "created_by", "created_at", "duration"] = Query("created_at"),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
-) -> RunListRead:
+) -> dict[str, Any]:
     try:
         parsed_created_from = _parse_run_filter_datetime(created_from)
         parsed_created_to = _parse_run_filter_datetime(created_to, end_of_day=True)
@@ -145,12 +148,12 @@ async def list_runs(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         counts_map = await run_service.fetch_session_counts(db, [r.id for r in page.items])
         items = [run_service.build_run_read(r, counts_map.get(r.id)) for r in page.items]
-        return RunListRead(
-            items=items,
-            limit=page.limit,
-            next_cursor=page.next_cursor,
-            prev_cursor=page.prev_cursor,
-        )
+        return {
+            "items": items,
+            "limit": page.limit,
+            "next_cursor": page.next_cursor,
+            "prev_cursor": page.prev_cursor,
+        }
     runs, total = await run_service.list_runs(
         db,
         state=state,
@@ -163,21 +166,18 @@ async def list_runs(
     )
     counts_map = await run_service.fetch_session_counts(db, [r.id for r in runs])
     items = [run_service.build_run_read(r, counts_map.get(r.id)) for r in runs]
-    return RunListRead(items=items, total=total, limit=limit, offset=offset)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{run_id}", response_model=RunDetail)
-async def get_run(run_id: uuid.UUID, db: DbDep) -> RunDetail:
+async def get_run(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     run = await run_service.get_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     devices = [ReservedDeviceInfo(**d) for d in (run.reserved_devices or [])]
     counts_map = await run_service.fetch_session_counts(db, [run.id])
     base = run_service.build_run_read(run, counts_map.get(run.id))
-    return RunDetail(
-        **base.model_dump(),
-        devices=devices,
-    )
+    return {**base.model_dump(), "devices": devices}
 
 
 @router.post("/{run_id}/ready", response_model=RunRead)
@@ -260,12 +260,12 @@ async def cooldown_device_endpoint(
 
 
 @router.post("/{run_id}/heartbeat", response_model=HeartbeatResponse)
-async def heartbeat(run_id: uuid.UUID, db: DbDep) -> HeartbeatResponse:
+async def heartbeat(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     try:
         run = await run_service.heartbeat(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    return HeartbeatResponse(state=run.state, last_heartbeat=run.last_heartbeat)
+    return {"state": run.state, "last_heartbeat": run.last_heartbeat}
 
 
 @router.post("/{run_id}/complete", response_model=RunRead)

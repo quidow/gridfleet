@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.schemas.device import (
     BulkMaintenanceEnter,
     BulkOperationResult,
@@ -21,7 +22,9 @@ from app.devices.services import bulk as bulk_service
 from app.devices.services import groups as device_group_service
 from app.devices.services import presenter as device_presenter
 
-router = APIRouter(prefix="/api/device-groups", tags=["device-groups"])
+DEVICE_GROUP_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+
+router = APIRouter(prefix="/api/device-groups", tags=["device-groups"], responses=DEVICE_GROUP_ERROR_RESPONSES)
 
 
 async def _group_device_ids_or_404(db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:

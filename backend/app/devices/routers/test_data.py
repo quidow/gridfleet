@@ -4,11 +4,12 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
 from app.devices.routers.helpers import get_device_for_update_or_404, get_device_or_404
 from app.devices.schemas.test_data import TestDataAuditEntryRead, TestDataPayload, TestDataRead
 from app.devices.services import test_data as test_data_service
 
-router = APIRouter(tags=["devices-test-data"])
+router = APIRouter(tags=["devices-test-data"], responses={**RESPONSES_400, **RESPONSES_401, **RESPONSES_404})
 
 
 @router.get("/{device_id}/test_data", response_model=TestDataRead)

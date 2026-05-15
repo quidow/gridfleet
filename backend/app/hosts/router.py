@@ -10,10 +10,11 @@ from sqlalchemy.exc import IntegrityError
 from app.agent_comm import operations as agent_operations
 from app.core.database import async_session
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.type_defs import AsyncTaskFactory
+from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import presenter as device_presenter
-from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events import event_bus
 from app.hosts import service as host_service
 from app.hosts import service_diagnostics as host_diagnostics
@@ -41,7 +42,9 @@ from app.settings import settings_service
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 
-router = APIRouter(prefix="/api/hosts", tags=["hosts"])
+HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+
+router = APIRouter(prefix="/api/hosts", tags=["hosts"], responses=HOST_ERROR_RESPONSES)
 logger = logging.getLogger(__name__)
 get_agent_tool_status = agent_operations.get_tool_status
 get_pack_devices = agent_operations.get_pack_devices

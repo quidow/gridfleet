@@ -1,8 +1,12 @@
+import asyncio
 import contextlib
 import logging
 import uuid
 
+import anyio
+import httpx
 from fastapi import APIRouter, WebSocket, status
+from starlette.websockets import WebSocketDisconnect
 
 from app.agent_comm import agent_settings
 from app.auth import service as auth
@@ -87,8 +91,15 @@ async def host_terminal(ws: WebSocket, host_id: uuid.UUID) -> None:
             agent_url=agent_url,
             agent_token=agent_settings.agent_terminal_token or "",
         )
-    except Exception:
-        logger.exception("terminal proxy crashed")
+    except (
+        asyncio.CancelledError,
+        WebSocketDisconnect,
+        anyio.ClosedResourceError,
+        httpx.HTTPError,
+        ConnectionError,
+        OSError,
+    ) as exc:
+        logger.warning("terminal proxy closed: %s", exc)
         close_reason = "proxy_error"
     finally:
         with contextlib.suppress(Exception):

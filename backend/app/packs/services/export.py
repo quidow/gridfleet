@@ -11,6 +11,7 @@ In both cases the caller receives ``(tarball_bytes, sha256_hex)``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import tarfile
@@ -55,16 +56,20 @@ async def export_pack(
 
     if row.artifact_path is not None:
         try:
-            with storage.open(row.artifact_path) as handle:
-                data = handle.read()
+            data = await asyncio.to_thread(_read_artifact, storage, row.artifact_path)
         except PackStorageError as exc:
             raise LookupError(f"artifact for pack {pack_id!r} release {release!r} is not readable: {exc}") from exc
     else:
         # Synthesise a tarball containing only manifest.yaml.
-        data = _synthesise_tarball(row.manifest_json)
+        data = await asyncio.to_thread(_synthesise_tarball, row.manifest_json)
 
     sha256 = hashlib.sha256(data).hexdigest()
     return data, sha256
+
+
+def _read_artifact(storage: PackStorageService, path: str) -> bytes:
+    with storage.open(path) as handle:
+        return handle.read()
 
 
 def _synthesise_tarball(manifest_json: dict[str, object]) -> bytes:

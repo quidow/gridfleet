@@ -12,9 +12,12 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     request_timeout_sec: float = 30.0
+    environment: str = "local"
 
     model_config = SettingsConfigDict(env_prefix="GRIDFLEET_", extra="ignore")
 
+
+DOCS_ENABLED_ENVIRONMENTS = frozenset({"local", "test", "staging"})
 
 settings = Settings()
 

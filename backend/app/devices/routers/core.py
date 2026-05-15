@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 
 from app.core.dependencies import DbDep
+from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.models import Device as DeviceModel
 from app.devices.routers.helpers import get_device_or_404
@@ -41,7 +42,9 @@ from app.sessions.models import Session
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
-router = APIRouter()
+DEVICE_CORE_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
+
+router = APIRouter(responses=DEVICE_CORE_ERROR_RESPONSES)
 
 
 def _extract_tag_filters(request: Request) -> dict[str, str] | None:

@@ -51,7 +51,7 @@ async def invoke_feature_action(
     body: FeatureActionRequest,
     _username: AdminDep,
     session: DbDep,
-) -> FeatureActionResultOut:
+) -> dict[str, Any]:
     """Dispatch a feature action to the agent owning ``host_id``.
 
     Returns 404 when the host, pack, or feature can't be resolved, and 502
@@ -66,4 +66,4 @@ async def invoke_feature_action(
         args=body.args,
     )
     await session.commit()
-    return FeatureActionResultOut(ok=result.ok, detail=result.detail, data=result.data)
+    return {"ok": result.ok, "detail": result.detail, "data": result.data}
