@@ -172,6 +172,25 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         grid_url="http://grid",
     )
 
+    from sqlalchemy import select
+
+    from app.sessions.models import Session
+    from app.sessions.probe_constants import PROBE_TEST_NAME
+    from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Session).where(Session.device_id == existing.id, Session.test_name == PROBE_TEST_NAME)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].requested_capabilities is not None
+    assert rows[0].requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "verification"
+
 
 async def test_save_verified_context_and_cleanup_error_paths(
     db_session: AsyncSession,
