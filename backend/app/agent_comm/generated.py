@@ -49,7 +49,7 @@ class AppiumStartRequest(BaseModel):
         str,
         Field(
             min_length=1,
-            pattern="^[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)*$",
+            pattern="^(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,})(?:/(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,}))*$",
             title="Pack Id",
         ),
     ]
@@ -96,7 +96,7 @@ class FeatureActionRequest(BaseModel):
         str,
         Field(
             min_length=1,
-            pattern="^[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)*$",
+            pattern="^(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,})(?:/(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,}))*$",
             title="Pack Id",
         ),
     ]
@@ -150,7 +150,7 @@ class NormalizeDeviceRequest(BaseModel):
         str,
         Field(
             min_length=1,
-            pattern="^[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)*$",
+            pattern="^(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,})(?:/(?:[A-Za-z0-9_.\\-]*[A-Za-z0-9_\\-][A-Za-z0-9_.\\-]*|\\.{3,}))*$",
             title="Pack Id",
         ),
     ]

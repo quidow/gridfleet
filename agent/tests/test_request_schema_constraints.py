@@ -192,6 +192,11 @@ def test_feature_action_rejects_pack_id_with_double_slash() -> None:
         FeatureActionRequest(pack_id="foo//bar", args={})
 
 
+def test_appium_start_accepts_three_dot_pack_id_segment() -> None:
+    _valid_start_payload_with_three_dots = _valid_start_payload() | {"pack_id": "..."}
+    AppiumStartRequest(**_valid_start_payload_with_three_dots)
+
+
 def test_plugin_config_rejects_path_traversal() -> None:
     with pytest.raises(ValidationError):
         PluginConfig(name="../etc/passwd", version="1.0.0", source="npm")
