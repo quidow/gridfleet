@@ -89,3 +89,55 @@ async def test_start_unexpected_runtime_error_becomes_envelope_500(client: Async
     body = resp.json()
     assert body["detail"]["code"] == AgentErrorCode.INTERNAL_ERROR.value
     assert body["detail"]["message"] == "Internal server error"
+
+
+async def test_runtime_missing_sets_retry_after(client: AsyncClient) -> None:
+    from agent_app.appium.exceptions import RuntimeMissingError
+
+    class NoRuntime:
+        async def start(self, **_: object) -> None:
+            raise RuntimeMissingError("no runtime")
+
+    app.dependency_overrides[get_appium_mgr] = lambda: NoRuntime()
+    try:
+        resp = await client.post(
+            "/agent/appium/start",
+            json={
+                "connection_target": "abc",
+                "port": 4723,
+                "grid_url": "http://hub:4444",
+                "pack_id": "pack",
+                "platform_id": "android",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_appium_mgr, None)
+
+    assert resp.status_code == 503
+    assert resp.headers.get("retry-after") == "30"
+
+
+async def test_startup_timeout_sets_retry_after(client: AsyncClient) -> None:
+    from agent_app.appium.exceptions import StartupTimeoutError
+
+    class Slow:
+        async def start(self, **_: object) -> None:
+            raise StartupTimeoutError("timed out")
+
+    app.dependency_overrides[get_appium_mgr] = lambda: Slow()
+    try:
+        resp = await client.post(
+            "/agent/appium/start",
+            json={
+                "connection_target": "abc",
+                "port": 4723,
+                "grid_url": "http://hub:4444",
+                "pack_id": "pack",
+                "platform_id": "android",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_appium_mgr, None)
+
+    assert resp.status_code == 504
+    assert resp.headers.get("retry-after") == "5"
