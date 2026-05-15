@@ -123,6 +123,10 @@ jobs:
         working-directory: backend
         run: uv run --locked --extra dev mypy app/
 
+      - name: Install agent dependencies (needed for schema drift test)
+        working-directory: agent
+        run: uv sync --extra dev --locked
+
       - name: Test
         working-directory: backend
         run: uv run --locked --extra dev pytest -q -n auto --cov=app --cov-report=term-missing:skip-covered

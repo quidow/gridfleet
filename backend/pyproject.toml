@@ -40,6 +40,7 @@ dev = [
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
     "ruff>=0.15.12",
+    "datamodel-code-generator==0.57.0",
 ]
 
 [tool.pytest.ini_options]
@@ -56,6 +57,10 @@ plugins = ["pydantic.mypy"]
 module = ["alembic.*"]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = "app.agent_comm.generated"
+ignore_errors = true
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120
@@ -69,12 +74,14 @@ ignore = ["B008"]
 "app/routers/*.py" = ["TC001"]  # FastAPI inspects Annotated deps at runtime; TC001 is a false positive
 "tests/**" = ["PLC0415"]  # tests often need lazy imports for fixture and patch ordering
 "tests/pack/test_start_payload_integration.py" = ["ANN401"]  # *args/**kwargs shims need Any
+"app/agent_comm/generated.py" = ["ALL"]  # auto-generated — do not lint
 
 [tool.ruff.format]
 quote-style = "double"
 
 [tool.coverage.run]
 source = ["app"]
+omit = ["app/agent_comm/generated.py"]
 
 [tool.coverage.report]
 fail_under = 99.0
