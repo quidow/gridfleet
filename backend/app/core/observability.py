@@ -6,7 +6,7 @@ import logging
 import os
 import socket
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -250,13 +250,88 @@ def build_background_loop_snapshot(
     }
 
 
-# Per-process in-memory snapshot of the latest background-loop heartbeats.
-# The leader-owned flusher (see ``background_loop_flush_loop``) periodically
-# UPSERTs this whole map into the control-plane state table in a single round
-# trip, instead of letting every loop cycle hit the database twice. Non-leader
-# workers never run the loops so their map stays empty and they flush nothing.
-_in_memory_snapshots: dict[str, dict[str, Any]] = {}
-_in_memory_dirty: bool = False
+@dataclass
+class _HeartbeatBuffer:
+    """Per-process in-memory cache of the latest background-loop heartbeats.
+
+    The leader-owned flusher (see ``background_loop_flush_loop``) periodically
+    UPSERTs ``snapshots`` into the control-plane state table in a single round
+    trip, instead of letting every loop cycle hit the database twice. Non-leader
+    workers never run the loops so their buffer stays empty and they flush
+    nothing.
+
+    Encapsulating state in a small class keeps both the snapshot map and the
+    dirty flag co-located, removes the need for ``global`` declarations in
+    every mutator, and makes the lifecycle (update → drain → optional retry)
+    explicit at the call site.
+    """
+
+    snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    dirty: bool = False
+
+    def update(
+        self,
+        loop_name: str,
+        *,
+        interval_seconds: float,
+        started_at: datetime | None = None,
+        succeeded_at: datetime | None = None,
+        duration_seconds: float | None = None,
+        error_at: datetime | None = None,
+        error: str | None = None,
+    ) -> None:
+        previous = self.snapshots.get(loop_name, {})
+        snapshot = dict(previous)
+        reference_time = succeeded_at or error_at or started_at or _now()
+
+        snapshot.update(
+            {
+                "loop_name": loop_name,
+                "owner": _PROCESS_OWNER,
+                "interval_seconds": interval_seconds,
+                "next_expected_at": (reference_time + timedelta(seconds=interval_seconds)).isoformat(),
+            }
+        )
+        if started_at is not None:
+            snapshot["last_started_at"] = started_at.isoformat()
+        if succeeded_at is not None:
+            snapshot["last_succeeded_at"] = succeeded_at.isoformat()
+            snapshot["last_error_at"] = None
+            snapshot["last_error"] = None
+        if duration_seconds is not None:
+            snapshot["last_duration_seconds"] = duration_seconds
+        if error_at is not None:
+            snapshot["last_error_at"] = error_at.isoformat()
+        if error is not None:
+            snapshot["last_error"] = error[:500]
+
+        self.snapshots[loop_name] = snapshot
+        self.dirty = True
+
+    def drain(self) -> dict[str, dict[str, Any]] | None:
+        """Return a copy of the current snapshots and clear the dirty flag.
+
+        Returns ``None`` when there is nothing to flush. Callers must invoke
+        :meth:`mark_dirty` on persistence failure so the next flush retries.
+        """
+        if not self.dirty or not self.snapshots:
+            return None
+        copy: dict[str, dict[str, Any]] = {name: dict(value) for name, value in self.snapshots.items()}
+        self.dirty = False
+        return copy
+
+    def mark_dirty(self) -> None:
+        self.dirty = True
+
+    def clear(self) -> None:
+        self.snapshots.clear()
+        self.dirty = False
+
+    def copy(self) -> dict[str, dict[str, Any]]:
+        return {name: dict(value) for name, value in self.snapshots.items()}
+
+
+_heartbeat_buffer = _HeartbeatBuffer()
 
 
 def _update_loop_snapshot(
@@ -269,34 +344,15 @@ def _update_loop_snapshot(
     error_at: datetime | None = None,
     error: str | None = None,
 ) -> None:
-    global _in_memory_dirty
-    previous = _in_memory_snapshots.get(loop_name, {})
-    snapshot = dict(previous)
-    reference_time = succeeded_at or error_at or started_at or _now()
-
-    snapshot.update(
-        {
-            "loop_name": loop_name,
-            "owner": _PROCESS_OWNER,
-            "interval_seconds": interval_seconds,
-            "next_expected_at": (reference_time + timedelta(seconds=interval_seconds)).isoformat(),
-        }
+    _heartbeat_buffer.update(
+        loop_name,
+        interval_seconds=interval_seconds,
+        started_at=started_at,
+        succeeded_at=succeeded_at,
+        duration_seconds=duration_seconds,
+        error_at=error_at,
+        error=error,
     )
-    if started_at is not None:
-        snapshot["last_started_at"] = started_at.isoformat()
-    if succeeded_at is not None:
-        snapshot["last_succeeded_at"] = succeeded_at.isoformat()
-        snapshot["last_error_at"] = None
-        snapshot["last_error"] = None
-    if duration_seconds is not None:
-        snapshot["last_duration_seconds"] = duration_seconds
-    if error_at is not None:
-        snapshot["last_error_at"] = error_at.isoformat()
-    if error is not None:
-        snapshot["last_error"] = error[:500]
-
-    _in_memory_snapshots[loop_name] = snapshot
-    _in_memory_dirty = True
 
 
 async def schedule_background_loop(loop_name: str, interval_seconds: float) -> None:
@@ -310,14 +366,12 @@ async def schedule_background_loop(loop_name: str, interval_seconds: float) -> N
 
 def reset_background_loop_snapshots() -> None:
     """Clear the in-memory snapshot cache. Test-only entrypoint."""
-    global _in_memory_dirty
-    _in_memory_snapshots.clear()
-    _in_memory_dirty = False
+    _heartbeat_buffer.clear()
 
 
 def current_background_loop_snapshots() -> dict[str, dict[str, Any]]:
     """Return a shallow copy of the in-memory snapshots. Test-only entrypoint."""
-    return {name: dict(value) for name, value in _in_memory_snapshots.items()}
+    return _heartbeat_buffer.copy()
 
 
 async def flush_background_loop_snapshots(
@@ -329,11 +383,9 @@ async def flush_background_loop_snapshots(
     loops, so the call costs one DB round trip regardless of how many loops
     are active or how fast they cycle.
     """
-    global _in_memory_dirty
-    if not _in_memory_dirty or not _in_memory_snapshots:
+    snapshot_copy = _heartbeat_buffer.drain()
+    if snapshot_copy is None:
         return 0
-    snapshot_copy: dict[str, dict[str, Any]] = {name: dict(value) for name, value in _in_memory_snapshots.items()}
-    _in_memory_dirty = False
     control_plane_state_store = _control_plane_state_store()
     session_cm = session_factory() if session_factory is not None else async_session()
     try:
@@ -342,7 +394,7 @@ async def flush_background_loop_snapshots(
             await db.commit()
     except Exception:
         # Re-mark dirty so the next flush retries the data we just dropped.
-        _in_memory_dirty = True
+        _heartbeat_buffer.mark_dirty()
         raise
     return len(snapshot_copy)
 

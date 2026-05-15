@@ -80,7 +80,7 @@ async def test_schedule_background_loop_seeds_in_memory_snapshot() -> None:
 
 def test_update_loop_snapshot_merges_previous_and_truncates_errors() -> None:
     # Pre-populate with an extra key to verify per-loop merge behavior.
-    observability._in_memory_snapshots["heartbeat"] = {  # type: ignore[index]
+    observability._heartbeat_buffer.snapshots["heartbeat"] = {
         "last_started_at": "old",
         "custom": "keep",
     }
