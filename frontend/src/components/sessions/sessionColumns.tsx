@@ -3,6 +3,7 @@ import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import StatusBadge from '../StatusBadge';
 import PlatformIcon from '../PlatformIcon';
+import Badge from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
@@ -153,6 +154,16 @@ export function buildSessionColumns(
       header: 'Test Name',
       sortKey: 'test_name',
       render: (s) => {
+        if (s.is_probe) {
+          return (
+            <div className="space-y-0.5">
+              <Badge tone="neutral" size="sm">probe</Badge>
+              {s.probe_checked_by && (
+                <p className="text-xs text-text-3">{s.probe_checked_by}</p>
+              )}
+            </div>
+          );
+        }
         const failureSummary = isSetupFailureSession(s) ? buildFailureSummary(s) : null;
         return (
           <div className="space-y-0.5">

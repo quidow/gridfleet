@@ -26,6 +26,8 @@ from app.devices.services.state import ready_operational_state, set_operational_
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import service_viability as session_viability
+from app.sessions.service_probes import ProbeSource, record_probe_session
+from app.sessions.service_viability import grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import settings_service
 
@@ -218,6 +220,14 @@ async def run_probe(
         active_connection_target=started_node.active_connection_target,
     )
     ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+    await record_probe_session(
+        db,
+        device=device,
+        attempted_at=datetime.now(UTC),
+        result=grid_probe_response_to_result((ok, error)),
+        source=ProbeSource.verification,
+        capabilities=capabilities,
+    )
     if ok:
         await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
         return started_node, None

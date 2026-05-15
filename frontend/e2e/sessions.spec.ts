@@ -20,6 +20,8 @@ type SessionRow = {
   error_type: string | null;
   error_message: string | null;
   run_id: string | null;
+  is_probe?: boolean;
+  probe_checked_by?: string | null;
 };
 
 async function mockSessionsSurface(page: Page) {
@@ -103,6 +105,31 @@ async function mockSessionsSurface(page: Page) {
       body: JSON.stringify([{ id: 'device-1', name: 'Pixel 8' }]),
     });
   });
+  const probeSessions: SessionRow[] = [
+    {
+      id: 'probe-1',
+      session_id: 'probe-0000aaaa1111',
+      device_id: 'device-1',
+      device_name: 'Pixel 8',
+      device_platform_id: 'android_mobile',
+      device_platform_label: 'Android',
+      test_name: '__gridfleet_probe__',
+      started_at: new Date(Date.UTC(2026, 3, 1, 11, 30, 0)).toISOString(),
+      ended_at: new Date(Date.UTC(2026, 3, 1, 11, 30, 2)).toISOString(),
+      status: 'passed',
+      requested_pack_id: null,
+      requested_platform_id: null,
+      requested_device_type: null,
+      requested_connection_type: null,
+      requested_capabilities: { 'gridfleet:probeCheckedBy': 'scheduled' },
+      error_type: null,
+      error_message: null,
+      run_id: null,
+      is_probe: true,
+      probe_checked_by: 'scheduled',
+    },
+  ];
+
   await page.route((url) => new URL(url).pathname === '/api/sessions', async (route) => {
     const urlObject = new URL(route.request().url());
     const startedAfter = urlObject.searchParams.get('started_after');
@@ -110,8 +137,10 @@ async function mockSessionsSurface(page: Page) {
     const limit = Number(urlObject.searchParams.get('limit') ?? '50');
     const cursor = urlObject.searchParams.get('cursor');
     const direction = urlObject.searchParams.get('direction') ?? 'older';
+    const includeProbes = urlObject.searchParams.get('include_probes') === 'true';
 
-    const filtered = sessions.filter((session) => {
+    const source = includeProbes ? [...probeSessions, ...sessions] : sessions;
+    const filtered = source.filter((session) => {
       const startedAt = new Date(session.started_at).getTime();
       if (startedAfter && startedAt < new Date(startedAfter).getTime()) return false;
       if (startedBefore && startedAt > new Date(startedBefore).getTime()) return false;
@@ -183,6 +212,20 @@ test.describe('Sessions page', () => {
     await expect(page.getByText('Android Mobile • Real Device • Network')).toBeVisible();
     await expect(page.getByText('RuntimeError: Session could not be created')).toBeVisible();
     await expect(page.getByText('Synthetic ID')).toBeVisible();
+  });
+
+  test('hides probe sessions by default and reveals them when the toggle is enabled', async ({ page }) => {
+    await page.goto('/sessions');
+
+    await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('__gridfleet_probe__')).toHaveCount(0);
+    await expect(page.getByText('probe', { exact: true })).toHaveCount(0);
+
+    await page.getByLabel('Include probe sessions').click();
+    await expect(page).toHaveURL(/include_probes=1/);
+    await expect(page.getByLabel('Include probe sessions')).toBeChecked();
+    await expect(page.getByText('probe', { exact: true })).toBeVisible();
+    await expect(page.getByText('scheduled')).toBeVisible();
   });
 
   test('navigates through cursor history and restores state from the URL', async ({ page }) => {

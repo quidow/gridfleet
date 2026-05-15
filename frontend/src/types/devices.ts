@@ -110,6 +110,7 @@ export type SessionListParams = {
   limit?: number;
   cursor?: string;
   direction?: CursorDirection;
+  include_probes?: boolean;
 };
 
 // Open-dict shapes (backend JSON columns).

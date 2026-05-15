@@ -131,7 +131,7 @@ async def test_list_sessions_filter_by_device(
     assert data["items"][0]["session_id"] == "gs-d1"
 
 
-async def test_list_sessions_excludes_reserved_but_includes_probe_rows(
+async def test_list_sessions_excludes_reserved_and_probes_by_default(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     from app.sessions.models import Session, SessionStatus
@@ -167,8 +167,18 @@ async def test_list_sessions_excludes_reserved_but_includes_probe_rows(
     resp = await client.get("/api/sessions")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["total"] == 2
-    assert [row["session_id"] for row in data["items"]] == ["probe-sess-1", "grid-real"]
+    assert data["total"] == 1
+    assert [row["session_id"] for row in data["items"]] == ["grid-real"]
+
+    resp_with_probes = await client.get("/api/sessions", params={"include_probes": "true"})
+    assert resp_with_probes.status_code == 200
+    data_with_probes = resp_with_probes.json()
+    assert data_with_probes["total"] == 2
+    assert [row["session_id"] for row in data_with_probes["items"]] == ["probe-sess-1", "grid-real"]
+    probe_row = next(row for row in data_with_probes["items"] if row["session_id"] == "probe-sess-1")
+    assert probe_row["is_probe"] is True
+    real_row = next(row for row in data_with_probes["items"] if row["session_id"] == "grid-real")
+    assert real_row["is_probe"] is False
 
 
 async def test_list_sessions_paginates_and_sorts(

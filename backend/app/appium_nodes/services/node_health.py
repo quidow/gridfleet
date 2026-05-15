@@ -35,6 +35,7 @@ from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.grid import service as grid_service
+from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import (
     build_probe_capabilities,
     grid_probe_response_to_result,
@@ -151,7 +152,17 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
+    probe_capabilities: dict[str, Any] | None = None,
 ) -> None:
+    if probe_capabilities is not None:
+        await record_probe_session(
+            db,
+            device=device,
+            attempted_at=datetime.now(UTC),
+            result=result,
+            source=ProbeSource.node_health,
+            capabilities=probe_capabilities,
+        )
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None:
         # Node was deleted between the caller's lock_device and here. Bail out
@@ -440,6 +451,7 @@ async def _check_nodes(db: AsyncSession) -> None:
             observed_port=request.observed_port,
             observed_pid=request.observed_pid,
             observed_active_connection_target=request.observed_active_connection_target,
+            probe_capabilities=request.probe_capabilities,
         )
         await db.commit()
 

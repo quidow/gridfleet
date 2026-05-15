@@ -201,9 +201,10 @@ async def device_sessions(
     device_id: uuid.UUID,
     db: DbDep,
     limit: int = Query(50, le=200),
+    include_probes: bool = Query(False),
 ) -> list[Session]:
     await get_device_or_404(device_id, db)
-    return await session_service.get_device_sessions(db, device_id, limit=limit)
+    return await session_service.get_device_sessions(db, device_id, limit=limit, include_probes=include_probes)
 
 
 @router.get("/{device_id}/session-outcome-heatmap", response_model=list[SessionOutcomeHeatmapRow])

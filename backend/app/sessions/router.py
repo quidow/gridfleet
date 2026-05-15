@@ -62,6 +62,7 @@ async def list_sessions(
         "started_at"
     ),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
+    include_probes: bool = Query(False),
 ) -> dict[str, Any]:
     cursor_mode = "cursor" in request.query_params or "direction" in request.query_params
     if cursor_mode:
@@ -78,6 +79,7 @@ async def list_sessions(
                 limit=limit,
                 cursor=cursor,
                 direction=direction,
+                include_probes=include_probes,
             )
         except CursorPaginationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -100,6 +102,7 @@ async def list_sessions(
         offset=offset,
         sort_by=sort_by,
         sort_dir=sort_dir,
+        include_probes=include_probes,
     )
     return {
         "items": await _session_details_with_labels(db, sessions),

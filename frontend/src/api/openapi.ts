@@ -4619,6 +4619,13 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Is Probe
+             * @default false
+             */
+            is_probe: boolean;
+            /** Probe Checked By */
+            probe_checked_by?: string | null;
             /** Requested Capabilities */
             requested_capabilities?: {
                 [key: string]: unknown;
@@ -4679,6 +4686,13 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Is Probe
+             * @default false
+             */
+            is_probe: boolean;
+            /** Probe Checked By */
+            probe_checked_by?: string | null;
             /** Requested Capabilities */
             requested_capabilities?: {
                 [key: string]: unknown;
@@ -8596,6 +8610,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                include_probes?: boolean;
             };
             header?: never;
             path: {
@@ -11659,6 +11674,7 @@ export interface operations {
                 offset?: number;
                 sort_by?: "session_id" | "device" | "test_name" | "platform" | "started_at" | "duration" | "status";
                 sort_dir?: "asc" | "desc";
+                include_probes?: boolean;
             };
             header?: never;
             path?: never;

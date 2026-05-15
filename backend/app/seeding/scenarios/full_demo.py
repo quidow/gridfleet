@@ -1435,6 +1435,7 @@ async def apply_full_demo(ctx: SeedContext, *, skip_telemetry: bool = False) -> 
         make_setting(ctx, key="appium.default_plugins", value="images", category="grid"),
         make_setting(ctx, key="reservations.default_ttl_minutes", value=60, category="reservations"),
         make_setting(ctx, key="retention.sessions_days", value=90, category="retention"),
+        make_setting(ctx, key="retention.probe_sessions_days", value=7, category="retention"),
         make_setting(ctx, key="retention.device_events_days", value=90, category="retention"),
         make_setting(ctx, key="retention.capacity_snapshots_days", value=90, category="retention"),
     ]

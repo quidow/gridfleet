@@ -23,6 +23,7 @@ from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVE
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
+from app.sessions.probe_constants import PROBE_TEST_NAME
 
 assert_runnable = pack_platform_resolver.assert_runnable
 
@@ -226,6 +227,6 @@ async def serialize_device_detail(
         platform_label=platform_label,
     )
     payload["appium_node"] = _serialize_appium_node_for_detail(device)
-    payload["sessions"] = device.sessions
+    payload["sessions"] = [s for s in device.sessions if s.test_name != PROBE_TEST_NAME]
     payload["orchestration"] = await _serialize_orchestration(db, device)
     return payload

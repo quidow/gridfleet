@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,6 +82,70 @@ async def test_cleanup_old_sessions(db_session: AsyncSession, db_host: Host) -> 
     assert "old-session" not in session_ids
     assert "recent-session" in session_ids
     assert "running-session" in session_ids
+
+
+async def test_cleanup_uses_separate_retention_window_for_probes(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.sessions.probe_constants import PROBE_TEST_NAME
+    from app.settings import settings_service
+
+    overrides: dict[str, int] = {"retention.sessions_days": 30, "retention.probe_sessions_days": 7}
+    original_get = settings_service.get
+
+    def _get(key: str) -> object:
+        if key in overrides:
+            return overrides[key]
+        return original_get(key)
+
+    monkeypatch.setattr(settings_service, "get", _get)
+
+    device_id = await _create_device(db_session, db_host)
+    now = datetime.now(UTC)
+
+    real_recent = Session(
+        session_id="real-recent",
+        device_id=device_id,
+        test_name="test_login",
+        started_at=now - timedelta(days=10),
+        ended_at=now - timedelta(days=10),
+        status=SessionStatus.passed,
+    )
+    real_old = Session(
+        session_id="real-old",
+        device_id=device_id,
+        test_name="test_login",
+        started_at=now - timedelta(days=40),
+        ended_at=now - timedelta(days=40),
+        status=SessionStatus.passed,
+    )
+    probe_recent = Session(
+        session_id="probe-recent",
+        device_id=device_id,
+        test_name=PROBE_TEST_NAME,
+        started_at=now - timedelta(days=3),
+        ended_at=now - timedelta(days=3),
+        status=SessionStatus.passed,
+    )
+    probe_old = Session(
+        session_id="probe-old",
+        device_id=device_id,
+        test_name=PROBE_TEST_NAME,
+        started_at=now - timedelta(days=10),
+        ended_at=now - timedelta(days=10),
+        status=SessionStatus.passed,
+    )
+    db_session.add_all([real_recent, real_old, probe_recent, probe_old])
+    await db_session.commit()
+
+    await _cleanup_old_data(db_session)
+    await db_session.commit()
+
+    remaining_ids = set((await db_session.execute(select(Session.session_id))).scalars().all())
+    assert "real-recent" in remaining_ids
+    assert "probe-recent" in remaining_ids
+    assert "real-old" not in remaining_ids
+    assert "probe-old" not in remaining_ids
 
 
 async def test_cleanup_old_agent_reconfigure_outbox_rows(db_session: AsyncSession, db_host: Host) -> None:

@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator, model_validator
 
 from app.devices.models import (
     ConnectionType,
@@ -15,6 +15,8 @@ from app.devices.models import (
     HardwareHealthStatus,
 )
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 DeviceTags = dict[str, str]
@@ -229,6 +231,20 @@ class SessionRead(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     run_id: uuid.UUID | None = None
+    is_probe: bool = False
+    probe_checked_by: str | None = None
+
+    @model_validator(mode="after")
+    def _derive_probe_fields(self) -> "SessionRead":
+        is_probe = self.test_name == PROBE_TEST_NAME
+        probe_checked_by: str | None = None
+        if is_probe and isinstance(self.requested_capabilities, dict):
+            raw = self.requested_capabilities.get(PROBE_CHECKED_BY_CAP_KEY)
+            if isinstance(raw, str):
+                probe_checked_by = raw
+        self.is_probe = is_probe
+        self.probe_checked_by = probe_checked_by
+        return self
 
 
 class SessionOutcomeHeatmapRow(BaseModel):
