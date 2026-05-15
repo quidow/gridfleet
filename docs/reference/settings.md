@@ -50,6 +50,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `agent.recommended_version` | `agent` | `string` | `""` | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | none | Recommended `gridfleet-agent` version surfaced to agents and operators; empty disables recommendation messaging |
 | `agent.auto_accept_hosts` | `agent` | `bool` | `true` | `GRIDFLEET_HOST_AUTO_ACCEPT` | boolean | Whether self-registering hosts are automatically approved |
 | `agent.default_port` | `agent` | `int` | `5100` | none | `1024..65535` | Default agent port for new hosts |
+| `agent.log_ship_min_level` | `agent` | `string` | `INFO` | `GRIDFLEET_AGENT_LOG_SHIP_MIN_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Minimum agent-process log level shipped to backend storage |
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |
 | `reservations.max_ttl_minutes` | `reservations` | `int` | `180` | none | `1..1440` | Hard cap for reservation TTL |
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |
@@ -59,6 +60,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `retention.audit_log_days` | `retention` | `int` | `180` | none | `1..3650` | Delete device config audit entries older than N days |
 | `retention.device_events_days` | `retention` | `int` | `90` | none | `1..3650` | Delete device incident events older than N days |
 | `retention.agent_reconfigure_outbox_days` | `retention` | `int` | `7` | none | `1..3650` | Delete delivered or abandoned agent reconfigure outbox rows older than N days |
+| `retention.agent_log_days` | `retention` | `int` | `7` | `GRIDFLEET_AGENT_LOG_RETENTION_DAYS` | `1..30` | Delete shipped agent-process log entries older than N days |
 | `retention.cleanup_interval_hours` | `retention` | `int` | `24` | none | `1..168` | Interval for the retention cleanup loop |
 
 ## Notes

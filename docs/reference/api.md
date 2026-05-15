@@ -97,6 +97,8 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | `GET` | `/api/hosts/{host_id}` | Read host detail including current devices | path `host_id` | `HostDetail` |
 | `GET` | `/api/hosts/{host_id}/diagnostics` | Read backend-owned host diagnostics (breaker state, latest Appium process snapshot, recent agent-local Appium recovery events) | path `host_id` | `HostDiagnosticsRead` |
 | `GET` | `/api/hosts/{host_id}/resource-telemetry` | Read recent host CPU, memory, and disk telemetry using backend bucketing | `since`, `until`, `bucket_minutes` | `HostResourceTelemetryResponse` |
+| `GET` | `/api/hosts/{host_id}/agent-logs` | Read shipped agent-process logs for one host | `level`, `q`, `since`, `until`, `limit`, `offset` | `AgentLogPage` |
+| `GET` | `/api/hosts/{host_id}/events` | Read persisted system events scoped to one host | `types`, `since`, `until`, `limit`, `offset` | `HostEventsPage` |
 | `GET` | `/api/hosts/{host_id}/tools/status` | Read host agent Node, Node provider, and iOS helper versions | path `host_id` | `HostToolStatusRead` |
 | `DELETE` | `/api/hosts/{host_id}` | Delete an empty host | path `host_id` | empty `204` |
 | `POST` | `/api/hosts/{host_id}/approve` | Approve a pending host | path `host_id` | `HostRead` |
@@ -124,6 +126,10 @@ Current validation rules:
 - `bucket_minutes` must stay within `1..1440`
 - the requested window cannot exceed `retention.host_resource_telemetry_hours`
 
+`GET /api/hosts/{host_id}/agent-logs` returns newest log lines first. `level` expands upward (`INFO` includes `WARNING`, `ERROR`, and `CRITICAL`; `WARN` is accepted as an alias for `WARNING`). `q` performs a case-insensitive substring search over logger name and message.
+
+`GET /api/hosts/{host_id}/events` filters `SystemEvent` rows whose payload contains the requested `host_id`. `types` accepts a comma-separated event-type list.
+
 ## Agent Local API
 
 The agent exposes a local `/agent/health` endpoint. The response includes a `version_guidance` object with fields cached from the latest successful manager registration:
@@ -139,6 +145,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | --- | --- | --- | --- | --- |
 | `GET` | `/agent/driver-packs/desired` | Agent fetches desired driver-pack runtime state | `host_id` | desired pack/runtime payload |
 | `POST` | `/agent/driver-packs/status` | Agent reports installed runtimes, pack status, doctor checks, and sidecars | status payload | empty `204` |
+| `POST` | `/agent/{host_id}/log-batch` | Agent ships process log batches to the manager | `AgentLogBatchIngest` | `AgentLogIngestResult` (`202`) |
 
 ## Runs
 
