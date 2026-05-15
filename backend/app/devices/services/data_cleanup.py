@@ -171,10 +171,11 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
     agent_log_days: int = settings_service.get("retention.agent_log_days")
     if agent_log_days > 0:
         cutoff = now - timedelta(days=agent_log_days)
+        # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
         agent_log_entries_deleted = await _delete_in_batches(
             db,
             model=HostAgentLogEntry,
-            timestamp_column=HostAgentLogEntry.ts,
+            timestamp_column=HostAgentLogEntry.received_at,
             cutoff=cutoff,
         )
 

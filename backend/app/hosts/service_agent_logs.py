@@ -71,7 +71,9 @@ async def query_logs(
     if until is not None:
         base = base.where(HostAgentLogEntry.ts < until)
     if q:
-        base = base.where(HostAgentLogEntry.message.ilike(f"%{q}%"))
+        # Treat operator input as a literal substring: escape ILIKE wildcards.
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        base = base.where(HostAgentLogEntry.message.ilike(f"%{escaped}%", escape="\\"))
 
     count_stmt = select(func.count()).select_from(base.subquery())
     total = int((await db.execute(count_stmt)).scalar_one())

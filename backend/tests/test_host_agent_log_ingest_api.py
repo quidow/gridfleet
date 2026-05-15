@@ -61,3 +61,21 @@ async def test_ingest_dedup_on_retry(client: AsyncClient, db_host: Host) -> None
 async def test_ingest_rejects_malformed_body(client: AsyncClient, db_host: Host) -> None:
     resp = await client.post(f"/agent/{db_host.id}/log-batch", json={"boot_id": "not-uuid", "lines": []})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_ingest_unknown_host_returns_404(client: AsyncClient) -> None:
+    payload = {
+        "boot_id": str(uuid4()),
+        "lines": [
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "level": "INFO",
+                "logger_name": "agent.foo",
+                "message": "hello",
+                "sequence_no": 0,
+            }
+        ],
+    }
+    resp = await client.post(f"/agent/{uuid4()}/log-batch", json=payload)
+    assert resp.status_code == 404

@@ -26,7 +26,8 @@ async def query_host_events(
     limit: int = 50,
     offset: int = 0,
 ) -> HostEventsPage:
-    base = select(SystemEvent).where(SystemEvent.data["host_id"].astext == str(host_id))
+    # `data @> '{"host_id": "..."}'` is GIN-indexed; `data->>'host_id' = ...` is not.
+    base = select(SystemEvent).where(SystemEvent.data.contains({"host_id": str(host_id)}))
     if types:
         base = base.where(SystemEvent.type.in_(types))
     if since is not None:
@@ -48,4 +49,4 @@ async def query_host_events(
         )
         for row in rows
     ]
-    return HostEventsPage(events=events, total=total)
+    return HostEventsPage(events=events, total=total, has_more=(offset + len(events)) < total)

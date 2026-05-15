@@ -5,12 +5,10 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from app.devices.services.data_cleanup import _cleanup_old_data
 from app.hosts.models import HostAgentLogEntry
-from app.hosts.schemas import AgentLogBatchIngest, ShippedLogLineIngest
-from app.hosts.service_agent_logs import write_batch
 from app.settings import settings_service
 
 if TYPE_CHECKING:
@@ -24,19 +22,35 @@ pytestmark = pytest.mark.db
 @pytest.mark.asyncio
 async def test_prune_deletes_only_old_rows(db_session: AsyncSession, db_host: Host) -> None:
     settings_service._cache["retention.agent_log_days"] = 7
-    old_ts = datetime.now(UTC) - timedelta(days=10)
-    new_ts = datetime.now(UTC) - timedelta(days=1)
-    await write_batch(
-        db_session,
-        host_id=db_host.id,
-        batch=AgentLogBatchIngest(
-            boot_id=uuid4(),
-            lines=[
-                ShippedLogLineIngest(ts=old_ts, level="INFO", logger_name="x", message="old", sequence_no=0),
-                ShippedLogLineIngest(ts=new_ts, level="INFO", logger_name="x", message="new", sequence_no=1),
-            ],
-        ),
+    now = datetime.now(UTC)
+    boot_id = uuid4()
+    # Cleanup uses server-clock `received_at` (agent `ts` may be skewed).
+    await db_session.execute(
+        insert(HostAgentLogEntry),
+        [
+            {
+                "host_id": db_host.id,
+                "boot_id": boot_id,
+                "sequence_no": 0,
+                "ts": now,
+                "received_at": now - timedelta(days=10),
+                "level": "INFO",
+                "logger_name": "x",
+                "message": "old",
+            },
+            {
+                "host_id": db_host.id,
+                "boot_id": boot_id,
+                "sequence_no": 1,
+                "ts": now,
+                "received_at": now - timedelta(days=1),
+                "level": "INFO",
+                "logger_name": "x",
+                "message": "new",
+            },
+        ],
     )
+    await db_session.commit()
 
     await _cleanup_old_data(db_session)
 

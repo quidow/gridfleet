@@ -72,7 +72,13 @@ def _expand_levels(raw: str | None) -> list[str] | None:
         key = token.strip().upper()
         if not key:
             continue
-        out.update(_LEVEL_EXPANSION.get(key, [key]))
+        expansion = _LEVEL_EXPANSION.get(key)
+        if expansion is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown log level: {token!r}; expected one of {sorted(_LEVEL_EXPANSION)}",
+            )
+        out.update(expansion)
     return sorted(out) or None
 
 

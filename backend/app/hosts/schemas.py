@@ -221,7 +221,7 @@ class ShippedLogLineIngest(BaseModel):
     ts: datetime
     level: str = Field(min_length=1, max_length=16)
     logger_name: str = Field(min_length=1, max_length=255)
-    message: str
+    message: str = Field(max_length=16384)
     sequence_no: int = Field(ge=0)
 
 
@@ -260,3 +260,4 @@ class HostEventEntry(BaseModel):
 class HostEventsPage(BaseModel):
     events: list[HostEventEntry]
     total: int
+    has_more: bool = False

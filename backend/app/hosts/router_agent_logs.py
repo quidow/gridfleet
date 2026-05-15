@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003 - FastAPI inspects path parameter annotations at runtime.
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI resolves dependency aliases at runtime.
+from app.hosts.models import Host
 from app.hosts.schemas import AgentLogBatchIngest, AgentLogIngestResult
 from app.hosts.service_agent_logs import write_batch
 
@@ -24,4 +25,7 @@ async def ingest_agent_log_batch(
     payload: AgentLogBatchIngest,
     db: DbDep,
 ) -> AgentLogIngestResult:
+    host = await db.get(Host, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="host not found")
     return await write_batch(db, host_id=host_id, batch=payload)

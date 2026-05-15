@@ -37,4 +37,5 @@ class HostAgentLogEntry(Base):
     __table_args__ = (
         UniqueConstraint("host_id", "boot_id", "sequence_no", name="uq_agent_log_seq"),
         Index("ix_agent_log_host_ts", "host_id", "ts"),
+        Index("ix_agent_log_received_at", "received_at"),
     )
