@@ -34,6 +34,13 @@ class Host(Base):
     status: Mapped[HostStatus] = mapped_column(Enum(HostStatus), default=HostStatus.offline, nullable=False)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    os_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    kernel_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    cpu_arch: Mapped[str | None] = mapped_column(String, nullable=True)
+    cpu_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    cpu_cores: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_disk_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -133,6 +133,9 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
             host.agent_port = data.agent_port
         host.agent_version = data.agent_version
         host.capabilities = normalize_capabilities(data.capabilities)
+        if data.host_info is not None:
+            for field, value in data.host_info.model_dump(exclude_none=True).items():
+                setattr(host, field, value)
         if host.status == HostStatus.offline:
             host.status = HostStatus.online
         await db.commit()
@@ -151,6 +154,9 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
         capabilities=normalize_capabilities(data.capabilities),
         status=status,
     )
+    if data.host_info is not None:
+        for field, value in data.host_info.model_dump(exclude_none=True).items():
+            setattr(host, field, value)
     db.add(host)
     await db.flush()
     queue_event_for_session(

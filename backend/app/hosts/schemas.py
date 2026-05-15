@@ -17,6 +17,16 @@ class HostCreate(BaseModel):
     agent_port: int | None = None
 
 
+class HostHardwareInfo(BaseModel):
+    os_version: str | None = None
+    kernel_version: str | None = None
+    cpu_arch: str | None = None
+    cpu_model: str | None = None
+    cpu_cores: int | None = None
+    total_memory_mb: int | None = None
+    total_disk_gb: int | None = None
+
+
 class HostRegister(BaseModel):
     hostname: str
     ip: str
@@ -24,6 +34,7 @@ class HostRegister(BaseModel):
     agent_port: int | None = None
     agent_version: str | None = None
     capabilities: dict[str, Any] | None = None
+    host_info: HostHardwareInfo | None = None
 
 
 class HostUpdate(BaseModel):
@@ -54,6 +65,13 @@ class HostRead(BaseModel):
     missing_prerequisites: list[str] = []
     last_heartbeat: datetime | None
     created_at: datetime
+    os_version: str | None = None
+    kernel_version: str | None = None
+    cpu_arch: str | None = None
+    cpu_model: str | None = None
+    cpu_cores: int | None = None
+    total_memory_mb: int | None = None
+    total_disk_gb: int | None = None
 
 
 class HostDetail(HostRead):
