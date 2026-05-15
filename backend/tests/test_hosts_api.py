@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services import control_plane_state_store
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {

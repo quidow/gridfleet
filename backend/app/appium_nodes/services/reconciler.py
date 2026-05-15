@@ -36,6 +36,7 @@ from app.appium_nodes.services.reconciler_agent import (
 from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
 from app.core.config import reconciler_convergence_enabled
 from app.core.database import async_session
+from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.metrics_recorders import (
     APPIUM_RECONCILER_CYCLE_FAILURES,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
@@ -53,7 +54,6 @@ from app.devices.services.lifecycle_policy_actions import (
 )
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 
 if TYPE_CHECKING:

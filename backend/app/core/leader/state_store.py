@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import cast, delete, func, select
 from sqlalchemy.dialects.postgresql import JSON, JSONB, insert
 
-from app.models.control_plane_state_entry import ControlPlaneStateEntry
+from app.core.leader.models import ControlPlaneStateEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

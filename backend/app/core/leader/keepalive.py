@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 
+from app.core.leader.advisory import LeadershipLost, control_plane_leader
+from app.core.leader.settings_provider import get as _setting
 from app.core.observability import get_logger, observe_background_loop
-from app.services.control_plane_leader import LeadershipLost, control_plane_leader
-from app.settings import settings_service
 
 logger = get_logger(__name__)
 LEADER_KEEPALIVE_LOOP_NAME = "control_plane_leader_keepalive"
@@ -13,7 +13,7 @@ LEADER_KEEPALIVE_LOOP_NAME = "control_plane_leader_keepalive"
 
 async def run_keepalive_once() -> None:
     """One iteration. Extracted so tests can drive it without sleeping."""
-    if not settings_service.get("general.leader_keepalive_enabled"):
+    if not _setting("general.leader_keepalive_enabled"):
         return
     try:
         await control_plane_leader.write_heartbeat()
@@ -25,7 +25,7 @@ async def run_keepalive_once() -> None:
 
 async def control_plane_leader_keepalive_loop() -> None:
     while True:
-        interval = float(settings_service.get("general.leader_keepalive_interval_sec"))
+        interval = float(_setting("general.leader_keepalive_interval_sec"))
         try:
             async with observe_background_loop(LEADER_KEEPALIVE_LOOP_NAME, interval).cycle():
                 await run_keepalive_once()

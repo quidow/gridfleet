@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app.services import control_plane_state_store
+from app.core.leader import state_store as control_plane_state_store
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import func, select
 
+from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.hosts.models import Host, HostStatus, OSType
-from app.services.control_plane_leader import LeadershipLost
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions
 

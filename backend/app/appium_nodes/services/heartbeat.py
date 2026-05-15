@@ -21,6 +21,8 @@ from app.appium_nodes.services.heartbeat_outcomes import (
 )
 from app.core.database import async_session
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.leader import state_store as control_plane_state_store
+from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.core.observability import get_logger, observe_background_loop
 from app.core.type_defs import AsyncTaskFactory
@@ -34,8 +36,6 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.plugins import service as plugin_service
-from app.services import control_plane_state_store
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader, control_plane_leader
 from app.settings import settings_service
 
 logger = get_logger(__name__)

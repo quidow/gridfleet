@@ -1113,7 +1113,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
     db_host: Host,
 ) -> None:
     """A stale holder detected after a probe must NOT mutate AppiumNode or Device."""
-    from app.services.control_plane_leader import LeadershipLost
+    from app.core.leader.advisory import LeadershipLost
 
     device = Device(
         pack_id="appium-uiautomator2",

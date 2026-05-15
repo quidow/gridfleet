@@ -16,13 +16,13 @@ from app.core import health as health
 from app.core import metrics as metrics
 from app.core import metrics_recorders
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.leader import state_store as control_plane_state_store
+from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
 from app.grid import service as grid_service
-from app.models.control_plane_state_entry import ControlPlaneStateEntry
 from app.runs import service_reaper as run_reaper
-from app.services import control_plane_state_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

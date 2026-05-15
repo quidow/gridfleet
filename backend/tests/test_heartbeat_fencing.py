@@ -11,8 +11,8 @@ import pytest
 
 from app.appium_nodes.services.heartbeat import _check_hosts
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.core.leader.advisory import LeadershipLost
 from app.hosts.models import Host, HostStatus, OSType
-from app.services.control_plane_leader import LeadershipLost
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

@@ -13,6 +13,7 @@ from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.core import metrics_recorders
 from app.core.database import async_session
+from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceHold, DeviceIntent, DeviceIntentDirty, DeviceReservation
@@ -26,7 +27,6 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 
 if TYPE_CHECKING:

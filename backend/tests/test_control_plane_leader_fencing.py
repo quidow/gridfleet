@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock as _AsyncMock
 import pytest
 from sqlalchemy import text
 
-from app.models.control_plane_leader_heartbeat import ControlPlaneLeaderHeartbeat
-from app.services.control_plane_leader import ControlPlaneLeader, LeadershipLost
+from app.core.leader.advisory import ControlPlaneLeader, LeadershipLost
+from app.core.leader.models import ControlPlaneLeaderHeartbeat
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession

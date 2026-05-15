@@ -3,17 +3,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import control_plane_leader_keepalive as keepalive
-from app.services import control_plane_leader_watcher as watcher
-from app.services.control_plane_leader import LeadershipLost
+from app.core.leader import keepalive, watcher
+from app.core.leader.advisory import LeadershipLost
 
 
 async def test_keepalive_once_disabled_success_error_and_leadership_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(keepalive.settings_service, "get", lambda key: False)
+    monkeypatch.setattr(keepalive, "_setting", lambda key: False)
     await keepalive.run_keepalive_once()
 
     writes = AsyncMock()
-    monkeypatch.setattr(keepalive.settings_service, "get", lambda key: True)
+    monkeypatch.setattr(keepalive, "_setting", lambda key: True)
     monkeypatch.setattr(keepalive.control_plane_leader, "write_heartbeat", writes)
     await keepalive.run_keepalive_once()
     writes.assert_awaited_once()
@@ -39,11 +38,11 @@ async def test_watcher_once_guard_failure_and_preempt_paths(monkeypatch: pytest.
     leader.try_acquire.assert_not_awaited()
 
     monkeypatch.setattr(watcher, "freeze_background_loops_enabled", lambda: False)
-    monkeypatch.setattr(watcher.settings_service, "get", lambda key: False)
+    monkeypatch.setattr(watcher, "_setting", lambda key: False)
     await watcher.run_watcher_once(leader)
     leader.try_acquire.assert_not_awaited()
 
-    monkeypatch.setattr(watcher.settings_service, "get", lambda key: 5 if key.endswith("threshold_sec") else True)
+    monkeypatch.setattr(watcher, "_setting", lambda key: 5 if key.endswith("threshold_sec") else True)
     leader.try_acquire = AsyncMock(side_effect=RuntimeError("db"))
     await watcher.run_watcher_once(leader, engine=object())
 

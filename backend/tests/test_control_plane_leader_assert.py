@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
-from app.services.control_plane_leader import (
+from app.core.leader.advisory import (
     LeadershipLost,
     assert_current_leader,
     control_plane_leader,
@@ -101,14 +101,14 @@ async def test_assert_current_leader_noop_when_keepalive_disabled(
         )
         await db_session.commit()
 
-        from app.services import control_plane_leader as module
+        from app.core.leader import advisory as module
 
         monkeypatch.setattr(
-            module.settings_service,
-            "get",
-            lambda key: False if key == "general.leader_keepalive_enabled" else module.settings_service.get(key),
+            module,
+            "_setting",
+            lambda key: False,
         )
-        with caplog.at_level(logging.DEBUG, logger="app.services.control_plane_leader"):
+        with caplog.at_level(logging.DEBUG, logger="app.core.leader.advisory"):
             await assert_current_leader(db_session)
         assert any("fencing_disabled" in record.message for record in caplog.records)
     finally:

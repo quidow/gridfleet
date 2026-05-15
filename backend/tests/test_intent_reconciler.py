@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
+from app.core.leader.advisory import LeadershipLost
 from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
@@ -21,7 +22,6 @@ from app.devices.services.intent_reconciler import (
     run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
-from app.services.control_plane_leader import LeadershipLost
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:

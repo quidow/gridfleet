@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import node_health as node_health
+from app.core.leader import keepalive as control_plane_leader_keepalive
+from app.core.leader.advisory import LeadershipLost
 from app.devices.services import (
     connectivity as device_connectivity,
 )
@@ -19,8 +21,6 @@ from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
 from app.runs import service_reaper as run_reaper
-from app.services import control_plane_leader_keepalive
-from app.services.control_plane_leader import LeadershipLost
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -179,7 +179,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
 async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(control_plane_leader_keepalive.settings_service, "get", lambda _key: 1)
+    monkeypatch.setattr(control_plane_leader_keepalive, "_setting", lambda _key: 1)
     monkeypatch.setattr(control_plane_leader_keepalive, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         control_plane_leader_keepalive,

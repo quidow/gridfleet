@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.services import capability_keys as appium_capability_keys
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services import resource_service as appium_node_resource_service
+from app.core.leader import state_store as control_plane_state_store
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceType
 from app.devices.services.identity import appium_connection_target
@@ -13,7 +14,6 @@ from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
-from app.services import control_plane_state_store
 
 render_default_capabilities = pack_capability.render_default_capabilities
 render_device_field_capabilities = pack_capability.render_device_field_capabilities

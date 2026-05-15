@@ -20,6 +20,7 @@ from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.reconciler_agent import require_management_host
 from app.core.database import async_session
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceEventType, DeviceOperationalState, DeviceType
@@ -34,7 +35,6 @@ from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.grid import service as grid_service
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.sessions.service_viability import (
     build_probe_capabilities,
     grid_probe_response_to_result,

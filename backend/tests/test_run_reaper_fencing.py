@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.leader.advisory import LeadershipLost
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
-from app.services.control_plane_leader import LeadershipLost
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
