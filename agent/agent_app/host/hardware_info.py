@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -12,7 +13,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _MB = 1024 * 1024
-_GB = 1024**3
+# Disk reported in decimal GB (1 GB = 10^9 bytes) to match Apple Storage and
+# `df -H`. Memory stays binary MiB (RAM convention).
+_DISK_GB = 1_000_000_000
 _SUBPROCESS_TIMEOUT_SEC = 5
 
 
@@ -76,8 +79,23 @@ def _total_memory_mb() -> int | None:
     return _safe(lambda: int(psutil.virtual_memory().total / _MB))
 
 
+def host_disk_path() -> str:
+    """Return the filesystem path that reflects user-data disk usage.
+
+    On macOS APFS the root mount `/` is a sealed system volume holding only OS
+    files (~12 GiB). Real user data lives on the data volume mounted at
+    `/System/Volumes/Data`, which shares the APFS container so totals match.
+    Using `/` makes `disk_used_gb` report system-only usage and miss user data.
+    """
+    if platform.system() == "Darwin":
+        data_volume = "/System/Volumes/Data"
+        if os.path.isdir(data_volume):
+            return data_volume
+    return "/"
+
+
 def _total_disk_gb() -> int | None:
-    return _safe(lambda: int(psutil.disk_usage("/").total / _GB))
+    return _safe(lambda: int(psutil.disk_usage(host_disk_path()).total / _DISK_GB))
 
 
 def _cpu_cores() -> int | None:
