@@ -48,7 +48,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
-BOOT_ID = uuid4()
 
 
 def _watchdog(
@@ -176,7 +175,7 @@ async def _start_log_shipper_when_ready(
     host_identity: HostIdentity,
     backend_url: str,
     *,
-    boot_id: UUID = BOOT_ID,
+    boot_id: UUID,
 ) -> None:
     if agent_observability.shipper_queue is None:
         return
@@ -240,10 +239,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     runtime_registry = RuntimeRegistry()
     adapter_registry = AdapterRegistry()
     sidecar_supervisor = SidecarSupervisor()
+    boot_id = uuid4()
     app.state.host_identity = host_identity
     app.state.runtime_registry = runtime_registry
     app.state.adapter_registry = adapter_registry
     app.state.sidecar_supervisor = sidecar_supervisor
+    app.state.boot_id = boot_id
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
 
@@ -280,7 +281,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         )
         pack_task.add_done_callback(_watchdog("pack_state_loop"))
-        log_shipper_task = asyncio.create_task(_start_log_shipper_when_ready(host_identity, backend_url))
+        log_shipper_task = asyncio.create_task(
+            _start_log_shipper_when_ready(host_identity, backend_url, boot_id=boot_id)
+        )
         log_shipper_task.add_done_callback(_watchdog("log_shipper"))
 
     try:

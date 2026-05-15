@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from agent_app import observability as agent_observability
 from agent_app.logs.schemas import AgentLogBatch, ShippedLogLine
 
 if TYPE_CHECKING:
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
     import httpx
 
 logger = logging.getLogger("agent.logs.shipper")
+DROP_REPORT_INTERVAL_SEC = 60.0
 
 
 class LogShipperTask:
@@ -30,6 +33,7 @@ class LogShipperTask:
         flush_interval_sec: float = 2.0,
         backoff_initial_sec: float = 1.0,
         backoff_max_sec: float = 60.0,
+        drop_report_interval_sec: float = DROP_REPORT_INTERVAL_SEC,
     ) -> None:
         self._client = client
         self._host_id = host_id
@@ -41,13 +45,18 @@ class LogShipperTask:
         self._flush_interval = flush_interval_sec
         self._backoff_initial = backoff_initial_sec
         self._backoff_max = backoff_max_sec
+        self._drop_report_interval = drop_report_interval_sec
         self._stop = asyncio.Event()
+        self._last_reported_queue_drops = 0
+        self._last_reported_rejected = 0
+        self._drop_report_task: asyncio.Task[None] | None = None
         self.dropped_rejected = 0
 
     def stop(self) -> None:
         self._stop.set()
 
     async def run(self) -> None:
+        self._drop_report_task = asyncio.create_task(self._drop_report_loop())
         try:
             while not self._stop.is_set():
                 batch = await self._collect_batch()
@@ -63,7 +72,48 @@ class LogShipperTask:
                 try:
                     await self._ship_with_retry(remaining)
                 finally:
+                    await self._stop_drop_report()
                     raise
+        finally:
+            await self._stop_drop_report()
+            self._emit_drop_report()
+
+    async def _stop_drop_report(self) -> None:
+        task = self._drop_report_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def _drop_report_loop(self) -> None:
+        try:
+            while not self._stop.is_set():
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._drop_report_interval)
+                except TimeoutError:
+                    self._emit_drop_report()
+        except asyncio.CancelledError:
+            return
+
+    def _emit_drop_report(self) -> None:
+        handler = agent_observability.shipper_handler
+        queue_drops = handler.dropped_count if handler is not None else 0
+        rejected = self.dropped_rejected
+        delta_queue = queue_drops - self._last_reported_queue_drops
+        delta_rejected = rejected - self._last_reported_rejected
+        if delta_queue == 0 and delta_rejected == 0:
+            return
+        logger.warning(
+            "log shipper drops: queue=%d (+%d), rejected=%d (+%d)",
+            queue_drops,
+            delta_queue,
+            rejected,
+            delta_rejected,
+        )
+        self._last_reported_queue_drops = queue_drops
+        self._last_reported_rejected = rejected
 
     async def _collect_batch(self) -> list[ShippedLogLine]:
         batch: list[ShippedLogLine] = []

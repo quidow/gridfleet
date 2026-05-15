@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from datetime import UTC, datetime
 from itertools import count
-from threading import Lock
 
 from agent_app.logs.schemas import ShippedLogLine
 
@@ -19,28 +17,6 @@ _LEVEL_NAME_TO_INT = {
     "ERROR": logging.ERROR,
     "CRITICAL": logging.CRITICAL,
 }
-
-
-class RingBufferHandler(logging.Handler):
-    """Bounded in-memory log buffer that stores pre-formatted strings."""
-
-    def __init__(self, maxlen: int = 1000) -> None:
-        super().__init__()
-        self._buf: deque[str] = deque(maxlen=maxlen)
-        self._buf_lock = Lock()
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            rendered = self.format(record)
-        except Exception:
-            self.handleError(record)
-            return
-        with self._buf_lock:
-            self._buf.append(rendered)
-
-    def snapshot(self) -> list[str]:
-        with self._buf_lock:
-            return list(self._buf)
 
 
 class ShipperHandler(logging.Handler):

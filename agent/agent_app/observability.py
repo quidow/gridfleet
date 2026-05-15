@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from starlette.datastructures import Headers, MutableHeaders
 
-from agent_app.logs.handlers import RingBufferHandler, ShipperHandler
+from agent_app.logs.handlers import ShipperHandler
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -22,7 +22,6 @@ _HTTP_METHOD: ContextVar[str | None] = ContextVar("agent_http_method", default=N
 _HTTP_PATH: ContextVar[str | None] = ContextVar("agent_http_path", default=None)
 _DEFAULT_RECORD_FACTORY = logging.getLogRecordFactory()
 _GRIDFLEET_AGENT_HANDLER_ATTR = "_gridfleet_agent_logging_handler"
-ring_buffer_handler: RingBufferHandler | None = None
 shipper_handler: ShipperHandler | None = None
 shipper_queue: asyncio.Queue[ShippedLogLine] | None = None
 
@@ -64,7 +63,7 @@ def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
 
 
 def configure_logging(*, force: bool = False) -> None:
-    global ring_buffer_handler, shipper_handler, shipper_queue
+    global shipper_handler, shipper_queue
     root_logger = logging.getLogger()
     if logging.getLogRecordFactory() is _record_factory and _has_gridfleet_logging_handler(root_logger) and not force:
         return
@@ -79,11 +78,6 @@ def configure_logging(*, force: bool = False) -> None:
 
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
-
-    ring_buffer_handler = RingBufferHandler(maxlen=1000)
-    ring_buffer_handler.setFormatter(formatter)
-    setattr(ring_buffer_handler, _GRIDFLEET_AGENT_HANDLER_ATTR, True)
-    root_logger.addHandler(ring_buffer_handler)
 
     shipper_queue = asyncio.Queue(maxsize=5000)
     shipper_handler = ShipperHandler(queue=shipper_queue, min_level=logging.INFO)
