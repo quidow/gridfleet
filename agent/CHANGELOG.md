@@ -2,6 +2,18 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.11.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.10.0...gridfleet-agent-v0.11.0) (2026-05-15)
+
+
+### Features
+
+* **agent:** install ~/.local/bin/gridfleet-agent shim ([88dcfbe](https://github.com/quidow/gridfleet/commit/88dcfbe637327e9782df34d463b0069740d84457))
+
+
+### Bug Fixes
+
+* **agent:** set AGENT_RUNTIME_ROOT in launchd plist ([977bdd2](https://github.com/quidow/gridfleet/commit/977bdd20ecad8be99d5252389b4d8a00d6a3f72d))
+
 ## [0.10.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.9.0...gridfleet-agent-v0.10.0) (2026-05-15)
 
 
