@@ -227,8 +227,11 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
     assert [point.timestamp for point in response.series] == [
         date_from,
         date_from + timedelta(minutes=1),
+        date_from + timedelta(minutes=2),
         date_from + timedelta(minutes=3),
     ]
+    assert [point.has_data for point in response.series] == [True, True, False, True]
+
     pressure_bucket = response.series[1]
     assert pressure_bucket.total_capacity_slots == 4
     assert pressure_bucket.active_sessions == 4
@@ -240,6 +243,90 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
     assert pressure_bucket.devices_available == 1
     assert pressure_bucket.devices_offline == 1
     assert pressure_bucket.devices_maintenance == 1
+
+    gap_bucket = response.series[2]
+    assert gap_bucket.has_data is False
+    assert gap_bucket.devices_total == 0
+    assert gap_bucket.devices_available == 0
+    assert gap_bucket.devices_offline == 0
+    assert gap_bucket.devices_maintenance == 0
+    assert gap_bucket.total_capacity_slots == 0
+    assert gap_bucket.active_sessions == 0
+    assert gap_bucket.queued_requests == 0
+    assert gap_bucket.available_capacity_slots == 0
+    assert gap_bucket.inferred_demand == 0
+
+
+async def test_fleet_capacity_timeline_picks_latest_snapshot_per_bucket(
+    db_session: AsyncSession,
+) -> None:
+    date_from = datetime(2026, 4, 18, 12, 0, tzinfo=UTC)
+    db_session.add_all(
+        [
+            AnalyticsCapacitySnapshot(
+                captured_at=date_from + timedelta(minutes=2),
+                total_capacity_slots=4,
+                active_sessions=0,
+                queued_requests=0,
+                available_capacity_slots=4,
+                devices_total=2,
+                devices_available=0,
+                devices_offline=2,
+                devices_maintenance=0,
+            ),
+            AnalyticsCapacitySnapshot(
+                captured_at=date_from + timedelta(minutes=12),
+                total_capacity_slots=4,
+                active_sessions=0,
+                queued_requests=0,
+                available_capacity_slots=4,
+                devices_total=2,
+                devices_available=0,
+                devices_offline=0,
+                devices_maintenance=2,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await get_fleet_capacity_timeline(
+        db_session,
+        date_from=date_from,
+        date_to=date_from + timedelta(minutes=60),
+        bucket_minutes=60,
+    )
+
+    assert len(response.series) == 1
+    bucket = response.series[0]
+    assert bucket.has_data is True
+    assert bucket.devices_offline == 0
+    assert bucket.devices_maintenance == 2
+    assert bucket.devices_total - bucket.devices_offline - bucket.devices_maintenance == 0
+
+
+async def test_fleet_capacity_timeline_aligns_unaligned_bounds(
+    db_session: AsyncSession,
+) -> None:
+    date_from = datetime(2026, 4, 18, 10, 23, tzinfo=UTC)
+    date_to = datetime(2026, 4, 18, 11, 17, tzinfo=UTC)
+
+    response = await get_fleet_capacity_timeline(
+        db_session,
+        date_from=date_from,
+        date_to=date_to,
+        bucket_minutes=60,
+    )
+
+    assert len(response.series) == 2
+    assert [point.timestamp for point in response.series] == [
+        datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
+        datetime(2026, 4, 18, 11, 0, tzinfo=UTC),
+    ]
+    assert all(point.has_data is False for point in response.series)
+    for point in response.series:
+        assert point.devices_total == 0
+        assert point.available_capacity_slots == 0
+        assert point.inferred_demand == 0
 
 
 async def test_capacity_snapshot_collector_counts_verified_running_nodes(
