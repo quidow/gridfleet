@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import tarfile
@@ -24,7 +25,7 @@ from app.packs.services.storage import PackStorageError
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.packs.services.storage import PackStorageService
+    from app.packs.services.storage import PackStorageService, StorageRecord
 
 
 class PackIngestValidationError(ValueError):
@@ -104,6 +105,10 @@ def _extract_manifest_text(data: bytes) -> str:
     raise PackIngestValidationError("tarball is missing manifest.yaml at archive root")
 
 
+def _store_artifact(storage: PackStorageService, *, pack_id: str, release: str, data: bytes) -> StorageRecord:
+    return storage.store(pack_id=pack_id, release=release, data=data)
+
+
 async def ingest_pack_tarball(
     session: AsyncSession,
     *,
@@ -112,7 +117,7 @@ async def ingest_pack_tarball(
     origin_filename: str,
     data: bytes,
 ) -> DriverPack:
-    manifest_text = _extract_manifest_text(data)
+    manifest_text = await asyncio.to_thread(_extract_manifest_text, data)
     try:
         manifest = load_manifest_yaml(manifest_text)
     except ManifestValidationError as exc:
@@ -139,7 +144,9 @@ async def ingest_pack_tarball(
                     existing.current_release = release_id
                     if release.artifact_path is None or not Path(release.artifact_path).is_file():
                         try:
-                            record = storage.store(pack_id=pack_id, release=release_id, data=data)
+                            record = await asyncio.to_thread(
+                                _store_artifact, storage, pack_id=pack_id, release=release_id, data=data
+                            )
                         except PackStorageError as exc:
                             raise PackIngestConflictError(str(exc)) from exc
                         release.artifact_path = record.path
@@ -172,7 +179,7 @@ async def ingest_pack_tarball(
         await session.flush()
 
     try:
-        record = storage.store(pack_id=pack_id, release=release_id, data=data)
+        record = await asyncio.to_thread(_store_artifact, storage, pack_id=pack_id, release=release_id, data=data)
     except PackStorageError as exc:
         raise PackIngestConflictError(str(exc)) from exc
 

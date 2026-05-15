@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import io
 import tarfile
@@ -32,6 +33,20 @@ class ForkPackBody(BaseModel):
 
     new_pack_id: str
     display_name: str | None = None
+
+
+def _build_fork_tarball(manifest_bytes: bytes) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
+        info = tarfile.TarInfo("manifest.yaml")
+        info.size = len(manifest_bytes)
+        info.mtime = 0
+        info.uid = 0
+        info.gid = 0
+        info.uname = ""
+        info.gname = ""
+        tar.addfile(info, io.BytesIO(manifest_bytes))
+    return buf.getvalue()
 
 
 @router.post(
@@ -73,16 +88,7 @@ async def fork(
     }
 
     manifest_bytes = yaml.safe_dump(forked_manifest, sort_keys=False).encode("utf-8")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
-        info = tarfile.TarInfo("manifest.yaml")
-        info.size = len(manifest_bytes)
-        info.mtime = 0
-        info.uid = 0
-        info.gid = 0
-        info.uname = ""
-        info.gname = ""
-        tar.addfile(info, io.BytesIO(manifest_bytes))
+    data = await asyncio.to_thread(_build_fork_tarball, manifest_bytes)
 
     storage = PackStorageService(packs_settings.driver_pack_storage_dir)
     try:
@@ -91,7 +97,7 @@ async def fork(
             storage=storage,
             username=_username,
             origin_filename=f"{body.new_pack_id}-fork.tar.gz",
-            data=buf.getvalue(),
+            data=data,
         )
     except PackIngestConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
