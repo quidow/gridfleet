@@ -65,6 +65,9 @@ function Gauge({ label, percent, detail }: { label: string; percent: number | nu
   );
 }
 
+// totalMemoryMb/totalDiskGb are static host-registration metadata used as fallbacks
+// when telemetry samples omit memory_total_mb / disk_total_gb (older agent versions
+// that emit percent-only telemetry).
 export default function HostOverviewResourceStrip({ hostId, totalMemoryMb, totalDiskGb }: Props) {
   const { data } = useHostResourceTelemetry(hostId);
   const latest = data ? pickLatestSample(data.samples) : null;

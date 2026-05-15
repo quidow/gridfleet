@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import HostOverviewPanel from './HostOverviewPanel';
@@ -86,6 +86,12 @@ test('falls back to os_type and empty-glyph when hardware metadata is absent', (
 
   // OS row: no os_version on the fixture, so it falls back to os_type ("macos")
   expect(screen.getByText('macos')).toBeInTheDocument();
-  // Kernel, Architecture, CPU, Cores each render the empty glyph
-  expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
+
+  // Each hardware-detail row in the Host Info <dl> renders the empty glyph in its <dd>
+  for (const label of ['Kernel', 'Architecture', 'CPU', 'Cores']) {
+    const term = screen.getByText(label, { selector: 'dt' });
+    const row = term.parentElement;
+    if (!row) throw new Error(`row for "${label}" not found`);
+    expect(within(row).getByText('—')).toBeInTheDocument();
+  }
 });
