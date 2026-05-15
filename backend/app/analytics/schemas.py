@@ -72,6 +72,7 @@ class FleetCapacityTimelinePoint(BaseModel):
     devices_available: int
     devices_offline: int = 0
     devices_maintenance: int = 0
+    has_data: bool = True
 
 
 class FleetCapacityTimeline(BaseModel):

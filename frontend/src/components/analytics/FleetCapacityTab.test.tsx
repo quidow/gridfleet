@@ -42,6 +42,7 @@ function makeTimeline(overrides: Partial<FleetCapacityTimeline> = {}): FleetCapa
         devices_available: 2,
         devices_offline: 1,
         devices_maintenance: 0,
+        has_data: true,
       },
       {
         timestamp: '2026-04-18T10:01:00Z',
@@ -57,6 +58,7 @@ function makeTimeline(overrides: Partial<FleetCapacityTimeline> = {}): FleetCapa
         devices_available: 0,
         devices_offline: 2,
         devices_maintenance: 1,
+        has_data: true,
       },
     ],
     ...overrides,
@@ -64,25 +66,46 @@ function makeTimeline(overrides: Partial<FleetCapacityTimeline> = {}): FleetCapa
 }
 
 describe('buildFleetCapacityChartData', () => {
-  it('inserts a null gap row when a bucket is missing', () => {
+  it('emits gap rows for buckets where has_data is false', () => {
+    const baseline = makeTimeline();
     const chartData = buildFleetCapacityChartData({
-      ...makeTimeline(),
+      ...baseline,
       series: [
-        makeTimeline().series[0],
+        baseline.series[0]!,
         {
-          ...makeTimeline().series[1],
-          timestamp: '2026-04-18T10:03:00Z',
+          ...baseline.series[1]!,
+          timestamp: '2026-04-18T10:01:00Z',
+          total_capacity_slots: 0,
+          active_sessions: 0,
+          queued_requests: 0,
+          rejected_unfulfilled_sessions: 0,
+          available_capacity_slots: 0,
+          inferred_demand: 0,
+          hosts_total: 0,
+          hosts_online: 0,
+          devices_total: 0,
+          devices_available: 0,
+          devices_offline: 0,
+          devices_maintenance: 0,
+          has_data: false,
+        },
+        {
+          ...baseline.series[1]!,
+          timestamp: '2026-04-18T10:02:00Z',
+          has_data: true,
         },
       ],
     });
 
-    expect(chartData).toHaveLength(3);
+    expect(chartData.map((row) => row.isGap)).toEqual([false, true, false]);
     expect(chartData[1]).toMatchObject({
       isGap: true,
       total_capacity_slots: null,
       active_sessions: null,
       queued_requests: null,
       rejected_unfulfilled_sessions: null,
+      available_capacity_slots: null,
+      inferred_demand: null,
     });
   });
 });

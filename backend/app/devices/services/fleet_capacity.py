@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +82,26 @@ def is_unmet_demand_session(session: Session) -> bool:
     return session.ended_at - session.started_at <= timedelta(seconds=30)
 
 
+def _align_window_to_buckets(
+    *,
+    date_from: datetime,
+    date_to: datetime,
+    bucket_minutes: int,
+) -> tuple[datetime, datetime]:
+    # Callers must validate date_from < date_to before invoking. The max(..., 1)
+    # below is a defensive floor: if a degenerate equal-bounds input ever slips
+    # past validation, the helper still emits a single bucket instead of an
+    # empty series that would silently break generate_series consumers.
+    bucket = timedelta(minutes=bucket_minutes)
+    bucket_seconds = bucket.total_seconds()
+    aligned_from_index = math.floor(date_from.timestamp() / bucket_seconds)
+    aligned_from = datetime.fromtimestamp(aligned_from_index * bucket_seconds, tz=UTC)
+    total = (date_to - aligned_from).total_seconds() / bucket_seconds
+    n_buckets = max(math.ceil(total), 1)
+    aligned_to = aligned_from + bucket * n_buckets
+    return aligned_from, aligned_to
+
+
 def _bucket_start(timestamp: datetime, *, date_from: datetime, bucket_minutes: int) -> datetime:
     bucket_seconds = bucket_minutes * 60
     offset_seconds = max((timestamp - date_from).total_seconds(), 0)
@@ -129,34 +150,67 @@ async def get_fleet_capacity_timeline(
     if not 1 <= bucket_minutes <= MAX_BUCKET_MINUTES:
         raise ValueError("bucket_minutes must be between 1 and 1440")
 
+    aligned_from, aligned_to = _align_window_to_buckets(
+        date_from=date_from,
+        date_to=date_to,
+        bucket_minutes=bucket_minutes,
+    )
+
     bucket_rows = (
         (
             await db.execute(
                 text(
                     """
-                SELECT
-                    date_bin(
-                        make_interval(mins => CAST(:bucket_minutes AS integer)),
-                        captured_at,
-                        :date_from
-                    ) AS bucket_start,
-                    MAX(total_capacity_slots)::int AS total_capacity_slots,
-                    MAX(active_sessions)::int AS active_sessions,
-                    MAX(queued_requests)::int AS queued_requests,
-                    MAX(hosts_total)::int AS hosts_total,
-                    MAX(hosts_online)::int AS hosts_online,
-                    MAX(devices_total)::int AS devices_total,
-                    MAX(devices_available)::int AS devices_available,
-                    MAX(devices_offline)::int AS devices_offline,
-                    MAX(devices_maintenance)::int AS devices_maintenance
-                FROM analytics_capacity_snapshots
-                WHERE captured_at >= :date_from
-                  AND captured_at < :date_to
-                GROUP BY bucket_start
-                ORDER BY bucket_start ASC
-                """
+                    WITH bucket_axis AS (
+                        SELECT generate_series(
+                            CAST(:date_from AS timestamptz),
+                            CAST(:date_to AS timestamptz) - make_interval(mins => CAST(:bucket_minutes AS integer)),
+                            make_interval(mins => CAST(:bucket_minutes AS integer))
+                        ) AS bucket_start
+                    ),
+                    binned AS (
+                        SELECT DISTINCT ON (bucket_start)
+                            date_bin(
+                                make_interval(mins => CAST(:bucket_minutes AS integer)),
+                                captured_at,
+                                CAST(:date_from AS timestamptz)
+                            ) AS bucket_start,
+                            total_capacity_slots,
+                            active_sessions,
+                            queued_requests,
+                            hosts_total,
+                            hosts_online,
+                            devices_total,
+                            devices_available,
+                            devices_offline,
+                            devices_maintenance
+                        FROM analytics_capacity_snapshots
+                        WHERE captured_at >= CAST(:date_from AS timestamptz)
+                          AND captured_at < CAST(:date_to AS timestamptz)
+                        ORDER BY bucket_start ASC, captured_at DESC
+                    )
+                    SELECT
+                        bucket_axis.bucket_start AS bucket_start,
+                        (binned.bucket_start IS NOT NULL) AS has_data,
+                        COALESCE(binned.total_capacity_slots, 0)::int AS total_capacity_slots,
+                        COALESCE(binned.active_sessions, 0)::int AS active_sessions,
+                        COALESCE(binned.queued_requests, 0)::int AS queued_requests,
+                        COALESCE(binned.hosts_total, 0)::int AS hosts_total,
+                        COALESCE(binned.hosts_online, 0)::int AS hosts_online,
+                        COALESCE(binned.devices_total, 0)::int AS devices_total,
+                        COALESCE(binned.devices_available, 0)::int AS devices_available,
+                        COALESCE(binned.devices_offline, 0)::int AS devices_offline,
+                        COALESCE(binned.devices_maintenance, 0)::int AS devices_maintenance
+                    FROM bucket_axis
+                    LEFT JOIN binned USING (bucket_start)
+                    ORDER BY bucket_axis.bucket_start ASC
+                    """
                 ),
-                {"bucket_minutes": bucket_minutes, "date_from": date_from, "date_to": date_to},
+                {
+                    "bucket_minutes": bucket_minutes,
+                    "date_from": aligned_from,
+                    "date_to": aligned_to,
+                },
             )
         )
         .mappings()
@@ -164,14 +218,15 @@ async def get_fleet_capacity_timeline(
     )
     rejected_counts = await _rejected_unfulfilled_counts_by_bucket(
         db,
-        date_from=date_from,
-        date_to=date_to,
+        date_from=aligned_from,
+        date_to=aligned_to,
         bucket_minutes=bucket_minutes,
     )
 
     series: list[analytics_schemas.FleetCapacityTimelinePoint] = []
     for row in bucket_rows:
         timestamp = row["bucket_start"]
+        has_data = bool(row["has_data"])
         total_capacity_slots = int(row["total_capacity_slots"] or 0)
         active_sessions = int(row["active_sessions"] or 0)
         queued_requests = int(row["queued_requests"] or 0)
@@ -181,8 +236,9 @@ async def get_fleet_capacity_timeline(
         devices_available = int(row["devices_available"] or 0)
         devices_offline = int(row["devices_offline"] or 0)
         devices_maintenance = int(row["devices_maintenance"] or 0)
-        rejected_unfulfilled_sessions = rejected_counts.get(timestamp, 0)
+        rejected_unfulfilled_sessions = rejected_counts.get(timestamp, 0) if has_data else 0
         available_capacity_slots = max(total_capacity_slots - active_sessions, 0)
+        inferred_demand = active_sessions + queued_requests + rejected_unfulfilled_sessions if has_data else 0
         series.append(
             analytics_schemas.FleetCapacityTimelinePoint(
                 timestamp=timestamp,
@@ -191,19 +247,20 @@ async def get_fleet_capacity_timeline(
                 queued_requests=queued_requests,
                 rejected_unfulfilled_sessions=rejected_unfulfilled_sessions,
                 available_capacity_slots=available_capacity_slots,
-                inferred_demand=active_sessions + queued_requests + rejected_unfulfilled_sessions,
+                inferred_demand=inferred_demand,
                 hosts_total=hosts_total,
                 hosts_online=hosts_online,
                 devices_total=devices_total,
                 devices_available=devices_available,
                 devices_offline=devices_offline,
                 devices_maintenance=devices_maintenance,
+                has_data=has_data,
             )
         )
 
     return analytics_schemas.FleetCapacityTimeline(
-        date_from=date_from,
-        date_to=date_to,
+        date_from=aligned_from,
+        date_to=aligned_to,
         bucket_minutes=bucket_minutes,
         series=series,
     )
