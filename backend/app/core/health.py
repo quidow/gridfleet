@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
-from app.core.observability import BACKGROUND_LOOP_NAMES, get_background_loop_snapshots, loop_heartbeat_fresh
+from app.core.observability import (
+    BACKGROUND_LOOP_NAMES,
+    current_background_loop_flush_interval_seconds,
+    get_background_loop_snapshots,
+    loop_heartbeat_fresh,
+)
 from app.core.shutdown import shutdown_coordinator
 
 if TYPE_CHECKING:
@@ -47,6 +52,10 @@ async def check_readiness(db: AsyncSession) -> tuple[dict[str, Any], int]:
 
     snapshots = await get_background_loop_snapshots(db)
     current_time = _now()
+    # Snapshots live in-memory on the leader and are batch-flushed every
+    # `background_loop_flush_interval_sec`; allow that full window as extra
+    # grace so a healthy loop is never reported stale during the flush gap.
+    flush_interval = current_background_loop_flush_interval_seconds()
     loop_checks: dict[str, Any] = {}
     leader_ready = True
 
@@ -60,7 +69,7 @@ async def check_readiness(db: AsyncSession) -> tuple[dict[str, Any], int]:
             }
             continue
 
-        healthy = loop_heartbeat_fresh(snapshot, now=current_time)
+        healthy = loop_heartbeat_fresh(snapshot, now=current_time, extra_grace_seconds=flush_interval)
         loop_checks[loop_name] = {
             "healthy": healthy,
             "owner": snapshot.get("owner"),

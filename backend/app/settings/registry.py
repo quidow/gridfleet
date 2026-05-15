@@ -275,6 +275,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3600,
     ),
     SettingDefinition(
+        key="general.background_loop_flush_interval_sec",
+        category="general",
+        setting_type="int",
+        default=15,
+        description=(
+            "How often the leader flushes in-memory background-loop heartbeat snapshots to the "
+            "control-plane state table. Lower values reduce reader staleness; higher values reduce "
+            "DB write volume."
+        ),
+        min_value=1,
+        max_value=300,
+    ),
+    SettingDefinition(
         key="general.lifecycle_recovery_backoff_base_sec",
         category="general",
         setting_type="int",

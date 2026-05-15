@@ -32,7 +32,12 @@ from app.core.leader.keepalive import control_plane_leader_keepalive_loop
 from app.core.leader.watcher import control_plane_leader_watcher_loop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
-from app.core.observability import configure_logging, get_logger
+from app.core.observability import (
+    background_loop_flush_loop,
+    configure_logging,
+    flush_background_loop_snapshots,
+    get_logger,
+)
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
@@ -241,6 +246,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     name="appium_reconciler_loop",
                 ),
                 asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
+                asyncio.create_task(
+                    background_loop_flush_loop(session_factory),
+                    name="background_loop_flush_loop",
+                ),
             ]
         watcher_task = asyncio.create_task(
             control_plane_leader_watcher_loop(),
@@ -252,6 +261,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await shutdown_coordinator.begin_shutdown()
         await shutdown_coordinator.wait_for_drain(SHUTDOWN_DRAIN_TIMEOUT_SEC)
         await _cancel_and_wait_for_tasks(tasks, label="background")
+        # Persist the last in-memory heartbeat snapshot so operators see fresh
+        # values immediately after a clean restart, instead of waiting for the
+        # first cycle of the new process to write rows.
+        try:
+            await flush_background_loop_snapshots(session_factory)
+        except Exception:
+            logger.exception("background_loop_final_flush_failed")
         if watcher_task is not None:
             await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
         await shutdown_background_tasks()

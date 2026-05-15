@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.core import observability as observability
 
-if TYPE_CHECKING:
-    import pytest
+
+@pytest.fixture(autouse=True)
+def _reset_background_loop_snapshots() -> None:
+    observability.reset_background_loop_snapshots()
 
 
 def test_request_context_helpers_round_trip() -> None:
@@ -67,48 +69,39 @@ async def test_get_background_loop_snapshots_filters_non_dict_values() -> None:
     assert snapshots == {"heartbeat": {"ok": True}}
 
 
-async def test_schedule_background_loop_delegates_to_state_writer() -> None:
-    with patch("app.core.observability._write_background_loop_state", new=AsyncMock()) as writer:
-        await observability.schedule_background_loop("heartbeat", 30.0)
+async def test_schedule_background_loop_seeds_in_memory_snapshot() -> None:
+    await observability.schedule_background_loop("heartbeat", 30.0)
 
-    writer.assert_awaited_once_with("heartbeat", interval_seconds=30.0)
+    snapshots = observability.current_background_loop_snapshots()
+    assert snapshots["heartbeat"]["loop_name"] == "heartbeat"
+    assert snapshots["heartbeat"]["interval_seconds"] == 30.0
+    assert "next_expected_at" in snapshots["heartbeat"]
 
 
-async def test_write_background_loop_state_merges_previous_snapshot_and_truncates_errors() -> None:
-    db = AsyncMock()
+def test_update_loop_snapshot_merges_previous_and_truncates_errors() -> None:
+    # Pre-populate with an extra key to verify per-loop merge behavior.
+    observability._heartbeat_buffer.snapshots["heartbeat"] = {
+        "last_started_at": "old",
+        "custom": "keep",
+    }
+    observability._update_loop_snapshot(
+        "heartbeat",
+        interval_seconds=15.0,
+        started_at=datetime(2024, 1, 1, tzinfo=UTC),
+        succeeded_at=datetime(2024, 1, 1, 0, 0, 5, tzinfo=UTC),
+        duration_seconds=0.5,
+        error_at=datetime(2024, 1, 1, 0, 0, 6, tzinfo=UTC),
+        error="x" * 800,
+    )
 
-    @asynccontextmanager
-    async def fake_session() -> AsyncMock:
-        yield db
-
-    store = AsyncMock()
-    store.get_value = AsyncMock(return_value={"last_started_at": "old", "custom": "keep"})
-    store.set_value = AsyncMock()
-
-    with (
-        patch("app.core.observability.async_session", fake_session),
-        patch("app.core.observability._control_plane_state_store", return_value=store),
-    ):
-        await observability._write_background_loop_state(
-            "heartbeat",
-            interval_seconds=15.0,
-            started_at=datetime(2024, 1, 1, tzinfo=UTC),
-            succeeded_at=datetime(2024, 1, 1, 0, 0, 5, tzinfo=UTC),
-            duration_seconds=0.5,
-            error_at=datetime(2024, 1, 1, 0, 0, 6, tzinfo=UTC),
-            error="x" * 800,
-        )
-
-    snapshot = store.set_value.await_args.args[3]
+    snapshot = observability.current_background_loop_snapshots()["heartbeat"]
     assert snapshot["custom"] == "keep"
     assert snapshot["last_duration_seconds"] == 0.5
     assert len(snapshot["last_error"]) == 500
-    db.commit.assert_awaited_once()
 
 
 async def test_observe_background_loop_records_success_and_errors() -> None:
     with (
-        patch("app.core.observability._write_background_loop_state", new=AsyncMock()) as writer,
         patch("app.core.observability.record_background_loop_run") as record_run,
         patch("app.core.observability.record_background_loop_error") as record_error,
         patch("app.core.observability.perf_counter", side_effect=[1.0, 2.5, 10.0, 12.0]),
@@ -126,6 +119,141 @@ async def test_observe_background_loop_records_success_and_errors() -> None:
             raised = True
 
         assert raised
-        assert writer.await_count == 4
         record_run.assert_called_once()
         record_error.assert_called_once()
+        snapshot = observability.current_background_loop_snapshots()["heartbeat"]
+        # Final cycle errored — error fields populated, success fields preserved
+        # from the first cycle.
+        assert snapshot["last_error"] == "boom"
+        assert snapshot["last_succeeded_at"] is not None
+
+
+async def test_observe_background_loop_does_not_touch_database() -> None:
+    """Every cycle used to hit the DB twice; now writes are in-memory only."""
+    with patch("app.core.observability._control_plane_state_store") as store_factory:
+        async with observability.observe_background_loop("heartbeat", 30.0).cycle():
+            pass
+
+    store_factory.assert_not_called()
+
+
+async def test_flush_background_loop_snapshots_writes_set_many_once() -> None:
+    await observability.schedule_background_loop("heartbeat", 15.0)
+    await observability.schedule_background_loop("session_sync", 5.0)
+    await observability.schedule_background_loop("node_health", 30.0)
+
+    store = AsyncMock()
+    store.set_many = AsyncMock()
+    db = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self) -> AsyncMock:
+            return db
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+
+    with patch("app.core.observability._control_plane_state_store", return_value=store):
+        written = await observability.flush_background_loop_snapshots(factory)
+
+    assert written == 3
+    store.set_many.assert_awaited_once()
+    namespace, payload = store.set_many.await_args.args[1], store.set_many.await_args.args[2]
+    assert namespace == observability.LOOP_HEARTBEAT_NAMESPACE
+    assert set(payload.keys()) == {"heartbeat", "session_sync", "node_health"}
+    db.commit.assert_awaited_once()
+
+
+async def test_flush_is_noop_when_no_snapshots() -> None:
+    store = AsyncMock()
+    store.set_many = AsyncMock()
+    factory_calls: list[None] = []
+
+    def factory() -> object:
+        factory_calls.append(None)
+        raise AssertionError("factory should not be called on empty flush")
+
+    with patch("app.core.observability._control_plane_state_store", return_value=store):
+        written = await observability.flush_background_loop_snapshots(factory)
+
+    assert written == 0
+    store.set_many.assert_not_awaited()
+    assert factory_calls == []
+
+
+async def test_flush_skips_when_no_changes_since_last_flush() -> None:
+    """Repeated flushes without intervening cycles should not re-write."""
+    await observability.schedule_background_loop("heartbeat", 15.0)
+
+    store = AsyncMock()
+    store.set_many = AsyncMock()
+    db = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self) -> AsyncMock:
+            return db
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+
+    with patch("app.core.observability._control_plane_state_store", return_value=store):
+        first = await observability.flush_background_loop_snapshots(factory)
+        second = await observability.flush_background_loop_snapshots(factory)
+
+    assert first == 1
+    assert second == 0
+    store.set_many.assert_awaited_once()
+
+
+async def test_flush_remains_dirty_on_failure() -> None:
+    await observability.schedule_background_loop("heartbeat", 15.0)
+
+    store = AsyncMock()
+    store.set_many = AsyncMock(side_effect=RuntimeError("db down"))
+    db = AsyncMock()
+
+    class _Ctx:
+        async def __aenter__(self) -> AsyncMock:
+            return db
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+    factory = lambda: _Ctx()  # noqa: E731 — plain callable returning the CM
+
+    with patch("app.core.observability._control_plane_state_store", return_value=store):
+        with pytest.raises(RuntimeError):
+            await observability.flush_background_loop_snapshots(factory)
+
+        # Second flush retries the same data because the first one re-marked dirty.
+        store.set_many.side_effect = None
+        store.set_many.return_value = None
+        written = await observability.flush_background_loop_snapshots(factory)
+
+    assert written == 1
+
+
+def test_loop_heartbeat_freshness_signal_uses_next_expected_at() -> None:
+    """Hung-loop detection should not depend on per-cycle DB writes."""
+    now = datetime.now(UTC)
+    fresh = {"next_expected_at": (now + timedelta(seconds=5)).isoformat()}
+    stale = {"next_expected_at": (now - timedelta(minutes=1)).isoformat()}
+    assert observability.loop_heartbeat_fresh(fresh, now=now) is True
+    assert observability.loop_heartbeat_fresh(stale, now=now) is False
+
+
+def test_loop_heartbeat_freshness_respects_extra_grace_window() -> None:
+    """A snapshot that is past the base grace but inside the flush window stays fresh."""
+    now = datetime.now(UTC)
+    base_grace = observability.LOOP_HEARTBEAT_STALE_GRACE_SEC
+    past_due = {"next_expected_at": (now - timedelta(seconds=base_grace + 5)).isoformat()}
+    # Without extra grace the snapshot is stale by 5s.
+    assert observability.loop_heartbeat_fresh(past_due, now=now) is False
+    # With a 15s flush-window cushion (the default) it is healthy again.
+    assert observability.loop_heartbeat_fresh(past_due, now=now, extra_grace_seconds=15.0) is True
+    # Negative values are clamped to zero so callers cannot tighten the window.
+    assert observability.loop_heartbeat_fresh(past_due, now=now, extra_grace_seconds=-100.0) is False
