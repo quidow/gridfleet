@@ -665,3 +665,105 @@ async def test_host_discovery_returns_pack_shaped_candidates(
     body = resp.json()
     assert body["new_devices"][0]["pack_id"] == "appium-uiautomator2"
     assert body["new_devices"][0]["platform_label"] == "Android"
+
+
+async def test_register_host_persists_hardware_info(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "hardware-host",
+                "ip": "192.168.1.130",
+                "os_type": "macos",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "os_version": "macOS 14.5",
+                    "kernel_version": "Darwin 23.5.0",
+                    "cpu_arch": "arm64",
+                    "cpu_model": "Apple M2 Pro",
+                    "cpu_cores": 12,
+                    "total_memory_mb": 32768,
+                    "total_disk_gb": 1024,
+                },
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["os_version"] == "macOS 14.5"
+    assert data["kernel_version"] == "Darwin 23.5.0"
+    assert data["cpu_arch"] == "arm64"
+    assert data["cpu_model"] == "Apple M2 Pro"
+    assert data["cpu_cores"] == 12
+    assert data["total_memory_mb"] == 32768
+    assert data["total_disk_gb"] == 1024
+
+
+async def test_register_host_without_host_info_keeps_columns_null(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        resp = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "no-hwinfo-host",
+                "ip": "192.168.1.131",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+            },
+        )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["os_version"] is None
+    assert data["kernel_version"] is None
+    assert data["cpu_arch"] is None
+    assert data["cpu_model"] is None
+    assert data["cpu_cores"] is None
+    assert data["total_memory_mb"] is None
+    assert data["total_disk_gb"] is None
+
+
+async def test_register_host_does_not_overwrite_hardware_info_with_null(client: AsyncClient) -> None:
+    with patch("app.hosts.router._fire_and_forget"):
+        first = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "noclobber-host",
+                "ip": "192.168.1.132",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "os_version": "Ubuntu 22.04.3 LTS",
+                    "cpu_cores": 8,
+                    "total_memory_mb": 16384,
+                },
+            },
+        )
+        assert first.status_code == 201
+
+        second = await client.post(
+            "/api/hosts/register",
+            json={
+                "hostname": "noclobber-host",
+                "ip": "192.168.1.132",
+                "os_type": "linux",
+                "agent_port": 5100,
+                "agent_version": "0.11.0",
+                "capabilities": {"orchestration_contract_version": 2},
+                "host_info": {
+                    "cpu_arch": "x86_64",
+                },
+            },
+        )
+
+    assert second.status_code == 200
+    data = second.json()
+    assert data["os_version"] == "Ubuntu 22.04.3 LTS"
+    assert data["cpu_cores"] == 8
+    assert data["total_memory_mb"] == 16384
+    assert data["cpu_arch"] == "x86_64"

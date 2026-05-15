@@ -250,6 +250,42 @@ async def test_register_with_manager_stores_version_guidance() -> None:
     assert guidance.agent_version_status == "outdated"
 
 
+async def test_register_with_manager_sends_host_info() -> None:
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+    response = MagicMock(spec=httpx.Response)
+    response.json.return_value = {"id": "host-1", "status": "online"}
+    response.raise_for_status = MagicMock()
+    client.post = AsyncMock(return_value=response)
+
+    hardware = {
+        "os_version": "macOS 14.5",
+        "kernel_version": "Darwin 23.5.0",
+        "cpu_arch": "arm64",
+        "cpu_model": "Apple M2 Pro",
+        "cpu_cores": 12,
+        "total_memory_mb": 32768,
+        "total_disk_gb": 1024,
+    }
+
+    with (
+        patch(
+            "agent_app.registration.get_or_refresh_capabilities_snapshot",
+            new_callable=AsyncMock,
+            return_value={"platforms": [], "orchestration_contract_version": 2},
+        ),
+        patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
+        patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
+        patch("agent_app.registration.hardware_info.collect", return_value=hardware),
+        patch("agent_app.registration.httpx.AsyncClient", return_value=client),
+    ):
+        await register_with_manager("http://manager:8000", 5100)
+
+    payload = client.post.await_args.kwargs["json"]
+    assert payload["host_info"] == hardware
+
+
 async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.LogCaptureFixture) -> None:
     clear_version_guidance()
     client = AsyncMock()
