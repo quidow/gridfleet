@@ -48,7 +48,8 @@ def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "secret")
     settings = AgentSettings()
     assert settings.api_auth.api_auth_username == "ops"
-    assert settings.api_auth.api_auth_password == "secret"
+    assert settings.api_auth.api_auth_password is not None
+    assert settings.api_auth.api_auth_password.get_secret_value() == "secret"
 
 
 def test_grid_node_settings_defaults() -> None:
@@ -74,3 +75,53 @@ def test_grid_node_settings_reject_inf(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC", "inf")
     with pytest.raises(ValueError, match="AGENT_GRID_NODE_PROXY_TIMEOUT_SEC"):
         AgentSettings()
+
+
+def test_core_settings_reads_agent_host_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.config import CoreSettings
+
+    monkeypatch.setenv("AGENT_HOST_ID", "host-123")
+    settings = CoreSettings()
+    assert settings.host_id == "host-123"
+
+
+def test_core_settings_host_id_default_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.config import CoreSettings
+
+    monkeypatch.delenv("AGENT_HOST_ID", raising=False)
+    settings = CoreSettings()
+    assert settings.host_id is None
+
+
+def test_manager_settings_reads_backend_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.config import ManagerSettings
+
+    monkeypatch.setenv("AGENT_BACKEND_URL", "http://backend:8000")
+    settings = ManagerSettings()
+    assert settings.backend_url == "http://backend:8000"
+    assert settings.effective_backend_url == "http://backend:8000"
+
+
+def test_manager_settings_effective_falls_back_to_manager_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.config import ManagerSettings
+
+    monkeypatch.delenv("AGENT_BACKEND_URL", raising=False)
+    monkeypatch.setenv("AGENT_MANAGER_URL", "http://manager:8000")
+    settings = ManagerSettings()
+    assert settings.backend_url is None
+    assert settings.effective_backend_url == "http://manager:8000"
+
+
+def test_settings_repr_does_not_leak_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_API_AUTH_USERNAME", "u")
+    monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "super-secret-pw")
+    monkeypatch.setenv("AGENT_MANAGER_AUTH_USERNAME", "u2")
+    monkeypatch.setenv("AGENT_MANAGER_AUTH_PASSWORD", "another-secret")
+    monkeypatch.setenv("AGENT_TERMINAL_TOKEN", "tok-very-private")
+
+    settings = AgentSettings()
+    blob = repr(settings.api_auth) + repr(settings.manager) + repr(settings.terminal)
+
+    assert "super-secret-pw" not in blob
+    assert "another-secret" not in blob
+    assert "tok-very-private" not in blob

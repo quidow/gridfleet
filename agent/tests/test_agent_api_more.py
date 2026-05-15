@@ -206,7 +206,7 @@ async def test_pack_lifecycle_reconnect_endpoint(client: AsyncClient) -> None:
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {"success": True, "state": "reconnecting", "detail": ""}
+    assert resp.json() == {"success": True, "detail": "", "state": "reconnecting"}
     assert adapter.lifecycle_calls == [("device-1", "reconnect", {"ip_address": "192.168.1.10", "port": 5556})]
 
 

@@ -51,6 +51,7 @@ def test_health_response_accepts_route_shape() -> None:
             "hostname": "host-1",
             "os_type": "linux",
             "version": "0.1.0",
+            "registered": True,
             "missing_prerequisites": [],
             "capabilities": {},
             "appium_processes": {"running_nodes": [], "recent_restart_events": []},
@@ -77,8 +78,10 @@ def test_pack_devices_response_accepts_route_shape() -> None:
     PackDevicesResponse.model_validate({"candidates": []})
 
 
-def test_pack_device_properties_response_accepts_arbitrary_dict() -> None:
-    PackDevicePropertiesResponse.model_validate({"foo": "bar"})
+def test_pack_device_properties_response_accepts_route_shape() -> None:
+    PackDevicePropertiesResponse.model_validate(
+        {"pack_id": "pack", "pack_release": "1.0.0", "properties": {"foo": "bar"}}
+    )
 
 
 def test_pack_device_health_response_accepts_route_shape() -> None:
@@ -90,12 +93,12 @@ def test_pack_device_health_response_accepts_route_shape() -> None:
     )
 
 
-def test_pack_device_telemetry_response_accepts_arbitrary_dict() -> None:
-    PackDeviceTelemetryResponse.model_validate({"cpu": 0.1})
+def test_pack_device_telemetry_response_accepts_route_shape() -> None:
+    PackDeviceTelemetryResponse.model_validate({"pack_id": "pack", "pack_release": "1.0.0", "metrics": {"cpu": 0.1}})
 
 
 def test_pack_device_lifecycle_response_accepts_route_shape() -> None:
-    PackDeviceLifecycleResponse.model_validate({"success": False, "detail": "no adapter"})
+    PackDeviceLifecycleResponse.model_validate({"success": False, "detail": "no adapter", "extras": {}})
 
 
 def test_feature_action_response_accepts_route_shape() -> None:

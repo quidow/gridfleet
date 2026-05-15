@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect, status
 
 import agent_app.config as _config
+from agent_app.config import secret_value
 from agent_app.terminal.pty import PtyShell
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ _STOP: dict[str, Any] = {}
 
 
 def _token_valid(provided: str | None) -> bool:
-    expected = _config.agent_settings.terminal.terminal_token
+    expected = secret_value(_config.agent_settings.terminal.terminal_token)
     if not expected:
         return False
     if not provided:

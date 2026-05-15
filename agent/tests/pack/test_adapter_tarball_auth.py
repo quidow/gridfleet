@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from agent_app.config import agent_settings
+from agent_app.http_client import close as close_shared_http_client
 from agent_app.lifespan import _build_adapter_loader
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
@@ -30,6 +31,7 @@ async def test_adapter_tarball_download_uses_manager_basic_auth(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    await close_shared_http_client()
     monkeypatch.setattr(agent_settings.manager, "manager_auth_username", "machine")
     monkeypatch.setattr(agent_settings.manager, "manager_auth_password", "machine-secret")
     payload = b"adapter-tarball"
@@ -46,8 +48,11 @@ async def test_adapter_tarball_download_uses_manager_basic_auth(
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
     loader = _build_adapter_loader("http://manager.local", AdapterRegistry())
-    with patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock) as load_adapter:
-        await loader(_desired_pack(hashlib.sha256(payload).hexdigest()), _runtime_env(tmp_path))
+    try:
+        with patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock) as load_adapter:
+            await loader(_desired_pack(hashlib.sha256(payload).hexdigest()), _runtime_env(tmp_path))
+    finally:
+        await close_shared_http_client()
 
     assert len(seen_requests) == 1
     assert seen_requests[0].url.path == "/api/driver-packs/appium-roku-dlenroc/releases/2026.04.0/tarball"

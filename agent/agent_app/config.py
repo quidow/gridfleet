@@ -1,8 +1,15 @@
 import math
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def secret_value(value: SecretStr | str | None) -> str | None:
+    """Return the plaintext value behind a ``SecretStr`` (or ``None``)."""
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
 
 
 class CoreSettings(BaseSettings):
@@ -12,6 +19,7 @@ class CoreSettings(BaseSettings):
     agent_port: int = 5100
     registration_refresh_interval_sec: int = 30
     advertise_ip: str | None = None
+    host_id: str | None = None
 
 
 class ManagerSettings(BaseSettings):
@@ -19,27 +27,32 @@ class ManagerSettings(BaseSettings):
 
     manager_url: str = "http://localhost:8000"
     manager_auth_username: str | None = None
-    manager_auth_password: str | None = None
+    manager_auth_password: SecretStr | None = None
+    backend_url: str | None = None
 
     @model_validator(mode="after")
     def validate_auth_pair(self) -> "ManagerSettings":
         has_username = bool(self.manager_auth_username)
-        has_password = bool(self.manager_auth_password)
+        has_password = self.manager_auth_password is not None and bool(self.manager_auth_password.get_secret_value())
         if has_username != has_password:
             raise ValueError("AGENT_MANAGER_AUTH_USERNAME and AGENT_MANAGER_AUTH_PASSWORD must be set together")
         return self
+
+    @property
+    def effective_backend_url(self) -> str:
+        return self.backend_url or self.manager_url
 
 
 class ApiAuthSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
     api_auth_username: str | None = None
-    api_auth_password: str | None = None
+    api_auth_password: SecretStr | None = None
 
     @model_validator(mode="after")
     def validate_auth_pair(self) -> "ApiAuthSettings":
         has_username = bool(self.api_auth_username)
-        has_password = bool(self.api_auth_password)
+        has_password = self.api_auth_password is not None and bool(self.api_auth_password.get_secret_value())
         if has_username != has_password:
             raise ValueError("AGENT_API_AUTH_USERNAME and AGENT_API_AUTH_PASSWORD must be set together")
         return self
@@ -86,14 +99,15 @@ class TerminalSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
     enable_web_terminal: bool = False
-    terminal_token: str | None = None
+    terminal_token: SecretStr | None = None
     terminal_shell: str | None = None
 
     @model_validator(mode="after")
     def validate_token_and_enabled(self) -> "TerminalSettings":
-        if self.terminal_token is not None and not self.terminal_token.strip():
+        token_value = self.terminal_token.get_secret_value() if self.terminal_token is not None else None
+        if token_value is not None and not token_value.strip():
             raise ValueError("AGENT_TERMINAL_TOKEN must not be blank when set")
-        if self.enable_web_terminal and not self.terminal_token:
+        if self.enable_web_terminal and not token_value:
             raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true")
         return self
 

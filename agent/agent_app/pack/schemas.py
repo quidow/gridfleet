@@ -6,29 +6,19 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Single-segment identifiers: alphanumeric, underscores, dots, hyphens — no slashes.
-# Used for platform_id values like "android", "ios", "android_mobile", "android-emulator".
-_PLATFORM_ID_PATTERN = r"^[A-Za-z0-9_.\-]+$"
-
-# Full pack-id pattern: slash-separated segments where each segment must contain at least
-# one non-dot character, or be three-or-more consecutive dots. This rejects single-dot
-# and double-dot path traversal segments without requiring lookahead (pydantic-core compat).
-_PACK_ID_PATTERN = (
-    r"^(?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-][A-Za-z0-9_.\-]*|\.{3,})"
-    r"(?:/(?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-][A-Za-z0-9_.\-]*|\.{3,}))*$"
-)
+from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 
 
 class FeatureActionRequest(BaseModel):
-    pack_id: str = Field(min_length=1, pattern=_PACK_ID_PATTERN)
+    pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
     args: dict[str, Any] = {}
     device_identity_value: str | None = None
 
 
 class NormalizeDeviceRequest(BaseModel):
-    pack_id: str = Field(min_length=1, pattern=_PACK_ID_PATTERN)
+    pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
     pack_release: str = Field(min_length=1)
-    platform_id: str = Field(min_length=1, pattern=_PLATFORM_ID_PATTERN)
+    platform_id: str = Field(min_length=1, pattern=PLATFORM_ID_PATTERN)
     raw_input: dict[str, Any]
 
 
@@ -77,6 +67,8 @@ class HealthCheckResult(BaseModel):
 
 
 class PackDeviceHealthResponse(BaseModel):
+    """Pack-shaped health snapshot. Typed core; adapters may add extra fields."""
+
     model_config = ConfigDict(extra="allow")
 
     healthy: bool | None
@@ -90,6 +82,8 @@ class PackDeviceTelemetryResponse(BaseModel):
 
 
 class PackDeviceLifecycleResponse(BaseModel):
+    """Pack lifecycle action outcome. Typed core; adapters may add extra fields."""
+
     model_config = ConfigDict(extra="allow")
 
     success: bool

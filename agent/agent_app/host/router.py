@@ -12,6 +12,7 @@ from agent_app.appium.dependencies import AppiumMgrDep  # noqa: TC001 - FastAPI 
 from agent_app.host.dependencies import (  # noqa: TC001 - FastAPI resolves at runtime
     CapabilitiesDep,
     HostTelemetryDep,
+    RegisteredFlagDep,
     VersionGuidanceDep,
 )
 from agent_app.host.schemas import HealthResponse, HostTelemetryResponse
@@ -29,12 +30,14 @@ async def health(
     capabilities: CapabilitiesDep,
     version_guidance: VersionGuidanceDep,
     mgr: AppiumMgrDep,
+    registered: RegisteredFlagDep,
 ) -> dict[str, Any]:
     return {
         "status": "ok",
         "hostname": platform.node(),
         "os_type": platform.system().lower(),
         "version": __version__,
+        "registered": registered,
         "missing_prerequisites": capabilities.get("missing_prerequisites", []),
         "capabilities": capabilities,
         "appium_processes": mgr.process_snapshot(),

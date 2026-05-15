@@ -20,6 +20,7 @@ async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -
     fast = MagicMock()
     manager = MagicMock()
     manager._grid_supervisors = {4723: slow, 4724: fast}
+    manager.iter_grid_supervisors.return_value = list(manager._grid_supervisors.items())
 
     await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=0.01)
 
@@ -50,6 +51,8 @@ async def test_release_for_pack_returns_release_when_matching() -> None:
 
 
 async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
+    from agent_app.lifespan import agent_settings
+
     stop_event = asyncio.Event()
 
     async def _wait_forever(*_args: object, **_kwargs: object) -> None:
@@ -60,7 +63,8 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
-        patch.dict("os.environ", {"AGENT_HOST_ID": "test-host-id", "AGENT_BACKEND_URL": ""}),
+        patch.object(agent_settings.core, "host_id", "test-host-id"),
+        patch.object(agent_settings.manager, "backend_url", ""),
     ):
         async with lifespan(app):
             assert app.state.pack_state_loop_enabled is True
@@ -68,6 +72,8 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
 
 
 async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
+    from agent_app.lifespan import agent_settings
+
     stop_event = asyncio.Event()
 
     async def _wait_forever(*_args: object, **_kwargs: object) -> None:
@@ -78,10 +84,11 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
-        patch.dict("os.environ", {"AGENT_HOST_ID": "test", "AGENT_BACKEND_URL": ""}),
+        patch.object(agent_settings.core, "host_id", "test"),
+        patch.object(agent_settings.manager, "backend_url", ""),
     ):
         async with lifespan(app):
-            # Since AGENT_BACKEND_URL is empty string and manager_url may be default,
+            # Since backend_url is empty string and manager_url may be default,
             # pack task should still exist because manager_url is set in config.
             # Test mainly verifies no errors.
             stop_event.set()
@@ -91,7 +98,9 @@ async def test_reregister_grid_node_not_found() -> None:
     appium_mgr._grid_supervisors.clear()
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         resp = await client.post("/grid/node/missing/reregister", json={})
     assert resp.status_code == 404
     assert "No running grid node" in resp.json()["detail"]["message"]
@@ -102,7 +111,9 @@ async def test_start_appium_invalid_payload_error() -> None:
 
     from agent_app.appium.exceptions import InvalidStartPayloadError
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=InvalidStartPayloadError("bad payload"),
@@ -123,7 +134,8 @@ async def test_start_appium_invalid_payload_error() -> None:
 async def test_start_appium_generic_runtime_error() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         with patch(
             "agent_app.appium.appium_mgr.start",
             side_effect=RuntimeError("boom"),
@@ -139,6 +151,8 @@ async def test_start_appium_generic_runtime_error() -> None:
                 },
             )
     assert resp.status_code == 500
+    assert resp.json()["detail"]["message"] == "Internal server error"
+    assert resp.json()["detail"]["message"] == "Internal server error"
 
 
 async def test_start_appium_unexpected_exception() -> None:

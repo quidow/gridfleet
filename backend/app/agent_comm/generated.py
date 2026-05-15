@@ -72,7 +72,10 @@ class AppiumStatusResponse(BaseModel):
     model_config = ConfigDict(
         extra="allow",
     )
+    appium_status: Annotated[dict[str, Any] | None, Field(title="Appium Status")] = None
+    pid: Annotated[int | None, Field(title="Pid")] = None
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
+    running: Annotated[bool, Field(title="Running")]
 
 
 class AppiumStopRequest(BaseModel):
@@ -127,13 +130,14 @@ class HealthCheckResult(BaseModel):
 
 class HealthResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
     appium_processes: Annotated[dict[str, Any], Field(title="Appium Processes")]
     capabilities: Annotated[dict[str, Any], Field(title="Capabilities")]
     hostname: Annotated[str, Field(title="Hostname")]
     missing_prerequisites: Annotated[list[str], Field(title="Missing Prerequisites")]
     os_type: Annotated[str, Field(title="Os Type")]
+    registered: Annotated[bool, Field(title="Registered")]
     status: Annotated[str, Field(title="Status")]
     version: Annotated[str, Field(title="Version")]
     version_guidance: Annotated[dict[str, Any], Field(title="Version Guidance")]
@@ -141,8 +145,16 @@ class HealthResponse(BaseModel):
 
 class HostTelemetryResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    cpu_percent: Annotated[float | None, Field(title="Cpu Percent")] = None
+    disk_percent: Annotated[float | None, Field(title="Disk Percent")] = None
+    disk_total_gb: Annotated[float | None, Field(title="Disk Total Gb")] = None
+    disk_used_gb: Annotated[float | None, Field(title="Disk Used Gb")] = None
+    extras: Annotated[dict[str, Any] | None, Field(title="Extras")] = None
+    memory_total_mb: Annotated[int | None, Field(title="Memory Total Mb")] = None
+    memory_used_mb: Annotated[int | None, Field(title="Memory Used Mb")] = None
+    recorded_at: Annotated[str | None, Field(title="Recorded At")] = None
 
 
 class NormalizeDeviceRequest(BaseModel):

@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from agent_app import __version__
-from agent_app.config import agent_settings
+from agent_app.config import agent_settings, secret_value
 from agent_app.grid_url import get_local_ip
 from agent_app.host.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.host.version_guidance import update_version_guidance
 from agent_app.http_client import get_client as get_shared_http_client
+from agent_app.observability import sanitize_log_value
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -45,7 +46,7 @@ def _handle_version_guidance(data: dict[str, Any]) -> None:
 
 def _manager_auth() -> httpx.BasicAuth | None:
     username = agent_settings.manager.manager_auth_username
-    password = agent_settings.manager.manager_auth_password
+    password = secret_value(agent_settings.manager.manager_auth_password)
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
@@ -113,9 +114,19 @@ async def registration_loop(
                 continue
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
-            logger.warning("Registration rejected by manager: %s", status_code)
+            try:
+                body_excerpt = sanitize_log_value(e.response.text)
+            except Exception:
+                body_excerpt = "<unreadable>"
             if 400 <= status_code < 500:
-                return  # Don't retry on client-side registration errors
+                logger.warning(
+                    "Registration rejected by manager (4xx, will retry): %s body=%s",
+                    status_code,
+                    body_excerpt,
+                )
+                await asyncio.sleep(300.0)
+                continue
+            logger.warning("Registration error from manager: %s body=%s", status_code, body_excerpt)
         except (httpx.HTTPError, OSError) as e:
             logger.warning("Registration failed (retrying in %.0fs): %s", delay, e)
 

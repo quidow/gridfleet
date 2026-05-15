@@ -36,8 +36,9 @@ def http_exc(
     code: AgentErrorCode,
     message: str,
     extra: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> HTTPException:
     payload: dict[str, Any] = {"code": code.value, "message": message}
     if extra:
         payload.update(extra)
-    return HTTPException(status_code=status_code, detail=payload)
+    return HTTPException(status_code=status_code, detail=payload, headers=headers)

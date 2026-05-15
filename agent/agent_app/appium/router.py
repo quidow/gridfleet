@@ -75,15 +75,23 @@ async def start_appium(req: AppiumStartRequest, mgr: AppiumMgrDep) -> dict[str, 
     except AlreadyRunningError as e:
         raise http_exc(status_code=409, code=AgentErrorCode.ALREADY_RUNNING, message=str(e)) from e
     except StartupTimeoutError as e:
-        raise http_exc(status_code=504, code=AgentErrorCode.STARTUP_TIMEOUT, message=str(e)) from e
+        raise http_exc(
+            status_code=504,
+            code=AgentErrorCode.STARTUP_TIMEOUT,
+            message=str(e),
+            headers={"Retry-After": "5"},
+        ) from e
     except (RuntimeMissingError, RuntimeNotInstalledError) as e:
-        raise http_exc(status_code=503, code=AgentErrorCode.RUNTIME_MISSING, message=str(e)) from e
+        raise http_exc(
+            status_code=503,
+            code=AgentErrorCode.RUNTIME_MISSING,
+            message=str(e),
+            headers={"Retry-After": "30"},
+        ) from e
     except DeviceNotFoundError as e:
         raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(e)) from e
     except InvalidStartPayloadError as e:
         raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
-    except RuntimeError as e:
-        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
 
 

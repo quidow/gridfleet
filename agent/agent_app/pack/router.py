@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import dispatch_feature_action
+from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
     DesiredPlatformDep,
     HostIdDep,
@@ -35,6 +36,9 @@ from agent_app.pack.schemas import (
 )
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
+
+PackIdQuery = Annotated[str, Query(min_length=1, pattern=PACK_ID_PATTERN)]
+PlatformIdQuery = Annotated[str, Query(min_length=1, pattern=PLATFORM_ID_PATTERN)]
 
 
 @router.get(
@@ -70,7 +74,7 @@ async def pack_device_properties_route(
     pack_state_loop: PackStateLoopDep,
     adapter_registry: OptionalAdapterRegistryDep,
     host_id: HostIdDep,
-    pack_id: str = Query(...),
+    pack_id: PackIdQuery,
 ) -> dict[str, Any]:
     desired = pack_state_loop.latest_desired_packs if pack_state_loop else None
     data = await pack_device_properties(
@@ -102,15 +106,15 @@ async def pack_device_health_route(
     connection_target: str,
     platform: DesiredPlatformDep,
     adapter_registry: OptionalAdapterRegistryDep,
-    pack_id: str = Query(...),
-    platform_id: str = Query(...),
-    device_type: str = Query(...),
-    connection_type: str | None = Query(None),
-    ip_address: str | None = Query(None),
-    allow_boot: bool = Query(False),
-    headless: bool = Query(True),
-    ip_ping_timeout_sec: float | None = Query(None),
-    ip_ping_count: int | None = Query(None),
+    pack_id: PackIdQuery,
+    platform_id: PlatformIdQuery,
+    device_type: Annotated[str, Query(min_length=1)],
+    connection_type: Annotated[str | None, Query()] = None,
+    ip_address: Annotated[str | None, Query()] = None,
+    allow_boot: Annotated[bool, Query()] = False,
+    headless: Annotated[bool, Query()] = True,
+    ip_ping_timeout_sec: Annotated[float | None, Query(gt=0)] = None,
+    ip_ping_count: Annotated[int | None, Query(ge=1)] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
     if adapter_registry is not None:
@@ -154,11 +158,11 @@ async def pack_device_telemetry_route(
     connection_target: str,
     platform: DesiredPlatformDep,
     adapter_registry: OptionalAdapterRegistryDep,
-    pack_id: str = Query(...),
-    platform_id: str = Query(...),
-    device_type: str = Query(...),
-    connection_type: str | None = Query(None),
-    ip_address: str | None = Query(None),
+    pack_id: PackIdQuery,
+    platform_id: PlatformIdQuery,
+    device_type: Annotated[str, Query(min_length=1)],
+    connection_type: Annotated[str | None, Query()] = None,
+    ip_address: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
     telemetry = (
@@ -196,9 +200,9 @@ async def pack_device_lifecycle_route(
     platform: DesiredPlatformDep,
     adapter_registry: OptionalAdapterRegistryDep,
     host_id: HostIdDep,
-    pack_id: str = Query(...),
-    platform_id: str = Query(...),
-    args: dict[str, Any] = Body(default_factory=dict),
+    pack_id: PackIdQuery,
+    platform_id: PlatformIdQuery,
+    args: Annotated[dict[str, Any], Body(default_factory=dict)],
 ) -> dict[str, Any]:
     _platform_def, release = platform
     if adapter_registry is not None:
