@@ -7,12 +7,17 @@ from typing import TYPE_CHECKING, Any
 
 import psutil  # type: ignore[import-untyped]
 
+from agent_app.host.hardware_info import host_disk_path
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 _MB = 1024 * 1024
-_GB = 1024**3
+# Memory uses binary MiB (industry convention for RAM).
+# Disk uses decimal GB (1 GB = 10^9 bytes) to match Apple Storage,
+# drive-manufacturer labels, and `df -H` — the values operators see elsewhere.
+_DISK_GB = 1_000_000_000
 
 
 async def _safe_call[T](metric_name: str, fn: Callable[..., T], *args: object) -> T | None:
@@ -26,15 +31,15 @@ async def _safe_call[T](metric_name: str, fn: Callable[..., T], *args: object) -
 async def get_host_telemetry() -> dict[str, Any]:
     cpu = await _safe_call("cpu_percent", psutil.cpu_percent, 0.2)
     vm = await _safe_call("virtual_memory", psutil.virtual_memory)
-    disk = await _safe_call("disk_usage", psutil.disk_usage, "/")
+    disk = await _safe_call("disk_usage", psutil.disk_usage, host_disk_path())
 
     raw: dict[str, Any] = {
         "recorded_at": datetime.now(UTC).isoformat(),
         "cpu_percent": float(cpu) if cpu is not None else None,
         "memory_used_mb": int(vm.used / _MB) if vm is not None else None,
         "memory_total_mb": int(vm.total / _MB) if vm is not None else None,
-        "disk_used_gb": round(disk.used / _GB, 2) if disk is not None else None,
-        "disk_total_gb": round(disk.total / _GB, 2) if disk is not None else None,
+        "disk_used_gb": round(disk.used / _DISK_GB, 2) if disk is not None else None,
+        "disk_total_gb": round(disk.total / _DISK_GB, 2) if disk is not None else None,
         "disk_percent": float(disk.percent) if disk is not None else None,
     }
     typed_keys = {

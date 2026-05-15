@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from agent_app.host import hardware_info
+from agent_app.host.hardware_info import host_disk_path
 
 
 def _reset_cache() -> None:
@@ -13,7 +14,7 @@ def test_collect_returns_expected_shape_on_darwin() -> None:
     _reset_cache()
     uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
     vm = MagicMock(total=32 * 1024**3)
-    disk = MagicMock(total=1024 * 1024**3)
+    disk = MagicMock(total=1024 * 10**9)
 
     with (
         patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
@@ -46,7 +47,7 @@ def test_collect_returns_expected_shape_on_linux(tmp_path: Path) -> None:
 
     uname = MagicMock(system="Linux", release="5.15.0-89-generic", machine="x86_64")
     vm = MagicMock(total=16 * 1024**3)
-    disk = MagicMock(total=500 * 1024**3)
+    disk = MagicMock(total=500 * 10**9)
 
     real_open = open
 
@@ -80,7 +81,7 @@ def test_collect_returns_none_for_failing_helpers() -> None:
     _reset_cache()
     uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
     vm = MagicMock(total=32 * 1024**3)
-    disk = MagicMock(total=1024 * 1024**3)
+    disk = MagicMock(total=1024 * 10**9)
 
     with (
         patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
@@ -105,7 +106,7 @@ def test_collect_caches_result() -> None:
     _reset_cache()
     uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
     vm = MagicMock(total=32 * 1024**3)
-    disk = MagicMock(total=1024 * 1024**3)
+    disk = MagicMock(total=1024 * 10**9)
 
     cpu_count = MagicMock(return_value=12)
     with (
@@ -175,11 +176,33 @@ def test_collect_handles_psutil_failures() -> None:
     assert info["kernel_version"] == "Darwin 23.5.0"
 
 
+def test_host_disk_path_uses_data_volume_on_darwin() -> None:
+    with (
+        patch("agent_app.host.hardware_info.platform.system", return_value="Darwin"),
+        patch("agent_app.host.hardware_info.os.path.isdir", return_value=True) as isdir,
+    ):
+        assert host_disk_path() == "/System/Volumes/Data"
+    isdir.assert_called_once_with("/System/Volumes/Data")
+
+
+def test_host_disk_path_falls_back_to_root_on_darwin_without_data_volume() -> None:
+    with (
+        patch("agent_app.host.hardware_info.platform.system", return_value="Darwin"),
+        patch("agent_app.host.hardware_info.os.path.isdir", return_value=False),
+    ):
+        assert host_disk_path() == "/"
+
+
+def test_host_disk_path_returns_root_on_linux() -> None:
+    with patch("agent_app.host.hardware_info.platform.system", return_value="Linux"):
+        assert host_disk_path() == "/"
+
+
 def test_collect_handles_subprocess_timeout() -> None:
     _reset_cache()
     uname = MagicMock(system="Darwin", release="23.5.0", machine="arm64")
     vm = MagicMock(total=32 * 1024**3)
-    disk = MagicMock(total=1024 * 1024**3)
+    disk = MagicMock(total=1024 * 10**9)
 
     with (
         patch("agent_app.host.hardware_info.platform.uname", return_value=uname),
