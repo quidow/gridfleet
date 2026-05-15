@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from fastapi import Depends, Query, Request
 
 from agent_app.error_codes import AgentErrorCode, http_exc
+from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 from agent_app.pack.manifest import resolve_desired_platform
 
 if TYPE_CHECKING:
@@ -55,8 +56,8 @@ def _pack_state_loop(request: Request) -> PackStateLoop | None:
 
 
 def _desired_platform(
-    pack_id: Annotated[str, Query(...)],
-    platform_id: Annotated[str, Query(...)],
+    pack_id: Annotated[str, Query(min_length=1, pattern=PACK_ID_PATTERN)],
+    platform_id: Annotated[str, Query(min_length=1, pattern=PLATFORM_ID_PATTERN)],
     latest_desired: Annotated[list[Any], Depends(_latest_desired)],
 ) -> tuple[DesiredPlatform, str]:
     platform_def = resolve_desired_platform(latest_desired, pack_id=pack_id, platform_id=platform_id)
