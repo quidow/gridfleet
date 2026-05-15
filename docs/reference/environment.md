@@ -6,7 +6,7 @@ Use this page to answer "is this a real process env var?" before adding it to pr
 
 ## Backend Core Process Variables
 
-These are read directly by `backend/app/config.py`.
+These are read directly by `backend/app/core/config.py` and domain config modules.
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
@@ -14,6 +14,7 @@ These are read directly by `backend/app/config.py`.
 | `GRIDFLEET_DB_POOL_SIZE` | `10` | backend process | Base SQLAlchemy connection pool size |
 | `GRIDFLEET_DB_MAX_OVERFLOW` | `20` | backend process | Additional burst connections allowed above pool size |
 | `GRIDFLEET_REQUEST_TIMEOUT_SEC` | `30` | backend process | Default timeout for outbound backend HTTP calls |
+| `GRIDFLEET_ENVIRONMENT` | `local` | backend process | Deployment environment used for process-only behavior. `local`, `test`, and `staging` expose `/openapi.json`, `/docs`, and `/redoc`; any other value hides those routes. Production compose sets this to `prod`. |
 | `GRIDFLEET_ENV` | unset | backend logging | `dev` / `development` / `local` switches logs to console format; other values keep JSON logs |
 | `GRIDFLEET_AUTH_ENABLED` | `false` | backend auth gate | Enables browser login cookies and machine Basic auth for protected manager routes. Production compose sets this to `true`; leave it `false` only for local development or isolated trusted-lab trials. |
 | `GRIDFLEET_AUTH_USERNAME` | unset | backend auth gate | Shared operator username used by `/api/auth/login` when auth is enabled |
