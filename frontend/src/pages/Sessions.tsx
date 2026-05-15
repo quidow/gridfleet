@@ -48,6 +48,7 @@ export default function Sessions() {
   const platformIdFilter = searchParams.get('platform_id') ?? '';
   const startedAfter = searchParams.get('started_after') ?? '';
   const startedBefore = searchParams.get('started_before') ?? '';
+  const includeProbes = searchParams.get('include_probes') === '1';
 
   const { data: devices } = useDevices();
   const { data: catalog = [] } = useDriverPackCatalog();
@@ -66,6 +67,7 @@ export default function Sessions() {
     platform_id: platformIdFilter || undefined,
     started_after: startedAfter ? dateOnlyToStartOfDayIso(startedAfter) : undefined,
     started_before: startedBefore ? dateOnlyToEndOfDayIso(startedBefore) : undefined,
+    include_probes: includeProbes || undefined,
     limit: pageSize,
     cursor: cursor || undefined,
     direction,
@@ -73,7 +75,9 @@ export default function Sessions() {
 
   const sortedDevices = [...(devices ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   const sessionRows = sessions?.items ?? [];
-  const hasFilters = Boolean(deviceFilter || statusFilter || platformIdFilter || startedAfter || startedBefore);
+  const hasFilters = Boolean(
+    deviceFilter || statusFilter || platformIdFilter || startedAfter || startedBefore || includeProbes,
+  );
   const showingLabel = `Showing ${sessionRows.length} session${sessionRows.length === 1 ? '' : 's'}`;
 
   return (
@@ -95,6 +99,7 @@ export default function Sessions() {
                   platform_id: null,
                   started_after: null,
                   started_before: null,
+                  include_probes: null,
                 },
                 { resetCursor: true },
               )
@@ -139,6 +144,17 @@ export default function Sessions() {
               onChange={(value) => updateParams({ started_before: value || null }, { resetCursor: true })}
               size="sm"
             />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-text-2">
+            <input
+              type="checkbox"
+              checked={includeProbes}
+              onChange={(e) =>
+                updateParams({ include_probes: e.target.checked ? '1' : null }, { resetCursor: true })
+              }
+              aria-label="Include probe sessions"
+            />
+            <span>Include probes</span>
           </label>
         </FilterBar>
 

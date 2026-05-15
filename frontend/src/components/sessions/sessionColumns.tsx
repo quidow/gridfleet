@@ -153,6 +153,18 @@ export function buildSessionColumns(
       header: 'Test Name',
       sortKey: 'test_name',
       render: (s) => {
+        if (s.is_probe) {
+          return (
+            <div className="space-y-0.5">
+              <span className="inline-flex items-center rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-text-3">
+                probe
+              </span>
+              {s.probe_checked_by && (
+                <p className="text-xs text-text-3">{s.probe_checked_by}</p>
+              )}
+            </div>
+          );
+        }
         const failureSummary = isSetupFailureSession(s) ? buildFailureSummary(s) : null;
         return (
           <div className="space-y-0.5">
