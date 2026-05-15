@@ -2,6 +2,27 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.12.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.11.0...gridfleet-agent-v0.12.0) (2026-05-15)
+
+
+### Features
+
+* **agent:** add in-memory log ring buffer ([13914cd](https://github.com/quidow/gridfleet/commit/13914cda19d6c4bd097c7772150120a8da31ac70))
+* **agent:** collect host hardware metadata for registration ([21058a1](https://github.com/quidow/gridfleet/commit/21058a178cf599f290c7bd4becdb3783a5d9ab69))
+* **agent:** include host_info in registration payload ([9d27f8f](https://github.com/quidow/gridfleet/commit/9d27f8fdb35714dc5e2c5104c46ce10655df7b8e))
+* **agent:** queue shippable log lines ([091928c](https://github.com/quidow/gridfleet/commit/091928c49f007502772e36df348579dbb2a8557e))
+* **agent:** ship log batches with retry ([db59f92](https://github.com/quidow/gridfleet/commit/db59f9235b194520a82de700ca3373f7c6724b4c))
+* **agent:** wire log shipper into lifespan ([b41802c](https://github.com/quidow/gridfleet/commit/b41802c5bbd661772797c6b4bd4854769ad5905d))
+* **frontend:** add host logs tab ([f21de6a](https://github.com/quidow/gridfleet/commit/f21de6af1964224f6f4bac132297829e3a5e9426))
+* surface host hardware metadata on host detail ([de6116e](https://github.com/quidow/gridfleet/commit/de6116e5155d80eee9e868cbc69c56cdfa027afa))
+
+
+### Bug Fixes
+
+* **agent:** drop unused ring buffer and surface log shipper drops ([8073e0d](https://github.com/quidow/gridfleet/commit/8073e0d3294c8a062891f296971e4559c8c61ccd))
+* **agent:** harden host hardware probe against hangs and transient failures ([871286b](https://github.com/quidow/gridfleet/commit/871286b4ee2f6c4e3cd3430ef93752e0ff8248aa))
+* **agent:** use list singleton instead of global-cached for hardware snapshot ([304db1c](https://github.com/quidow/gridfleet/commit/304db1cf791e30e706896af1866508175109f173))
+
 ## [0.11.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.10.0...gridfleet-agent-v0.11.0) (2026-05-15)
 
 
