@@ -69,10 +69,11 @@ export function useHostToolStatus(id: string, enabled = true) {
 }
 
 export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['host-agent-logs', hostId, filters],
     queryFn: () => fetchHostAgentLogs(hostId, filters),
-    refetchInterval: 5_000,
+    refetchInterval: connected ? 30_000 : 5_000,
     refetchIntervalInBackground: false,
     staleTime: 4_000,
     enabled: Boolean(hostId),
@@ -80,10 +81,11 @@ export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
 }
 
 export function useHostEvents(hostId: string, filters: HostEventsQuery) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['host-events', hostId, filters],
     queryFn: () => fetchHostEvents(hostId, filters),
-    refetchInterval: 5_000,
+    refetchInterval: connected ? 30_000 : 5_000,
     refetchIntervalInBackground: false,
     staleTime: 4_000,
     enabled: Boolean(hostId),

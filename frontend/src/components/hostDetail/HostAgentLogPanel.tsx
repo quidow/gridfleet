@@ -5,7 +5,7 @@ import LoadingSpinner from '../LoadingSpinner';
 import FetchError from '../ui/FetchError';
 import Select from '../ui/Select';
 
-type Level = 'INFO' | 'WARN' | 'ERROR';
+type Level = 'INFO' | 'WARNING' | 'ERROR';
 type LineCount = 100 | 500 | 1000 | 2000;
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
 
 const LEVEL_OPTIONS: { value: Level; label: string }[] = [
   { value: 'INFO', label: 'INFO+' },
-  { value: 'WARN', label: 'WARN+' },
+  { value: 'WARNING', label: 'WARN+' },
   { value: 'ERROR', label: 'ERROR+' },
 ];
 

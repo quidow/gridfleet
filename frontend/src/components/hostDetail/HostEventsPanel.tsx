@@ -110,7 +110,7 @@ export default function HostEventsPanel({ hostId }: Props) {
         </div>
       )}
 
-      {data && data.events.length < data.total ? (
+      {data?.has_more ? (
         <button
           type="button"
           onClick={() => setLimit((current) => current + 50)}
@@ -123,8 +123,15 @@ export default function HostEventsPanel({ hostId }: Props) {
   );
 }
 
+const SUMMARY_PREFERRED_KEYS = ['old_status', 'new_status', 'pack_id', 'missed_count'];
+
 function summarize(data: Record<string, unknown>): string {
-  const keys = ['old_status', 'new_status', 'pack_id', 'missed_count'];
-  const parts = keys.filter((key) => key in data).map((key) => `${key}=${String(data[key])}`);
-  return parts.join(' ');
+  const known = SUMMARY_PREFERRED_KEYS.filter((key) => key in data);
+  if (known.length > 0) {
+    return known.map((key) => `${key}=${String(data[key])}`).join(' ');
+  }
+  return Object.keys(data)
+    .slice(0, 3)
+    .map((key) => `${key}=${String(data[key])}`)
+    .join(' ');
 }

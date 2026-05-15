@@ -17,7 +17,7 @@ export type AgentLogPage = components['schemas']['AgentLogPage'];
 export type HostEventsPage = components['schemas']['HostEventsPage'];
 
 export interface AgentLogQuery {
-  level?: 'INFO' | 'WARN' | 'ERROR';
+  level?: 'INFO' | 'WARNING' | 'ERROR';
   q?: string;
   since?: string;
   until?: string;

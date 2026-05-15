@@ -3729,6 +3729,11 @@ export interface components {
         HostEventsPage: {
             /** Events */
             events: components["schemas"]["HostEventEntry"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
             /** Total */
             total: number;
         };
