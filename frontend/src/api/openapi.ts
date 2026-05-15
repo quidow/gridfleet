@@ -3509,6 +3509,12 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Cpu Arch */
+            cpu_arch?: string | null;
+            /** Cpu Cores */
+            cpu_cores?: number | null;
+            /** Cpu Model */
+            cpu_model?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -3528,6 +3534,8 @@ export interface components {
             id: string;
             /** Ip */
             ip: string;
+            /** Kernel Version */
+            kernel_version?: string | null;
             /** Last Heartbeat */
             last_heartbeat: string | null;
             /**
@@ -3536,11 +3544,17 @@ export interface components {
              */
             missing_prerequisites: string[];
             os_type: components["schemas"]["OSType"];
+            /** Os Version */
+            os_version?: string | null;
             /** Recommended Agent Version */
             recommended_agent_version?: string | null;
             /** Required Agent Version */
             required_agent_version?: string | null;
             status: components["schemas"]["HostStatus"];
+            /** Total Disk Gb */
+            total_disk_gb?: number | null;
+            /** Total Memory Mb */
+            total_memory_mb?: number | null;
         };
         /** HostDiagnosticsNodeRead */
         HostDiagnosticsNodeRead: {
@@ -3596,6 +3610,23 @@ export interface components {
             packs: components["schemas"]["HostPackStatusOut"][];
             /** Runtimes */
             runtimes: components["schemas"]["HostRuntimeStatusOut"][];
+        };
+        /** HostHardwareInfo */
+        HostHardwareInfo: {
+            /** Cpu Arch */
+            cpu_arch?: string | null;
+            /** Cpu Cores */
+            cpu_cores?: number | null;
+            /** Cpu Model */
+            cpu_model?: string | null;
+            /** Kernel Version */
+            kernel_version?: string | null;
+            /** Os Version */
+            os_version?: string | null;
+            /** Total Disk Gb */
+            total_disk_gb?: number | null;
+            /** Total Memory Mb */
+            total_memory_mb?: number | null;
         };
         /** HostPackDoctorOut */
         HostPackDoctorOut: {
@@ -3681,6 +3712,12 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            /** Cpu Arch */
+            cpu_arch?: string | null;
+            /** Cpu Cores */
+            cpu_cores?: number | null;
+            /** Cpu Model */
+            cpu_model?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -3695,6 +3732,8 @@ export interface components {
             id: string;
             /** Ip */
             ip: string;
+            /** Kernel Version */
+            kernel_version?: string | null;
             /** Last Heartbeat */
             last_heartbeat: string | null;
             /**
@@ -3703,11 +3742,17 @@ export interface components {
              */
             missing_prerequisites: string[];
             os_type: components["schemas"]["OSType"];
+            /** Os Version */
+            os_version?: string | null;
             /** Recommended Agent Version */
             recommended_agent_version?: string | null;
             /** Required Agent Version */
             required_agent_version?: string | null;
             status: components["schemas"]["HostStatus"];
+            /** Total Disk Gb */
+            total_disk_gb?: number | null;
+            /** Total Memory Mb */
+            total_memory_mb?: number | null;
         };
         /** HostRecoveryEventRead */
         HostRecoveryEventRead: {
@@ -3764,6 +3809,7 @@ export interface components {
             capabilities?: {
                 [key: string]: unknown;
             } | null;
+            host_info?: components["schemas"]["HostHardwareInfo"] | null;
             /** Hostname */
             hostname: string;
             /** Ip */

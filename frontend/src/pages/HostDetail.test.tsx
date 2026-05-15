@@ -27,6 +27,13 @@ vi.mock('../hooks/useHosts', () => ({
       last_heartbeat: '2026-05-12T08:00:00Z',
       created_at: '2026-05-12T00:00:00Z',
       devices: [],
+      os_version: 'macOS 14.5',
+      kernel_version: 'Darwin 23.5.0',
+      cpu_arch: 'arm64',
+      cpu_model: 'Apple M2 Pro',
+      cpu_cores: 12,
+      total_memory_mb: 32768,
+      total_disk_gb: 1024,
     },
     isLoading: false,
     error: null,
@@ -55,6 +62,7 @@ vi.mock('../hooks/useHosts', () => ({
   useHostCapabilities: () => ({
     data: { web_terminal_enabled: true },
   }),
+  useHostResourceTelemetry: () => ({ data: { samples: [] } }),
   useApproveHost: () => ({ isPending: false, mutate: vi.fn() }),
   useRejectHost: () => ({ isPending: false, mutate: vi.fn() }),
 }));
@@ -106,4 +114,14 @@ test('does not render tool versions on diagnostics tab', () => {
   expect(screen.getAllByText('Diagnostics').length).toBeGreaterThan(0);
   expect(screen.getByText('Resource Telemetry')).toBeInTheDocument();
   expect(screen.queryByText('Tool Versions')).not.toBeInTheDocument();
+});
+
+test('renders hardware fields on the overview tab', () => {
+  renderHostDetail('/hosts/host-1?tab=overview');
+
+  expect(screen.getByText('macOS 14.5')).toBeInTheDocument();
+  expect(screen.getByText('Darwin 23.5.0')).toBeInTheDocument();
+  expect(screen.getByText('arm64')).toBeInTheDocument();
+  expect(screen.getByText('Apple M2 Pro')).toBeInTheDocument();
+  expect(screen.getByText('12')).toBeInTheDocument();
 });

@@ -80,3 +80,12 @@ test('renders live tool versions on overview instead of static capabilities', ()
   expect(screen.queryByText('legacy-platform')).not.toBeInTheDocument();
   expect(screen.queryByText('adb')).not.toBeInTheDocument();
 });
+
+test('falls back to os_type and empty-glyph when hardware metadata is absent', () => {
+  renderOverview();
+
+  // OS row: no os_version on the fixture, so it falls back to os_type ("macos")
+  expect(screen.getByText('macos')).toBeInTheDocument();
+  // Kernel, Architecture, CPU, Cores each render the empty glyph
+  expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
+});

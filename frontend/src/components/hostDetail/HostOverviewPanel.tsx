@@ -34,7 +34,11 @@ export default function HostOverviewPanel({
             layout="justified"
             items={[
               { term: 'IP Address', definition: host.ip },
-              { term: 'OS Type', definition: host.os_type },
+              { term: 'OS', definition: host.os_version ?? host.os_type },
+              { term: 'Kernel', definition: host.kernel_version ?? EMPTY_GLYPH },
+              { term: 'Architecture', definition: host.cpu_arch ?? EMPTY_GLYPH },
+              { term: 'CPU', definition: host.cpu_model ?? EMPTY_GLYPH },
+              { term: 'Cores', definition: host.cpu_cores != null ? String(host.cpu_cores) : EMPTY_GLYPH },
               { term: 'Agent Port', definition: String(host.agent_port) },
               { term: 'Status', definition: host.status },
               { term: 'Agent Version', definition: host.agent_version ?? EMPTY_GLYPH },
