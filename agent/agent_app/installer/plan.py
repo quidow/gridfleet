@@ -359,6 +359,7 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
         "AGENT_GRID_PUBLISH_URL": config.grid_publish_url,
         "AGENT_GRID_SUBSCRIBE_URL": config.grid_subscribe_url,
         "AGENT_GRID_NODE_PORT_START": str(config.grid_node_port_start),
+        "AGENT_RUNTIME_ROOT": f"{config.agent_dir}/runtimes",
     }
     if discovery.android_home:
         entries["ANDROID_HOME"] = discovery.android_home

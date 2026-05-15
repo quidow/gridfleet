@@ -300,6 +300,15 @@ def test_render_launchd_plist_includes_api_auth_pair() -> None:
     assert "<string>secret</string>" in plist
 
 
+def test_render_launchd_plist_sets_agent_runtime_root() -> None:
+    from agent_app.installer.plan import InstallConfig, ToolDiscovery, render_launchd_plist
+
+    config = InstallConfig(agent_dir="/Users/op/Library/Application Support/gridfleet-agent")
+    plist = render_launchd_plist(config, ToolDiscovery())
+    assert "<key>AGENT_RUNTIME_ROOT</key>" in plist
+    assert "<string>/Users/op/Library/Application Support/gridfleet-agent/runtimes</string>" in plist
+
+
 def test_format_dry_run_darwin_redacts_api_auth_password() -> None:
     from agent_app.installer.plan import InstallConfig, ToolDiscovery, format_dry_run
 
