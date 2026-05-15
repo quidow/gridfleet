@@ -194,7 +194,7 @@ def loop_heartbeat_fresh(snapshot: dict[str, Any], *, now: datetime | None = Non
 
 
 def _control_plane_state_store() -> _ControlPlaneStateStore:
-    return cast("_ControlPlaneStateStore", importlib.import_module("app.services.control_plane_state_store"))
+    return cast("_ControlPlaneStateStore", importlib.import_module("app.core.leader.state_store"))
 
 
 async def get_background_loop_snapshots(db: AsyncSession) -> dict[str, dict[str, Any]]:

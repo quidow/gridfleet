@@ -4,7 +4,7 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.services.control_plane_leader import ControlPlaneLeader
+from app.core.leader.advisory import ControlPlaneLeader
 
 
 async def test_try_acquire_returns_true_when_connection_already_held() -> None:

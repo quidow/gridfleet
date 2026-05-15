@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import text
 
-from app.services.control_plane_leader import ControlPlaneLeader
-from app.services.control_plane_leader_watcher import run_watcher_once
+from app.core.leader.advisory import ControlPlaneLeader
+from app.core.leader.watcher import run_watcher_once
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -29,7 +29,7 @@ async def test_watcher_no_op_when_heartbeat_fresh(
     try:
         non_leader = ControlPlaneLeader()
         with patch(
-            "app.services.control_plane_leader_watcher.settings_service.get",
+            "app.core.leader.watcher._setting",
             side_effect=lambda key: True if "enabled" in key else 30,
         ):
             await run_watcher_once(non_leader, engine=setup_database)
@@ -56,11 +56,11 @@ async def test_watcher_preempts_and_exits(
         non_leader = ControlPlaneLeader()
         with (
             patch(
-                "app.services.control_plane_leader_watcher.settings_service.get",
+                "app.core.leader.watcher._setting",
                 side_effect=lambda key: True if "enabled" in key else 30,
             ),
             patch(
-                "app.services.control_plane_leader_watcher._exit_after_preempt",
+                "app.core.leader.watcher._exit_after_preempt",
                 new_callable=AsyncMock,
             ) as exit_stub,
         ):
@@ -78,7 +78,7 @@ async def test_watcher_does_not_preempt_when_disabled() -> None:
     non_leader = ControlPlaneLeader()
     non_leader.try_acquire = AsyncMock(return_value=False)  # type: ignore[method-assign]
     with patch(
-        "app.services.control_plane_leader_watcher.settings_service.get",
+        "app.core.leader.watcher._setting",
         side_effect=lambda key: False if "enabled" in key else 30,
     ):
         await run_watcher_once(non_leader, engine=None)
@@ -91,7 +91,7 @@ async def test_watcher_skipped_when_freeze_set(monkeypatch: pytest.MonkeyPatch) 
     non_leader = ControlPlaneLeader()
     non_leader.try_acquire = AsyncMock(return_value=False)  # type: ignore[method-assign]
     with patch(
-        "app.services.control_plane_leader_watcher.settings_service.get",
+        "app.core.leader.watcher._setting",
         side_effect=lambda key: True,
     ):
         await run_watcher_once(non_leader, engine=None)

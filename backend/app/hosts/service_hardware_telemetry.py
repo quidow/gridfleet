@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm import operations as agent_operations
 from app.core.database import async_session
 from app.core.errors import AgentCallError
+from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop, parse_timestamp
 from app.devices.models import (
     Device,
@@ -25,7 +26,6 @@ from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
-from app.services import control_plane_state_store
 from app.settings import settings_service
 
 if TYPE_CHECKING:

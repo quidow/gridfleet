@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.connectivity import _check_connectivity
 from app.hosts.models import Host, HostStatus, OSType
-from app.services.control_plane_leader import LeadershipLost
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

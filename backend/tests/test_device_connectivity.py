@@ -892,8 +892,8 @@ def test_split_ip_ping_when_absent() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
-    from app.services import control_plane_state_store
 
     fake = _FakeDevice(identity_value="dev-1")
     gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
@@ -904,8 +904,8 @@ async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: A
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
-    from app.services import control_plane_state_store
 
     fake = _FakeDevice(identity_value="dev-1")
     for _ in range(2):
@@ -918,8 +918,8 @@ async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSess
 
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
-    from app.services import control_plane_state_store
 
     fake = _FakeDevice(identity_value="dev-1")
     await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
@@ -941,8 +941,8 @@ async def test_ip_ping_first_miss_keeps_healthy(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -963,8 +963,8 @@ async def test_ip_ping_threshold_flips_unhealthy(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -992,8 +992,8 @@ async def test_ip_ping_success_clears_counter(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1020,8 +1020,8 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1042,8 +1042,8 @@ async def test_ip_ping_absent_no_counter_writes(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address=None)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1062,8 +1062,8 @@ async def test_ip_ping_skipped_for_held_device(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7", hold=DeviceHold.maintenance)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1082,8 +1082,8 @@ async def test_ip_ping_skipped_for_auto_manage_off(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7", auto_manage=False)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1102,8 +1102,8 @@ async def test_ip_ping_health_result_none_preserves_counter(
     monkeypatch: pytest.MonkeyPatch,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
@@ -1145,9 +1145,9 @@ async def test_delete_device_clears_connectivity_and_ip_ping_namespaces(
     db_session: AsyncSession,
     make_device: Callable[..., Coroutine[Any, Any, Device]],
 ) -> None:
+    from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
     from app.devices.services.service import delete_device
-    from app.services import control_plane_state_store
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)

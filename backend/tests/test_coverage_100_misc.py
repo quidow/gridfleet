@@ -26,6 +26,8 @@ from app.appium_nodes.services import (
 )
 from app.auth.config import AuthConfig
 from app.core.errors import PackDrainingError, _http_error_code
+from app.core.leader import advisory as control_plane_leader_module
+from app.core.leader import watcher as control_plane_leader_watcher
 from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceType
@@ -109,10 +111,6 @@ from app.runs.schemas import DeviceRequirement
 from app.seeding import runner as seeding_runner
 from app.seeding.runner import SeedResult, wipe_all_tables
 from app.seeding.scenarios import full_demo
-from app.services import (
-    control_plane_leader as control_plane_leader_module,
-)
-from app.services import control_plane_leader_watcher
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service

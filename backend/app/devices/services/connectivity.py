@@ -13,6 +13,8 @@ from app.agent_comm.operations import pack_device_health as fetch_pack_device_he
 from app.core import metrics_recorders as metrics
 from app.core.database import async_session
 from app.core.errors import AgentCallError
+from app.core.leader import state_store as control_plane_state_store
+from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
@@ -30,8 +32,6 @@ from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
-from app.services import control_plane_state_store
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.settings import settings_service
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action

@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm import circuit_breaker as agent_circuit_breaker_module
 from app.appium_nodes.models import AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.hosts.models import Host
 from app.hosts.schemas import (
@@ -17,7 +18,6 @@ from app.hosts.schemas import (
     HostDiagnosticsRead,
     HostRecoveryEventRead,
 )
-from app.services import control_plane_state_store
 
 if TYPE_CHECKING:
     from uuid import UUID

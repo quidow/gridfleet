@@ -25,6 +25,10 @@ from app.core.database import engine
 from app.core.dependencies import DbDep
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
+from app.core.leader import register_settings_provider
+from app.core.leader.advisory import control_plane_leader
+from app.core.leader.keepalive import control_plane_leader_keepalive_loop
+from app.core.leader.watcher import control_plane_leader_watcher_loop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import configure_logging, get_logger
@@ -46,9 +50,6 @@ from app.packs import services as pack_services
 from app.plugins import router as plugins
 from app.runs import router as runs_router
 from app.runs import service_reaper as run_service_reaper
-from app.services.control_plane_leader import control_plane_leader
-from app.services.control_plane_leader_keepalive import control_plane_leader_keepalive_loop
-from app.services.control_plane_leader_watcher import control_plane_leader_watcher_loop
 from app.sessions import router as sessions_router
 from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
@@ -179,6 +180,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as db:
         await settings_service.initialize(db)
         await _validate_online_agent_contracts(db)
+    register_settings_provider(settings_service.get)
     _validate_leader_keepalive_settings()
 
     await _reopen_agent_http_pool()

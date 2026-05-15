@@ -20,11 +20,11 @@ from app.appium_nodes.services.heartbeat import (
 )
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services.node_health import _check_nodes
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.services import control_plane_state_store
 
 
 def _ok_result(payload: dict[str, Any]) -> HeartbeatPingResult:

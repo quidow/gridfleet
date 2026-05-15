@@ -5,11 +5,10 @@ import pytest
 
 from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services import reconciler as appium_reconciler
+from app.core.leader import keepalive, watcher
+from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.services import control_plane_leader_keepalive as keepalive
-from app.services import control_plane_leader_watcher as watcher
-from app.services.control_plane_leader import LeadershipLost
 from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
 
@@ -139,7 +138,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
 
 async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(keepalive.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(keepalive, "_setting", lambda key: 0.01)
     monkeypatch.setattr(keepalive, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(keepalive, "run_keepalive_once", AsyncMock())
     monkeypatch.setattr(keepalive.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
@@ -149,7 +148,7 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
 
     keepalive.run_keepalive_once.assert_awaited_once()
 
-    monkeypatch.setattr(watcher.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(watcher, "_setting", lambda key: 0.01)
     monkeypatch.setattr(watcher, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(watcher, "run_watcher_once", AsyncMock(side_effect=[RuntimeError("boom"), None]))
     monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))

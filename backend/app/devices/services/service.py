@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
 from app.devices.models import (
@@ -48,7 +49,6 @@ from app.devices.services.intent_types import (
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.runs import service as run_service
-from app.services import control_plane_state_store
 
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]

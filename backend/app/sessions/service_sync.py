@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.database import async_session
+from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -25,7 +26,6 @@ from app.devices.services import state as device_state
 from app.grid import service as grid_service
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
-from app.services.control_plane_leader import LeadershipLost, assert_current_leader
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME

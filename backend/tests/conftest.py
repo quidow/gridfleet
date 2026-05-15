@@ -12,11 +12,12 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-import app.models as _app_models  # noqa: F401  # Ensure all ORM models are registered on Base.metadata.
 from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.core.config import settings
 from app.core.database import Base, get_db
+from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
+from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
 from app.events import event_bus
 from app.events.models import SystemEvent
@@ -153,6 +154,8 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     auth_snapshot = auth_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
+    leader_settings_provider.reset_for_tests()
+    leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
     event_bus.reset()
     agent_circuit_breaker.reset()
@@ -179,6 +182,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
         setattr(auth_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
+    leader_settings_provider.reset_for_tests()
 
 
 @pytest_asyncio.fixture
