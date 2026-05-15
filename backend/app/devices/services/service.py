@@ -169,6 +169,8 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.connection_type == filters.connection_type)
     if filters.os_version is not None:
         stmt = stmt.where(Device.os_version == filters.os_version)
+    if filters.os_version_display is not None:
+        stmt = stmt.where(func.coalesce(Device.os_version_display, Device.os_version) == filters.os_version_display)
     if filters.hardware_health_status is not None:
         stmt = stmt.where(Device.hardware_health_status == filters.hardware_health_status)
     if filters.tags:
@@ -194,6 +196,7 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
         "device_type": Device.device_type,
         "connection_type": Device.connection_type,
         "os_version": Device.os_version,
+        "os_version_display": func.coalesce(Device.os_version_display, Device.os_version),
         "host": func.lower(func.coalesce(Host.hostname, "")),
         "status": chip_case,
         "operational_state": Device.operational_state,

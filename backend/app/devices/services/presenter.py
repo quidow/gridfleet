@@ -179,6 +179,7 @@ async def serialize_device(
         "connection_target": device.connection_target,
         "name": device.name,
         "os_version": device.os_version,
+        "os_version_display": device.os_version_display,
         "manufacturer": device.manufacturer,
         "model": device.model,
         "model_number": device.model_number,

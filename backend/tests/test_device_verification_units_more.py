@@ -893,6 +893,7 @@ async def test_preparation_validation_conflict_and_update_branches(
         connection_target="existing-verify",
         name="Existing Verify",
         os_version="14",
+        os_version_display=None,
         manufacturer=None,
         model=None,
         model_number=None,

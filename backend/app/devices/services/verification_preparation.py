@@ -186,6 +186,7 @@ async def resolve_host_derived_payload(
             payload["identity_value"] = normalized.get("identity_value") or payload.get("identity_value")
             payload["connection_target"] = normalized.get("connection_target") or payload.get("connection_target")
             payload["os_version"] = normalized.get("os_version") or payload.get("os_version")
+            payload["os_version_display"] = normalized.get("os_version_display") or payload.get("os_version_display")
             payload["manufacturer"] = normalized.get("manufacturer") or payload.get("manufacturer")
             payload["model"] = normalized.get("model") or payload.get("model")
             payload["model_number"] = normalized.get("model_number") or payload.get("model_number")
@@ -233,6 +234,7 @@ async def resolve_host_derived_payload(
         payload["connection_target"] = resolved.get("connection_target") or payload["connection_target"]
         payload["platform_id"] = resolved.get("platform_id") or payload.get("platform_id")
         payload["os_version"] = resolved.get("os_version") or payload.get("os_version")
+        payload["os_version_display"] = resolved.get("os_version_display") or payload.get("os_version_display")
         payload["manufacturer"] = resolved.get("manufacturer") or payload.get("manufacturer")
         payload["model"] = resolved.get("model") or payload.get("model")
         payload["model_number"] = resolved.get("model_number") or payload.get("model_number")
@@ -361,6 +363,7 @@ async def validate_update_request(
         "name": payload.get("name", existing.name),
         "platform_id": payload.get("platform_id", existing.platform_id),
         "os_version": payload.get("os_version", existing.os_version),
+        "os_version_display": payload.get("os_version_display", existing.os_version_display),
         "host_id": host_id,
         "tags": payload.get("tags", existing.tags),
         "manufacturer": payload.get("manufacturer", existing.manufacturer),
@@ -403,6 +406,7 @@ async def validate_update_request(
         name=verification_payload.get("name", ""),
         device_type=verification_payload.get("device_type", DeviceType.real_device),
         os_version=verification_payload.get("os_version"),
+        os_version_display=verification_payload.get("os_version_display"),
     )
     readiness = await device_readiness.assess_device_async(db, _probe_device)
     if readiness.missing_setup_fields:
