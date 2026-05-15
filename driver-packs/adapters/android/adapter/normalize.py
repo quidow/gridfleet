@@ -60,7 +60,14 @@ async def normalize_device(ctx: NormalizeDeviceContext) -> NormalizedDevice:
         identity_value = f"avd:{avd_name}" if not avd_name.startswith("avd:") else avd_name
         connection_target = avd_name
     connection_type = "virtual" if is_emulator else "network" if _IP_PORT_RE.match(target) else "usb"
-    os_version = props.get("fireos_version") or props.get("android_version") or str(raw.get("os_version") or "")
+    fireos_major = props.get("fireos_version")
+    if fireos_major:
+        os_version = fireos_major.split(".", 1)[0]
+        marketing = props.get("fireos_marketing_version", "")
+        os_version_display = marketing.removeprefix("Fire OS ").strip() or None
+    else:
+        os_version = props.get("android_version") or str(raw.get("os_version") or "")
+        os_version_display = None
     return NormalizedDevice(
         identity_scheme="android_serial",
         identity_scope="host" if is_emulator else "global",
@@ -70,6 +77,7 @@ async def normalize_device(ctx: NormalizeDeviceContext) -> NormalizedDevice:
         device_type="emulator" if is_emulator else "real_device",
         connection_type=connection_type,
         os_version=os_version,
+        os_version_display=os_version_display,
         field_errors=errors,
         manufacturer=props.get("manufacturer", ""),
         model=model_name(props),

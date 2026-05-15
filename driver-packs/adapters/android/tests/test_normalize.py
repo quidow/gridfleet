@@ -55,12 +55,13 @@ async def test_normalize_network_ip_connects_adb_and_uses_stable_serial(monkeypa
     assert result.connection_target == "192.168.1.99:5555"
     assert result.ip_address == "192.168.1.99"
     assert result.connection_type == "network"
-    assert result.os_version == "6.0"
+    assert result.os_version == "6"
+    assert result.os_version_display is None
     assert result.manufacturer == "Amazon"
     assert result.model == "Fire TV Stick 4K"
     assert result.model_number == "AFTMM"
     assert result.software_versions == {
-        "fire_os": "6.0",
+        "fire_os": "6",
         "android": "7.1.2",
         "sdk": "25",
         "build": "NS6271/2495",
@@ -106,14 +107,49 @@ async def test_normalize_firetv_keeps_model_code_as_model_number(monkeypatch: py
         )
     )
 
-    assert result.os_version == "6.0"
+    assert result.os_version == "6"
+    assert result.os_version_display == "6.7.1.1"
     assert result.model == "Fire TV Stick 4K (1st Gen)"
     assert result.model_number == "AFTMM"
     assert result.software_versions == {
         "fire_os": "Fire OS 6.7.1.1",
-        "fire_os_compat": "6.0",
+        "fire_os_compat": "6",
         "android": "7.1.2",
         "sdk": "25",
         "build": "NS6711",
         "build_number": "5908",
     }
+
+
+@pytest.mark.asyncio
+async def test_normalize_plain_android_leaves_os_version_display_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str]) -> str:
+        return "connected to 192.168.1.50:5555"
+
+    async def fake_get_android_properties(adb: str, target: str) -> dict[str, str]:
+        return {
+            "android_version": "14",
+            "serial_number": "ABCD1234",
+            "manufacturer": "Google",
+            "product_model": "Pixel 8",
+            "build_id": "UQ1A.240105.002",
+            "sdk_version": "34",
+        }
+
+    monkeypatch.setattr("adapter.normalize.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.normalize.run_cmd", fake_run_cmd, raising=False)
+    monkeypatch.setattr("adapter.normalize.get_android_properties", fake_get_android_properties)
+
+    result = await normalize_device(
+        _Ctx(
+            {
+                "connection_target": "192.168.1.50",
+                "ip_address": "192.168.1.50",
+                "connection_type": "network",
+            }
+        )
+    )
+
+    assert result.os_version == "14"
+    assert result.os_version_display is None
+    assert "fire_os" not in result.software_versions
