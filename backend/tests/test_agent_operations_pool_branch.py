@@ -10,6 +10,17 @@ import pytest
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.http_pool import AgentHttpPool
 
+_VALID_HEALTH_PAYLOAD: dict[str, object] = {
+    "status": "ok",
+    "hostname": "agent.local",
+    "os_type": "Linux",
+    "version": "1.0.0",
+    "version_guidance": {},
+    "missing_prerequisites": [],
+    "appium_processes": {},
+    "capabilities": {},
+}
+
 
 @pytest.mark.asyncio
 async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
@@ -175,7 +186,7 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
     class _PooledStub:
         async def get(self, url: str, **kwargs: object) -> httpx.Response:
             captured["kwargs"] = kwargs
-            return httpx.Response(200, request=httpx.Request("GET", url), json={"status": "ok"})
+            return httpx.Response(200, request=httpx.Request("GET", url), json=_VALID_HEALTH_PAYLOAD)
 
         async def post(self, url: str, **kwargs: object) -> httpx.Response:
             return httpx.Response(200, request=httpx.Request("POST", url), json={})
@@ -193,7 +204,8 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
     monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
 
     payload = await agent_operations.agent_health("agent.local", agent_port=5100)
-    assert payload == {"status": "ok"}
+    assert payload is not None
+    assert payload["status"] == "ok"
     assert captured["pool_key"] == ("agent.local", 5100)
     assert captured["kwargs"].get("auth") is sentinel  # type: ignore[union-attr]
 
@@ -211,7 +223,7 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
     class _PooledStub:
         async def get(self, url: str, **kwargs: object) -> httpx.Response:
             captured["kwargs"] = kwargs
-            return httpx.Response(200, request=httpx.Request("GET", url), json={"status": "ok"})
+            return httpx.Response(200, request=httpx.Request("GET", url), json=_VALID_HEALTH_PAYLOAD)
 
         async def post(self, url: str, **kwargs: object) -> httpx.Response:
             return httpx.Response(200, request=httpx.Request("POST", url), json={})
@@ -226,6 +238,7 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
     monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
 
     payload = await agent_operations.agent_health("agent.local", agent_port=5100)
-    assert payload == {"status": "ok"}, "pool branch did not call .get"
+    assert payload is not None, "pool branch did not call .get"
+    assert payload["status"] == "ok"
     assert "kwargs" in captured
     assert "auth" not in captured["kwargs"]  # type: ignore[operator]

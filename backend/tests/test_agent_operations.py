@@ -91,9 +91,21 @@ def _strict_client_factory(client: StrictAgentClient) -> AgentClientFactory:
     return factory
 
 
+_VALID_HEALTH_PAYLOAD: dict[str, object] = {
+    "status": "ok",
+    "hostname": "agent.local",
+    "os_type": "Linux",
+    "version": "1.0.0",
+    "version_guidance": {},
+    "missing_prerequisites": [],
+    "appium_processes": {},
+    "capabilities": {},
+}
+
+
 async def test_agent_health_get_request_omits_json_body() -> None:
     client = StrictAgentClient(
-        get_response=_response("GET", "http://10.0.0.5:5100/agent/health", payload={"status": "ok"})
+        get_response=_response("GET", "http://10.0.0.5:5100/agent/health", payload=_VALID_HEALTH_PAYLOAD)
     )
 
     payload = await agent_operations.agent_health(
@@ -103,7 +115,8 @@ async def test_agent_health_get_request_omits_json_body() -> None:
         timeout=5,
     )
 
-    assert payload == {"status": "ok"}
+    assert payload is not None
+    assert payload["status"] == "ok"
 
 
 async def test_agent_health_raises_response_error_on_http_500() -> None:
@@ -360,7 +373,7 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
         get_response=_response(
             "GET",
             "http://10.0.0.5:5100/agent/appium/4723/logs",
-            payload={"lines": ["one", "two"], "count": 2},
+            payload={"lines": ["one", "two"], "count": 2, "port": 4723},
         )
     )
 
@@ -373,7 +386,9 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
         timeout=10,
     )
 
-    assert payload == {"lines": ["one", "two"], "count": 2}
+    assert payload["lines"] == ["one", "two"]
+    assert payload["count"] == 2
+    assert payload["port"] == 4723
     assert client.get_calls == [
         (
             "http://10.0.0.5:5100/agent/appium/4723/logs",

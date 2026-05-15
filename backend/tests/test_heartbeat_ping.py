@@ -10,6 +10,17 @@ from app.appium_nodes.services.heartbeat import _ping_agent
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 
+_VALID_HEALTH_PAYLOAD: dict[str, object] = {
+    "status": "ok",
+    "hostname": "agent.local",
+    "os_type": "Linux",
+    "version": "1.0.0",
+    "version_guidance": {},
+    "missing_prerequisites": [],
+    "appium_processes": {},
+    "capabilities": {},
+}
+
 
 @pytest.mark.asyncio
 async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,7 +52,7 @@ async def test_ping_success_reports_fresh_mode_when_pool_disabled(monkeypatch: p
     monkeypatch.setattr("app.agent_comm.operations.settings_service.get", fake_setting)
     response = httpx.Response(
         200,
-        json={"status": "ok"},
+        json=_VALID_HEALTH_PAYLOAD,
         request=httpx.Request("GET", "http://1.2.3.4:5100/agent/health"),
     )
     with patch("app.agent_comm.operations.agent_request", new=AsyncMock(return_value=response)):
