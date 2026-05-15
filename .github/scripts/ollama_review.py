@@ -9,14 +9,23 @@ hunks are eligible for inline comments; others fall back to the summary.
 from __future__ import annotations
 
 import difflib
+import http.client
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+OLLAMA_RETRIABLE = (
+    urllib.error.URLError,
+    http.client.HTTPException,
+    TimeoutError,
+    ConnectionError,
+)
 
 
 def env(name: str, *, required: bool = True, default: str | None = None) -> str:
@@ -84,6 +93,11 @@ PY_STDLIB = {
     "glob", "argparse", "unittest", "abc", "copy", "string", "textwrap", "platform",
     "threading", "queue", "signal", "socket", "struct", "array", "csv", "html", "xml",
     "email", "http", "ssl", "decimal", "fractions", "weakref", "ast", "operator",
+    "difflib", "heapq", "bisect", "pickle", "shelve", "sqlite3", "zipfile", "tarfile",
+    "gzip", "bz2", "lzma", "configparser", "pprint", "reprlib", "types", "gc", "atexit",
+    "concurrent", "multiprocessing", "selectors", "asyncore", "ipaddress", "mimetypes",
+    "tokenize", "token", "keyword", "symtable", "site", "code", "codeop", "runpy",
+    "importlib", "linecache", "fileinput", "filecmp", "stat", "fcntl", "errno",
 }
 
 
@@ -123,6 +137,32 @@ def extract_identifiers(patch: str, limit: int = 6) -> list[tuple[str, str]]:
             if mod and mod not in PY_STDLIB and not mod.startswith("_"):
                 add("python", mod)
     return ordered[:limit]
+
+
+def _ollama_post(
+    url: str, payload: dict[str, Any], api_key: str, label: str, attempts: int = 3
+) -> str | None:
+    """POST to Ollama Cloud with retries on transient network failures.
+
+    Returns the response body on success, None after exhausting attempts.
+    Ollama Cloud sometimes drops the connection on long inference (seen as
+    http.client.RemoteDisconnected) — retry with backoff before giving up.
+    """
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            sys.stderr.write(f"{label}: HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:500]}\n")
+            return None
+        except OLLAMA_RETRIABLE as e:
+            sys.stderr.write(f"{label} attempt {attempt}/{attempts} failed: {type(e).__name__}: {e}\n")
+            if attempt < attempts:
+                time.sleep(2 ** attempt)
+    return None
 
 
 def _context7_get(url: str, api_key: str) -> bytes | None:
@@ -209,20 +249,8 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
         ],
         "options": {"temperature": 0.2},
     }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"ollama HTTP {e.code}: {e.read().decode('utf-8', 'replace')}\n")
+    body = _ollama_post(url, payload, api_key, label="review")
+    if body is None:
         sys.exit(1)
 
     try:
@@ -344,8 +372,13 @@ def _graphql(query: str, variables: dict[str, Any], token: str) -> dict[str, Any
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+        body = json.loads(raw)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"graphql call failed: {e}\n")
+        return {}
     if body.get("errors"):
         sys.stderr.write(f"graphql errors: {body['errors']}\n")
     return body
@@ -415,8 +448,8 @@ def post_thread_reply(repo: str, pr_number: int, comment_id: int, body: str, tok
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return 200 <= resp.status < 300
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"reply on {comment_id}: HTTP {e.code}\n")
+    except (urllib.error.URLError, TimeoutError) as e:
+        sys.stderr.write(f"reply on {comment_id} failed: {e}\n")
         return False
 
 
@@ -452,11 +485,8 @@ def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            raw = resp.read().decode("utf-8")
-    except (urllib.error.URLError, TimeoutError) as e:
-        sys.stderr.write(f"resolve-check ollama failed: {e}\n")
+    raw = _ollama_post(url, payload, api_key, label="resolve-check")
+    if raw is None:
         return set()
     try:
         data = json.loads(raw)
@@ -478,12 +508,10 @@ def resolve_thread(thread_id: str, token: str) -> bool:
       resolveReviewThread(input:{threadId:$id}) { thread { id isResolved } }
     }
     """
-    try:
-        _graphql(mutation, {"id": thread_id}, token)
-        return True
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"resolve {thread_id}: HTTP {e.code}\n")
+    data = _graphql(mutation, {"id": thread_id}, token)
+    if not data or data.get("errors"):
         return False
+    return True
 
 
 def reconcile_existing_threads(patch: str) -> list[dict[str, Any]]:
@@ -553,7 +581,14 @@ def main() -> None:
     if len(patch) > max_chars:
         patch = patch[:max_chars] + "\n\n[diff truncated]\n"
 
-    resolved_threads = reconcile_existing_threads(patch)
+    try:
+        resolved_threads = reconcile_existing_threads(patch)
+    except Exception as e:  # noqa: BLE001 - reconcile is non-critical
+        sys.stderr.write(f"reconcile failed (continuing without it): {e}\n")
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        resolved_threads = []
 
     eligible = parse_diff_positions(patch)
     identifiers = extract_identifiers(patch)
