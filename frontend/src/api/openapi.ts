@@ -3383,6 +3383,11 @@ export interface components {
             devices_offline: number;
             /** Devices Total */
             devices_total: number;
+            /**
+             * Has Data
+             * @default true
+             */
+            has_data: boolean;
             /** Hosts Online */
             hosts_online: number;
             /** Hosts Total */
