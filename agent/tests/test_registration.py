@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -111,18 +112,32 @@ def test_agent_settings_require_complete_manager_auth_pair() -> None:
         ManagerSettings(manager_auth_username="machine")
 
 
-async def test_registration_loop_stops_after_4xx_rejection() -> None:
+async def test_registration_loop_retries_after_4xx_rejection(caplog: pytest.LogCaptureFixture) -> None:
     request = httpx.Request("POST", "http://manager:8000/api/hosts/register")
-    response = httpx.Response(400, request=request)
+    response = httpx.Response(422, text="capabilities missing field 'platform'", request=request)
+    sleeps: list[float] = []
 
-    with patch(
-        "agent_app.registration.register_with_manager",
-        new_callable=AsyncMock,
-        side_effect=httpx.HTTPStatusError("bad request", request=request, response=response),
-    ) as register:
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    with (
+        patch(
+            "agent_app.registration.register_with_manager",
+            new_callable=AsyncMock,
+            side_effect=[
+                httpx.HTTPStatusError("bad request", request=request, response=response),
+                asyncio.CancelledError,
+            ],
+        ) as register,
+        patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
+        caplog.at_level(logging.WARNING, logger="agent_app.registration"),
+        pytest.raises(asyncio.CancelledError),
+    ):
         await registration_loop("http://manager:8000", 5100)
 
-    register.assert_awaited_once()
+    assert register.await_count == 2
+    assert sleeps == [300.0]
+    assert any("capabilities missing field" in record.getMessage() for record in caplog.records)
 
 
 async def test_registration_loop_retries_transport_failures_with_backoff() -> None:
