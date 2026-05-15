@@ -170,6 +170,42 @@ def extract_identifiers(patch: str, limit: int = 6) -> list[tuple[str, str]]:
     return ordered[:limit]
 
 
+def _read_ollama_stream(resp: Any, label: str) -> str:
+    """Assemble streamed Ollama chunks into a single non-streaming response body.
+
+    Each line is a JSON object with `message.content` for incremental text and
+    a final `done: true` chunk that carries timing/token totals. We concatenate
+    the content and synthesize a body that matches the non-streaming shape so
+    callers can keep parsing with `json.loads(body)`.
+    """
+    parts: list[str] = []
+    final: dict[str, Any] = {}
+    chunks = 0
+    started = time.monotonic()
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", "replace").strip()
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except json.JSONDecodeError:
+            log("WARN", f"{label}: stream chunk not JSON: {line[:200]}")
+            continue
+        chunks += 1
+        msg = chunk.get("message") or {}
+        if isinstance(msg.get("content"), str):
+            parts.append(msg["content"])
+        if chunk.get("done"):
+            final = chunk
+    log(
+        "INFO",
+        f"{label}: stream finished, {chunks} chunk(s) over "
+        f"{time.monotonic() - started:.1f}s, content_chars={sum(len(p) for p in parts)}",
+    )
+    final["message"] = {"role": "assistant", "content": "".join(parts)}
+    return json.dumps(final)
+
+
 def _ollama_post(
     url: str, payload: dict[str, Any], api_key: str, label: str, attempts: int = 3
 ) -> str | None:
@@ -182,10 +218,11 @@ def _ollama_post(
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     timeout = int(os.environ.get("OLLAMA_REVIEW_TIMEOUT", "600"))
+    streaming = bool(payload.get("stream"))
     log(
         "INFO",
         f"{label}: POST {url} model={payload.get('model')} "
-        f"req_bytes={len(data)} timeout={timeout}s",
+        f"req_bytes={len(data)} timeout={timeout}s stream={streaming}",
     )
     if DEBUG:
         log("DEBUG", f"{label} payload: {json.dumps(payload)[:4000]}")
@@ -194,7 +231,11 @@ def _ollama_post(
         started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = resp.read().decode("utf-8")
+                body = (
+                    _read_ollama_stream(resp, label)
+                    if streaming
+                    else resp.read().decode("utf-8")
+                )
             elapsed = time.monotonic() - started
             log(
                 "INFO",
@@ -302,7 +343,7 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
 
     payload = {
         "model": model,
-        "stream": False,
+        "stream": True,
         "format": "json",
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -540,7 +581,7 @@ def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[
     user = f"Open concerns:\n{items}\n\nNew diff:\n```diff\n{patch[:80_000]}\n```"
     payload = {
         "model": model,
-        "stream": False,
+        "stream": True,
         "format": "json",
         "messages": [
             {"role": "system", "content": system},
