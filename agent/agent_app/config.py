@@ -12,6 +12,7 @@ class CoreSettings(BaseSettings):
     agent_port: int = 5100
     registration_refresh_interval_sec: int = 30
     advertise_ip: str | None = None
+    host_id: str | None = None
 
 
 class ManagerSettings(BaseSettings):
@@ -20,6 +21,7 @@ class ManagerSettings(BaseSettings):
     manager_url: str = "http://localhost:8000"
     manager_auth_username: str | None = None
     manager_auth_password: str | None = None
+    backend_url: str | None = None
 
     @model_validator(mode="after")
     def validate_auth_pair(self) -> "ManagerSettings":
@@ -28,6 +30,10 @@ class ManagerSettings(BaseSettings):
         if has_username != has_password:
             raise ValueError("AGENT_MANAGER_AUTH_USERNAME and AGENT_MANAGER_AUTH_PASSWORD must be set together")
         return self
+
+    @property
+    def effective_backend_url(self) -> str:
+        return self.backend_url or self.manager_url
 
 
 class ApiAuthSettings(BaseSettings):

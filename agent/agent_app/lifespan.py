@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -190,8 +189,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
 
-    env_host_id = os.environ.get("AGENT_HOST_ID")
-    backend_url = os.environ.get("AGENT_BACKEND_URL") or agent_settings.manager.manager_url
+    env_host_id = agent_settings.core.host_id
+    backend_url = agent_settings.manager.effective_backend_url
     if env_host_id:
         host_identity.set(env_host_id)
         app.state.pack_state_loop_enabled = True

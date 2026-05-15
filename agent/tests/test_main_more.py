@@ -50,6 +50,8 @@ async def test_release_for_pack_returns_release_when_matching() -> None:
 
 
 async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
+    from agent_app.lifespan import agent_settings
+
     stop_event = asyncio.Event()
 
     async def _wait_forever(*_args: object, **_kwargs: object) -> None:
@@ -60,7 +62,8 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
-        patch.dict("os.environ", {"AGENT_HOST_ID": "test-host-id", "AGENT_BACKEND_URL": ""}),
+        patch.object(agent_settings.core, "host_id", "test-host-id"),
+        patch.object(agent_settings.manager, "backend_url", ""),
     ):
         async with lifespan(app):
             assert app.state.pack_state_loop_enabled is True
@@ -68,6 +71,8 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
 
 
 async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
+    from agent_app.lifespan import agent_settings
+
     stop_event = asyncio.Event()
 
     async def _wait_forever(*_args: object, **_kwargs: object) -> None:
@@ -78,10 +83,11 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
         patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
-        patch.dict("os.environ", {"AGENT_HOST_ID": "test", "AGENT_BACKEND_URL": ""}),
+        patch.object(agent_settings.core, "host_id", "test"),
+        patch.object(agent_settings.manager, "backend_url", ""),
     ):
         async with lifespan(app):
-            # Since AGENT_BACKEND_URL is empty string and manager_url may be default,
+            # Since backend_url is empty string and manager_url may be default,
             # pack task should still exist because manager_url is set in config.
             # Test mainly verifies no errors.
             stop_event.set()

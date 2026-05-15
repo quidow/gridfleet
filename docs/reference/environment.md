@@ -61,6 +61,8 @@ These are read directly by `agent/agent_app/config.py`.
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `AGENT_MANAGER_URL` | `http://localhost:8000` | agent process | Backend base URL used for registration and manager-owned calls |
+| `AGENT_BACKEND_URL` | falls back to `AGENT_MANAGER_URL` | agent process | Override of the backend base URL used for pack desired-state polling. |
+| `AGENT_HOST_ID` | unset | agent process | Pre-assigned host UUID. When set, the agent skips manager-issued identity and enables the pack state loop immediately. |
 | `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `30` | agent process | How often the agent re-registers to refresh mutable host fields such as IP address and capabilities |
 | `AGENT_MANAGER_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username used for manager API calls when the backend auth gate is enabled |
 | `AGENT_MANAGER_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password used for manager API calls when the backend auth gate is enabled |

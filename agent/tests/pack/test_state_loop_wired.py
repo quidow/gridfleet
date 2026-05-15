@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from agent_app.lifespan import agent_settings
 from agent_app.main import app
 
 if TYPE_CHECKING:
@@ -28,9 +29,9 @@ def _mock_lifespan_deps() -> list[AbstractContextManager[object]]:
 
 
 def test_pack_state_loop_enabled_when_host_id_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_HOST_ID", "00000000-0000-0000-0000-000000000042")
+    monkeypatch.setattr(agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000042")
     # Explicit backend URL so the loop task is created without a real network call.
-    monkeypatch.setenv("AGENT_BACKEND_URL", "http://backend.invalid")
+    monkeypatch.setattr(agent_settings.manager, "backend_url", "http://backend.invalid")
 
     with ExitStack() as stack:
         for mock in _mock_lifespan_deps():
@@ -40,8 +41,8 @@ def test_pack_state_loop_enabled_when_host_id_env_set(monkeypatch: pytest.Monkey
 
 
 def test_pack_state_loop_disabled_without_host_id_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGENT_HOST_ID", raising=False)
-    monkeypatch.setenv("AGENT_BACKEND_URL", "http://backend.invalid")
+    monkeypatch.setattr(agent_settings.core, "host_id", None)
+    monkeypatch.setattr(agent_settings.manager, "backend_url", "http://backend.invalid")
 
     with ExitStack() as stack:
         for mock in _mock_lifespan_deps():
