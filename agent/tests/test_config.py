@@ -48,7 +48,8 @@ def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "secret")
     settings = AgentSettings()
     assert settings.api_auth.api_auth_username == "ops"
-    assert settings.api_auth.api_auth_password == "secret"
+    assert settings.api_auth.api_auth_password is not None
+    assert settings.api_auth.api_auth_password.get_secret_value() == "secret"
 
 
 def test_grid_node_settings_defaults() -> None:
@@ -109,3 +110,18 @@ def test_manager_settings_effective_falls_back_to_manager_url(monkeypatch: pytes
     settings = ManagerSettings()
     assert settings.backend_url is None
     assert settings.effective_backend_url == "http://manager:8000"
+
+
+def test_settings_repr_does_not_leak_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_API_AUTH_USERNAME", "u")
+    monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "super-secret-pw")
+    monkeypatch.setenv("AGENT_MANAGER_AUTH_USERNAME", "u2")
+    monkeypatch.setenv("AGENT_MANAGER_AUTH_PASSWORD", "another-secret")
+    monkeypatch.setenv("AGENT_TERMINAL_TOKEN", "tok-very-private")
+
+    settings = AgentSettings()
+    blob = repr(settings.api_auth) + repr(settings.manager) + repr(settings.terminal)
+
+    assert "super-secret-pw" not in blob
+    assert "another-secret" not in blob
+    assert "tok-very-private" not in blob

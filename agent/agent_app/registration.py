@@ -9,6 +9,7 @@ import socket
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from pydantic import SecretStr
 
 from agent_app import __version__
 from agent_app.config import agent_settings
@@ -46,10 +47,16 @@ def _handle_version_guidance(data: dict[str, Any]) -> None:
 
 def _manager_auth() -> httpx.BasicAuth | None:
     username = agent_settings.manager.manager_auth_username
-    password = agent_settings.manager.manager_auth_password
+    password = _secret_value(agent_settings.manager.manager_auth_password)
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
+
+
+def _secret_value(value: SecretStr | str | None) -> str | None:
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
 
 
 async def register_with_manager(manager_url: str, agent_port: int) -> dict[str, Any] | None:

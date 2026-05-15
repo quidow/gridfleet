@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect, status
+from pydantic import SecretStr
 
 import agent_app.config as _config
 from agent_app.terminal.pty import PtyShell
@@ -22,12 +23,18 @@ _STOP: dict[str, Any] = {}
 
 
 def _token_valid(provided: str | None) -> bool:
-    expected = _config.agent_settings.terminal.terminal_token
+    expected = _secret_value(_config.agent_settings.terminal.terminal_token)
     if not expected:
         return False
     if not provided:
         return False
     return hmac.compare_digest(provided, expected)
+
+
+def _secret_value(value: SecretStr | str | None) -> str | None:
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
 
 
 def _resolve_shell() -> str:

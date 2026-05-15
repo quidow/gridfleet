@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from pydantic import SecretStr
 
 from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings
@@ -74,10 +75,16 @@ def _watchdog(
 
 def _manager_auth() -> httpx.BasicAuth | None:
     username = agent_settings.manager.manager_auth_username
-    password = agent_settings.manager.manager_auth_password
+    password = _secret_value(agent_settings.manager.manager_auth_password)
     if not username or not password:
         return None
     return httpx.BasicAuth(username, password)
+
+
+def _secret_value(value: SecretStr | str | None) -> str | None:
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
 
 
 class HttpPackStateClient(PackStateClient):
