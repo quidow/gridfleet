@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -79,6 +80,22 @@ def is_unmet_demand_session(session: Session) -> bool:
     if session.ended_at is None:
         return False
     return session.ended_at - session.started_at <= timedelta(seconds=30)
+
+
+def _align_window_to_buckets(
+    *,
+    date_from: datetime,
+    date_to: datetime,
+    bucket_minutes: int,
+) -> tuple[datetime, datetime]:
+    bucket = timedelta(minutes=bucket_minutes)
+    bucket_seconds = bucket.total_seconds()
+    aligned_from_index = math.floor(date_from.timestamp() / bucket_seconds)
+    aligned_from = datetime.fromtimestamp(aligned_from_index * bucket_seconds, tz=UTC)
+    total = (date_to - aligned_from).total_seconds() / bucket_seconds
+    n_buckets = max(math.ceil(total), 1)
+    aligned_to = aligned_from + bucket * n_buckets
+    return aligned_from, aligned_to
 
 
 def _bucket_start(timestamp: datetime, *, date_from: datetime, bucket_minutes: int) -> datetime:

@@ -23,6 +23,28 @@ from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
 
 
+def test_align_window_to_buckets_pads_partial_bounds() -> None:
+    from app.devices.services.fleet_capacity import _align_window_to_buckets
+
+    date_from = datetime(2026, 4, 18, 10, 23, tzinfo=UTC)
+    date_to = datetime(2026, 4, 18, 11, 17, tzinfo=UTC)
+    aligned_from, aligned_to = _align_window_to_buckets(date_from=date_from, date_to=date_to, bucket_minutes=60)
+
+    assert aligned_from == datetime(2026, 4, 18, 10, 0, tzinfo=UTC)
+    assert aligned_to == datetime(2026, 4, 18, 12, 0, tzinfo=UTC)
+
+
+def test_align_window_to_buckets_is_idempotent_for_aligned_bounds() -> None:
+    from app.devices.services.fleet_capacity import _align_window_to_buckets
+
+    date_from = datetime(2026, 4, 18, 10, 0, tzinfo=UTC)
+    date_to = datetime(2026, 4, 18, 11, 0, tzinfo=UTC)
+    aligned_from, aligned_to = _align_window_to_buckets(date_from=date_from, date_to=date_to, bucket_minutes=60)
+
+    assert aligned_from == date_from
+    assert aligned_to == date_to
+
+
 def test_fleet_capacity_timeline_point_defaults_has_data_true() -> None:
     from app.analytics.schemas import FleetCapacityTimelinePoint
 
