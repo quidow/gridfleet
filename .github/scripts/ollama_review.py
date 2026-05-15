@@ -225,7 +225,11 @@ def call_ollama(patch: str, docs: str = "") -> dict[str, Any]:
         sys.stderr.write(f"ollama HTTP {e.code}: {e.read().decode('utf-8', 'replace')}\n")
         sys.exit(1)
 
-    data = json.loads(body)
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        sys.stderr.write(f"ollama returned non-JSON body:\n{body[:1000]}\n")
+        sys.exit(1)
     content = data.get("message", {}).get("content", "")
     if not content:
         sys.stderr.write(f"ollama returned no content: {body[:500]}\n")
@@ -450,9 +454,14 @@ def ask_model_for_resolutions(threads: list[dict[str, Any]], patch: str) -> set[
     )
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read().decode("utf-8")
     except (urllib.error.URLError, TimeoutError) as e:
         sys.stderr.write(f"resolve-check ollama failed: {e}\n")
+        return set()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        sys.stderr.write(f"resolve-check non-JSON body: {raw[:500]}\n")
         return set()
     content = data.get("message", {}).get("content", "")
     try:
