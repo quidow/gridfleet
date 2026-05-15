@@ -504,6 +504,7 @@ async def _drive_convergence(
                     stop_agent=_make_stop_agent(host_ip, agent_port),
                     write_observed=_write_observed_factory(require_leader=require_leader),
                     clear_token=_clear_token_factory(require_leader=require_leader),
+                    reset_start_failure=_make_reset_start_failure(require_leader=require_leader),
                 )
             finally:
                 APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
@@ -557,6 +558,7 @@ async def converge_device_now(device_id: uuid.UUID, *, db: AsyncSession | None =
         stop_agent=_make_stop_agent(host.ip, host.agent_port),
         write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope),
         clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope),
+        reset_start_failure=_make_reset_start_failure(require_leader=False, session_scope=session_scope),
         raise_errors=True,
     )
     async with session_scope() as read_db:
@@ -826,6 +828,17 @@ async def _reset_start_failure(
             return
         reset_reconciler_start_failure_state(device)
         await db.commit()
+
+
+def _make_reset_start_failure(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+) -> Callable[..., Awaitable[None]]:
+    async def _reset(*, row: DesiredRow) -> None:
+        await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope)
+
+    return _reset
 
 
 async def run_one_cycle_for_test() -> None:

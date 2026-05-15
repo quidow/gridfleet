@@ -44,6 +44,7 @@ ActionKind = Literal[
     "stop",
     "restart",
     "no_op",
+    "confirm_running",
     "db_mark_running",
     "db_clear_stale_running",
     "clear_expired_token",
@@ -65,6 +66,7 @@ StartAgent = Callable[..., Awaitable[dict[str, Any]]]
 StopAgent = Callable[..., Awaitable[None]]
 WriteObserved = Callable[..., Awaitable[None]]
 ClearToken = Callable[..., Awaitable[None]]
+ResetStartFailure = Callable[..., Awaitable[None]]
 
 
 def decide_convergence_action(
@@ -104,7 +106,7 @@ def decide_convergence_action(
                     pid=observed.pid,
                     active_connection_target=observed.connection_target,
                 )
-            return ConvergenceAction(kind="no_op")
+            return ConvergenceAction(kind="confirm_running")
         return ConvergenceAction(kind="stop", port=observed.port, clear_desired_port=True)
 
     if observed is not None:
@@ -126,6 +128,7 @@ async def converge_host_rows(
     stop_agent: StopAgent,
     write_observed: WriteObserved,
     clear_token: ClearToken,
+    reset_start_failure: ResetStartFailure,
     raise_errors: bool = False,
 ) -> None:
     """Drive convergence for one host.
@@ -147,6 +150,7 @@ async def converge_host_rows(
                 stop_agent=stop_agent,
                 write_observed=write_observed,
                 clear_token=clear_token,
+                reset_start_failure=reset_start_failure,
             )
         except Exception:
             logger.warning(
@@ -169,6 +173,7 @@ async def _execute_action(
     stop_agent: StopAgent,
     write_observed: WriteObserved,
     clear_token: ClearToken,
+    reset_start_failure: ResetStartFailure,
 ) -> None:
     APPIUM_RECONCILER_CONVERGENCE_ACTIONS.labels(action=action.kind).inc()
     logger.info(
@@ -179,6 +184,9 @@ async def _execute_action(
     )
 
     if action.kind == "no_op":
+        return
+    if action.kind == "confirm_running":
+        await reset_start_failure(row=row)
         return
     if action.kind == "clear_expired_token":
         APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()

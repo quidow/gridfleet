@@ -42,7 +42,7 @@ def test_desired_running_no_token_no_observed_picks_start() -> None:
     assert action.port == 4723
 
 
-def test_desired_running_no_token_observed_matching_picks_noop() -> None:
+def test_desired_running_no_token_observed_matching_picks_confirm_running() -> None:
     row = _row(
         desired_state="running",
         desired_port=4723,
@@ -52,7 +52,7 @@ def test_desired_running_no_token_observed_matching_picks_noop() -> None:
     )
     obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
     action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
-    assert action.kind == "no_op"
+    assert action.kind == "confirm_running"
 
 
 def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> None:
@@ -169,11 +169,45 @@ async def test_converge_host_rows_calls_start_for_running_intent_no_observation(
         stop_agent=stop_agent,
         write_observed=write_observed,
         clear_token=AsyncMock(),
+        reset_start_failure=AsyncMock(),
     )
 
     start_agent.assert_awaited_once()
     stop_agent.assert_not_awaited()
     write_observed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_converge_host_rows_resets_start_failure_when_observed_matches_db() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    observed = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
+    reset_start_failure = AsyncMock()
+    start_agent = AsyncMock()
+    stop_agent = AsyncMock()
+    write_observed = AsyncMock()
+
+    await converge_host_rows(
+        host_id=row.host_id,
+        rows=[row],
+        agent_running=[observed],
+        now=datetime.now(UTC),
+        start_agent=start_agent,
+        stop_agent=stop_agent,
+        write_observed=write_observed,
+        clear_token=AsyncMock(),
+        reset_start_failure=reset_start_failure,
+    )
+
+    reset_start_failure.assert_awaited_once_with(row=row)
+    start_agent.assert_not_awaited()
+    stop_agent.assert_not_awaited()
+    write_observed.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -191,6 +225,7 @@ async def test_converge_host_rows_clears_desired_port_when_start_uses_fallback_p
         stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=AsyncMock(),
+        reset_start_failure=AsyncMock(),
     )
 
     write_observed.assert_awaited_once_with(
@@ -219,6 +254,7 @@ async def test_converge_host_rows_repairs_observed_running_db_missing_pid() -> N
         stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=AsyncMock(),
+        reset_start_failure=AsyncMock(),
     )
 
     write_observed.assert_awaited_once_with(
@@ -251,6 +287,7 @@ async def test_converge_host_rows_skips_one_failed_row_continues_others() -> Non
         stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=AsyncMock(),
+        reset_start_failure=AsyncMock(),
     )
 
     write_observed.assert_awaited_once()
@@ -286,6 +323,7 @@ async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
         stop_agent=AsyncMock(),
         write_observed=write_observed,
         clear_token=clear_token,
+        reset_start_failure=AsyncMock(),
     )
 
     clear_token.assert_awaited_once_with(row=expired, reason="deadline_elapsed")
@@ -310,6 +348,7 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
         stop_agent=AsyncMock(),
         write_observed=AsyncMock(),
         clear_token=AsyncMock(),
+        reset_start_failure=AsyncMock(),
     )
 
     failing = _row(desired_state="running", desired_port=4723)
@@ -323,5 +362,6 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
             stop_agent=AsyncMock(),
             write_observed=AsyncMock(),
             clear_token=AsyncMock(),
+            reset_start_failure=AsyncMock(),
             raise_errors=True,
         )
