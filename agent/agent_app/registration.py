@@ -13,6 +13,7 @@ import httpx
 from agent_app import __version__
 from agent_app.config import agent_settings, secret_value
 from agent_app.grid_url import get_local_ip
+from agent_app.host import hardware_info
 from agent_app.host.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.host.version_guidance import update_version_guidance
 from agent_app.http_client import get_client as get_shared_http_client
@@ -62,6 +63,7 @@ async def register_with_manager(manager_url: str, agent_port: int) -> dict[str, 
         "agent_port": agent_port,
         "agent_version": __version__,
         "capabilities": capabilities,
+        "host_info": hardware_info.collect(),
     }
 
     client = get_shared_http_client()
