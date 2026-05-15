@@ -121,6 +121,7 @@ class Device(Base):
     connection_target: Mapped[str | None] = mapped_column(String, nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     os_version: Mapped[str] = mapped_column(String, nullable=False)
+    os_version_display: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     host_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("hosts.id", ondelete="RESTRICT"), nullable=False
     )
