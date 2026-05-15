@@ -37,7 +37,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
         appium_reconciler.settings_service, "get", lambda key: 0.01 if key.endswith("interval_sec") else 1
     )
     monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(appium_reconciler, "async_session", lambda: _Session())
+    monkeypatch.setattr(appium_reconciler, "async_session", _Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[{"id": "bad"}]))
     monkeypatch.setattr(appium_reconciler, "_fetch_node_rows", AsyncMock(return_value=[]))
@@ -57,7 +57,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(heartbeat, "async_session", lambda: _Session())
+    monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
@@ -71,7 +71,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_viability, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_viability, "async_session", lambda: _Session())
+    monkeypatch.setattr(session_viability, "async_session", _Session)
     monkeypatch.setattr(session_viability, "_check_due_devices", AsyncMock())
     monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
@@ -84,7 +84,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", lambda: _Session())
+    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
     monkeypatch.setattr(session_sync.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
@@ -97,7 +97,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", lambda: _Session())
+    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(session_sync.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
@@ -108,7 +108,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fleet_capacity.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(fleet_capacity, "async_session", lambda: _Session())
+    monkeypatch.setattr(fleet_capacity, "async_session", _Session)
     monkeypatch.setattr(
         fleet_capacity,
         "collect_capacity_snapshot_once",
@@ -123,7 +123,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
     monkeypatch.setattr(hardware_telemetry.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(hardware_telemetry, "async_session", lambda: _Session())
+    monkeypatch.setattr(hardware_telemetry, "async_session", _Session)
     monkeypatch.setattr(
         hardware_telemetry,
         "poll_hardware_telemetry_once",
@@ -165,7 +165,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(appium_reconciler.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(appium_reconciler, "async_session", lambda: _Session())
+    monkeypatch.setattr(appium_reconciler, "async_session", _Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(appium_reconciler.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
@@ -173,7 +173,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(heartbeat, "async_session", lambda: _Session())
+    monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)
@@ -182,7 +182,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", lambda: _Session())
+    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(session_sync.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):

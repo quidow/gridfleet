@@ -425,7 +425,7 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     with pytest.raises(StopAsyncIteration):
         await response.body_iterator.__anext__()
 
-    empty_queue = SimpleNamespace(get=lambda: object())
+    empty_queue = SimpleNamespace(get=object)
 
     class FakeTask:
         def __await__(self) -> object:

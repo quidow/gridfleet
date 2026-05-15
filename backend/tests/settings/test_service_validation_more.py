@@ -92,7 +92,7 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     assert service._refresh_task is task
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)
 
     with pytest.raises(KeyError, match="Unknown setting"):
         service.get("missing.setting")

@@ -104,7 +104,7 @@ async def test_preempt_skips_fresh_missing_pid_and_changed_heartbeat_rows() -> N
     )
     assert await leader._try_preempt(connection, stale_threshold_sec=30) is False
 
-    connection.begin = lambda: _BeginContext()
+    connection.begin = _BeginContext
     connection.execute.side_effect = [
         SimpleNamespace(first=lambda: SimpleNamespace(age=60, lock_backend_pid=123, holder_id=uuid.uuid4())),
         SimpleNamespace(first=lambda: None),
@@ -115,11 +115,11 @@ async def test_preempt_skips_fresh_missing_pid_and_changed_heartbeat_rows() -> N
 async def test_preempt_warns_once_when_termination_does_not_grant_lock() -> None:
     leader = ControlPlaneLeader()
     connection = AsyncMock()
-    connection.begin = lambda: _BeginContext()
+    connection.begin = _BeginContext
     holder_id = uuid.uuid4()
     connection.execute.side_effect = [
         SimpleNamespace(first=lambda: SimpleNamespace(age=60, lock_backend_pid=123, holder_id=holder_id)),
-        SimpleNamespace(first=lambda: object()),
+        SimpleNamespace(first=object),
         SimpleNamespace(scalar=lambda: False),
         SimpleNamespace(scalar=lambda: False),
     ]

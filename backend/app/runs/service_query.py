@@ -17,7 +17,6 @@ from app.runs.schemas import (
     SessionCounts,
     UnavailableInclude,
 )
-from app.runs.service_reservation import get_run as get_run
 from app.sessions.models import Session, SessionStatus
 from app.settings import service_config as config_service
 

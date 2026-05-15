@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import locking as appium_node_locking
-from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.health_view import (
@@ -23,8 +22,6 @@ from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = get_logger(__name__)
 
 __all__ = [
     "apply_node_state_transition",

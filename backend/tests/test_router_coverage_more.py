@@ -470,7 +470,7 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
     task = asyncio.create_task(devices_verification._read_queue_event(queue))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1.0)
 
 
 async def test_device_verification_event_stream_initial_completed_job(monkeypatch: pytest.MonkeyPatch) -> None:

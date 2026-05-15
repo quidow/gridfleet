@@ -26,8 +26,6 @@ class TestDataPayload(RootModel[dict[str, Any]]):
 class TestDataRead(RootModel[dict[str, Any]]):
     __test__ = False
 
-    pass
-
 
 class TestDataAuditEntryRead(BaseModel):
     __test__ = False
