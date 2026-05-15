@@ -15,7 +15,7 @@ export interface FleetCapacityChartDatum {
   inferred_demand: NullableMetric;
 }
 
-function toChartDatum(point: FleetCapacityTimelinePoint): FleetCapacityChartDatum {
+function realDatum(point: FleetCapacityTimelinePoint): FleetCapacityChartDatum {
   return {
     timestamp: point.timestamp,
     label: formatDateTime(point.timestamp),
@@ -29,11 +29,10 @@ function toChartDatum(point: FleetCapacityTimelinePoint): FleetCapacityChartDatu
   };
 }
 
-function gapDatum(timestampMs: number): FleetCapacityChartDatum {
-  const timestamp = new Date(timestampMs).toISOString();
+function gapDatum(point: FleetCapacityTimelinePoint): FleetCapacityChartDatum {
   return {
-    timestamp,
-    label: formatDateTime(timestamp),
+    timestamp: point.timestamp,
+    label: formatDateTime(point.timestamp),
     isGap: true,
     total_capacity_slots: null,
     active_sessions: null,
@@ -46,19 +45,5 @@ function gapDatum(timestampMs: number): FleetCapacityChartDatum {
 
 export function buildFleetCapacityChartData(timeline: FleetCapacityTimeline | undefined): FleetCapacityChartDatum[] {
   if (!timeline?.series.length) return [];
-
-  const bucketMs = timeline.bucket_minutes * 60_000;
-  const rows: FleetCapacityChartDatum[] = [];
-  timeline.series.forEach((point, index) => {
-    if (index > 0) {
-      const previous = timeline.series[index - 1];
-      const previousMs = new Date(previous.timestamp).getTime();
-      const currentMs = new Date(point.timestamp).getTime();
-      if (currentMs - previousMs > bucketMs * 1.5) {
-        rows.push(gapDatum(previousMs + bucketMs));
-      }
-    }
-    rows.push(toChartDatum(point));
-  });
-  return rows;
+  return timeline.series.map((point) => (point.has_data ? realDatum(point) : gapDatum(point)));
 }
