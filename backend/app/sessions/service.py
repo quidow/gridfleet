@@ -132,9 +132,10 @@ async def list_sessions_cursor(
     limit: int = 50,
     cursor: str | None = None,
     direction: str = "older",
+    include_probes: bool = False,
 ) -> CursorPage[Session]:
     stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
-    stmt = exclude_reserved_sessions(stmt)
+    stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
 
     if device_id is not None:
         stmt = stmt.where(Session.device_id == device_id)
@@ -195,9 +196,10 @@ async def list_sessions(
     offset: int = 0,
     sort_by: str = "started_at",
     sort_dir: str = "desc",
+    include_probes: bool = False,
 ) -> tuple[list[Session], int]:
     stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
-    stmt = exclude_reserved_sessions(stmt)
+    stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
     platform_id_expr = func.coalesce(Device.platform_id, Session.requested_platform_id)
 
     if device_id is not None:
@@ -455,9 +457,10 @@ async def get_device_sessions(
     db: AsyncSession,
     device_id: uuid.UUID,
     limit: int = 50,
+    include_probes: bool = False,
 ) -> list[Session]:
     stmt = select(Session).where(Session.device_id == device_id).order_by(Session.started_at.desc()).limit(limit)
-    stmt = exclude_non_test_sessions(stmt)
+    stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
