@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.hosts.models import HostAgentLogEntry
-from app.hosts.schemas import AgentLogBatchIngest, AgentLogIngestResult
+from app.hosts.schemas import AgentLogBatchIngest, AgentLogIngestResult, AgentLogLine, AgentLogPage
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,3 +50,46 @@ async def write_batch(
     await db.commit()
 
     return AgentLogIngestResult(accepted=inserted, deduped=len(rows) - inserted)
+
+
+async def query_logs(
+    db: AsyncSession,
+    *,
+    host_id: UUID,
+    levels: list[str] | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> AgentLogPage:
+    base = select(HostAgentLogEntry).where(HostAgentLogEntry.host_id == host_id)
+    if levels:
+        base = base.where(HostAgentLogEntry.level.in_(levels))
+    if since is not None:
+        base = base.where(HostAgentLogEntry.ts >= since)
+    if until is not None:
+        base = base.where(HostAgentLogEntry.ts < until)
+    if q:
+        base = base.where(HostAgentLogEntry.message.ilike(f"%{q}%"))
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = int((await db.execute(count_stmt)).scalar_one())
+
+    rows_stmt = (
+        base.order_by(desc(HostAgentLogEntry.ts), desc(HostAgentLogEntry.sequence_no)).offset(offset).limit(limit)
+    )
+    rows = (await db.execute(rows_stmt)).scalars().all()
+
+    lines = [
+        AgentLogLine(
+            ts=row.ts,
+            level=row.level,
+            logger_name=row.logger_name,
+            message=row.message,
+            sequence_no=row.sequence_no,
+            boot_id=row.boot_id,
+        )
+        for row in rows
+    ]
+    return AgentLogPage(lines=lines, total=total, has_more=(offset + len(lines)) < total)
