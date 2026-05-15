@@ -9,6 +9,29 @@ CONFIG_DIR="/etc/gridfleet-agent"
 
 OS=$(uname -s)
 
+# Resolve invoking operator's home so we can clean per-user uv tool installs that
+# were laid down with sudo (which leaves root-owned __pycache__ in their dirs).
+if [ -n "${SUDO_USER:-}" ]; then
+    OP_USER="$SUDO_USER"
+    OP_HOME=$(eval echo "~${SUDO_USER}")
+else
+    OP_USER="$(id -un)"
+    OP_HOME="$HOME"
+fi
+
+kill_agent_processes() {
+    local pids
+    # Match both legacy uvicorn-direct launches and the post-CLI `gridfleet-agent serve` form.
+    pids=$(pgrep -f "uvicorn agent_app.main:app" 2>/dev/null || true)
+    pids="$pids $(pgrep -f "gridfleet-agent serve" 2>/dev/null || true)"
+    pids=$(echo "$pids" | tr ' ' '\n' | sort -u | grep -v '^$' || true)
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+        sleep 2
+        kill -9 $pids 2>/dev/null || true
+    fi
+}
+
 if [ "$OS" = "Linux" ]; then
     SERVICE="gridfleet-agent"
     if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
@@ -22,29 +45,18 @@ if [ "$OS" = "Linux" ]; then
         sudo rm "$UNIT_FILE"
         sudo systemctl daemon-reload
     fi
-    AGENT_PID=$(pgrep -f "uvicorn agent_app.main:app" 2>/dev/null || true)
-    if [ -n "$AGENT_PID" ]; then
-        kill $AGENT_PID 2>/dev/null || true
-        sleep 2
-        kill -9 $AGENT_PID 2>/dev/null || true
-    fi
+    kill_agent_processes
 elif [ "$OS" = "Darwin" ]; then
-    if [ -n "${SUDO_USER:-}" ]; then
-        OP_HOME=$(eval echo "~${SUDO_USER}")
-    else
-        OP_HOME="$HOME"
-    fi
+    OP_UID=$(id -u "$OP_USER")
     PLIST_PATH="${OP_HOME}/Library/LaunchAgents/com.gridfleet.agent.plist"
+    # Bootout by domain-target so the registration is removed even if the plist
+    # file has already been deleted (otherwise the service stays loaded forever).
+    sudo -u "$OP_USER" launchctl bootout "gui/${OP_UID}/com.gridfleet.agent" 2>/dev/null || true
     if [ -f "$PLIST_PATH" ]; then
-        launchctl unload "$PLIST_PATH" 2>/dev/null || true
-        rm "$PLIST_PATH"
+        sudo -u "$OP_USER" launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        rm -f "$PLIST_PATH"
     fi
-    AGENT_PID=$(pgrep -f "uvicorn agent_app.main:app" 2>/dev/null || true)
-    if [ -n "$AGENT_PID" ]; then
-        kill $AGENT_PID 2>/dev/null || true
-        sleep 2
-        kill -9 $AGENT_PID 2>/dev/null || true
-    fi
+    kill_agent_processes
 else
     echo "Unsupported OS: $OS"
     exit 1
@@ -59,6 +71,18 @@ fi
 
 if [ -d "$CONFIG_DIR" ]; then
     sudo rm -rf "$CONFIG_DIR"
+fi
+
+# Clean root-owned residue inside the per-user uv tool dir if present.
+# Sudo installs of `uv tool install gridfleet-agent` write __pycache__ entries as root,
+# which then block a subsequent `uv tool uninstall` run as the operator with EACCES.
+UV_TOOL_DIR="${OP_HOME}/.local/share/uv/tools/gridfleet-agent"
+if [ -d "$UV_TOOL_DIR" ] && [ -n "$(sudo find "$UV_TOOL_DIR" -uid 0 -print -quit 2>/dev/null)" ]; then
+    sudo rm -rf "$UV_TOOL_DIR"
+    UV_BIN_SHIM="${OP_HOME}/.local/bin/gridfleet-agent"
+    if [ -L "$UV_BIN_SHIM" ] || [ -f "$UV_BIN_SHIM" ]; then
+        sudo rm -f "$UV_BIN_SHIM"
+    fi
 fi
 
 echo "Legacy GridFleet Agent install removed. Re-run install without sudo."

@@ -43,7 +43,9 @@ def _stop_service(
         run_command(["systemctl", "--user", "disable", "gridfleet-agent"], check=False)
         return
     if os_name == "Darwin":
-        run_command(["launchctl", "bootout", f"gui/{operator.uid}", str(service_file)], check=False)
+        # Use domain-target form so bootout still removes the registered service when the
+        # plist file is missing (e.g. half-uninstalled host where the plist was rm'd manually).
+        run_command(["launchctl", "bootout", f"gui/{operator.uid}/com.gridfleet.agent"], check=False)
         return
     raise RuntimeError(f"Unsupported OS: {os_name}")
 

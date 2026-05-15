@@ -85,7 +85,7 @@ def test_uninstall_macos_boots_out_launchd_domain_and_removes_files(
 
     assert result.removed_service_file is True
     assert result.service_file == service_file
-    assert commands == [(["launchctl", "bootout", "gui/501", str(service_file)], False)]
+    assert commands == [(["launchctl", "bootout", "gui/501/com.gridfleet.agent"], False)]
     assert not agent_dir.exists()
     assert not config_dir.exists()
     assert not service_file.exists()
@@ -130,6 +130,23 @@ def test_uninstall_is_idempotent_when_files_are_missing(tmp_path: Path, os_name:
     assert result.removed_service_file is False
     assert result.removed_agent_dir is False
     assert result.removed_config_dir is False
+
+
+def test_uninstall_darwin_bootout_runs_when_plist_file_missing(tmp_path: Path) -> None:
+    """Half-uninstalled hosts (plist deleted but service still loaded) must still bootout."""
+    config = _make_config(tmp_path)
+    operator = OperatorIdentity(login="ops", uid=501, home=tmp_path)
+    commands: list[list[str]] = []
+
+    result = uninstall(
+        config,
+        operator=operator,
+        os_name="Darwin",
+        run_command=lambda command, *, check=True: commands.append(list(command)),
+    )
+
+    assert commands == [["launchctl", "bootout", "gui/501/com.gridfleet.agent"]]
+    assert result.removed_service_file is False
 
 
 def test_uninstall_uses_operator_uid_for_bootout() -> None:
