@@ -618,6 +618,15 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3650,
     ),
     SettingDefinition(
+        key="retention.probe_sessions_days",
+        category="retention",
+        setting_type="int",
+        default=7,
+        description="Delete probe session rows older than N days (diagnostic; separate from retention.sessions_days)",
+        min_value=1,
+        max_value=3650,
+    ),
+    SettingDefinition(
         key="retention.audit_log_days",
         category="retention",
         setting_type="int",

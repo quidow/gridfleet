@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
@@ -16,6 +16,7 @@ from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.events import event_bus
 from app.hosts.models import HostResourceSample
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings import settings_service
 from app.settings.models import ConfigAuditLog
 
@@ -78,7 +79,8 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
     capacity_snapshots_deleted = 0
     agent_reconfigure_outbox_deleted = 0
 
-    # Sessions (only completed ones)
+    # Sessions (only completed ones) — exclude probe rows; they have their own
+    # retention.probe_sessions_days window below.
     sessions_days: int = settings_service.get("retention.sessions_days")
     if sessions_days > 0:
         cutoff = now - timedelta(days=sessions_days)
@@ -90,7 +92,20 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
             extra_predicates=(
                 Session.status != SessionStatus.running,
                 Session.ended_at.is_not(None),
+                or_(Session.test_name.is_(None), Session.test_name != PROBE_TEST_NAME),
             ),
+        )
+
+    probe_sessions_days: int = settings_service.get("retention.probe_sessions_days")
+    probe_sessions_deleted = 0
+    if probe_sessions_days > 0:
+        cutoff = now - timedelta(days=probe_sessions_days)
+        probe_sessions_deleted = await _delete_in_batches(
+            db,
+            model=Session,
+            timestamp_column=Session.started_at,
+            cutoff=cutoff,
+            extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
         )
 
     # ConfigAuditLog
@@ -162,9 +177,10 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
         )
 
     logger.info(
-        "Data cleanup completed: sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
+        "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
         "device_events=%d, host_resource_samples=%d, capacity_snapshots=%d, agent_reconfigure_outbox=%d",
         sessions_deleted,
+        probe_sessions_deleted,
         audit_deleted,
         test_data_audit_deleted,
         events_deleted,
@@ -176,6 +192,7 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
         "system.cleanup_completed",
         {
             "sessions_deleted": sessions_deleted,
+            "probe_sessions_deleted": probe_sessions_deleted,
             "audit_entries_deleted": audit_deleted,
             "test_data_audit_entries_deleted": test_data_audit_deleted,
             "device_events_deleted": events_deleted,
