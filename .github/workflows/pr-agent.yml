@@ -1,0 +1,35 @@
+name: PR Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr_agent:
+    if: ${{ github.event.sender.type != 'Bot' && (github.event.pull_request || github.event.issue.pull_request) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: PR Agent
+        uses: qodo-ai/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ollama Cloud exposes an OpenAI-compatible endpoint at /v1.
+          # Drive litellm via the `openai/<model>` prefix so streaming, retries,
+          # and tool calls all go through its well-tested OpenAI client.
+          CONFIG__MODEL: openai/${{ vars.OLLAMA_MODEL || 'gpt-oss:120b' }}
+          CONFIG__FALLBACK_MODELS: "[]"
+          CONFIG__GIT_PROVIDER: github
+          OPENAI__KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OPENAI__API_BASE: ${{ vars.OLLAMA_BASE_URL || 'https://ollama.com/v1' }}
