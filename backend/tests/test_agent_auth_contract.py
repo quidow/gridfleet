@@ -12,6 +12,7 @@ _VALID_HEALTH_PAYLOAD: dict[str, object] = {
     "hostname": "agent.local",
     "os_type": "Linux",
     "version": "1.0.0",
+    "registered": True,
     "version_guidance": {},
     "missing_prerequisites": [],
     "appium_processes": {},

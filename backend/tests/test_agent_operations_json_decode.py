@@ -269,6 +269,7 @@ async def test_agent_health_preserves_wire_shape() -> None:
         "hostname": "agent.local",
         "os_type": "Linux",
         "version": "1.0.0",
+        "registered": True,
         "version_guidance": {},
         "missing_prerequisites": [],
         "appium_processes": {},

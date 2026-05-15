@@ -74,7 +74,7 @@ async def test_pack_device_properties_endpoint_uses_latest_desired_packs(monkeyp
         )
 
     assert resp.status_code == 200
-    assert resp.json()["properties"]["detected_properties"]["os_version"] == "15"
+    assert resp.json()["detected_properties"]["os_version"] == "15"
 
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ async def test_enumerate_pack_scope_adapter() -> None:
     result = await enumerate_pack_candidates([pack], adapter_registry=registry, host_id="h1")
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["pack_id"] == "appium-uiautomator2"
-    assert result["candidates"][0]["extras"]["identity_value"] == "serial1"
+    assert result["candidates"][0]["identity_value"] == "serial1"
 
 
 class _FailingAdapter:
@@ -397,10 +397,9 @@ async def test_pack_device_properties_successful_fallback() -> None:
     )
     assert result is not None
     assert result["pack_id"] == "appium-uiautomator2"
-    properties = result["properties"]
-    assert properties["platform_id"] == "android_mobile"
-    assert properties["extras"]["identity_value"] == "serial1"
-    assert properties["extras"]["detected_properties"]["manufacturer"] == "Google"
-    assert properties["extras"]["detected_properties"]["model"] == "Pixel"
-    assert properties["extras"]["runnable"] is True
-    assert properties["extras"]["field_errors"] == []
+    assert result["platform_id"] == "android_mobile"
+    assert result["identity_value"] == "serial1"
+    assert result["detected_properties"]["manufacturer"] == "Google"
+    assert result["detected_properties"]["model"] == "Pixel"
+    assert result["runnable"] is True
+    assert result["field_errors"] == []

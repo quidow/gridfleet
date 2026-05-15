@@ -73,15 +73,14 @@ class AppiumStopResponse(BaseModel):
 
 
 class AppiumStatusResponse(BaseModel):
-    """Status snapshot for a managed Appium process."""
+    """Status snapshot for a managed Appium process. Adapter-specific fields permitted."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     port: int = Field(ge=1024, le=65535)
     running: bool
     pid: int | None = None
     appium_status: dict[str, Any] | None = None
-    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppiumLogsResponse(BaseModel):

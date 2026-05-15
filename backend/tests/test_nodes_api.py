@@ -271,6 +271,7 @@ async def test_restart_node_converges_immediately(
             "hostname": "test-host",
             "os_type": "linux",
             "version": "1.0.0",
+            "registered": True,
             "missing_prerequisites": [],
             "capabilities": {},
             "version_guidance": {},

@@ -5,6 +5,13 @@ from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def secret_value(value: SecretStr | str | None) -> str | None:
+    """Return the plaintext value behind a ``SecretStr`` (or ``None``)."""
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
+
+
 class CoreSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 

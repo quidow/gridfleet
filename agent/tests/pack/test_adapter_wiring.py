@@ -198,7 +198,7 @@ async def test_adapter_kind_discovery_dispatches_to_adapter() -> None:
     candidate = result["candidates"][0]
     assert candidate["pack_id"] == pack.id
     assert candidate["platform_id"] == "vendor_real"
-    assert candidate["extras"]["identity_value"] == "VENDOR-1"
+    assert candidate["identity_value"] == "VENDOR-1"
     assert any(call[0] == "discover" for call in adapter.calls)
 
 
@@ -252,9 +252,7 @@ async def test_pack_wide_discovery_routes_candidates_to_matching_platforms_once(
     )
 
     assert [call[0] for call in adapter.calls] == ["discover"]
-    assert [
-        (candidate["extras"]["identity_value"], candidate["platform_id"]) for candidate in result["candidates"]
-    ] == [
+    assert [(candidate["identity_value"], candidate["platform_id"]) for candidate in result["candidates"]] == [
         ("REAL-1", "android_mobile"),
         ("avd:Pixel_8_API_34", "android_mobile"),
     ]
@@ -297,10 +295,9 @@ async def test_pack_device_properties_falls_back_to_adapter_normalize_for_endpoi
     )
 
     assert result is not None
-    properties = result["properties"]
-    assert properties["extras"]["identity_value"] == "VENDOR-1"
-    assert properties["connection_target"] == "192.168.1.50"
-    assert properties["extras"]["detected_properties"]["os_version"] == "15"
+    assert result["identity_value"] == "VENDOR-1"
+    assert result["connection_target"] == "192.168.1.50"
+    assert result["detected_properties"]["os_version"] == "15"
     assert any(call[0] == "normalize_device" for call in adapter.calls)
 
 

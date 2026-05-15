@@ -182,7 +182,7 @@ async def pack_device_telemetry_route(
             code=AgentErrorCode.DEVICE_NOT_FOUND,
             message=f"Device {connection_target} not found or not connected",
         )
-    return {"pack_id": pack_id, "pack_release": release, "metrics": telemetry}
+    return telemetry
 
 
 @router.post(
@@ -216,11 +216,10 @@ async def pack_device_lifecycle_route(
             args=args,
         )
         if payload is not None:
-            return _shape_lifecycle_payload(payload)
+            return payload
     return {
         "success": False,
         "detail": f"Adapter not loaded for pack {pack_id}:{platform_id}",
-        "extras": {},
     }
 
 
@@ -254,15 +253,6 @@ async def feature_action_route(
     )
     result = await dispatch_feature_action(adapter, feature_id, action_id, body.args, ctx)
     return {"ok": result.ok, "detail": result.detail, "data": result.data}
-
-
-def _shape_lifecycle_payload(raw: dict[str, Any]) -> dict[str, Any]:
-    known = {"success", "detail"}
-    return {
-        "success": bool(raw.get("success")),
-        "detail": raw.get("detail") if isinstance(raw.get("detail"), str) or raw.get("detail") is None else None,
-        "extras": {key: value for key, value in raw.items() if key not in known},
-    }
 
 
 @router.post(

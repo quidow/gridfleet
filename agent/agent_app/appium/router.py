@@ -140,18 +140,7 @@ async def stop_appium(req: AppiumStopRequest, mgr: AppiumMgrDep) -> dict[str, An
     summary="Process info for a managed Appium port",
 )
 async def appium_status(port: int, mgr: AppiumMgrDep) -> dict[str, Any]:
-    return _shape_appium_status(await mgr.status(port))
-
-
-def _shape_appium_status(raw: dict[str, Any]) -> dict[str, Any]:
-    known = {"port", "running", "pid", "appium_status"}
-    return {
-        "port": raw["port"],
-        "running": bool(raw.get("running")),
-        "pid": raw.get("pid"),
-        "appium_status": raw.get("appium_status"),
-        "extras": {key: value for key, value in raw.items() if key not in known},
-    }
+    return await mgr.status(port)
 
 
 @router.get(

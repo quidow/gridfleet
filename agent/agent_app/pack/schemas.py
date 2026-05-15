@@ -39,68 +39,55 @@ class NormalizeDeviceResponse(BaseModel):
 
 
 class PackDeviceCandidate(BaseModel):
-    """A single entry in ``GET /agent/pack/devices``."""
+    """A single entry in ``GET /agent/pack/devices``. Adapters return arbitrary keys."""
 
-    model_config = ConfigDict(extra="forbid")
-
-    connection_target: str
-    platform_id: str
-    device_type: str
-    pack_id: str
-    pack_release: str
-    extras: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
 
 
 class PackDevicesResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     candidates: list[PackDeviceCandidate] = Field(default_factory=list)
 
 
 class PackDevicePropertiesResponse(BaseModel):
-    """Adapter-defined property bag under a stable response envelope."""
+    """Adapter-defined property bag. Schema is intentionally open."""
 
-    model_config = ConfigDict(extra="forbid")
-
-    pack_id: str
-    pack_release: str
-    properties: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
 
 
 class HealthCheckResult(BaseModel):
     """One check in a pack device's health response."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     check_id: str
     ok: bool
     message: str | None = None
-    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class PackDeviceHealthResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Pack-shaped health snapshot. Typed core; adapters may add extra fields."""
+
+    model_config = ConfigDict(extra="allow")
 
     healthy: bool | None
     checks: list[HealthCheckResult] = Field(default_factory=list)
 
 
 class PackDeviceTelemetryResponse(BaseModel):
-    """Adapter telemetry metrics under a stable response envelope."""
+    """Adapter telemetry blob."""
 
-    model_config = ConfigDict(extra="forbid")
-
-    pack_id: str
-    pack_release: str
-    metrics: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
 
 
 class PackDeviceLifecycleResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Pack lifecycle action outcome. Typed core; adapters may add extra fields."""
+
+    model_config = ConfigDict(extra="allow")
 
     success: bool
     detail: str | None = None
-    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class FeatureActionResponse(BaseModel):
