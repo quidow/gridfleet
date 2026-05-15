@@ -82,8 +82,6 @@ async def start_appium(req: AppiumStartRequest, mgr: AppiumMgrDep) -> dict[str, 
         raise http_exc(status_code=404, code=AgentErrorCode.DEVICE_NOT_FOUND, message=str(e)) from e
     except InvalidStartPayloadError as e:
         raise http_exc(status_code=400, code=AgentErrorCode.INVALID_PAYLOAD, message=str(e)) from e
-    except RuntimeError as e:
-        raise http_exc(status_code=500, code=AgentErrorCode.INTERNAL_ERROR, message=str(e)) from e
     return {"pid": info.pid, "port": info.port, "connection_target": info.connection_target}
 
 

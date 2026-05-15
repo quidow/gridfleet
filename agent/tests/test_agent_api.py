@@ -33,7 +33,7 @@ class _AdapterContext(Protocol):
 
 @pytest.fixture
 async def client() -> AsyncGenerator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as c:
         yield c
     await appium_mgr.shutdown()
 
@@ -394,7 +394,7 @@ async def test_start_appium_failure(client: AsyncClient) -> None:
     assert resp.status_code == 500
     detail = resp.json()["detail"]
     assert detail["code"] == "INTERNAL_ERROR"
-    assert "appium not found" in detail["message"]
+    assert detail["message"] == "Internal server error"
 
 
 async def test_stop_appium(client: AsyncClient) -> None:
