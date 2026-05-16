@@ -60,10 +60,10 @@ const TABS = [
 
 const TAB_IDS = TABS.map((t) => t.id);
 
-const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'danger' | 'neutral'> = {
+const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'critical' | 'neutral'> = {
   ok: 'success',
   warn: 'warning',
-  error: 'danger',
+  error: 'critical',
   neutral: 'neutral',
 };
 
@@ -400,7 +400,7 @@ export default function DeviceDetail() {
               <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Badge tone="danger">Danger</Badge>
+                    <Badge tone="critical">Danger</Badge>
                     <h2
                       id="device-danger-zone-heading"
                       className="text-sm font-semibold text-text-1"

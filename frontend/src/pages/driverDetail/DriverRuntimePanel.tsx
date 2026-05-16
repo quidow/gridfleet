@@ -21,7 +21,7 @@ function InstallSpecCard({ title, spec }: { title: string; spec: AppiumInstallab
           <span className="text-xs font-medium text-text-3">Known Bad Versions</span>
           <div className="mt-1 flex flex-wrap gap-1">
             {spec.known_bad.map((version) => (
-              <Badge key={version} tone="danger">
+              <Badge key={version} tone="critical">
                 {version}
               </Badge>
             ))}

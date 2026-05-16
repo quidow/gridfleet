@@ -23,7 +23,7 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
     case 'available': return 'success';
     case 'busy': return 'warning';
     case 'verifying': return 'warning';
-    case 'offline': return 'danger';
+    case 'offline': return 'critical';
     case 'maintenance': return 'neutral';
     case 'reserved': return 'info';
   }
@@ -241,7 +241,7 @@ export function buildDeviceMenuItems(
       label: 'Delete Device',
       icon: <Trash2 size={15} />,
       onSelect: () => onAction({ type: 'delete', deviceId: device.id }),
-      tone: 'danger',
+      tone: 'critical',
       disabled: rowBusy,
     },
   ];

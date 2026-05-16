@@ -1,6 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react';
 
-export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'critical';
 type BadgeSize = 'sm' | 'md';
 
 interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'> {
@@ -16,7 +16,7 @@ const TONE_CLASSES: Record<BadgeTone, string> = {
   info: 'bg-info-soft text-info-foreground',
   success: 'bg-success-soft text-success-foreground',
   warning: 'bg-warning-soft text-warning-foreground',
-  danger: 'bg-danger-soft text-danger-foreground',
+  critical: 'bg-danger-soft text-danger-foreground',
 };
 
 const DOT_CLASSES: Record<BadgeTone, string> = {
@@ -24,13 +24,16 @@ const DOT_CLASSES: Record<BadgeTone, string> = {
   info: 'bg-info-strong',
   success: 'bg-success-strong',
   warning: 'bg-warning-strong',
-  danger: 'bg-danger-strong',
+  critical: 'bg-danger-strong',
 };
 
 const SIZE_CLASSES: Record<BadgeSize, string> = {
   md: 'px-2.5 py-0.5 text-xs',
   sm: 'px-1.5 py-0.5 text-xs',
 };
+
+// Compat alias: 'danger' was renamed to 'critical'. Remove once eventRegistry.ts is updated (Task 13).
+const TONE_COMPAT: Partial<Record<string, BadgeTone>> = { danger: 'critical' };
 
 export default function Badge({
   tone = 'neutral',
@@ -41,12 +44,13 @@ export default function Badge({
   children,
   ...rest
 }: BadgeProps) {
+  const resolvedTone: BadgeTone = TONE_COMPAT[tone as string] ?? tone;
   return (
     <span
       {...rest}
       className={[
         'inline-flex items-center gap-1 rounded-full font-medium',
-        TONE_CLASSES[tone],
+        TONE_CLASSES[resolvedTone],
         SIZE_CLASSES[size],
         className,
       ]
@@ -54,7 +58,7 @@ export default function Badge({
         .join(' ')}
     >
       {dot && (
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${DOT_CLASSES[tone]}`} aria-hidden="true" />
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${DOT_CLASSES[resolvedTone]}`} aria-hidden="true" />
       )}
       {icon}
       {children}
