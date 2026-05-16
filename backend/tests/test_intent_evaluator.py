@@ -89,6 +89,45 @@ def test_node_process_start_drops_transition_token_without_deadline() -> None:
     assert decision.transition_token is None
 
 
+def test_node_process_same_priority_start_prefers_intent_with_transition_token() -> None:
+    """Tokenized restart intents must beat tokenless baselines at the same priority.
+
+    Both `auto_recovery:node:*` (registered by the lifecycle policy when a
+    device boots healthy) and `operator:start:*` (registered by an operator
+    restart) carry `priority: PRIORITY_AUTO_RECOVERY` with `action: "start"`.
+    Lexicographic tie-break put auto_recovery first, dropping the operator
+    restart's transition_token before it reached the desired-state writer —
+    so the convergence loop never fired a restart and the node stayed in
+    `confirm_running` indefinitely (PR #270 follow-up; bulk-restart no-op bug).
+    """
+    token = str(uuid.uuid4())
+    deadline = (datetime.now(UTC) + timedelta(seconds=120)).isoformat()
+    intents = [
+        _intent(
+            source="auto_recovery:node:abc",
+            axis=NODE_PROCESS,
+            payload={"action": "start", "priority": 20, "desired_port": 4723},
+        ),
+        _intent(
+            source="operator:start:abc",
+            axis=NODE_PROCESS,
+            payload={
+                "action": "start",
+                "priority": 20,
+                "desired_port": 4723,
+                "transition_token": token,
+                "transition_deadline": deadline,
+            },
+        ),
+    ]
+
+    decision = evaluate_node_process(intents, datetime.now(UTC))
+
+    assert decision.desired_state == "running"
+    assert decision.transition_token == uuid.UUID(token)
+    assert decision.transition_deadline is not None
+
+
 def test_intent_evaluator_small_coercion_fallbacks() -> None:
     assert _stop_mode("unexpected") == "hard"
     assert _optional_int(True) is None
