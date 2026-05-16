@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.grid.slot_parser import iter_slot_sessions, parse_slot_session
+from app.grid.slot_parser import list_slot_sessions, parse_slot_session
 from app.sessions.probe_constants import PROBE_TEST_NAME
 
 
@@ -173,7 +173,7 @@ def test_iter_walks_all_nodes_and_slots() -> None:
             ]
         }
     }
-    parsed = iter_slot_sessions(payload)
+    parsed = list_slot_sessions(payload)
     assert [p.session_id for p in parsed] == ["real", "probe"]
     assert parsed[0].is_probe is False
     assert parsed[0].device_id == uuid.UUID(device_id)
@@ -181,8 +181,8 @@ def test_iter_walks_all_nodes_and_slots() -> None:
 
 
 def test_iter_tolerates_malformed_payload() -> None:
-    assert iter_slot_sessions(None) == []
-    assert iter_slot_sessions("nope") == []
-    assert iter_slot_sessions({"value": "wrong"}) == []
-    assert iter_slot_sessions({"value": {"nodes": "wrong"}}) == []
-    assert iter_slot_sessions({"value": {"nodes": [{"slots": "wrong"}]}}) == []
+    assert list_slot_sessions(None) == []
+    assert list_slot_sessions("nope") == []
+    assert list_slot_sessions({"value": "wrong"}) == []
+    assert list_slot_sessions({"value": {"nodes": "wrong"}}) == []
+    assert list_slot_sessions({"value": {"nodes": [{"slots": "wrong"}]}}) == []

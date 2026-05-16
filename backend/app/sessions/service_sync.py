@@ -24,7 +24,7 @@ from app.devices.services import (
 )
 from app.devices.services import state as device_state
 from app.grid import service as grid_service
-from app.grid.slot_parser import iter_slot_sessions
+from app.grid.slot_parser import list_slot_sessions
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import service as session_service
@@ -59,7 +59,7 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
     is the authoritative source for device id and connection target.
     """
     sessions: dict[str, dict[str, Any]] = {}
-    for parsed in iter_slot_sessions(grid_data):
+    for parsed in list_slot_sessions(grid_data):
         if parsed.is_probe:
             continue
         sessions[parsed.session_id] = {

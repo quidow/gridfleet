@@ -43,7 +43,9 @@ class GridSlotSession:
     connection_target: str | None
     test_name: str | None
     is_probe: bool
-    requested_capabilities: dict[str, Any] | None
+    # Always a dict (possibly empty) so consumers don't have to disambiguate
+    # ``{}`` vs ``None``; the Session row's JSONB column accepts both equally.
+    requested_capabilities: dict[str, Any]
 
 
 def _coerce_device_id(raw: object) -> uuid.UUID | None:
@@ -116,11 +118,11 @@ def parse_slot_session(slot: object) -> GridSlotSession | None:
         connection_target=connection_target,
         test_name=test_name,
         is_probe=is_probe,
-        requested_capabilities=capabilities or None,
+        requested_capabilities=capabilities,
     )
 
 
-def iter_slot_sessions(grid_data: object) -> list[GridSlotSession]:
+def list_slot_sessions(grid_data: object) -> list[GridSlotSession]:
     """Walk a Grid ``/status`` payload and return every parsable session."""
     result: list[GridSlotSession] = []
     if not isinstance(grid_data, dict):

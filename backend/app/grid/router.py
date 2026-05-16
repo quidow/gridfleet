@@ -6,7 +6,7 @@ from app.core.dependencies import DbDep
 from app.devices.services import service as device_service
 from app.grid import service as grid_service
 from app.grid.schemas import GridQueueRead, GridStatusRead
-from app.grid.slot_parser import iter_slot_sessions
+from app.grid.slot_parser import list_slot_sessions
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 
@@ -37,7 +37,7 @@ async def grid_status(db: DbDep) -> dict[str, Any]:
     # (which never persists probes as real sessions) and the device state
     # machine (which never transitions devices to busy for probes). The
     # parser also drops reserved-sentinel slots and malformed entries.
-    active_sessions = sum(1 for parsed in iter_slot_sessions(grid_data) if not parsed.is_probe)
+    active_sessions = sum(1 for parsed in list_slot_sessions(grid_data) if not parsed.is_probe)
     value = grid_data.get("value", {})
     queue_size = len(value.get("sessionQueueRequests", [])) if isinstance(value, dict) else 0
 
