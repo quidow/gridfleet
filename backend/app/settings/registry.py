@@ -266,6 +266,18 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
+        key="general.session_viability_failure_threshold",
+        category="general",
+        setting_type="int",
+        default=3,
+        description=(
+            "Consecutive session_viability failures required before the manager "
+            "parks the device. Tolerates transient Selenium Grid hiccups."
+        ),
+        min_value=1,
+        max_value=20,
+    ),
+    SettingDefinition(
         key="general.fleet_capacity_snapshot_interval_sec",
         category="general",
         setting_type="int",
