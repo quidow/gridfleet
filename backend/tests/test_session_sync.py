@@ -171,6 +171,59 @@ async def test_sync_tracks_real_hub_payload_with_stripped_capabilities(db_sessio
     assert device.operational_state == DeviceOperationalState.busy
 
 
+async def test_sync_hydrates_orphan_session_row_from_hub_stereotype(db_session: AsyncSession, db_host: Host) -> None:
+    """Real-world testkit flow: client registers a session with no
+    ``device_id`` / ``connection_target`` (the Appium echo strips the
+    identifying caps), so the row lands with ``device_id IS NULL`` and the
+    device stays ``available``. The sync loop must read the hub's
+    ``slot.session.stereotype`` (which carries ``appium:gridfleet:deviceId``
+    verbatim), bind the row to its device, and fire the busy transition.
+    """
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="hydrate-target",
+        connection_target="hydrate-target",
+        name="Hydrate Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    # Orphan row created earlier by ``POST /api/sessions`` from the testkit.
+    orphan = Session(
+        session_id="orphan-sess",
+        device_id=None,
+        test_name="test_orphan",
+        status=SessionStatus.running,
+        requested_capabilities={
+            "udid": "hydrate-target",
+            "deviceName": "hydrate-target",
+            "automationName": "UiAutomator2",
+        },
+    )
+    db_session.add(orphan)
+    await db_session.commit()
+
+    grid_data = _grid_response([_grid_session("orphan-sess", "hydrate-target", device_id=str(device.id))])
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(orphan)
+    assert orphan.device_id == device.id
+    assert orphan.status == SessionStatus.running
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy
+
+
 async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",

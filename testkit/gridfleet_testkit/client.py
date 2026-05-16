@@ -511,11 +511,23 @@ class GridFleetClient:
         run_id: str | None = None,
         suppress_errors: bool = True,
     ) -> JsonObject | None:
-        """Extract session metadata from an Appium driver and register it.
+        """Register a running Appium session and wire ``driver.quit`` for notify.
 
-        Also wraps ``driver.quit`` so that the first call after a successful
-        registration fires :meth:`notify_session_finished` automatically.
-        Errors from notify are suppressed — they must never break the caller.
+        The testkit does not try to derive a device identity from
+        ``driver.capabilities``. ``udid`` / ``deviceName`` are not unique
+        across drivers (Roku reuses the IP, AVDs reuse port-named handles,
+        iOS simulators reuse a UDID across reboots), and the Appium driver
+        strips the ``appium:`` vendor prefix and drops nested vendor keys
+        like ``appium:gridfleet:deviceId`` from the W3C echo, so identifying
+        caps cannot be read reliably from the client side at all.
+
+        The row is registered with only ``session_id`` + capabilities; the
+        backend ``session_sync_loop`` queries the Grid hub on each cycle and
+        binds the row to its Device by reading ``slot.session.stereotype``,
+        which is prefix-stable and carries ``appium:gridfleet:deviceId``.
+        ``driver.quit`` is wrapped so the first call posts to ``/finished``
+        exactly once; errors from notify are suppressed so they never break
+        the caller.
         """
         capabilities = cast("JsonObject", driver.capabilities) if isinstance(driver.capabilities, dict) else {}
         if not isinstance(capabilities, dict):
@@ -523,13 +535,9 @@ class GridFleetClient:
         session_id = getattr(driver, "session_id", None)
         if not isinstance(session_id, str) or not session_id:
             raise RuntimeError("Created Appium driver did not expose a session ID")
-        device_id = capabilities.get("appium:gridfleet:deviceId") or capabilities.get("gridfleet:deviceId")
-        connection_target = capabilities.get("appium:udid") or capabilities.get("appium:deviceName")
         result = self.register_session(
             session_id=session_id,
             test_name=test_name,
-            device_id=device_id if isinstance(device_id, str) and device_id else None,
-            connection_target=connection_target if isinstance(connection_target, str) and connection_target else None,
             requested_capabilities=capabilities,
             run_id=run_id,
             suppress_errors=suppress_errors,
