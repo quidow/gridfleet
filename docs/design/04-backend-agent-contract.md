@@ -70,6 +70,18 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 
 Each row has a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). Routers and services should never call `httpx` directly — go through these wrappers so the circuit breaker and metrics fire.
 
+### `/agent/appium/start` cap surfaces
+
+The Appium start payload carries three distinct capability surfaces. They have separate sources of truth and separate consumers; keep them disentangled when extending the contract.
+
+| Field             | Source of truth                                                                                                                                                             | Consumer                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `stereotype_caps` | Pack manifest `capabilities.stereotype` (with `{device.*}` interpolation) + manager-owned sentinels (`appium:gridfleet:deviceId`, `gridfleet:run_id`) + tag fanout          | Selenium Grid hub: stored per-slot, matched against client requests, exposed on `/status` |
+| `extra_caps`      | `build_extra_caps(device, ...)` — full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent relay: merged into Appium `/session` request body (`agent/agent_app/appium/process.py`) |
+| `allocated_caps`  | `appium_node_resource_service.get_capabilities(...)` (UDID + reserved ports)                                                                                                | Agent → Appium driver                                                                   |
+
+**Cross-component invariant.** The Grid slot stereotype is the routing surface. Backend MUST NOT include Appium-only device metadata (manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`) in `stereotype_caps`. That metadata MUST flow via `extra_caps` only. The agent enforces the same separation in `agent_app/grid_node/protocol.build_slots` and `agent_app/appium/process.AppiumProcessManager._start_grid_node_service`. The `gridfleet:available` sentinel was removed in release 2026.05 — `AppiumNode.accepting_new_sessions` plus Selenium `NodeStatus.availability` cover the routing-suppression cases.
+
 ## Endpoint catalog (agent → backend)
 
 | Method | Path | Caller (agent) | Purpose | Ack semantics |
