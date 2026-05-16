@@ -122,6 +122,7 @@ export interface NotificationListParams {
   limit?: number;
   offset?: number;
   types?: string[];
+  severities?: string[];
 }
 
 export type RunListResponse = Omit<Schemas['RunListRead'], 'items'> & {

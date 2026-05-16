@@ -11129,6 +11129,8 @@ export interface operations {
                 offset?: number;
                 /** @description Comma-separated event types to filter */
                 types?: string | null;
+                /** @description Comma-separated severities to filter */
+                severity?: string | null;
             };
             header?: never;
             path?: never;

@@ -261,7 +261,7 @@ For CI jobs that should consume the currently available matching fleet slice, us
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/events/catalog` | Read the canonical emitted-event catalog | none | event catalog object |
 | `GET` | `/api/events` | Subscribe to live SSE events | optional `types`, `device_ids` | SSE stream |
-| `GET` | `/api/notifications` | Read recent notification history in newest-first order | `limit`, `offset`, optional `types` | `{ items: SystemEventRead[], total, limit, offset }` |
+| `GET` | `/api/notifications` | Read recent notification history in newest-first order | `limit`, `offset`, optional `types`, optional `severity` | `{ items: SystemEventRead[], total, limit, offset }` |
 | `GET` | `/api/webhooks` | List configured webhooks | none | `WebhookRead[]` |
 | `POST` | `/api/webhooks` | Create a webhook | `WebhookCreate` with valid `event_types` | `WebhookRead` |
 | `GET` | `/api/webhooks/{webhook_id}` | Read one webhook | path `webhook_id` | `WebhookRead` |
@@ -294,6 +294,15 @@ For CI jobs that should consume the currently available matching fleet slice, us
 ```
 
 Rows persisted before the severity field was introduced will have `severity = null`. Clients that require a non-null value should fall back to the `default_severity` for that event type from `GET /api/events/catalog`.
+
+### Query parameters
+
+- `limit` — page size; integer between 1 and 200; defaults to 25.
+- `offset` — page offset; non-negative integer; defaults to 0.
+- `types` — comma-separated event-type names. Only events whose `type` matches one of the supplied names are returned.
+- `severity` — comma-separated severity values. Allowed: `info`, `success`, `warning`, `critical`, `neutral`. Rows with `severity = null` (pre-severity-rollout legacy events) are **excluded** when this filter is active. Empty or missing returns all severities. Unknown values produce a `400` response.
+
+Filters compose with AND semantics. Example: `GET /api/notifications?types=node.crash&severity=critical,warning` returns `node.crash` rows whose severity is either `critical` or `warning`.
 
 `GET /api/events/catalog` returns an object whose keys are event type names. Each entry now includes:
 

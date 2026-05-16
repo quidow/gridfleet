@@ -247,3 +247,77 @@ async def test_event_catalog_includes_severity(client: AsyncClient) -> None:
         for sev in entry["allowed_severities"]:
             assert sev in _SEVERITY_VOCAB
         assert entry["default_severity"] in entry["allowed_severities"]
+
+
+async def test_notifications_filter_by_single_severity(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"n": 1}, severity="info")
+    await event_bus.publish("node.crash", {"n": 2})  # default critical
+    response = await client.get("/api/notifications", params={"severity": "critical"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["type"] == "node.crash"
+    assert body["items"][0]["severity"] == "critical"
+
+
+async def test_notifications_filter_by_multiple_severities(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"n": 1}, severity="info")
+    await event_bus.publish("device.operational_state_changed", {"n": 2}, severity="warning")
+    await event_bus.publish("node.crash", {"n": 3})  # critical
+    response = await client.get("/api/notifications", params={"severity": "warning,critical"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    severities = {item["severity"] for item in body["items"]}
+    assert severities == {"warning", "critical"}
+
+
+async def test_notifications_filter_severity_excludes_null_rows(client: AsyncClient, db_session: AsyncSession) -> None:
+    from sqlalchemy import text
+
+    await event_bus.publish("device.operational_state_changed", {"n": 1}, severity="info")
+    await db_session.execute(text("UPDATE system_events SET severity = NULL"))
+    await db_session.commit()
+    response = await client.get("/api/notifications", params={"severity": "info"})
+    assert response.json()["total"] == 0
+
+
+async def test_notifications_invalid_severity_returns_400(client: AsyncClient) -> None:
+    response = await client.get("/api/notifications", params={"severity": "bogus"})
+    assert response.status_code == 400
+    assert "bogus" in response.json()["error"]["message"]
+
+
+async def test_notifications_combined_type_and_severity_filter(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"n": 1}, severity="warning")
+    await event_bus.publish("device.operational_state_changed", {"n": 2}, severity="info")
+    await event_bus.publish("node.crash", {"n": 3})  # critical
+    response = await client.get(
+        "/api/notifications",
+        params={"types": "device.operational_state_changed", "severity": "warning"},
+    )
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["data"]["n"] == 1
+
+
+async def test_notifications_blank_severity_treated_as_unset(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"n": 1}, severity="info")
+    response = await client.get("/api/notifications", params={"severity": ",,"})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
+async def test_notifications_invalid_type_returns_400(client: AsyncClient) -> None:
+    response = await client.get("/api/notifications", params={"types": "not.a.real.event"})
+    assert response.status_code == 400
+    assert "not.a.real.event" in response.json()["error"]["message"]
+
+
+async def test_notifications_blank_types_treated_as_unset(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"n": 1})
+    response = await client.get("/api/notifications", params={"types": ",,"})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
