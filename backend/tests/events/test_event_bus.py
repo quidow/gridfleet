@@ -1,5 +1,5 @@
 import asyncio
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -194,6 +194,36 @@ async def test_from_system_event_falls_back_to_default() -> None:
 
     # device.hold_changed has default_severity="info"
     assert event.severity == "info"
+
+
+@pytest.mark.db
+async def test_queue_event_for_session_carries_severity(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """queue_event_for_session forwards the severity kwarg to event_bus.publish."""
+    from app.events.event_bus import queue_event_for_session
+
+    captured: list[tuple[str, dict[str, Any], str | None]] = []
+
+    async def fake_publish(event_type: str, data: dict[str, Any], severity: str | None = None) -> None:
+        captured.append((event_type, data, severity))
+
+    monkeypatch.setattr(event_bus, "publish", fake_publish)
+
+    queue_event_for_session(
+        db_session,
+        "host.status_changed",
+        {"host_id": "h1", "old_status": "online", "new_status": "offline"},
+        severity="warning",
+    )
+    await db_session.commit()
+    await event_bus.drain_handlers()
+
+    assert len(captured) == 1
+    event_type, data, severity = captured[0]
+    assert event_type == "host.status_changed"
+    assert data == {"host_id": "h1", "old_status": "online", "new_status": "offline"}
+    assert severity == "warning"
 
 
 async def test_event_bus_shutdown_waits_for_inflight_handlers(db_session: AsyncSession) -> None:

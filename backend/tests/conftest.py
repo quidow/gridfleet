@@ -273,7 +273,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     """Capture every event_bus.publish invocation for after-commit contract tests."""
     captured: list[tuple[str, dict[str, Any]]] = []
 
-    async def _fake_publish(name: str, payload: dict[str, Any]) -> None:
+    async def _fake_publish(name: str, payload: dict[str, Any], severity: str | None = None) -> None:
         captured.append((name, payload))
 
     monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
