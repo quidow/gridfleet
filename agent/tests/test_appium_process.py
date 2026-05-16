@@ -136,7 +136,7 @@ class ReconfigurableGridNodeService:
         self.busy = busy
 
     def slot_stereotype_caps(self) -> dict[str, object]:
-        return {"platformName": "Android", "gridfleet:run_id": "free", "gridfleet:available": True}
+        return {"platformName": "Android", "gridfleet:run_id": "free"}
 
     def has_active_session(self) -> bool:
         return self.busy
@@ -459,12 +459,15 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         "platformName": "android_mobile",
         "appium:platform": "android_mobile",
         "gridfleet:run_id": "free",
-        "gridfleet:available": True,
     }
     await manager.shutdown()
 
 
-async def test_start_with_accepting_new_sessions_false_marks_grid_unavailable() -> None:
+async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() -> None:
+    """accepting_new_sessions=False no longer surfaces in stereotype — the
+    gridfleet:available sentinel was dropped (it had no readers). The agent still
+    accepts the flag from the backend; routing-suppression is enforced via the
+    in-process slot match in node_state._caps_match, not via the stereotype."""
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5678)
     configs: list[GridNodeConfig] = []
@@ -490,7 +493,7 @@ async def test_start_with_accepting_new_sessions_false_marks_grid_unavailable() 
         )
 
     caps = configs[0].slots[0].stereotype.caps
-    assert caps["gridfleet:available"] is False
+    assert "gridfleet:available" not in caps
     assert caps["gridfleet:run_id"] == str(run_id)
     await manager.shutdown()
 
@@ -514,7 +517,7 @@ async def test_reconfigure_updates_grid_stereotype() -> None:
         grid_run_id=run_id,
     )
 
-    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id), "gridfleet:available": False}]
+    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id)}]
 
 
 async def test_reconfigure_unknown_port_raises_device_not_found() -> None:

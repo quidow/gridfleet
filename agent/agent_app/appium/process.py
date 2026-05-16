@@ -881,7 +881,6 @@ class AppiumProcessManager:
         elif spec.extra_caps:
             caps.update(spec.extra_caps)
         caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
-        caps["gridfleet:available"] = spec.accepting_new_sessions
 
         node_port = self._allocate_node_port()
         # Selenium hub deserializes nodeId via UUID.fromString — derive a stable UUID
@@ -939,7 +938,6 @@ class AppiumProcessManager:
 
         service = handle.service
         caps = service.slot_stereotype_caps()
-        caps["gridfleet:available"] = accepting_new_sessions
         caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id is not None else "free"
         await service.reregister_with_stereotype(new_caps=caps)
 

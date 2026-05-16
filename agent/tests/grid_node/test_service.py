@@ -92,12 +92,14 @@ async def test_service_starts_and_stops_event_bus_around_lifecycle_events() -> N
     assert http_server.calls == ["start", "stop"]
 
 
-def test_build_slots_default_to_available_for_gridfleet_matching() -> None:
+def test_build_slots_omits_gridfleet_available_sentinel() -> None:
+    """The gridfleet:available routing sentinel was dropped (no client ever filtered on it)."""
     from agent_app.grid_node.protocol import build_slots
 
     slots = build_slots(base_caps={"platformName": "Android"}, grid_slots=["native"])
 
-    assert slots[0].stereotype.caps["gridfleet:available"] is True
+    assert "gridfleet:available" not in slots[0].stereotype.caps
+    assert slots[0].stereotype.caps["gridfleet:run_id"] == "free"
 
 
 @pytest.mark.asyncio
