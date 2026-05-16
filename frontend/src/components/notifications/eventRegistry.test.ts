@@ -67,13 +67,54 @@ describe('eventRegistry', () => {
   });
 
   it('derives severity from registry', () => {
-    expect(severityForEventType('run.failed')).toBe('danger');
+    expect(severityForEventType('run.failed')).toBe('critical');
     expect(severityForEventType('run.completed')).toBe('success');
-    expect(severityForEventType('host.offline')).toBe('danger');
+    expect(severityForEventType('host.offline')).toBe('critical');
     expect(severityForEventType('host.online')).toBe('success');
     expect(severityForEventType('lifecycle.incident_open')).toBe('warning');
     expect(severityForEventType('lifecycle.incident_resolved')).toBe('success');
     expect(severityForEventType('node.restart')).toBe('info');
     expect(severityForEventType('unknown.type')).toBe('neutral');
+  });
+});
+
+import { resolveEventSeverity, legacyFallbackSeverity } from './eventRegistry';
+
+describe('resolveEventSeverity', () => {
+  it('returns the event severity when present', () => {
+    const event = {
+      id: 'e1',
+      type: 'device.operational_state_changed',
+      timestamp: 'now',
+      severity: 'success' as const,
+      data: {},
+    };
+    expect(resolveEventSeverity(event)).toBe('success');
+  });
+
+  it('falls back to legacy map when severity is null', () => {
+    const event = {
+      id: 'e1',
+      type: 'node.crash',
+      timestamp: 'now',
+      severity: null,
+      data: {},
+    };
+    expect(resolveEventSeverity(event)).toBe('critical');
+  });
+
+  it('falls back to neutral when both are unknown', () => {
+    const event = {
+      id: 'e1',
+      type: 'not.a.real.event',
+      timestamp: 'now',
+      severity: null,
+      data: {},
+    };
+    expect(resolveEventSeverity(event)).toBe('neutral');
+  });
+
+  it('legacyFallbackSeverity returns null for unknown types', () => {
+    expect(legacyFallbackSeverity('not.a.real.event')).toBeNull();
   });
 });

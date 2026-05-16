@@ -12,7 +12,12 @@ type Renderer = (data: EventData) => string;
 
 type RegistryEntry = {
   render: Renderer;
-  severity: EventSeverity;
+};
+
+type EventLike = {
+  type: string;
+  severity?: EventSeverity | null;
+  data?: EventData | null;
 };
 
 export const SEEDED_EVENT_TYPES = [
@@ -55,6 +60,56 @@ function appendReason(data: EventData): string {
   return reason ? `: ${reason}` : '';
 }
 
+const LEGACY_FALLBACK: Record<string, EventSeverity> = {
+  'device.operational_state_changed': 'warning',
+  'device.hold_changed': 'warning',
+  'device.hardware_health_changed': 'warning',
+  'device.maintenance_start': 'info',
+  'device.maintenance_end': 'success',
+  'device.verified': 'success',
+  'device.verification.updated': 'info',
+  'node.crash': 'critical',
+  'node.restart': 'info',
+  'node.state_changed': 'info',
+  'host.registered': 'success',
+  'host.online': 'success',
+  'host.offline': 'critical',
+  'host.status_changed': 'warning',
+  'host.heartbeat_lost': 'critical',
+  'host.discovery_completed': 'info',
+  'host.circuit_breaker.opened': 'critical',
+  'host.circuit_breaker.closed': 'success',
+  'session.started': 'info',
+  'session.ended': 'info',
+  'session.stuck': 'warning',
+  'run.created': 'info',
+  'run.active': 'info',
+  'run.completed': 'success',
+  'run.failed': 'critical',
+  'run.cancelled': 'warning',
+  'run.expired': 'critical',
+  'lifecycle.incident_open': 'warning',
+  'lifecycle.incident_resolved': 'success',
+  'device_group.updated': 'info',
+  'device_group.members_changed': 'warning',
+  'bulk.operation_completed': 'warning',
+  'settings.changed': 'neutral',
+  'config.updated': 'neutral',
+  'test_data.updated': 'neutral',
+  'webhook.delivered': 'success',
+  'webhook.failed': 'critical',
+  'webhook.test': 'neutral',
+  'system.cleanup_completed': 'neutral',
+};
+
+export function legacyFallbackSeverity(eventType: string): EventSeverity | null {
+  return LEGACY_FALLBACK[eventType] ?? null;
+}
+
+export function resolveEventSeverity(event: EventLike): EventSeverity {
+  return event.severity ?? legacyFallbackSeverity(event.type) ?? 'neutral';
+}
+
 const REGISTRY: Record<string, RegistryEntry> = {
   'device.operational_state_changed': {
     render: (data) => {
@@ -63,7 +118,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
       const newStatus = firstString(data, ['new_operational_state'], 'unknown');
       return `${device}: operational state ${oldStatus} -> ${newStatus}${appendReason(data)}`;
     },
-    severity: 'warning',
   },
   'device.hold_changed': {
     render: (data) => {
@@ -72,38 +126,30 @@ const REGISTRY: Record<string, RegistryEntry> = {
       const newHold = firstString(data, ['new_hold'], 'none');
       return `${device}: hold ${oldHold} -> ${newHold}${appendReason(data)}`;
     },
-    severity: 'warning',
   },
   'device.hardware_health_changed': {
     render: (data) => {
       const device = firstString(data, ['device_name', 'name'], 'Device');
       return `${device}: hardware ${firstString(data, ['old_status'], 'unknown')} -> ${firstString(data, ['new_status'], 'unknown')}`;
     },
-    severity: 'warning',
   },
   'device.maintenance_start': {
     render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} entered maintenance`,
-    severity: 'info',
   },
   'device.maintenance_end': {
     render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} exited maintenance`,
-    severity: 'success',
   },
   'device.verified': {
     render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} verified`,
-    severity: 'success',
   },
   'device.verification.updated': {
     render: (data) => `Verification ${firstString(data, ['job_id'], 'job')}: ${firstString(data, ['status'], 'updated')}`,
-    severity: 'info',
   },
   'node.crash': {
     render: (data) => `Appium node for ${firstString(data, ['device_name', 'name'], 'device')} crashed${appendReason(data)}`,
-    severity: 'danger',
   },
   'node.restart': {
     render: (data) => `Appium node for ${firstString(data, ['device_name', 'name'], 'device')} restarted`,
-    severity: 'info',
   },
   'node.state_changed': {
     render: (data) => {
@@ -111,34 +157,27 @@ const REGISTRY: Record<string, RegistryEntry> = {
       const port = numberValue(data.port);
       return `${device}: node ${firstString(data, ['old_state'], 'unknown')} -> ${firstString(data, ['new_state'], 'unknown')}${port ? ` (port ${port})` : ''}`;
     },
-    severity: 'info',
   },
   'host.registered': {
     render: (data) => `Host registered: ${firstString(data, ['hostname', 'host', 'name'], 'host')}`,
-    severity: 'success',
   },
   'host.online': {
     render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')} came online`,
-    severity: 'success',
   },
   'host.offline': {
     render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')} went offline`,
-    severity: 'danger',
   },
   'host.status_changed': {
     render: (data) => {
       const host = firstString(data, ['hostname', 'host', 'name'], 'Host');
       return `${host}: ${firstString(data, ['old_status'], 'unknown')} -> ${firstString(data, ['new_status'], 'unknown')}`;
     },
-    severity: 'warning',
   },
   'host.heartbeat_lost': {
     render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')}: ${numberValue(data.missed_count) ?? 0} missed heartbeats`,
-    severity: 'danger',
   },
   'host.discovery_completed': {
     render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')}: discovery completed`,
-    severity: 'info',
   },
   'host.circuit_breaker.opened': {
     render: (data) => {
@@ -150,59 +189,45 @@ const REGISTRY: Record<string, RegistryEntry> = {
       if (cooldown !== null) parts.push(`(cooldown ${cooldown}s)`);
       return parts.join(' ');
     },
-    severity: 'danger',
   },
   'host.circuit_breaker.closed': {
     render: (data) => `Circuit breaker closed on ${firstString(data, ['hostname', 'host', 'name'], 'host')}`,
-    severity: 'success',
   },
   'session.started': {
     render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')}: session started${stringValue(data.test_name) ? ` (${stringValue(data.test_name)})` : ''}`,
-    severity: 'info',
   },
   'session.ended': {
     render: (data) => `Session ended (${firstString(data, ['status'], 'unknown')})`,
-    severity: 'info',
   },
   'session.stuck': {
     render: (data) => `Session ${firstString(data, ['session_id'], 'unknown').slice(0, 8)} stuck on ${firstString(data, ['device_name', 'name'], 'device')}`,
-    severity: 'warning',
   },
   'run.created': {
     render: (data) => `${firstString(data, ['name'], 'Run')} created`,
-    severity: 'info',
   },
   'run.active': {
     render: (data) => `${firstString(data, ['name'], 'Run')} active`,
-    severity: 'info',
   },
   'run.completed': {
     render: (data) => `${firstString(data, ['name'], 'Run')} completed`,
-    severity: 'success',
   },
   'run.failed': {
     render: (data) => `${firstString(data, ['name'], 'Run')} failed${appendReason(data)}`,
-    severity: 'danger',
   },
   'run.cancelled': {
     render: (data) => `${firstString(data, ['name'], 'Run')} cancelled${appendReason(data)}`,
-    severity: 'warning',
   },
   'run.expired': {
     render: (data) => `${firstString(data, ['name'], 'Run')} expired${appendReason(data)}`,
-    severity: 'danger',
   },
   'lifecycle.incident_open': {
     render: (data) => `Incident opened: ${firstString(data, ['device_name', 'name'], 'device')}${appendReason(data)}`,
-    severity: 'warning',
   },
   'lifecycle.incident_resolved': {
     render: (data) => `Incident resolved: ${firstString(data, ['device_name', 'name'], 'device')}`,
-    severity: 'success',
   },
   'device_group.updated': {
     render: (data) => `Device group ${firstString(data, ['group_id'], 'group')}: ${firstString(data, ['action'], 'updated')}`,
-    severity: 'info',
   },
   'device_group.members_changed': {
     render: (data) => {
@@ -213,11 +238,9 @@ const REGISTRY: Record<string, RegistryEntry> = {
       if (removed !== null) return `Device group ${group}: removed ${removed} member(s)`;
       return `Device group ${group}: membership changed`;
     },
-    severity: 'warning',
   },
   'bulk.operation_completed': {
     render: (data) => `Bulk ${firstString(data, ['operation'], 'operation')}: ${numberValue(data.succeeded) ?? 0}/${numberValue(data.total) ?? 0} succeeded`,
-    severity: 'warning',
   },
   'settings.changed': {
     render: (data) => {
@@ -226,31 +249,24 @@ const REGISTRY: Record<string, RegistryEntry> = {
       if (data.reset === true) return `Setting reset: ${firstString(data, ['key'], 'unknown')}`;
       return `Setting updated: ${firstString(data, ['key'], 'unknown')}`;
     },
-    severity: 'neutral',
   },
   'config.updated': {
     render: (data) => `${firstString(data, ['name', 'config_name'], 'Config')} updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
-    severity: 'neutral',
   },
   'test_data.updated': {
     render: (data) => `${firstString(data, ['device_name'], 'Device')} test_data updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
-    severity: 'neutral',
   },
   'webhook.delivered': {
     render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')} delivered`,
-    severity: 'success',
   },
   'webhook.failed': {
     render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')} failed${appendReason(data)}`,
-    severity: 'danger',
   },
   'webhook.test': {
     render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')}: test event published`,
-    severity: 'neutral',
   },
   'system.cleanup_completed': {
     render: (data) => `Cleanup completed: ${numberValue(data.sessions_deleted) ?? 0} sessions, ${numberValue(data.audit_entries_deleted) ?? 0} audit logs, ${numberValue(data.device_events_deleted) ?? 0} device events`,
-    severity: 'neutral',
   },
 };
 
@@ -266,14 +282,18 @@ export function formatEventDetails(type: string, data: EventData | null | undefi
   return { kind: 'json', text: JSON.stringify(payload, null, 2) };
 }
 
+/**
+ * @deprecated Use `legacyFallbackSeverity(type) ?? 'neutral'` or `resolveEventSeverity(event)` instead.
+ * This function will be removed in Task 14.
+ */
 export function severityForEventType(type: string): EventSeverity {
-  return REGISTRY[type]?.severity ?? 'neutral';
+  return legacyFallbackSeverity(type) ?? 'neutral';
 }
 
 export const EVENT_SEVERITY_LABEL: Record<EventSeverity, string> = {
   info: 'Info',
   success: 'Success',
   warning: 'Warning',
-  danger: 'Critical',
+  critical: 'Critical',
   neutral: 'Neutral',
 };

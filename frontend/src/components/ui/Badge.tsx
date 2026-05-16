@@ -32,9 +32,6 @@ const SIZE_CLASSES: Record<BadgeSize, string> = {
   sm: 'px-1.5 py-0.5 text-xs',
 };
 
-// Compat alias: 'danger' was renamed to 'critical'. Remove once eventRegistry.ts is updated (Task 13).
-const TONE_COMPAT: Partial<Record<string, BadgeTone>> = { danger: 'critical' };
-
 export default function Badge({
   tone = 'neutral',
   size = 'md',
@@ -44,13 +41,12 @@ export default function Badge({
   children,
   ...rest
 }: BadgeProps) {
-  const resolvedTone: BadgeTone = TONE_COMPAT[tone as string] ?? tone;
   return (
     <span
       {...rest}
       className={[
         'inline-flex items-center gap-1 rounded-full font-medium',
-        TONE_CLASSES[resolvedTone],
+        TONE_CLASSES[tone],
         SIZE_CLASSES[size],
         className,
       ]
@@ -58,7 +54,7 @@ export default function Badge({
         .join(' ')}
     >
       {dot && (
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${DOT_CLASSES[resolvedTone]}`} aria-hidden="true" />
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${DOT_CLASSES[tone]}`} aria-hidden="true" />
       )}
       {icon}
       {children}
