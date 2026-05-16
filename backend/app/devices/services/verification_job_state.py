@@ -4,10 +4,32 @@ from typing import Any, cast
 
 from app.core.type_defs import SessionFactory
 from app.events import event_bus
+from app.events.catalog import EventSeverity
 from app.jobs.models import Job
 
 VERIFICATION_EVENT = "device.verification.updated"
 STAGE_NAMES = ("validation", "device_health", "node_start", "session_probe", "cleanup", "save_device")
+
+
+def _verification_severity(job_status: str, stage_status: str | None) -> EventSeverity:
+    """Derive event severity from verification job status.
+
+    completed → success (device verified OK)
+    failed with a stage that has status "failed" → warning (soft failure)
+    failed with no stage info (hard error / exception path) → critical
+    running/pending → info (progress update)
+    """
+    if job_status == "completed":
+        return "success"
+    if job_status == "failed":
+        # A stage-level failure (e.g. session probe didn't pass) is a warning;
+        # a hard failure with no stage info (exception before any stage ran) is critical.
+        if stage_status == "failed":
+            return "warning"
+        return "critical"
+    return "info"
+
+
 _SESSION_FACTORY_KEY = "_session_factory"
 _DB_JOB_ID_KEY = "_db_job_id"
 
@@ -84,7 +106,16 @@ def public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
 
 async def publish(job: dict[str, Any]) -> None:
     await persist_job(job)
-    await event_bus.publish(VERIFICATION_EVENT, snapshot(job))
+    snap = snapshot(job)
+    job_status = str(snap.get("status", "pending"))
+    # Determine current stage status for severity derivation.
+    _, current_stage = _resolve_current_stage(snap)
+    stage_status = current_stage.get("status") if current_stage else None
+    await event_bus.publish(
+        VERIFICATION_EVENT,
+        snap,
+        severity=_verification_severity(job_status, stage_status),
+    )
 
 
 async def persist_job(job: dict[str, Any]) -> None:

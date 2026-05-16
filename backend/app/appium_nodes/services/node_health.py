@@ -31,12 +31,26 @@ from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.events import queue_device_crashed_event, queue_event_for_session
+from app.events.catalog import EventSeverity
 from app.grid import service as grid_service
 from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
 PROBE_CONCURRENCY_PER_HOST = 2
+
+
+def _node_state_severity(old_state: str, new_state: str) -> EventSeverity:
+    """Derive severity from node state direction.
+
+    running→stopped is actionable (worth a warning); stopped/error→running is
+    a recovery (success); all other transitions are routine (info).
+    """
+    if new_state == "stopped" and old_state == "running":
+        return "warning"
+    if new_state == "running" and old_state != "running":
+        return "success"
+    return "info"
 
 
 async def _bounded_check_node_health(
@@ -175,6 +189,7 @@ async def _process_node_health(
                     "new_state": "running",
                     "port": node.port,
                 },
+                severity=_node_state_severity("error", "running"),
             )
             await record_event(
                 db,
@@ -254,6 +269,7 @@ async def _process_node_health(
                     "error": "Max health check failures",
                     "will_restart": False,
                 },
+                severity=None,  # will_restart=False → default critical
             )
             queue_device_crashed_event(
                 db,
@@ -263,6 +279,7 @@ async def _process_node_health(
                 reason="Max health check failures",
                 will_restart=False,
                 process=None,
+                severity=None,  # will_restart=False → default critical
             )
             await record_event(
                 db,

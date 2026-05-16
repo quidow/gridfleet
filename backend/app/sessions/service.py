@@ -16,12 +16,26 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import lifecycle_policy
 from app.devices.services import state as device_state
 from app.events import queue_event_for_session
+from app.events.catalog import EventSeverity
 from app.runs import service as run_service
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.models import Session, SessionStatus
 
 ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
+
+
+def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
+    """Derive event severity from session outcome.
+
+    'completed' → success; an error_type means something went wrong → critical;
+    any other terminal state (cancelled, timeout, etc.) → warning.
+    """
+    if status == "completed":
+        return "success"
+    if error_type:
+        return "critical"
+    return "warning"
 
 
 def _session_requested_metadata_payload(session: Session) -> dict[str, Any]:
@@ -94,7 +108,12 @@ def queue_session_ended_event(
     *,
     device: Device | None,
 ) -> None:
-    queue_event_for_session(db, "session.ended", build_session_ended_event_payload(session, device=device))
+    queue_event_for_session(
+        db,
+        "session.ended",
+        build_session_ended_event_payload(session, device=device),
+        severity=_session_ended_severity(str(session.status), session.error_type),
+    )
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:

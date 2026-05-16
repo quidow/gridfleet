@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.events import queue_event_for_session
+from app.events.catalog import EventSeverity
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_lifecycle_release import (
     _clear_desired_grid_run_id_for_run,
@@ -16,6 +17,22 @@ from app.runs.service_reservation_lookup import (
     get_device_reservation_with_entry,
     reservation_entry_is_excluded,
 )
+
+
+def _run_completed_severity(run: TestRun) -> EventSeverity:
+    """Return 'success' for a clean completion, 'warning' if any session failed."""
+    # run.error is set when the run completed due to an internal error or
+    # partial failure (e.g. some sessions were in a failed/error state).
+    if run.error:
+        return "warning"
+    return "success"
+
+
+def _run_cancelled_severity(cancelled_by: str) -> EventSeverity:
+    """Return 'warning' for user / admin cancellations, 'info' for natural shutdowns."""
+    # Any explicit operator action (user cancel or admin force-release) is
+    # actionable and worth a 'warning' to make it visible in the dashboard.
+    return "warning"
 
 
 async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
@@ -129,6 +146,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "name": run.name,
             "duration": duration,
         },
+        severity=_run_completed_severity(run),
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -156,6 +174,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "name": run.name,
             "cancelled_by": "user",
         },
+        severity=_run_cancelled_severity("user"),
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -182,6 +201,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "name": run.name,
             "cancelled_by": "admin (force release)",
         },
+        severity=_run_cancelled_severity("admin"),
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
