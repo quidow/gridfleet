@@ -60,6 +60,7 @@ from app.packs.services import start_shim as pack_start_shim
 from app.settings import settings_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
+build_device_context = pack_start_shim.build_device_context
 build_pack_start_payload = pack_start_shim.build_pack_start_payload
 device_is_virtual = pack_platform_catalog.device_is_virtual
 render_default_capabilities = pack_capability.render_default_capabilities
@@ -360,7 +361,12 @@ async def start_remote_node(
     resolved_pack = resolve_pack_for_device(device)
     if resolved_pack is None:
         raise NodeManagerError(f"Device {device.id} has no driver pack platform")
-    stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    stereotype = await render_stereotype(
+        db,
+        pack_id=resolved_pack[0],
+        platform_id=resolved_pack[1],
+        device_context=build_device_context(device),
+    )
     plat = await resolve_pack_platform(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
     appium_platform_name = plat.appium_platform_name
     extra_caps = await _build_session_aligned_start_caps(

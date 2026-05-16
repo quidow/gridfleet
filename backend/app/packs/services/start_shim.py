@@ -27,6 +27,33 @@ def resolve_pack_for_device(device: Device) -> tuple[str, str] | None:
     return None
 
 
+def build_device_context(device: Device, *, device_type: str | None = None) -> dict[str, object]:
+    """Snapshot the device fields available for `{device.*}` template expansion.
+
+    Reads via ``getattr`` so test fakes that only define a subset of the
+    ``Device`` columns still work — missing keys simply resolve to ``None`` and
+    the template engine drops the corresponding stereotype entry.
+    """
+    raw_device_type = device_type if device_type is not None else getattr(device, "device_type", None)
+    if raw_device_type is not None and hasattr(raw_device_type, "value"):
+        resolved_device_type: str | None = raw_device_type.value
+    elif raw_device_type is not None:
+        resolved_device_type = str(raw_device_type)
+    else:
+        resolved_device_type = None
+    return {
+        "platform_id": getattr(device, "platform_id", None),
+        "ip_address": getattr(device, "ip_address", None),
+        "connection_target": getattr(device, "connection_target", None),
+        "identity_value": getattr(device, "identity_value", None),
+        "os_version": getattr(device, "os_version", None),
+        "device_type": resolved_device_type,
+        "manufacturer": getattr(device, "manufacturer", None),
+        "model": getattr(device, "model", None),
+        "name": getattr(device, "name", None),
+    }
+
+
 async def build_pack_start_payload(
     session: AsyncSession,
     *,
@@ -55,7 +82,12 @@ async def build_pack_start_payload(
         ) from exc
     if stereotype is None:
         try:
-            stereotype = await render_stereotype(session, pack_id=pack_id, platform_id=platform_id)
+            stereotype = await render_stereotype(
+                session,
+                pack_id=pack_id,
+                platform_id=platform_id,
+                device_context=build_device_context(device, device_type=device_type),
+            )
         except LookupError as exc:
             raise PackStartPayloadError(
                 f"Pack platform {pack_id}:{platform_id} is not available for device {device.id}"
