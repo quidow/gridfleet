@@ -549,7 +549,17 @@ def test_update_session_status_patches_status(monkeypatch):
     }
 
 
-def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatch):
+def test_register_session_from_driver_does_not_send_client_side_device_identity(monkeypatch):
+    """The testkit deliberately does not attempt to identify the device.
+
+    Vendor-prefixed identifying caps do not survive the Appium driver's W3C
+    echo (``appium:`` stripped, ``appium:gridfleet:deviceId`` dropped) and
+    the stripped forms (``udid`` / ``deviceName``) are not globally unique
+    across drivers. The backend ``session_sync_loop`` reads the
+    prefix-stable ``slot.session.stereotype`` from the Grid hub instead, so
+    the registration payload carries only ``session_id`` + capabilities +
+    ``test_name`` + ``run_id``.
+    """
     captured: JsonObject = {}
 
     def fake_register_session(self: GridFleetClient, **kwargs: object) -> JsonObject:
@@ -561,10 +571,12 @@ def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatc
     class FakeDriver:
         session_id = "sess-1"
         capabilities: ClassVar[dict[str, object]] = {
-            "appium:gridfleet:deviceId": "dev-1",
-            "appium:udid": "SERIAL123",
-            "appium:platform": "android_mobile",
-            "platformName": "Android",
+            # Real Appium echo: ``appium:`` stripped, no
+            # ``appium:gridfleet:deviceId`` survives.
+            "udid": "SERIAL123",
+            "deviceName": "SERIAL123",
+            "automationName": "UiAutomator2",
+            "platformName": "ANDROID",
         }
 
         def quit(self) -> None:
@@ -574,16 +586,16 @@ def test_register_session_from_driver_extracts_gridfleet_capabilities(monkeypatc
     client = GridFleetClient("http://manager/api")
 
     assert client.register_session_from_driver(driver, test_name="test_login", run_id="run-1") == {"ok": True}
+    assert "device_id" not in captured
+    assert "connection_target" not in captured
     assert captured == {
         "session_id": "sess-1",
         "test_name": "test_login",
-        "device_id": "dev-1",
-        "connection_target": "SERIAL123",
         "requested_capabilities": {
-            "appium:gridfleet:deviceId": "dev-1",
-            "appium:udid": "SERIAL123",
-            "appium:platform": "android_mobile",
-            "platformName": "Android",
+            "udid": "SERIAL123",
+            "deviceName": "SERIAL123",
+            "automationName": "UiAutomator2",
+            "platformName": "ANDROID",
         },
         "run_id": "run-1",
         "suppress_errors": True,
