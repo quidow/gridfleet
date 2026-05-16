@@ -28,8 +28,9 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
-        "appium:platformName": "Android"
-        "appium:automationName": "UiAutomator2"
+        "appium:platform": "{device.platform_id}"
+        "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
       session_required: []
     identity:
       scheme: android_serial
@@ -84,8 +85,9 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
-        "appium:platformName": "Android"
+        "appium:platform": "{device.platform_id}"
         "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
       session_required: []
     identity:
       scheme: android_serial
@@ -140,8 +142,9 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
-        "appium:platformName": "Android"
-        "appium:automationName": "UiAutomator2"
+        "appium:platform": "{device.platform_id}"
+        "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
       session_required: []
     identity:
       scheme: android_serial

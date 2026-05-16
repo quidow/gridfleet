@@ -57,8 +57,8 @@ async def test_render_stereotype_drops_keys_with_missing_context(db_session: Asy
     # Template references device.os_version which is not in the (empty) context;
     # the key is dropped, matching render_default_capabilities behaviour.
     assert "appium:os_version" not in caps
-    # Literal stereotype values still pass through.
-    assert caps["appium:platformName"] == "Android"
+    # Renderer still emits the hard-coded platformName from the platform model.
+    assert caps["platformName"] == "Android"
 
 
 @pytest.mark.asyncio

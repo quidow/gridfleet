@@ -85,6 +85,34 @@ def _patched_remote_start(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+async def test_uiautomator2_stereotype_uses_device_template(
+    db_session: AsyncSession,
+    _android_real_device: MagicMock,
+) -> None:
+    """Pack manifest stereotype interpolates {device.*} placeholders."""
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    stereotype = await render_stereotype(
+        db_session,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_context={
+            "platform_id": _android_real_device.platform_id,
+            "os_version": _android_real_device.os_version,
+            "device_type": _android_real_device.device_type.value,
+        },
+    )
+    assert stereotype["platformName"] == "Android"
+    assert stereotype["appium:automationName"] == "UiAutomator2"
+    assert stereotype["appium:platform"] == "android_mobile"
+    assert stereotype["appium:os_version"] == _android_real_device.os_version
+    assert stereotype["appium:device_type"] == "real_device"
+    # Redundant appium:platformName mirror is removed in favor of unprefixed platformName.
+    assert "appium:platformName" not in stereotype
+
+
+@pytest.mark.asyncio
 async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
