@@ -140,11 +140,16 @@ def _classify_session_error(error: str | None) -> str | None:
     carries ``Driver info: driver.version: unknown`` because no driver loaded.
     This is a transient infrastructure error (relay registration race), not a
     persistent device-side fault.
+
+    Everything else is ``driver``. Unrecognised payloads are debug-logged with
+    a short excerpt so future Grid signature changes surface in operator logs
+    without requiring a code change to this classifier.
     """
     if error is None:
         return None
     if "driver.version: unknown" in error:
         return "grid_no_slot"
+    logger.debug("session_viability error unmatched by grid_no_slot signature: %s", error[:200])
     return "driver"
 
 

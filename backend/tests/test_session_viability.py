@@ -1148,3 +1148,51 @@ async def test_passing_probe_resets_viability_failure_counter(
     final = await get_session_viability(db_session, device)
     assert final is not None and final["consecutive_failures"] == 1
     handler.assert_not_awaited()
+
+
+async def test_write_session_viability_persists_error_category(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: ``error_category`` must survive the round-trip through
+    the control-plane state store, not just live on the in-memory return value
+    of ``_write_session_viability``. Without this, the ``_classify_session_error``
+    classifier would silently stop being observable to operators."""
+    device, node = _make_viability_device(db_host, "category")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    grid_error = (
+        "Could not start a new session. {value={error=session not created}} Driver info: driver.version: unknown"
+    )
+
+    def _settings(key: str) -> int:
+        if "failure_threshold" in key:
+            return 5  # below threshold so no escalation interferes
+        return 5
+
+    monkeypatch.setattr(session_viability.settings_service, "get", _settings)
+    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, grid_error)))
+
+    await run_session_viability_probe(
+        db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+    )
+
+    persisted = await get_session_viability(db_session, device)
+    assert persisted is not None
+    assert persisted["status"] == "failed"
+    assert persisted["error_category"] == "grid_no_slot"
+
+    # A passing probe must clear ``error_category`` so a recovered device does
+    # not keep an old infra tag attached.
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(True, None)))
+    device.operational_state = DeviceOperationalState.available
+    await run_session_viability_probe(
+        db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+    )
+    after_pass = await get_session_viability(db_session, device)
+    assert after_pass is not None
+    assert after_pass["status"] == "passed"
+    assert after_pass["error_category"] is None
