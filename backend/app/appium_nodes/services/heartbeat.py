@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.operations import agent_health
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
+from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.heartbeat_outcomes import (
     ClientMode,
     HeartbeatOutcome,
@@ -32,7 +33,6 @@ from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.state import set_operational_state
 from app.events import queue_device_crashed_event, queue_event_for_session
-from app.events.catalog import EventSeverity
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
@@ -41,19 +41,6 @@ from app.settings import settings_service
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
-
-
-def _node_state_severity(old_state: str, new_state: str) -> EventSeverity:
-    """Derive severity from node state direction.
-
-    running→stopped is actionable (worth a warning); stopped/error→running is
-    a recovery (success); all other transitions are routine (info).
-    """
-    if new_state == "stopped" and old_state == "running":
-        return "warning"
-    if new_state == "running" and old_state != "running":
-        return "success"
-    return "info"
 
 
 HEARTBEAT_NAMESPACE = "heartbeat.failure_count"
@@ -440,7 +427,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                         "new_state": "running",
                         "port": port,
                     },
-                    severity=_node_state_severity("error", "running"),
+                    severity=node_state_severity("error", "running"),
                 )
             await record_event(
                 db,

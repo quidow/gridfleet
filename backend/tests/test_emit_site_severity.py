@@ -2,21 +2,16 @@
 
 Tests cover:
 - _run_completed_severity
-- _run_cancelled_severity
 - _session_ended_severity
-- _node_state_severity (shared across heartbeat, node_health, reconciler_agent)
+- node_state_severity (shared via app.appium_nodes.services.common)
 - _verification_severity
 """
 
 from __future__ import annotations
 
-import pytest
-
-from app.appium_nodes.services.heartbeat import _node_state_severity as heartbeat_node_state_severity
-from app.appium_nodes.services.node_health import _node_state_severity as node_health_node_state_severity
-from app.appium_nodes.services.reconciler_agent import _node_state_severity as reconciler_node_state_severity
+from app.appium_nodes.services.common import node_state_severity
 from app.devices.services.verification_job_state import _verification_severity
-from app.runs.service_lifecycle import _run_cancelled_severity, _run_completed_severity
+from app.runs.service_lifecycle import _run_completed_severity
 from app.sessions.service import _session_ended_severity
 
 # ---------------------------------------------------------------------------
@@ -71,87 +66,29 @@ def test_run_completed_with_failures_severity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _run_cancelled_severity
+# node_state_severity (shared helper used by heartbeat, node_health, reconciler_agent)
 # ---------------------------------------------------------------------------
 
 
-def test_run_cancelled_by_user_is_warning() -> None:
-    assert _run_cancelled_severity("user") == "warning"
+def test_node_state_running_to_stopped_severity() -> None:
+    assert node_state_severity("running", "stopped") == "warning"
 
 
-def test_run_cancelled_by_admin_is_warning() -> None:
-    assert _run_cancelled_severity("admin") == "warning"
+def test_node_state_stopped_to_running_severity() -> None:
+    assert node_state_severity("stopped", "running") == "success"
 
 
-def test_run_cancelled_by_system_is_warning() -> None:
-    # All cancellations are 'warning' — the helper always returns 'warning'
-    assert _run_cancelled_severity("system") == "warning"
+def test_node_state_error_to_running_severity() -> None:
+    assert node_state_severity("error", "running") == "success"
 
 
-# ---------------------------------------------------------------------------
-# _node_state_severity (all three modules share the same logic)
-# ---------------------------------------------------------------------------
+def test_node_state_stopped_to_stopped_info() -> None:
+    assert node_state_severity("stopped", "stopped") == "info"
 
 
-@pytest.mark.parametrize(
-    "severity_fn",
-    [
-        heartbeat_node_state_severity,
-        node_health_node_state_severity,
-        reconciler_node_state_severity,
-    ],
-)
-def test_node_state_running_to_stopped_severity(severity_fn: object) -> None:
-    assert severity_fn("running", "stopped") == "warning"  # type: ignore[operator]
-
-
-@pytest.mark.parametrize(
-    "severity_fn",
-    [
-        heartbeat_node_state_severity,
-        node_health_node_state_severity,
-        reconciler_node_state_severity,
-    ],
-)
-def test_node_state_stopped_to_running_severity(severity_fn: object) -> None:
-    assert severity_fn("stopped", "running") == "success"  # type: ignore[operator]
-
-
-@pytest.mark.parametrize(
-    "severity_fn",
-    [
-        heartbeat_node_state_severity,
-        node_health_node_state_severity,
-        reconciler_node_state_severity,
-    ],
-)
-def test_node_state_error_to_running_severity(severity_fn: object) -> None:
-    assert severity_fn("error", "running") == "success"  # type: ignore[operator]
-
-
-@pytest.mark.parametrize(
-    "severity_fn",
-    [
-        heartbeat_node_state_severity,
-        node_health_node_state_severity,
-        reconciler_node_state_severity,
-    ],
-)
-def test_node_state_stopped_to_stopped_info(severity_fn: object) -> None:
-    assert severity_fn("stopped", "stopped") == "info"  # type: ignore[operator]
-
-
-@pytest.mark.parametrize(
-    "severity_fn",
-    [
-        heartbeat_node_state_severity,
-        node_health_node_state_severity,
-        reconciler_node_state_severity,
-    ],
-)
-def test_node_state_running_to_error_info(severity_fn: object) -> None:
+def test_node_state_running_to_error_info() -> None:
     # running→error is not in the 'running→stopped' branch, so info
-    assert severity_fn("running", "error") == "info"  # type: ignore[operator]
+    assert node_state_severity("running", "error") == "info"
 
 
 # ---------------------------------------------------------------------------

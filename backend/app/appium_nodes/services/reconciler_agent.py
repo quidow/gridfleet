@@ -32,6 +32,7 @@ from app.appium_nodes.services.common import (
     build_appium_driver_caps,
     build_grid_stereotype_caps,
     get_default_plugins,
+    node_state_severity,
 )
 from app.appium_nodes.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.appium_nodes.services.reconciler_allocation import (
@@ -72,25 +73,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
-    from app.events.catalog import EventSeverity
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
 
 RESTART_BACKOFF_BASE = 2
-
-
-def _node_state_severity(old_state: str, new_state: str) -> EventSeverity:
-    """Derive severity from node state direction.
-
-    running→stopped is actionable (worth a warning); stopped/error→running is
-    a recovery (success); all other transitions are routine (info).
-    """
-    if new_state == "stopped" and old_state == "running":
-        return "warning"
-    if new_state == "running" and old_state != "running":
-        return "success"
-    return "info"
 
 
 RESTART_MAX_RETRIES = 3
@@ -216,7 +203,7 @@ async def mark_node_started(
             "new_state": "running",
             "port": port,
         },
-        severity=_node_state_severity("stopped", "running"),
+        severity=node_state_severity("stopped", "running"),
     )
     await db.commit()
     await db.refresh(node)
@@ -244,7 +231,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
             "old_state": "running",
             "new_state": "stopped",
         },
-        severity=_node_state_severity("running", "stopped"),
+        severity=node_state_severity("running", "stopped"),
     )
     await db.commit()
     await db.refresh(node)
