@@ -1702,7 +1702,20 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     ]
     grid_data = {
         "value": {
-            "nodes": [{"slots": [{"session": {"id": "s1"}}, {"session": None}]}],
+            "nodes": [
+                {
+                    "slots": [
+                        {
+                            "session": {
+                                "sessionId": "s1",
+                                "capabilities": {"platformName": "android"},
+                                "stereotype": {"appium:udid": "serial-1"},
+                            },
+                        },
+                        {"session": None},
+                    ],
+                }
+            ],
             "sessionQueueRequests": [{"requestId": "queued"}],
         }
     }
