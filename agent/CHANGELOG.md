@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.13.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.13.0...gridfleet-agent-v0.13.1) (2026-05-16)
+
+
+### Bug Fixes
+
+* **backend,agent:** propagate os_version_display through property refresh ([#264](https://github.com/quidow/gridfleet/issues/264)) ([f96c3bb](https://github.com/quidow/gridfleet/commit/f96c3bb4c72b253883c7f6852593e2e474e10f44))
+
 ## [0.13.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.12.1...gridfleet-agent-v0.13.0) (2026-05-16)
 
 
