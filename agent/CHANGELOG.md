@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.14.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.13.1...gridfleet-agent-v0.14.0) (2026-05-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** drop gridfleet:available stereotype emission
+
+### Features
+
+* **agent:** drop gridfleet:available stereotype emission ([4d4101f](https://github.com/quidow/gridfleet/commit/4d4101fcd6180bf094075544760a35bd1057d225))
+
+
+### Bug Fixes
+
+* **backend:** cover device.id None guard + clarify drop rationale ([e8711a6](https://github.com/quidow/gridfleet/commit/e8711a6ccd5ed3317aea212eb593d70cb6a2e811))
+
 ## [0.13.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.13.0...gridfleet-agent-v0.13.1) (2026-05-16)
 
 
