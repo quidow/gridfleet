@@ -118,11 +118,16 @@ def _detected_properties(
 
 
 async def discover_roku_devices(ctx: DiscoveryContext) -> list[DiscoveryCandidate]:
+    devices = await ssdp_search()
+    if not devices:
+        return []
+    infos = await asyncio.gather(
+        *(fetch_device_info(device.ip_address) for device in devices),
+        return_exceptions=True,
+    )
     candidates: list[DiscoveryCandidate] = []
-    for device in await ssdp_search():
-        try:
-            device_info = await fetch_device_info(device.ip_address)
-        except Exception as exc:
+    for device, info in zip(devices, infos, strict=True):
+        if isinstance(info, BaseException):
             candidates.append(
                 DiscoveryCandidate(
                     identity_scheme="roku_serial",
@@ -139,21 +144,21 @@ async def discover_roku_devices(ctx: DiscoveryContext) -> list[DiscoveryCandidat
                     field_errors=[
                         FieldError(
                             field_id="ip_address",
-                            message=f"Unable to query Roku ECP device-info: {exc}",
+                            message=f"Unable to query Roku ECP device-info: {info}",
                         )
                     ],
                     feature_status=[],
                 )
             )
             continue
-        serial_number = device_info.get("serial-number") or device_info.get("device-id") or device.serial_number
-        model = device_info.get("model-name") or device_info.get("model-number") or serial_number
+        serial_number = info.get("serial-number") or info.get("device-id") or device.serial_number
+        model = info.get("model-name") or info.get("model-number") or serial_number
         candidates.append(
             DiscoveryCandidate(
                 identity_scheme="roku_serial",
                 identity_value=serial_number,
                 suggested_name=model,
-                detected_properties=_detected_properties(device, device_info),
+                detected_properties=_detected_properties(device, info),
                 runnable=True,
                 missing_requirements=[],
                 field_errors=[],

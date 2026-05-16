@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from adapter.discovery import _ssdp_search_sync, discover_roku_devices, parse_ssdp_response
 
@@ -129,3 +131,75 @@ async def test_discover_roku_devices_keeps_ssdp_candidate_when_device_info_fails
     assert candidate.runnable is False
     assert candidate.missing_requirements == ["ecp_device_info"]
     assert candidate.field_errors[0].field_id == "ip_address"
+
+
+@pytest.mark.asyncio
+async def test_discover_roku_devices_fetches_ecp_info_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _SsdpDevice:
+        def __init__(self, ip: str, serial: str) -> None:
+            self.ip_address = ip
+            self.serial_number = serial
+
+    fleet = [_SsdpDevice(f"192.168.1.{i}", f"SERIAL{i:03d}") for i in range(10)]
+
+    async def fake_search() -> list[_SsdpDevice]:
+        return fleet
+
+    in_flight = 0
+    peak_in_flight = 0
+
+    async def fake_device_info(ip_address: str) -> dict[str, str]:
+        nonlocal in_flight, peak_in_flight
+        in_flight += 1
+        peak_in_flight = max(peak_in_flight, in_flight)
+        try:
+            await asyncio.sleep(0.05)
+            serial = next(d.serial_number for d in fleet if d.ip_address == ip_address)
+            return {"serial-number": serial, "model-name": f"Model-{serial}"}
+        finally:
+            in_flight -= 1
+
+    monkeypatch.setattr("adapter.discovery.ssdp_search", fake_search)
+    monkeypatch.setattr("adapter.discovery.fetch_device_info", fake_device_info)
+
+    candidates = await discover_roku_devices(_Ctx())
+
+    assert len(candidates) == len(fleet)
+    assert peak_in_flight == len(fleet), "ECP fetches must run concurrently, not sequentially"
+    serials = {c.identity_value for c in candidates}
+    assert serials == {d.serial_number for d in fleet}
+
+
+@pytest.mark.asyncio
+async def test_discover_roku_devices_preserves_per_device_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _SsdpDevice:
+        def __init__(self, ip: str, serial: str) -> None:
+            self.ip_address = ip
+            self.serial_number = serial
+
+    devices = [
+        _SsdpDevice("192.168.1.10", "OK001"),
+        _SsdpDevice("192.168.1.11", "FAIL002"),
+        _SsdpDevice("192.168.1.12", "OK003"),
+    ]
+
+    async def fake_search() -> list[_SsdpDevice]:
+        return devices
+
+    async def fake_device_info(ip_address: str) -> dict[str, str]:
+        if ip_address == "192.168.1.11":
+            raise TimeoutError("timed out")
+        serial = next(d.serial_number for d in devices if d.ip_address == ip_address)
+        return {"serial-number": serial, "model-name": f"Model-{serial}"}
+
+    monkeypatch.setattr("adapter.discovery.ssdp_search", fake_search)
+    monkeypatch.setattr("adapter.discovery.fetch_device_info", fake_device_info)
+
+    candidates = await discover_roku_devices(_Ctx())
+
+    assert len(candidates) == 3
+    by_serial = {c.identity_value: c for c in candidates}
+    assert by_serial["OK001"].runnable is True
+    assert by_serial["OK003"].runnable is True
+    assert by_serial["FAIL002"].runnable is False
+    assert by_serial["FAIL002"].missing_requirements == ["ecp_device_info"]

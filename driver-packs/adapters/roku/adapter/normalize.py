@@ -11,7 +11,7 @@ from agent_app.pack.adapter_types import FieldError, NormalizedDevice, Normalize
 
 async def fetch_device_info(ip_address: str) -> dict[str, str]:
     def _fetch() -> dict[str, str]:
-        with urllib.request.urlopen(f"http://{ip_address}:8060/query/device-info", timeout=5) as response:
+        with urllib.request.urlopen(f"http://{ip_address}:8060/query/device-info", timeout=3) as response:
             payload = response.read()
         root = ET.fromstring(payload)
         return {child.tag: child.text or "" for child in root}
