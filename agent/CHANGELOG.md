@@ -2,6 +2,18 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.15.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.14.0...gridfleet-agent-v0.15.0) (2026-05-16)
+
+
+### Features
+
+* **agent:** add --advertise-ip install flag ([#279](https://github.com/quidow/gridfleet/issues/279)) ([ad990c1](https://github.com/quidow/gridfleet/commit/ad990c193331cb4e79f9de0298ec008c44ae1265))
+
+
+### Bug Fixes
+
+* **agent:** preserve per-slot caps on grid node reconfigure ([#282](https://github.com/quidow/gridfleet/issues/282)) ([1dbc7a9](https://github.com/quidow/gridfleet/commit/1dbc7a90bbbfe631909ebd5e44ecd267b061bb7c))
+
 ## [0.14.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.13.1...gridfleet-agent-v0.14.0) (2026-05-16)
 
 
