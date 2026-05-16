@@ -152,6 +152,45 @@ async def test_refresh_device_properties_writes_os_version_display(
 
 
 @pytest.mark.asyncio
+async def test_refresh_device_properties_updates_existing_os_version_display(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="fire-stick-serial-2",
+        connection_target="192.168.1.255:5555",
+        connection_type="network",
+        ip_address="192.168.1.255",
+        name="Fire TV Stick 4K",
+        os_version="6",
+        operational_state="available",
+    )
+    device.os_version_display = "6.7.1.0"
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert device.os_version_display == "6.7.1.0"
+
+    async def fake_get_properties(host: str, port: int, connection_target: str, pack_id: str) -> dict[str, object]:
+        return {
+            "detected_properties": {
+                "os_version": "6",
+                "os_version_display": "6.7.1.1",
+            }
+        }
+
+    await refresh_device_properties(
+        db_session,
+        device,
+        agent_get_pack_device_properties=fake_get_properties,
+    )
+
+    await db_session.refresh(device)
+    assert device.os_version_display == "6.7.1.1"
+
+
+@pytest.mark.asyncio
 async def test_refresh_device_properties_ignores_non_string_display(
     db_session: AsyncSession,
     db_host: Host,
