@@ -836,12 +836,20 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.settings_service, "get", lambda key: 5)
+    monkeypatch.setattr(
+        session_viability.settings_service,
+        "get",
+        lambda key: 1 if "failure_threshold" in key else 5,
+    )
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     monkeypatch.setattr(session_viability, "set_operational_state", AsyncMock())
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
-    monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
+    monkeypatch.setattr(
+        session_viability,
+        "_write_session_viability",
+        AsyncMock(return_value={"status": "failed", "consecutive_failures": 1}),
+    )
     handler = AsyncMock()
     session_viability.configure_health_failure_handler(handler)
     try:
@@ -853,7 +861,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     finally:
         session_viability.configure_health_failure_handler(None)
 
-    assert state == {"status": "failed"}
+    assert state == {"status": "failed", "consecutive_failures": 1}
     assert device.device_config == {}
     handler.assert_awaited_once()
     assert handler.await_args.kwargs["reason"] == "Appium session viability probe failed"
@@ -978,3 +986,165 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
         )
 
     assert set_state.await_args_list[-1].args[1] != DeviceOperationalState.offline
+
+
+def test_classify_session_error_recognises_grid_no_slot() -> None:
+    no_slot = "Could not start a new session. {value={error=session not created}} Driver info: driver.version: unknown"
+    assert session_viability._classify_session_error(no_slot) == "grid_no_slot"
+    assert session_viability._classify_session_error("ADB device 'X' not found within timeout") == "driver"
+    assert session_viability._classify_session_error(None) is None
+
+
+async def _run_failing_probe(
+    db: AsyncSession,
+    device: Device,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    error: str = "boom",
+    threshold: int = 3,
+    handler: AsyncMock | None = None,
+) -> dict[str, object]:
+    """Helper: drive ``run_session_viability_probe`` with a failing grid probe."""
+
+    def _settings(key: str) -> int:
+        if "failure_threshold" in key:
+            return threshold
+        return 5
+
+    monkeypatch.setattr(session_viability.settings_service, "get", _settings)
+    monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, error)))
+    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    if handler is not None:
+        session_viability.configure_health_failure_handler(handler)
+    return await run_session_viability_probe(
+        db, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+    )
+
+
+def _make_viability_device(db_host: Host, suffix: str) -> tuple[Device, AppiumNode]:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"viab-strike-{suffix}",
+        connection_target=f"viab-strike-{suffix}",
+        name=f"Viability Strike {suffix}",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4799,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4799,
+        pid=999,
+        active_connection_target=f"viab-strike-{suffix}",
+    )
+    device.appium_node = node
+    return device, node
+
+
+async def test_single_viability_failure_does_not_escalate_below_threshold(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device, node = _make_viability_device(db_host, "below")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    handler = AsyncMock()
+    try:
+        state = await _run_failing_probe(
+            db_session, device, monkeypatch, error="grid hiccup", threshold=3, handler=handler
+        )
+    finally:
+        session_viability.configure_health_failure_handler(None)
+
+    assert state["status"] == "failed"
+    assert state.get("consecutive_failures") == 1
+    handler.assert_not_awaited()
+
+
+async def test_viability_escalates_after_threshold_consecutive_failures(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device, node = _make_viability_device(db_host, "threshold")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    handler = AsyncMock()
+    try:
+        for _ in range(3):
+            # Each probe leaves the device offline; the recovery branch is what
+            # lets the next iteration re-enter the probe path.
+            device.operational_state = DeviceOperationalState.available
+            await _run_failing_probe(db_session, device, monkeypatch, error="grid hiccup", threshold=3, handler=handler)
+    finally:
+        session_viability.configure_health_failure_handler(None)
+
+    final = await get_session_viability(db_session, device)
+    assert final is not None and final["status"] == "failed"
+    assert final["consecutive_failures"] == 3
+    handler.assert_awaited_once()
+
+
+async def test_passing_probe_resets_viability_failure_counter(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device, node = _make_viability_device(db_host, "reset")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    handler = AsyncMock()
+
+    def _settings(key: str) -> int:
+        if "failure_threshold" in key:
+            return 3
+        return 5
+
+    monkeypatch.setattr(session_viability.settings_service, "get", _settings)
+    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    session_viability.configure_health_failure_handler(handler)
+    try:
+        # Two consecutive failures get to count=2.
+        monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, "transient")))
+        for _ in range(2):
+            device.operational_state = DeviceOperationalState.available
+            await run_session_viability_probe(
+                db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+            )
+
+        # A passing probe must reset the counter back to 0.
+        monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(True, None)))
+        device.operational_state = DeviceOperationalState.available
+        await run_session_viability_probe(
+            db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+        )
+        mid = await get_session_viability(db_session, device)
+        assert mid is not None and mid["consecutive_failures"] == 0
+
+        # One more failure must start the count over, not jump straight to threshold.
+        monkeypatch.setattr(
+            session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, "transient again"))
+        )
+        device.operational_state = DeviceOperationalState.available
+        await run_session_viability_probe(
+            db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+        )
+    finally:
+        session_viability.configure_health_failure_handler(None)
+
+    final = await get_session_viability(db_session, device)
+    assert final is not None and final["consecutive_failures"] == 1
+    handler.assert_not_awaited()

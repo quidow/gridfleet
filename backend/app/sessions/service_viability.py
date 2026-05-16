@@ -127,7 +127,25 @@ async def get_session_viability(db: AsyncSession, device: Device) -> dict[str, A
         "last_succeeded_at": state.get("last_succeeded_at"),
         "error": state.get("error"),
         "checked_by": state.get("checked_by"),
+        "consecutive_failures": state.get("consecutive_failures") or 0,
+        "error_category": state.get("error_category"),
     }
+
+
+def _classify_session_error(error: str | None) -> str | None:
+    """Categorise a viability probe failure for diagnostics.
+
+    ``grid_no_slot`` matches the Selenium Grid signature seen when the hub
+    accepts a session-create request but can't route it to a node: the response
+    carries ``Driver info: driver.version: unknown`` because no driver loaded.
+    This is a transient infrastructure error (relay registration race), not a
+    persistent device-side fault.
+    """
+    if error is None:
+        return None
+    if "driver.version: unknown" in error:
+        return "grid_no_slot"
+    return "driver"
 
 
 async def _write_session_viability(
@@ -140,12 +158,16 @@ async def _write_session_viability(
     checked_by: SessionViabilityCheckedBy,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}
+    previous_failures = int(previous.get("consecutive_failures") or 0)
+    consecutive_failures = 0 if status == "passed" else previous_failures + 1
     state = {
         "status": status,
         "last_attempted_at": attempted_at,
         "last_succeeded_at": attempted_at if status == "passed" else previous.get("last_succeeded_at"),
         "error": error,
         "checked_by": checked_by,
+        "consecutive_failures": consecutive_failures,
+        "error_category": _classify_session_error(error) if status != "passed" else None,
     }
     await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id), state)
     await device_health.update_session_viability(db, device, status=status, error=error)
@@ -409,12 +431,21 @@ async def run_session_viability_probe(
             if config_changed:
                 await db.commit()
         if not ok and checked_by != SessionViabilityCheckedBy.recovery and _health_failure_handler is not None:
-            await _health_failure_handler(
-                db,
-                device,
-                source="session_viability",
-                reason=error or "Appium session viability probe failed",
-            )
+            threshold = max(1, int(settings_service.get("general.session_viability_failure_threshold")))
+            if int(state.get("consecutive_failures") or 0) >= threshold:
+                await _health_failure_handler(
+                    db,
+                    device,
+                    source="session_viability",
+                    reason=error or "Appium session viability probe failed",
+                )
+            else:
+                logger.info(
+                    "session_viability probe failed for device %s (%d/%d) — holding before escalation",
+                    device.id,
+                    state.get("consecutive_failures"),
+                    threshold,
+                )
         return state
     except Exception:
         if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
