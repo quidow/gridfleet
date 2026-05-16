@@ -11,6 +11,10 @@ interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'> {
   children: ReactNode;
 }
 
+// Semantic tone names (info/success/warning/critical/neutral) intentionally
+// differ from the Tailwind design tokens (bg-danger-*, text-danger-*). The
+// public surface uses semantic names that match backend event severity; the
+// design tokens stay on their original color names.
 const TONE_CLASSES: Record<BadgeTone, string> = {
   neutral: 'bg-neutral-soft text-neutral-foreground',
   info: 'bg-info-soft text-info-foreground',
