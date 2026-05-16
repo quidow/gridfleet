@@ -28,13 +28,6 @@ def _run_completed_severity(run: TestRun) -> EventSeverity:
     return "success"
 
 
-def _run_cancelled_severity(cancelled_by: str) -> EventSeverity:
-    """Return 'warning' for user / admin cancellations, 'info' for natural shutdowns."""
-    # Any explicit operator action (user cancel or admin force-release) is
-    # actionable and worth a 'warning' to make it visible in the dashboard.
-    return "warning"
-
-
 async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -174,7 +167,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "name": run.name,
             "cancelled_by": "user",
         },
-        severity=_run_cancelled_severity("user"),
+        severity="warning",
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -201,7 +194,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "name": run.name,
             "cancelled_by": "admin (force release)",
         },
-        severity=_run_cancelled_severity("admin"),
+        severity="warning",
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -234,6 +227,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
             "name": locked_run.name,
             "reason": reason,
         },
+        severity="critical",
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
