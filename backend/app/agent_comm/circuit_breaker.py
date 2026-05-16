@@ -5,11 +5,34 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
+from sqlalchemy import or_, select
+
+from app.core.database import async_session
 from app.core.observability import get_logger
 from app.events import event_bus
+from app.hosts.models.host import Host
 from app.settings import settings_service
 
 logger = get_logger(__name__)
+
+
+async def _resolve_host_identity(host_addr: str) -> dict[str, str]:
+    """Resolve an IP or hostname to ``{"host_id": ..., "hostname": ...}``.
+
+    Returns an empty dict when the DB is unreachable or no row matches. The
+    breaker must keep emitting even without a resolvable Host row so that
+    pre-registration failures still surface in the global event stream.
+    """
+    try:
+        async with async_session() as db:
+            stmt = select(Host.id, Host.hostname).where(or_(Host.ip == host_addr, Host.hostname == host_addr)).limit(1)
+            row = (await db.execute(stmt)).first()
+            if row is None:
+                return {}
+            return {"host_id": str(row[0]), "hostname": str(row[1])}
+    except Exception:  # noqa: BLE001 - enrichment must never break the breaker
+        logger.debug("circuit_breaker_host_lookup_failed", host=host_addr, exc_info=True)
+        return {}
 
 
 @dataclass
@@ -74,11 +97,10 @@ class AgentCircuitBreaker:
 
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
+            payload: dict[str, Any] = {"host": host, **(await _resolve_host_identity(host))}
             await event_bus.publish(
                 "host.circuit_breaker.closed",
-                {
-                    "host": host,
-                },
+                payload,
             )
 
     async def record_failure(self, host: str, *, error: str) -> None:
@@ -118,14 +140,16 @@ class AgentCircuitBreaker:
                 cooldown_seconds=cooldown,
                 error=error,
             )
+            payload: dict[str, Any] = {
+                "host": host,
+                "consecutive_failures": failure_count,
+                "cooldown_seconds": cooldown,
+                "last_error": error,
+                **(await _resolve_host_identity(host)),
+            }
             await event_bus.publish(
                 "host.circuit_breaker.opened",
-                {
-                    "host": host,
-                    "consecutive_failures": failure_count,
-                    "cooldown_seconds": cooldown,
-                    "last_error": error,
-                },
+                payload,
             )
 
     def reset(self) -> None:
