@@ -47,7 +47,7 @@ class PreparedVerificationContext:
     keep_running_after_verify: bool = True
 
 
-def _coerce_payload_enums(payload: dict[str, Any]) -> dict[str, Any]:
+def _coerce_payload_enums_in_place(payload: dict[str, Any]) -> None:
     """Coerce device_type / connection_type to enum types in place.
 
     Agent-normalized payloads return these fields as plain strings; downstream
@@ -61,13 +61,11 @@ def _coerce_payload_enums(payload: dict[str, Any]) -> dict[str, Any]:
     connection_type = payload.get("connection_type")
     if isinstance(connection_type, str) and not isinstance(connection_type, ConnectionType):
         payload["connection_type"] = ConnectionType(connection_type)
-    return payload
 
 
 def build_transient_device(payload: dict[str, Any], host: Host | None) -> Device:
-    transient_payload = _coerce_payload_enums(
-        {key: value for key, value in payload.items() if key != "replace_device_config"}
-    )
+    transient_payload = {key: value for key, value in payload.items() if key != "replace_device_config"}
+    _coerce_payload_enums_in_place(transient_payload)
     device = Device(**transient_payload)
     if host is not None:
         device.host_id = host.id
@@ -258,7 +256,7 @@ async def resolve_host_derived_payload(
         ):
             payload["name"] = resolved_name
 
-    _coerce_payload_enums(payload)
+    _coerce_payload_enums_in_place(payload)
     return None
 
 
