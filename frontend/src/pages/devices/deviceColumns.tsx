@@ -241,7 +241,7 @@ export function buildDeviceMenuItems(
       label: 'Delete Device',
       icon: <Trash2 size={15} />,
       onSelect: () => onAction({ type: 'delete', deviceId: device.id }),
-      tone: 'critical',
+      tone: 'danger',
       disabled: rowBusy,
     },
   ];
