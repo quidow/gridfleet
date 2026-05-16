@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.13.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.12.1...gridfleet-agent-v0.13.0) (2026-05-16)
+
+
+### Features
+
+* **agent:** add os_version_display field to NormalizedDevice ([67fa911](https://github.com/quidow/gridfleet/commit/67fa911a5436ebe1cc4d8efbe8671e645225d432))
+* **backend,agent,frontend:** split Fire OS display version from routing major ([a289455](https://github.com/quidow/gridfleet/commit/a2894559f41bd15b3a6a60e593021d1b2049d778))
+
 ## [0.12.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.12.0...gridfleet-agent-v0.12.1) (2026-05-15)
 
 
