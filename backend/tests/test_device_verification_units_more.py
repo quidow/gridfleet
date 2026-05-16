@@ -785,6 +785,11 @@ async def test_preparation_normalization_success_and_resolution_errors(
     assert payload["identity_value"] == "stable-serial"
     assert payload["manufacturer"] == "Maker"
     assert payload["name"] == "Model X"
+    # Regression: agent normalize returns plain string device_type / connection_type.
+    # resolve_host_derived_payload must coerce them back to enum types so later
+    # `setattr` onto Mapped[Enum] columns does not corrupt the device row.
+    assert isinstance(payload["device_type"], DeviceType)
+    assert isinstance(payload["connection_type"], ConnectionType)
 
     monkeypatch.setattr(
         "app.devices.services.verification_preparation.normalize_pack_device",

@@ -175,3 +175,20 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             probe_session_fn=AsyncMock(),
         )
     finalize.assert_awaited_once()
+
+
+async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: device row with plain-string device_type / connection_type
+    (e.g. after `setattr` from agent-normalized save_payload in the update
+    path) must not crash run_device_health with AttributeError on `.value`.
+    """
+    job: dict[str, object] = {"stages": []}
+    monkeypatch.setattr(execution, "set_stage", AsyncMock())
+    monkeypatch.setattr(execution.settings_service, "get", lambda key: 30)
+    fetch = AsyncMock(return_value={"healthy": True})
+    monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
+
+    device = _device(device_type="real_device", connection_type="usb")
+    assert await execution.run_device_health(job, device, http_client_factory=MagicMock()) is None
+    assert fetch.await_args.kwargs["device_type"] == "real_device"
+    assert fetch.await_args.kwargs["connection_type"] == "usb"
