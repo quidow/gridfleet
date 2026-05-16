@@ -46,7 +46,7 @@ Use one of these types when a component-scoped commit should create a release no
 | `feat(scope): ...` | Minor |
 | `type(scope)!: ...` | Major after `v1.0.0`; minor while pre-`v1.0.0` |
 
-Commitlint enforces that component scopes use those release-please types. Non-release work should use a non-component scope, for example `docs(main): ...`, `ci(main): ...`, `test(main): ...`, or `chore(main): ...`.
+Use a release-please type when the change should appear in the component CHANGELOG. For non-release work that still touches a component (refactors, tests, internal docs), keep the component scope with the matching conventional type — e.g. `refactor(backend): ...`, `test(agent): ...`, `chore(frontend): ...`. release-please ignores these for version bumps. Use `(main)`, `(docs)`, `(ci)` scopes only for cross-cutting work.
 
 ## Automated Release Flow
 
