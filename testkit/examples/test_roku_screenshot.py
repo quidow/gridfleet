@@ -21,8 +21,6 @@ from examples._example_helpers import (
     save_and_assert_screenshot,
 )
 
-pytest_plugins = ["gridfleet_testkit.pytest_plugin"]
-
 
 @pytest.mark.parametrize(
     "appium_driver",
