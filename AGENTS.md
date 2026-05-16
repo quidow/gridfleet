@@ -32,7 +32,7 @@ uv run alembic upgrade head               # apply migrations
 uv run alembic revision --autogenerate -m "msg"
 uv run uvicorn app.main:app --reload      # dev server on :8000
 ```
-Tests marked `db` need a real Postgres (use the docker compose `postgres` service). Coverage threshold is 90% (`pyproject.toml`). Line length 120.
+Tests marked `db` need a real Postgres (use the docker compose `postgres` service). Coverage threshold is 99% (`pyproject.toml`). Line length 120.
 
 ### Agent (`cd agent`)
 ```bash
@@ -81,9 +81,9 @@ Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent 
 ## Architecture: What Spans Multiple Files
 
 ### Backend control plane and the leader-loop pattern
-The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~14 background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain) but only the elected leader actually runs maintenance work.
+The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~17 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher.
 
-Leader election uses **PostgreSQL advisory locks** via `app/services/control_plane_leader.py`. When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips all of them — the demo compose sets this so seeded state does not drift. The remaining `app/services/control_plane_*` modules are the control-plane leadership surface; migrated domains live under their owning `app/<domain>/` package.
+Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips all of them — the demo compose sets this so seeded state does not drift. Domain-specific loops live under their owning `app/<domain>/services/` package.
 
 ### Settings: env vars vs DB registry
 There are two distinct config surfaces. Do not conflate them:
@@ -117,14 +117,14 @@ Any code that writes `Device.operational_state`, `Device.hold`, or `Device.lifec
 
 All writes to `Device.operational_state` and `Device.hold` MUST go through `app.devices.services.lifecycle_state_machine.DeviceStateMachine.transition` under the device row lock. The machine routes through `set_operational_state` / `set_hold` so event-bus emissions and `EventLogHook` writes are preserved. Direct attribute assignment (`device.operational_state = ...`) is forbidden outside the writers themselves. See `docs/reference/device-lifecycle.md`.
 
-Writes to `AppiumNode.desired_state`, `AppiumNode.desired_port`, `AppiumNode.transition_token`, and `AppiumNode.transition_deadline` MUST go through `app.appium_nodes.services.desired_state_writer.write_desired_state` under the device row lock. Observation columns (`pid`, `port`, `active_connection_target`, `health_running`, `health_state`, `last_health_checked_at`, `last_observed_at`) are written only by sanctioned observed-state writers: the `app.appium_nodes.services.reconciler*` modules; `app.devices.services.health.apply_node_state_transition` for health fields; `app.devices.services.capability`'s active-target cache fill; `app.devices.services.verification_execution.retain_verified_node`; lifecycle crash handling in `app.devices.services.lifecycle_policy_actions`; and `app.appium_nodes.services.heartbeat`'s `restart_succeeded` event handler. Operator routes and lifecycle flows write desired state only.
+Writes to `AppiumNode.desired_state`, `AppiumNode.desired_port`, `AppiumNode.transition_token`, and `AppiumNode.transition_deadline` MUST go through `app.appium_nodes.services.desired_state_writer.write_desired_state` under the device row lock. Observation columns (`pid`, `port`, `active_connection_target`, `health_running`, `health_state`, `last_health_checked_at`, `last_observed_at`) are written only by sanctioned observed-state writers: the `app.appium_nodes.services.reconciler*` modules; `app.devices.services.health.apply_node_state_transition` for health fields; `app.devices.services.capability`'s active-target cache fill; verification flows in `app.devices.services.verification_execution`; lifecycle crash handling in `app.devices.services.lifecycle_policy_actions`; and `app.appium_nodes.services.heartbeat`'s `restart_succeeded` event handler. Operator routes and lifecycle flows write desired state only.
 
 ### Frontend conventions
 - `src/api/` is the only place that talks to the backend. Strongly-typed Axios clients mirror schemas from the backend domain packages under `backend/app/*/schemas*.py`.
 - `src/hooks/` wraps `react-query` with explicit polling intervals (5–15s) — operator screens are real-time dashboards, not request/response.
 - `src/api/openapi.ts` is generated from backend OpenAPI and committed. Keep backend public API responses on named Pydantic `response_model`s so frontend DTOs can derive from `components["schemas"]`; dynamic JSON-column or third-party subfields may stay flexible inside typed envelopes.
 - `src/types/` re-exports stable frontend names derived from `src/api/openapi.ts`. Keep only frontend-only helpers or narrow refinements there; do not hand-copy backend DTOs when a named OpenAPI schema exists.
-- Reuse `components/` primitives (`DataTable`, `Badge`, `FilterBar`, `FetchError`) instead of inventing new ones.
+- Reuse `components/ui/` primitives (`DataTable`, `Badge`, `FilterBar`, `FetchError`) instead of inventing new ones.
 - Tailwind-only spacing — no hardcoded pixels. See `docs/guides/frontend-development.md`.
 
 ### Auth gate
@@ -138,7 +138,7 @@ Off by default for local dev. When `GRIDFLEET_AUTH_ENABLED=true`:
 
 - **Migrations:** every schema change needs an Alembic revision in `backend/alembic/versions/`. Run `uv run alembic upgrade head` after pulling changes that touch models.
 - **Strict typing:** `mypy --strict` on both backend and agent. Pydantic plugin is enabled.
-- **Ruff lint set:** `E,F,W,I,N,UP,B,A,SIM,TCH,RUF,ANN`. SQLAlchemy `Mapped[]` columns under domain model packages are exempt from `TCH003` because runtime types are required.
+- **Ruff lint set:** `E,F,W,I,N,UP,B,A,BLE,SIM,TCH,RUF,ANN,PLC0415`. SQLAlchemy `Mapped[]` columns under domain model packages are exempt from `TCH003` because runtime types are required.
 - **Tests:** pytest-asyncio in `auto` mode. Backend uses `pytest-xdist` (`-n auto`); the `db` marker means "needs the real test database". Frontend unit = Vitest, frontend e2e = Playwright with mocked + live configs.
 - **Pre-commit** (`.pre-commit-config.yaml`) runs ruff format + lint + mypy on **both** backend and agent regardless of which component changed. Install hooks once with `pre-commit install`. Both venvs must exist: `cd backend && uv sync --extra dev && cd ../agent && uv sync --extra dev` — otherwise hooks fail silently with `Failed to spawn: ruff`.
 - **Conventional Commits:** all commits must use the format `type(scope): description`. Types follow conventional commits, plus `deps` for dependency updates that should be visible to release-please. Scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs`, `deps`, `deps-dev`, `main`. Use `!` for breaking changes: `feat(backend)!: description`. Enforced by commitlint in CI. **Subject must not be sentence-case, start-case, pascal-case, or upper-case** (`feat(backend): foo`, not `feat(backend): Foo`). camelCase identifiers from code (`maxSessions`, `OAuth`) are allowed. **Release-managed scopes** (`backend`, `agent`, `frontend`) reject types other than `feat`, `fix`, `perf`, `deps`, or breaking-change marker — `test`, `refactor`, `chore`, `docs` on those scopes fail the commit-msg hook.
