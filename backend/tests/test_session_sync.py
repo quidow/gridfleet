@@ -57,14 +57,118 @@ def _grid_session(
     connection_target: str,
     test_name: str | None = None,
     device_id: str | None = None,
+    *,
+    is_probe: bool = False,
 ) -> dict[str, Any]:
-    """Build a single slot session entry for the Grid response."""
-    caps = {"platformName": "android", "appium:udid": connection_target}
+    """Build a single slot session entry mirroring the real Selenium 4 hub shape.
+
+    The Appium driver strips the ``appium:`` prefix from the matched W3C
+    capabilities it returns at session start, so ``slot.session.capabilities``
+    in production exposes bare ``udid`` / ``deviceName`` and never echoes
+    ``appium:gridfleet:deviceId`` back. Identity therefore has to be read
+    from ``slot.session.stereotype`` (the agent-advertised block, which
+    keeps its prefixes verbatim). Probe / test_name markers live in the
+    ``gridfleet:`` vendor namespace which the driver does pass through
+    on ``capabilities``.
+    """
+    caps: dict[str, Any] = {
+        "platformName": "android",
+        "udid": connection_target,
+        "deviceName": connection_target,
+    }
     if test_name:
         caps["gridfleet:testName"] = test_name
+    if is_probe:
+        caps["gridfleet:probeSession"] = True
+
+    stereotype: dict[str, Any] = {
+        "platformName": "android",
+        "appium:udid": connection_target,
+    }
     if device_id:
-        caps["appium:gridfleet:deviceId"] = device_id
-    return {"sessionId": session_id, "capabilities": caps}
+        stereotype["appium:gridfleet:deviceId"] = device_id
+
+    return {"sessionId": session_id, "capabilities": caps, "stereotype": stereotype}
+
+
+async def test_sync_tracks_real_hub_payload_with_stripped_capabilities(db_session: AsyncSession, db_host: Host) -> None:
+    """Pin the long-term fix for the silent-skip bug.
+
+    Selenium 4.41 + Appium UiAutomator2 returns ``slot.session.capabilities``
+    with the ``appium:`` prefix stripped and ``appium:gridfleet:deviceId``
+    omitted entirely (the driver does not echo unknown vendor keys back into
+    the W3C capabilities response). Identity must be resolved from
+    ``slot.session.stereotype`` instead — that block carries the
+    agent-advertised, prefix-stable caps verbatim.
+
+    The literal payload below is copied from a live hub probe so the test
+    fails the moment a regression starts reading identity from
+    ``capabilities`` again.
+    """
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="firetv_real",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="192.168.1.254:5555",
+        connection_target="192.168.1.254:5555",
+        name="Fire TV Stick 4K",
+        os_version="6",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.network,
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    grid_data = {
+        "value": {
+            "ready": True,
+            "nodes": [
+                {
+                    "id": "node-real",
+                    "availability": "UP",
+                    "slots": [
+                        {
+                            "session": {
+                                "sessionId": "017b37b0-c2a8-4f90-8c3a-df4f7685944b",
+                                "start": "2026-05-16T14:12:03.733064Z",
+                                "uri": "http://192.168.88.92:5558",
+                                "capabilities": {
+                                    "automationName": "UiAutomator2",
+                                    "platformName": "ANDROID",
+                                    "udid": "192.168.1.254:5555",
+                                    "deviceName": "192.168.1.254:5555",
+                                },
+                                "stereotype": {
+                                    "appium:automationName": "UiAutomator2",
+                                    "appium:device_type": "real_device",
+                                    "appium:gridfleet:deviceId": str(device.id),
+                                    "appium:udid": "192.168.1.254:5555",
+                                    "platformName": "ANDROID",
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    result = await db_session.execute(
+        select(Session).where(Session.session_id == "017b37b0-c2a8-4f90-8c3a-df4f7685944b")
+    )
+    session = result.scalar_one()
+    assert session.status == SessionStatus.running
+    assert session.device_id == device.id
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy
 
 
 async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> None:

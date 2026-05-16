@@ -24,16 +24,15 @@ from app.devices.services import (
 )
 from app.devices.services import state as device_state
 from app.grid import service as grid_service
+from app.grid.slot_parser import iter_slot_sessions
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings import settings_service
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
-RESERVED_SESSION_ID = "reserved"
 ready_operational_state = device_state.ready_operational_state
 DeviceStateMachine = lifecycle_state_machine.DeviceStateMachine
 EventLogHook = lifecycle_state_machine_hooks.EventLogHook
@@ -50,49 +49,25 @@ _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusio
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Extract active sessions from Grid /status response.
+    """Extract trackable active sessions from a Grid /status response.
 
-    Returns {session_id: {connection_target, test_name, capabilities}} mapping.
-    Grid 4 stores sessions under node.slots[].session (not node.sessions).
-
-    Probe sessions (set by session_viability) are filtered out so the sync
-    loop does not persist transient probe activity as real sessions.
+    Returns {session_id: {connection_target, device_id, test_name,
+    requested_capabilities}}. Probe sessions are filtered out. Identity
+    parsing is delegated to ``app.grid.slot_parser`` so this loop and the
+    ``/api/grid/status`` counter share one definition of "what is a real
+    session" — see that module for why ``stereotype`` (not ``capabilities``)
+    is the authoritative source for device id and connection target.
     """
     sessions: dict[str, dict[str, Any]] = {}
-    value = grid_data.get("value", {})
-    if not isinstance(value, dict):
-        return sessions
-
-    for node in value.get("nodes", []):
-        for slot in node.get("slots", []):
-            sess = slot.get("session")
-            if not sess:
-                continue
-            sid = sess.get("sessionId")
-            if not sid or sid == RESERVED_SESSION_ID:
-                continue
-            caps = sess.get("capabilities", {})
-            if isinstance(caps, dict):
-                if caps.get("gridfleet:probeSession") is True:
-                    continue
-                if caps.get("gridfleet:testName") == PROBE_TEST_NAME:
-                    continue
-            connection_target = (
-                (caps.get("appium:udid") or caps.get("appium:deviceName")) if isinstance(caps, dict) else None
-            )
-            device_id = (
-                (caps.get("gridfleet:deviceId") or caps.get("appium:gridfleet:deviceId"))
-                if isinstance(caps, dict)
-                else None
-            )
-            test_name = caps.get("gridfleet:testName") if isinstance(caps, dict) else None
-            sessions[sid] = {
-                "connection_target": connection_target,
-                "device_id": device_id,
-                "test_name": test_name,
-                "requested_capabilities": caps if isinstance(caps, dict) else None,
-            }
-
+    for parsed in iter_slot_sessions(grid_data):
+        if parsed.is_probe:
+            continue
+        sessions[parsed.session_id] = {
+            "connection_target": parsed.connection_target,
+            "device_id": str(parsed.device_id) if parsed.device_id is not None else None,
+            "test_name": parsed.test_name,
+            "requested_capabilities": parsed.requested_capabilities,
+        }
     return sessions
 
 

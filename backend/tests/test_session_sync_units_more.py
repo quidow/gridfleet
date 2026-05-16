@@ -12,6 +12,7 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 
 def test_extract_sessions_from_grid_filters_invalid_reserved_and_probe_sessions() -> None:
     assert session_sync._extract_sessions_from_grid({"value": "bad"}) == {}
+    valid_device_id = str(uuid.uuid4())
     result = session_sync._extract_sessions_from_grid(
         {
             "value": {
@@ -36,9 +37,11 @@ def test_extract_sessions_from_grid_filters_invalid_reserved_and_probe_sessions(
                                 "session": {
                                     "sessionId": "real",
                                     "capabilities": {
-                                        "appium:udid": "target",
-                                        "gridfleet:deviceId": "device-id",
                                         "gridfleet:testName": "smoke",
+                                    },
+                                    "stereotype": {
+                                        "appium:udid": "target",
+                                        "appium:gridfleet:deviceId": valid_device_id,
                                     },
                                 }
                             },
@@ -49,16 +52,14 @@ def test_extract_sessions_from_grid_filters_invalid_reserved_and_probe_sessions(
         }
     )
 
+    # ``device_id`` is now UUID-validated upstream; non-UUID strings are
+    # dropped to ``None`` and the consumer falls back to connection_target.
     assert result == {
         "real": {
             "connection_target": "target",
-            "device_id": "device-id",
+            "device_id": valid_device_id,
             "test_name": "smoke",
-            "requested_capabilities": {
-                "appium:udid": "target",
-                "gridfleet:deviceId": "device-id",
-                "gridfleet:testName": "smoke",
-            },
+            "requested_capabilities": {"gridfleet:testName": "smoke"},
         }
     }
 
