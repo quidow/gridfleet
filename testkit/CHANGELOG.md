@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.9.2](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.1...gridfleet-testkit-v0.9.2) (2026-05-16)
+
+
+### Bug Fixes
+
+* **testkit:** remove pytest_plugins shim and stale --extra appium docs ([#270](https://github.com/quidow/gridfleet/issues/270)) ([1165fc1](https://github.com/quidow/gridfleet/commit/1165fc1e7326853e7467500c41d8b1c197e7046f))
+
 ## [0.9.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.0...gridfleet-testkit-v0.9.1) (2026-05-13)
 
 
