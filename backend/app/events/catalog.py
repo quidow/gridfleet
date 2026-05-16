@@ -176,7 +176,14 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Backend stopped calling a host agent temporarily after repeated failures.",
         default_severity="critical",
         allowed_severities=frozenset({"critical", "warning"}),
-        typical_data_fields=("host", "consecutive_failures", "cooldown_seconds", "last_error"),
+        typical_data_fields=(
+            "host_id",
+            "hostname",
+            "host",
+            "consecutive_failures",
+            "cooldown_seconds",
+            "last_error",
+        ),
     ),
     PublicEventDefinition(
         name="host.circuit_breaker.closed",
@@ -184,7 +191,7 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Backend resumed agent calls for a host after a successful probe.",
         default_severity="success",
         allowed_severities=frozenset({"success"}),
-        typical_data_fields=("host",),
+        typical_data_fields=("host_id", "hostname", "host"),
     ),
     PublicEventDefinition(
         name="session.started",
