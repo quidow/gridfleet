@@ -101,7 +101,7 @@ export default function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
           { term: 'Model Number', definition: device.model_number ?? EMPTY_GLYPH },
           { term: 'Connection', definition: CONNECTION_TYPE_LABELS[device.connection_type] ?? device.connection_type },
           { term: 'IP Address', definition: device.ip_address ?? EMPTY_GLYPH },
-          { term: 'OS Version', definition: device.os_version },
+          { term: 'OS Version', definition: device.os_version_display ?? device.os_version },
           { term: 'Software Versions', definition: softwareVersionsList(device.software_versions) },
           { term: 'Tags', definition: tagsList(device.tags) },
           {
