@@ -32,6 +32,7 @@ from app.appium_nodes.services.common import (
     build_appium_driver_caps,
     build_grid_stereotype_caps,
     get_default_plugins,
+    node_state_severity,
 )
 from app.appium_nodes.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.appium_nodes.services.reconciler_allocation import (
@@ -77,6 +78,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RESTART_BACKOFF_BASE = 2
+
+
 RESTART_MAX_RETRIES = 3
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 
@@ -178,7 +181,9 @@ async def mark_node_started(
             capability_key=key,
             value=value,
         )
-    await set_operational_state(device, await ready_operational_state(db, device), reason="Node started")
+    await set_operational_state(
+        device, await ready_operational_state(db, device), reason="Node started", severity="info"
+    )
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -198,6 +203,7 @@ async def mark_node_started(
             "new_state": "running",
             "port": port,
         },
+        severity=node_state_severity("stopped", "running"),
     )
     await db.commit()
     await db.refresh(node)
@@ -210,7 +216,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped")
+    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped", severity="info")
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -225,6 +231,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
             "old_state": "running",
             "new_state": "stopped",
         },
+        severity=node_state_severity("running", "stopped"),
     )
     await db.commit()
     await db.refresh(node)

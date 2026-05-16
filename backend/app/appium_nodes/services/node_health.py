@@ -16,6 +16,7 @@ from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
+from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
 from app.core.database import async_session
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
@@ -175,6 +176,7 @@ async def _process_node_health(
                     "new_state": "running",
                     "port": node.port,
                 },
+                severity=node_state_severity("error", "running"),
             )
             await record_event(
                 db,
@@ -254,6 +256,7 @@ async def _process_node_health(
                     "error": "Max health check failures",
                     "will_restart": False,
                 },
+                severity=None,  # will_restart=False → default critical
             )
             queue_device_crashed_event(
                 db,
@@ -263,6 +266,7 @@ async def _process_node_health(
                 reason="Max health check failures",
                 will_restart=False,
                 process=None,
+                severity=None,  # will_restart=False → default critical
             )
             await record_event(
                 db,

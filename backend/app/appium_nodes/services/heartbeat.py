@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.operations import agent_health
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
+from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.heartbeat_outcomes import (
     ClientMode,
     HeartbeatOutcome,
@@ -40,6 +41,8 @@ from app.settings import settings_service
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
 HEARTBEAT_NAMESPACE = "heartbeat.failure_count"
 APPIUM_RESTART_SEQUENCE_NAMESPACE = "heartbeat.appium_restart_sequence"
 LOOP_NAME = "heartbeat"
@@ -424,6 +427,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                         "new_state": "running",
                         "port": port,
                     },
+                    severity=node_state_severity("error", "running"),
                 )
             await record_event(
                 db,
@@ -454,6 +458,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                 "will_restart": will_retry,
                 "process": process,
             },
+            severity="warning" if will_retry else None,
         )
         queue_device_crashed_event(
             db,
@@ -463,6 +468,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             reason=error_message,
             will_restart=will_retry,
             process=process,
+            severity="warning" if will_retry else None,
         )
         await record_event(
             db,
@@ -604,6 +610,7 @@ async def _apply_host_ping_result(
                 device,
                 DeviceOperationalState.offline,
                 reason=f"Host {host.hostname} offline",
+                severity="warning",
             )
 
 

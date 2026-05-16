@@ -5,7 +5,7 @@ const STATE_TONE_MAP: Record<DeviceRead['lifecycle_policy_summary']['state'], Ba
   idle: 'neutral',
   deferred_stop: 'warning',
   backoff: 'warning',
-  excluded: 'danger',
+  excluded: 'critical',
   suppressed: 'warning',
   recoverable: 'info',
   manual: 'neutral',

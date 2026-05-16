@@ -3294,10 +3294,17 @@ export interface components {
         };
         /** EventCatalogEntryRead */
         EventCatalogEntryRead: {
+            /** Allowed Severities */
+            allowed_severities: ("info" | "success" | "warning" | "critical" | "neutral")[];
             /** Category */
             category: string;
             /** Category Display Name */
             category_display_name: string;
+            /**
+             * Default Severity
+             * @enum {string}
+             */
+            default_severity: "info" | "success" | "warning" | "critical" | "neutral";
             /** Description */
             description: string;
             /** Name */
@@ -5010,6 +5017,8 @@ export interface components {
             };
             /** Id */
             id: string;
+            /** Severity */
+            severity?: ("info" | "success" | "warning" | "critical" | "neutral") | null;
             /** Timestamp */
             timestamp: string;
             /** Type */

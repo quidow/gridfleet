@@ -6,10 +6,10 @@ import { Badge, DataTable, EmptyState, type DataTableColumn } from '../../compon
 import { useDriverPackHosts } from '../../hooks/useDriverDetail';
 import type { DriverPackHostStatus } from '../../types/driverPacks';
 
-const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+const STATUS_TONE: Record<string, 'success' | 'warning' | 'critical' | 'neutral'> = {
   online: 'success',
   installed: 'success',
-  blocked: 'danger',
+  blocked: 'critical',
   offline: 'neutral',
   pending: 'warning',
 };
@@ -82,7 +82,7 @@ const columns: DataTableColumn<DriverPackHostStatus>[] = [
       return (
         <div className="flex flex-wrap gap-1">
           {row.doctor.map((check) => (
-            <Badge key={check.check_id} tone={check.ok ? 'success' : 'danger'} title={check.message}>
+            <Badge key={check.check_id} tone={check.ok ? 'success' : 'critical'} title={check.message}>
               {check.check_id}
             </Badge>
           ))}

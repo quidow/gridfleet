@@ -1,6 +1,6 @@
 import type { HTMLAttributes, ReactNode } from 'react';
 
-export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'critical';
 type BadgeSize = 'sm' | 'md';
 
 interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'> {
@@ -11,12 +11,16 @@ interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'> {
   children: ReactNode;
 }
 
+// Semantic tone names (info/success/warning/critical/neutral) intentionally
+// differ from the Tailwind design tokens (bg-danger-*, text-danger-*). The
+// public surface uses semantic names that match backend event severity; the
+// design tokens stay on their original color names.
 const TONE_CLASSES: Record<BadgeTone, string> = {
   neutral: 'bg-neutral-soft text-neutral-foreground',
   info: 'bg-info-soft text-info-foreground',
   success: 'bg-success-soft text-success-foreground',
   warning: 'bg-warning-soft text-warning-foreground',
-  danger: 'bg-danger-soft text-danger-foreground',
+  critical: 'bg-danger-soft text-danger-foreground',
 };
 
 const DOT_CLASSES: Record<BadgeTone, string> = {
@@ -24,7 +28,7 @@ const DOT_CLASSES: Record<BadgeTone, string> = {
   info: 'bg-info-strong',
   success: 'bg-success-strong',
   warning: 'bg-warning-strong',
-  danger: 'bg-danger-strong',
+  critical: 'bg-danger-strong',
 };
 
 const SIZE_CLASSES: Record<BadgeSize, string> = {

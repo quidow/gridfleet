@@ -6,18 +6,18 @@ import CursorPagination from '../ui/CursorPagination';
 import { formatDate } from './utils';
 
 const EVENT_BADGE_MAP: Record<string, { label: string; tone: BadgeTone }> = {
-  lifecycle_auto_stopped: { label: 'Stopped', tone: 'danger' },
+  lifecycle_auto_stopped: { label: 'Stopped', tone: 'critical' },
   lifecycle_deferred_stop: { label: 'Deferred Stop', tone: 'warning' },
   lifecycle_recovery_suppressed: { label: 'Recovery Blocked', tone: 'warning' },
-  lifecycle_recovery_failed: { label: 'Recovery Failed', tone: 'danger' },
+  lifecycle_recovery_failed: { label: 'Recovery Failed', tone: 'critical' },
   lifecycle_recovery_backoff: { label: 'Backoff', tone: 'warning' },
   lifecycle_recovered: { label: 'Recovered', tone: 'success' },
-  lifecycle_run_excluded: { label: 'Run Excluded', tone: 'danger' },
+  lifecycle_run_excluded: { label: 'Run Excluded', tone: 'critical' },
   lifecycle_run_restored: { label: 'Run Restored', tone: 'success' },
-  health_check_fail: { label: 'Health Fail', tone: 'danger' },
-  connectivity_lost: { label: 'Disconnected', tone: 'danger' },
+  health_check_fail: { label: 'Health Fail', tone: 'critical' },
+  connectivity_lost: { label: 'Disconnected', tone: 'critical' },
   connectivity_restored: { label: 'Connected', tone: 'success' },
-  node_crash: { label: 'Node Crash', tone: 'danger' },
+  node_crash: { label: 'Node Crash', tone: 'critical' },
   node_restart: { label: 'Node Restart', tone: 'info' },
   hardware_health_changed: { label: 'Hardware', tone: 'warning' },
 };

@@ -515,7 +515,7 @@ async def test_recovery_rejoin_publishes_availability_event(
 ) -> None:
     captured: list[tuple[str, dict[str, object]]] = []
 
-    async def fake_publish(name: str, payload: dict[str, object]) -> None:
+    async def fake_publish(name: str, payload: dict[str, object], *, severity: object = None) -> None:
         captured.append((name, payload))
 
     monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
@@ -1522,6 +1522,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         device,
         DeviceHold.reserved,
         reason="Rejoined run after checks: reconnected",
+        severity="info",
     )
 
     busy = SimpleNamespace(

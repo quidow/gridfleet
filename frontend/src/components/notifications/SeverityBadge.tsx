@@ -1,12 +1,13 @@
 import Badge from '../ui/Badge';
-import { EVENT_SEVERITY_LABEL, severityForEventType } from './eventRegistry';
+import { EVENT_SEVERITY_LABEL, resolveEventSeverity } from './eventRegistry';
+import type { EventLike } from './eventRegistry';
 
 interface SeverityBadgeProps {
-  eventType: string;
+  event: EventLike;
 }
 
-export default function SeverityBadge({ eventType }: SeverityBadgeProps) {
-  const severity = severityForEventType(eventType);
+export default function SeverityBadge({ event }: SeverityBadgeProps) {
+  const severity = resolveEventSeverity(event);
   return (
     <Badge tone={severity} dot>
       {EVENT_SEVERITY_LABEL[severity]}

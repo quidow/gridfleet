@@ -222,7 +222,7 @@ export function incidentToneFromEventType(eventType: DeviceEventType): BadgeTone
     case 'node_crash':
     case 'lifecycle_recovery_failed':
     case 'lifecycle_run_excluded':
-      return 'danger';
+      return 'critical';
     case 'health_check_fail':
     case 'connectivity_lost':
     case 'hardware_health_changed':

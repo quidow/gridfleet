@@ -213,3 +213,37 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
 
     with pytest.raises(StopAsyncIteration):
         await asyncio.wait_for(iterator.__anext__(), 1)
+
+
+_SEVERITY_VOCAB = {"info", "success", "warning", "critical", "neutral"}
+
+
+async def test_notifications_list_includes_severity(client: AsyncClient) -> None:
+    await event_bus.publish("device.operational_state_changed", {"device_id": "dev-sev"})
+    await event_bus.publish("session.started", {"device_id": "dev-sev"})
+
+    response = await client.get("/api/notifications")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] >= 2
+    for item in body["items"]:
+        assert "severity" in item
+        assert item["severity"] is None or item["severity"] in _SEVERITY_VOCAB
+
+
+async def test_event_catalog_includes_severity(client: AsyncClient) -> None:
+    response = await client.get("/api/events/catalog")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["events"]) > 0
+    for entry in body["events"]:
+        assert "default_severity" in entry
+        assert "allowed_severities" in entry
+        assert entry["default_severity"] in _SEVERITY_VOCAB
+        assert isinstance(entry["allowed_severities"], list)
+        assert len(entry["allowed_severities"]) > 0
+        for sev in entry["allowed_severities"]:
+            assert sev in _SEVERITY_VOCAB
+        assert entry["default_severity"] in entry["allowed_severities"]

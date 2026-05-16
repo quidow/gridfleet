@@ -174,7 +174,7 @@ async def _release_devices(
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
         if device.hold == DeviceHold.reserved:
-            await set_hold(device, None, reason=f"Run '{run.name}' ended ({run.state.value})")
+            await set_hold(device, None, reason=f"Run '{run.name}' ended ({run.state.value})", severity="info")
         if device.operational_state == DeviceOperationalState.busy and await _device_has_running_session(db, device.id):
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
@@ -182,6 +182,7 @@ async def _release_devices(
             device,
             await ready_operational_state(db, device),
             reason=f"Run '{run.name}' ended ({run.state.value})",
+            severity="info",
         )
         devices_pending_lifecycle_cleanup.append(device.id)
     if commit:

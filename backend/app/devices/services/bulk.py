@@ -29,6 +29,7 @@ from app.devices.services.intent_types import (
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.devices.services.service import delete_device
 from app.events import event_bus, queue_event_for_session
+from app.events.catalog import EventSeverity
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.settings import settings_service
@@ -39,6 +40,14 @@ resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = 5
+
+
+def _bulk_severity(total: int, succeeded: int, failed: int) -> EventSeverity:
+    if failed == 0:
+        return "success"
+    if succeeded == 0:
+        return "critical"
+    return "warning"
 
 
 async def _load_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
@@ -199,14 +208,17 @@ async def _run_per_device_node_action(
 
     await asyncio.gather(*[_one(did) for did in existing_device_ids])
     succeeded = len(existing_device_ids) - len(errors)
+    total = len(existing_device_ids)
+    failed = len(errors)
     await event_bus.publish(
         "bulk.operation_completed",
         {
             "operation": operation,
-            "total": len(existing_device_ids),
+            "total": total,
             "succeeded": succeeded,
-            "failed": len(errors),
+            "failed": failed,
         },
+        severity=_bulk_severity(total, succeeded, failed),
     )
     return _result(len(existing_device_ids), succeeded, errors)
 
@@ -269,6 +281,7 @@ async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], au
             "succeeded": len(devices),
             "failed": 0,
         },
+        severity=_bulk_severity(len(devices), len(devices), 0),
     )
     await db.commit()
     return _result(len(devices), len(devices), {})
@@ -293,6 +306,7 @@ async def bulk_update_tags(
             "succeeded": len(devices),
             "failed": 0,
         },
+        severity=_bulk_severity(len(devices), len(devices), 0),
     )
     await db.commit()
     return _result(len(devices), len(devices), {})
@@ -308,14 +322,17 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str
         except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
             errors[str(device_id)] = str(e)
     succeeded = len(device_ids) - len(errors)
+    total = len(device_ids)
+    failed = len(errors)
     await event_bus.publish(
         "bulk.operation_completed",
         {
             "operation": "delete",
-            "total": len(device_ids),
+            "total": total,
             "succeeded": succeeded,
-            "failed": len(errors),
+            "failed": failed,
         },
+        severity=_bulk_severity(total, succeeded, failed),
     )
     return _result(len(device_ids), succeeded, errors)
 
@@ -331,15 +348,18 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) 
         except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk enter_maintenance must continue past one failure
             errors[str(device_id)] = str(e)
     succeeded = len(ordered_ids) - len(errors)
+    failed = len(errors)
+    total = len(ordered_ids)
     queue_event_for_session(
         db,
         "bulk.operation_completed",
         {
             "operation": "enter_maintenance",
-            "total": len(ordered_ids),
+            "total": total,
             "succeeded": succeeded,
-            "failed": len(errors),
+            "failed": failed,
         },
+        severity=_bulk_severity(total, succeeded, failed),
     )
     await db.commit()
     return _result(len(ordered_ids), succeeded, errors)
@@ -407,14 +427,17 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
 
     await asyncio.gather(*[_reconnect_one(d) for d in eligible])
     succeeded = len(devices) - len(errors)
+    total = len(devices)
+    failed = len(errors)
     await event_bus.publish(
         "bulk.operation_completed",
         {
             "operation": "reconnect",
-            "total": len(devices),
+            "total": total,
             "succeeded": succeeded,
-            "failed": len(errors),
+            "failed": failed,
         },
+        severity=_bulk_severity(total, succeeded, failed),
     )
     return _result(len(devices), succeeded, errors)
 
@@ -432,15 +455,18 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
         except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk exit_maintenance must continue past one failure
             errors[str(device.id)] = str(e)
     succeeded = len(devices) - len(errors)
+    failed = len(errors)
+    total = len(devices)
     queue_event_for_session(
         db,
         "bulk.operation_completed",
         {
             "operation": "exit_maintenance",
-            "total": len(devices),
+            "total": total,
             "succeeded": succeeded,
-            "failed": len(errors),
+            "failed": failed,
         },
+        severity=_bulk_severity(total, succeeded, failed),
     )
     await db.commit()
 

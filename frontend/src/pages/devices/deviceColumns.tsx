@@ -23,7 +23,7 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
     case 'available': return 'success';
     case 'busy': return 'warning';
     case 'verifying': return 'warning';
-    case 'offline': return 'danger';
+    case 'offline': return 'critical';
     case 'maintenance': return 'neutral';
     case 'reserved': return 'info';
   }

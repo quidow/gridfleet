@@ -2,9 +2,23 @@ from typing import Any
 
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
 from app.devices.models import Device
+from app.events.catalog import EventSeverity
 from app.settings import settings_service
 
 DEFAULT_GRID_BROWSER_BY_PLATFORM: dict[str, str] = {}
+
+
+def node_state_severity(old_state: str, new_state: str) -> EventSeverity:
+    """Derive severity from node state direction.
+
+    running→stopped is actionable (worth a warning); stopped/error→running is
+    a recovery (success); all other transitions are routine (info).
+    """
+    if new_state == "stopped" and old_state == "running":
+        return "warning"
+    if new_state == "running" and old_state != "running":
+        return "success"
+    return "info"
 
 
 def get_default_plugins() -> list[str]:

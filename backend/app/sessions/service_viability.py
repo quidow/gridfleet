@@ -395,6 +395,7 @@ async def run_session_viability_probe(
             DeviceOperationalState.busy,
             reason="Session viability probe running",
             publish_event=True,
+            severity="info",
         )
         await db.commit()
 
@@ -425,6 +426,7 @@ async def run_session_viability_probe(
                 await ready_operational_state(db, relocked),
                 reason="Session viability probe finished",
                 publish_event=True,
+                severity="info",
             )
             await db.commit()
         else:

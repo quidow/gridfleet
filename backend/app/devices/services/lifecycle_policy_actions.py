@@ -302,14 +302,16 @@ async def handle_node_crash(
         DeviceEventType.node_crash,
         {"error": reason, "source": source, "will_restart": bool(device.auto_manage)},
     )
+    _will_restart = bool(device.auto_manage)
     queue_device_crashed_event(
         db,
         device_id=str(device.id),
         device_name=device.name,
         source=source,
         reason=reason,
-        will_restart=bool(device.auto_manage),
+        will_restart=_will_restart,
         process=None,
+        severity="warning" if _will_restart else "critical",
     )
 
     if node is not None and node.observed_running:

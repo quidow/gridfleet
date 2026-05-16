@@ -29,8 +29,8 @@ describe('Badge', () => {
     expect(screen.getByText('warn').className).toMatch(/bg-warning-soft/);
   });
 
-  it('danger tone maps to danger tokens', () => {
-    render(<Badge tone="danger">err</Badge>);
+  it('critical tone maps to danger tokens', () => {
+    render(<Badge tone="critical">err</Badge>);
     expect(screen.getByText('err').className).toMatch(/bg-danger-soft/);
   });
 

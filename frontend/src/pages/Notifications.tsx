@@ -29,7 +29,7 @@ const COLUMNS: DataTableColumn<SystemEventRead>[] = [
   {
     key: 'severity',
     header: 'Severity',
-    render: (row) => <SeverityBadge eventType={row.type} />,
+    render: (row) => <SeverityBadge event={row} />,
   },
   {
     key: 'type',

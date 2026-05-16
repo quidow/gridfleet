@@ -164,7 +164,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
 ) -> None:
     captured: list[tuple[str, dict[str, object]]] = []
 
-    async def fake_publish(name: str, payload: dict[str, object]) -> None:
+    async def fake_publish(name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
         captured.append((name, payload))
 
     monkeypatch.setattr("app.events.event_bus.publish", fake_publish)

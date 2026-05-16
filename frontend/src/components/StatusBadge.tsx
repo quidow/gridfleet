@@ -22,9 +22,9 @@ const STATUS_TONE_MAP: Record<string, BadgeTone> = {
   stopped: 'neutral',
   cancelled: 'neutral',
   maintenance: 'neutral',
-  error: 'danger',
-  failed: 'danger',
-  expired: 'danger',
+  error: 'critical',
+  failed: 'critical',
+  expired: 'critical',
 };
 
 type StatusBadgeProps = {

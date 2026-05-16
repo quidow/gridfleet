@@ -161,9 +161,9 @@ describe('dashboardSummary', () => {
   });
 
   it('maps incident event_type to badge tone', () => {
-    expect(incidentToneFromEventType('lifecycle_run_excluded')).toBe('danger');
-    expect(incidentToneFromEventType('node_crash')).toBe('danger');
-    expect(incidentToneFromEventType('lifecycle_recovery_failed')).toBe('danger');
+    expect(incidentToneFromEventType('lifecycle_run_excluded')).toBe('critical');
+    expect(incidentToneFromEventType('node_crash')).toBe('critical');
+    expect(incidentToneFromEventType('lifecycle_recovery_failed')).toBe('critical');
     expect(incidentToneFromEventType('lifecycle_recovery_backoff')).toBe('warning');
     expect(incidentToneFromEventType('lifecycle_deferred_stop')).toBe('warning');
     expect(incidentToneFromEventType('health_check_fail')).toBe('warning');

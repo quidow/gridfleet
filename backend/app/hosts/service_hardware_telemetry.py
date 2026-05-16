@@ -31,11 +31,23 @@ from app.settings import settings_service
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.catalog import EventSeverity
+
 logger = get_logger(__name__)
 
 LOOP_NAME = "hardware_telemetry"
 HARDWARE_TELEMETRY_STATE_NAMESPACE = "hardware_telemetry.state"
 WARNING_OR_WORSE = {HardwareHealthStatus.warning, HardwareHealthStatus.critical}
+
+
+def _hardware_severity(old_status: str | None, new_status: str) -> EventSeverity:
+    if new_status == "critical":
+        return "critical"
+    if new_status == "ok" and old_status in ("warning", "critical"):
+        return "success"
+    return "warning"
+
+
 fetch_pack_device_telemetry = agent_operations.pack_device_telemetry
 
 
@@ -245,7 +257,12 @@ async def apply_telemetry_sample(
             DeviceEventType.hardware_health_changed,
             payload,
         )
-        queue_event_for_session(db, "device.hardware_health_changed", payload)
+        queue_event_for_session(
+            db,
+            "device.hardware_health_changed",
+            payload,
+            severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+        )
 
     return next_status
 
