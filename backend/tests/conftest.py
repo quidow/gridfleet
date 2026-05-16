@@ -270,7 +270,13 @@ async def db_host(db_session: AsyncSession) -> AsyncGenerator[Host]:
 
 @pytest.fixture
 def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """Capture every event_bus.publish invocation for after-commit contract tests."""
+    """Capture every event_bus.publish invocation for after-commit contract tests.
+
+    Captures ``(name, payload)``; the ``severity`` kwarg is accepted but dropped
+    so existing destructure-by-position tests stay compatible. Tests that need
+    to assert severity should install their own monkeypatch (see
+    ``tests/test_device_state_severity.py`` for the pattern).
+    """
     captured: list[tuple[str, dict[str, Any]]] = []
 
     async def _fake_publish(name: str, payload: dict[str, Any], severity: str | None = None) -> None:
