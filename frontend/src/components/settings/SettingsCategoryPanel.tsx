@@ -1,4 +1,4 @@
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import SettingsSection from '../SettingsSection';
 import { useBulkUpdateSettings, useResetSetting, useSettings } from '../../hooks/useSettings';
 import { buildSettingsSections } from './settingsSections';

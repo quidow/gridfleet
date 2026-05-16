@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { LockKeyhole, Shield } from 'lucide-react';
 import { Button, Card } from '../components/ui';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuth } from '../context/auth';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { normalizeNextTarget } from '../lib/authRouting';

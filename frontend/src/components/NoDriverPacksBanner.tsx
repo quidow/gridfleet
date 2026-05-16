@@ -1,7 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-export default function NoDriverPacksBanner({ packCount }: { packCount: number }) {
+export function NoDriverPacksBanner({ packCount }: { packCount: number }) {
   if (packCount > 0) return null;
 
   return (

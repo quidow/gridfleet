@@ -1,5 +1,5 @@
-import HardwareHealthBadge from '../HardwareHealthBadge';
-import HardwareTelemetryStateBadge from '../HardwareTelemetryStateBadge';
+import { HardwareHealthBadge } from '../HardwareHealthBadge';
+import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
 import {
   formatBatteryLevel,
   formatBatteryTemperature,

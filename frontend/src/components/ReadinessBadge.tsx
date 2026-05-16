@@ -8,7 +8,7 @@ const READINESS_TONE_MAP: Record<DeviceReadinessState, BadgeTone> = {
   verified: 'success',
 };
 
-export default function ReadinessBadge({ state }: { state: DeviceReadinessState }) {
+export function ReadinessBadge({ state }: { state: DeviceReadinessState }) {
   const tone = READINESS_TONE_MAP[state] ?? 'neutral';
   return (
     <Badge tone={tone}>

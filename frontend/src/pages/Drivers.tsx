@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Package } from 'lucide-react';
 import { Badge, Button, DataTable, EmptyState, PageHeader, type DataTableColumn } from '../components/ui';
 import FetchError from '../components/ui/FetchError';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import { AddDriverDialog } from '../components/settings/AddDriverDialog';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import { usePageTitle } from '../hooks/usePageTitle';

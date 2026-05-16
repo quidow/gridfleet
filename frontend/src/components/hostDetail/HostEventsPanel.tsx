@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { useHostEvents } from '../../hooks/useHosts';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import FetchError from '../ui/FetchError';
 import Select from '../ui/Select';
 

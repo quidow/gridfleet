@@ -5,8 +5,8 @@ import {
 import { Download } from 'lucide-react';
 import { useSessionSummary } from '../../hooks/useAnalytics';
 import { downloadAnalyticsCsv } from '../../api/analytics';
-import LoadingSpinner from '../LoadingSpinner';
-import PlatformIcon from '../PlatformIcon';
+import { LoadingSpinner } from '../LoadingSpinner';
+import { PlatformIcon } from '../PlatformIcon';
 import AnalyticsEmptyState from './AnalyticsEmptyState';
 import Card from '../ui/Card';
 import { resolvePlatformLabel } from '../../lib/labels';

@@ -7,10 +7,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import FetchError from '../ui/FetchError';
 import AnalyticsEmptyState from '../analytics/AnalyticsEmptyState';
-import HardwareTelemetryStateBadge from '../HardwareTelemetryStateBadge';
+import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import { deriveHostResourceTelemetryState } from '../../lib/hostResourceTelemetry';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormatting';

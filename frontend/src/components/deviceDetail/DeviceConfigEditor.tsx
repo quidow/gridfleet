@@ -6,7 +6,7 @@ import {
   useConfigHistory,
 } from '../../hooks/useDevices';
 import ConfirmDialog from '../ui/ConfirmDialog';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import SetupVerificationModal from '../../pages/devices/SetupVerificationModal';
 import Button from '../ui/Button';
 import type { ConfigAuditEntry, DeviceDetail } from '../../types';

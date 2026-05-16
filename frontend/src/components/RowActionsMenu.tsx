@@ -31,7 +31,7 @@ function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
   return document.querySelector('main');
 }
 
-export default function RowActionsMenu({ label, items }: Props) {
+export function RowActionsMenu({ label, items }: Props) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);

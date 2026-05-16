@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Cable, Cloud, LockKeyhole, Pencil, Play, Power, RefreshCw, Square, Trash2, Wifi, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import PlatformIcon from '../../components/PlatformIcon';
+import { PlatformIcon } from '../../components/PlatformIcon';
 import Badge, { type BadgeTone } from '../../components/ui/Badge';
 import Popover from '../../components/ui/Popover';
 import { missingSetupFieldLabel } from '../../components/readiness';

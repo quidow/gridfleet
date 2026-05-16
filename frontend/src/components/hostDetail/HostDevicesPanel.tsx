@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import PlatformIcon from '../PlatformIcon';
+import { PlatformIcon } from '../PlatformIcon';
 import { AvailabilityCell } from '../../pages/devices/deviceColumns';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';

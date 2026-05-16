@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import * as driverPacks from '../api/driverPacks';
-import PlatformIcon from './PlatformIcon';
+import { PlatformIcon } from './PlatformIcon';
 
 function makeWrapper() {
   const queryClient = new QueryClient({

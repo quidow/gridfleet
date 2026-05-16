@@ -6,7 +6,7 @@ import {
   useTestDataHistory,
   useReplaceDeviceTestData,
 } from '../../hooks/useDevices';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import Button from '../ui/Button';
 import type { DeviceDetail, TestDataAuditEntry } from '../../types';
 import { formatDate } from './utils';

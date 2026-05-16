@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
-import StatusBadge from '../StatusBadge';
-import PlatformIcon from '../PlatformIcon';
+import { StatusBadge } from '../StatusBadge';
+import { PlatformIcon } from '../PlatformIcon';
 import Badge from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';

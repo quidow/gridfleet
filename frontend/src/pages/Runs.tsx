@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Play } from 'lucide-react';
 import { useRuns, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
-import StatusBadge from '../components/StatusBadge';
+import { StatusBadge } from '../components/StatusBadge';
 import EmptyState from '../components/ui/EmptyState';
 import DataTable from '../components/ui/DataTable';
 import FilterBar from '../components/ui/FilterBar';

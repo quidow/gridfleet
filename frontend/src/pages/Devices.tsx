@@ -9,7 +9,7 @@ import {
   useStopNode,
   useToggleDeviceAutoManage,
 } from '../hooks/useDevices';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import BulkActionToolbar from './devices/BulkActionToolbar';
 import AddDeviceModal from './devices/AddDeviceModal';
 import SetupVerificationModal from './devices/SetupVerificationModal';
@@ -18,7 +18,7 @@ import DeviceEditModal from './devices/DeviceEditModal';
 import DevicesFiltersBar from './devices/DevicesFiltersBar';
 import DevicesTable from './devices/DevicesTable';
 import DevicesSummaryPills from './devices/DevicesSummaryPills';
-import NoDriverPacksBanner from '../components/NoDriverPacksBanner';
+import { NoDriverPacksBanner } from '../components/NoDriverPacksBanner';
 import {
   getVerificationAction,
 } from './devices/devicePageHelpers';
