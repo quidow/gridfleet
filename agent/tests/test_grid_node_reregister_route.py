@@ -18,13 +18,10 @@ class _FakeGridNodeService:
         self.node_id = node_id
         self.calls: list[dict[str, object]] = []
 
-    def slot_stereotype_caps(self) -> dict[str, object]:
-        return {"platformName": "Android", "appium:udid": "device-1", "gridfleet:run_id": "free"}
-
-    async def reregister_with_stereotype(
-        self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
+    async def reregister_with_caps_update(
+        self, *, updates: dict[str, object], drain_grace_sec: float | None = None
     ) -> None:
-        self.calls.append(new_caps)
+        self.calls.append(updates)
 
 
 class _FakeSupervisorHandle:
@@ -49,7 +46,7 @@ async def test_reregister_route_invokes_grid_node_service() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"grid_run_id": str(target)}
-    assert service.calls == [{"platformName": "Android", "appium:udid": "device-1", "gridfleet:run_id": str(target)}]
+    assert service.calls == [{"gridfleet:run_id": str(target)}]
 
 
 @pytest.mark.asyncio
@@ -63,7 +60,7 @@ async def test_reregister_route_with_null_target_sets_free_stereotype() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"grid_run_id": None}
-    assert service.calls == [{"platformName": "Android", "appium:udid": "device-1", "gridfleet:run_id": "free"}]
+    assert service.calls == [{"gridfleet:run_id": "free"}]
 
 
 @pytest.mark.asyncio
