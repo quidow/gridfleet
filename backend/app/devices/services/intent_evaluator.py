@@ -80,7 +80,16 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
             reason=f"same priority node_process conflict at priority {highest_priority}",
         )
 
-    winner = sorted(winners, key=lambda intent: intent.source)[0]
+    # Prefer intents carrying a transition_token among same-priority `start`
+    # winners. A token signals an explicit one-shot transition (e.g. operator
+    # restart) and must not be displaced by tokenless standing-order
+    # baselines (e.g. `auto_recovery:node:*`, `baseline:idle`) that happen
+    # to sort lexicographically earlier.
+    def _winner_sort_key(intent: DeviceIntent) -> tuple[int, str]:
+        has_token = isinstance(intent.payload.get("transition_token"), str)
+        return (0 if has_token else 1, intent.source)
+
+    winner = sorted(winners, key=_winner_sort_key)[0]
     if _action(winner) == "start":
         transition_token = _optional_uuid(winner.payload.get("transition_token"))
         transition_deadline = _optional_datetime(winner.payload.get("transition_deadline"))

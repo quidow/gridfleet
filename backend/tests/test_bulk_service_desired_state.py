@@ -19,6 +19,65 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
+async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_present(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression: with an auto_recovery:node intent already registered at
+    PRIORITY_AUTO_RECOVERY, the operator restart intent (same priority) used
+    to lose the lex-by-source tie-break, dropping its transition_token before
+    write_desired_state ran. Convergence then emitted `confirm_running` and
+    the node never restarted. The evaluator now prefers tokenized intents on
+    same-priority `start` ties.
+    """
+    from app.appium_nodes.services.desired_state_writer import write_desired_state
+    from app.devices.services import bulk as bulk_service
+    from app.devices.services.intent import IntentService
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
+
+    device = await create_device(db_session, host_id=db_host.id, name="bk-restart", verified=True)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        pid=12345,
+        active_connection_target="device-1",
+    )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+    await write_desired_state(
+        db_session,
+        node=node,
+        target=AppiumDesiredState.running,
+        desired_port=4723,
+        caller="bulk",
+    )
+    # Simulate the standing baseline registered by lifecycle_policy when a
+    # device boots healthy. Same priority + axis as the operator restart, but
+    # no transition_token.
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"auto_recovery:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": 4723},
+            ),
+        ],
+        reason="seed baseline",
+    )
+    await db_session.commit()
+    assert node.transition_token is None
+
+    await bulk_service._bulk_restart_one(db_session, device, caller="bulk")
+    await db_session.refresh(node)
+
+    assert node.transition_token is not None, "restart intent's token must reach the node row"
+    assert node.transition_deadline is not None
+    assert node.desired_state == AppiumDesiredState.running
+
+
 async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     db_session: AsyncSession,
     db_host: Host,
