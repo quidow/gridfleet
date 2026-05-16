@@ -266,17 +266,12 @@ def build_agent_start_payload(
     accepting_new_sessions = node.accepting_new_sessions if node is not None else True
     stop_pending = node.stop_pending if node is not None else False
     grid_run_id = node.desired_grid_run_id if node is not None else None
-    stereotype_caps = (
-        build_grid_stereotype_caps(
-            device,
-            session_caps=allocated_caps,
-            extra_caps=extra_caps,
-            manager_owned_keys=manager_owned_keys,
-        )
-        or {}
-    )
+    # The minimal stereotype emitted here is the manager-owned routing surface
+    # (deviceId + tag fanout + run_id). Pack-rendered stereotype (platformName,
+    # automationName, manifest-declared filters) is merged in by start_remote_node
+    # via build_pack_start_payload — see below.
+    stereotype_caps = build_grid_stereotype_caps(device, pack_stereotype=None)
     stereotype_caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id else "free"
-    stereotype_caps["gridfleet:available"] = accepting_new_sessions
     return {
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,

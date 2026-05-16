@@ -5,8 +5,6 @@ from app.devices.models import Device
 from app.events.catalog import EventSeverity
 from app.settings import settings_service
 
-DEFAULT_GRID_BROWSER_BY_PLATFORM: dict[str, str] = {}
-
 
 def node_state_severity(old_state: str, new_state: str) -> EventSeverity:
     """Derive severity from node state direction.
@@ -80,14 +78,21 @@ def build_appium_driver_caps(
 def build_grid_stereotype_caps(
     device: Device,
     *,
-    session_caps: dict[str, Any] | None = None,
-    extra_caps: dict[str, Any] | None = None,
-    manager_owned_keys: frozenset[str] | None = None,
+    pack_stereotype: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    stereotype = build_extra_caps(device, session_caps=session_caps, manager_owned_keys=manager_owned_keys)
-    if extra_caps:
-        stereotype.update(extra_caps)
-    default_browser_name = DEFAULT_GRID_BROWSER_BY_PLATFORM.get(device.platform_id)
-    if default_browser_name and "browserName" not in stereotype:
-        stereotype["browserName"] = default_browser_name
+    """Compose the Selenium Grid slot stereotype for *device*.
+
+    The stereotype is the per-slot routing surface used by the Selenium hub to
+    match incoming session requests against nodes. Appium-driver-side caps
+    (manufacturer, model, ip, sanitized device_config caps) deliberately stay
+    out — they flow to the driver via ``extra_caps`` instead.
+    """
+    stereotype: dict[str, Any] = {}
+    if pack_stereotype:
+        stereotype.update(pack_stereotype)
+    if device.id:
+        stereotype["appium:gridfleet:deviceId"] = str(device.id)
+    if device.tags:
+        for key, value in device.tags.items():
+            stereotype[f"appium:gridfleet:tag:{key}"] = value
     return stereotype

@@ -285,19 +285,13 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
         device_config={},
         tags=None,
     )
-    monkeypatch_default = {"android_mobile": "Chrome"}
-    original = node_service_common.DEFAULT_GRID_BROWSER_BY_PLATFORM
-    node_service_common.DEFAULT_GRID_BROWSER_BY_PLATFORM = monkeypatch_default
-    try:
-        assert node_service_common.build_grid_stereotype_caps(device_for_caps)["browserName"] == "Chrome"
-        assert (
-            node_service_common.build_grid_stereotype_caps(device_for_caps, extra_caps={"browserName": "Safari"})[
-                "browserName"
-            ]
-            == "Safari"
-        )
-    finally:
-        node_service_common.DEFAULT_GRID_BROWSER_BY_PLATFORM = original
+    # Pack stereotype is the only source for routing keys; the builder no longer
+    # injects browserName defaults of its own. The pack manifest decides whether
+    # browserName belongs in the stereotype.
+    pack_stereotype = {"browserName": "Chrome"}
+    caps = node_service_common.build_grid_stereotype_caps(device_for_caps, pack_stereotype=pack_stereotype)
+    assert caps["browserName"] == "Chrome"
+    assert "appium:gridfleet:deviceId" in caps
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     with pytest.raises(pack_storage_service.PackStorageError):
