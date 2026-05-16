@@ -182,14 +182,14 @@ async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(mon
 
 
 @pytest.mark.asyncio
-async def test_reregister_with_stereotype_publishes_drain_remove_add_sequence() -> None:
+async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
     bus.events.clear()
 
-    await service.reregister_with_stereotype(
-        new_caps={"platformName": "Android", "gridfleet:run_id": "abc-123"},
+    await service.reregister_with_caps_update(
+        updates={"gridfleet:run_id": "abc-123"},
         drain_grace_sec=0,
     )
 
@@ -213,8 +213,8 @@ async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
     service.state.commit(reservation.id, session_id="session-1", started_at=time.monotonic())
     bus.events.clear()
 
-    await service.reregister_with_stereotype(
-        new_caps={"platformName": "Android", "gridfleet:run_id": "xyz"},
+    await service.reregister_with_caps_update(
+        updates={"gridfleet:run_id": "xyz"},
         drain_grace_sec=0.01,
     )
 
@@ -243,27 +243,6 @@ def _config() -> GridNodeConfig:
 async def test_service_node_id_property() -> None:
     service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
     assert service.node_id == "node-1"
-
-
-def test_service_slot_stereotype_caps_returns_first_caps() -> None:
-    service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
-    assert service.slot_stereotype_caps() == {"platformName": "Android"}
-
-
-def test_service_slot_stereotype_caps_empty_when_no_slots() -> None:
-    config = GridNodeConfig(
-        node_id="node-1",
-        node_uri="http://127.0.0.1:5555",
-        appium_upstream="http://127.0.0.1:4723",
-        slots=[],
-        hub_publish_url="tcp://127.0.0.1:4442",
-        hub_subscribe_url="tcp://127.0.0.1:4443",
-        heartbeat_sec=5.0,
-        session_timeout_sec=300.0,
-        proxy_timeout_sec=30.0,
-    )
-    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer())
-    assert service.slot_stereotype_caps() == {}
 
 
 @pytest.mark.asyncio
@@ -403,8 +382,8 @@ async def test_service_heartbeat_when_drain_and_busy_does_not_request_stop() -> 
 @pytest.mark.asyncio
 async def test_service_reregister_not_started_raises() -> None:
     service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
-    with pytest.raises(RuntimeError, match="reregister_with_stereotype"):
-        await service.reregister_with_stereotype(new_caps={"x": 1})
+    with pytest.raises(RuntimeError, match="reregister_with_caps_update"):
+        await service.reregister_with_caps_update(updates={"x": 1})
 
 
 @pytest.mark.asyncio
@@ -434,13 +413,48 @@ async def test_service_drain_heartbeat_publishes_draining() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_reregister_with_stereotype_updates_caps() -> None:
+async def test_service_reregister_with_caps_update_merges_into_existing_caps() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
     bus.events.clear()
-    await service.reregister_with_stereotype(new_caps={"platformName": "iOS"}, drain_grace_sec=0)
-    assert service.state.snapshot_slots()[0].stereotype.caps == {"platformName": "iOS"}
+    await service.reregister_with_caps_update(updates={"gridfleet:run_id": "run-1"}, drain_grace_sec=0)
+    assert service.state.snapshot_slots()[0].stereotype.caps == {
+        "platformName": "Android",
+        "gridfleet:run_id": "run-1",
+    }
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_reregister_preserves_per_slot_browser_name() -> None:
+    """Regression: shared-field reconfigure must not collapse chrome slot into native."""
+    config = GridNodeConfig(
+        node_id="node-1",
+        node_uri="http://127.0.0.1:5555",
+        appium_upstream="http://127.0.0.1:4723",
+        slots=[
+            Slot(id="native", stereotype=Stereotype(caps={"platformName": "Android", "gridfleet:run_id": "free"})),
+            Slot(
+                id="chrome",
+                stereotype=Stereotype(
+                    caps={"platformName": "Android", "browserName": "chrome", "gridfleet:run_id": "free"}
+                ),
+            ),
+        ],
+        hub_publish_url="tcp://127.0.0.1:4442",
+        hub_subscribe_url="tcp://127.0.0.1:4443",
+        heartbeat_sec=5.0,
+        session_timeout_sec=300.0,
+        proxy_timeout_sec=30.0,
+    )
+    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer())
+    await service.start()
+    await service.reregister_with_caps_update(updates={"gridfleet:run_id": "run-1"}, drain_grace_sec=0)
+    snapshot = service.state.snapshot_slots()
+    assert snapshot[0].stereotype.caps.get("browserName") is None
+    assert snapshot[1].stereotype.caps.get("browserName") == "chrome"
+    assert snapshot[0].stereotype.caps != snapshot[1].stereotype.caps
     await service.stop()
 
 

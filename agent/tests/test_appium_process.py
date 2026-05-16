@@ -135,16 +135,13 @@ class ReconfigurableGridNodeService:
         self.calls: list[dict[str, object]] = []
         self.busy = busy
 
-    def slot_stereotype_caps(self) -> dict[str, object]:
-        return {"platformName": "Android", "gridfleet:run_id": "free"}
-
     def has_active_session(self) -> bool:
         return self.busy
 
-    async def reregister_with_stereotype(
-        self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
+    async def reregister_with_caps_update(
+        self, *, updates: dict[str, object], drain_grace_sec: float | None = None
     ) -> None:
-        self.calls.append(dict(new_caps))
+        self.calls.append(dict(updates))
 
 
 class ReconfigurableGridNodeHandle(RecordingGridNodeHandle):
@@ -523,7 +520,7 @@ async def test_reconfigure_updates_grid_stereotype() -> None:
         grid_run_id=run_id,
     )
 
-    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id)}]
+    assert service.calls == [{"gridfleet:run_id": str(run_id)}]
 
 
 async def test_reconfigure_unknown_port_raises_device_not_found() -> None:

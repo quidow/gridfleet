@@ -176,12 +176,6 @@ class GridNodeService:
     def node_id(self) -> str:
         return self.config.node_id
 
-    def slot_stereotype_caps(self) -> dict[str, object]:
-        slots = self.state.snapshot_slots()
-        if not slots:
-            return {}
-        return dict(slots[0].stereotype.caps)
-
     def has_active_session(self) -> bool:
         return any(slot.state == "BUSY" for slot in self.state.snapshot().slots)
 
@@ -254,14 +248,14 @@ class GridNodeService:
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
-    async def reregister_with_stereotype(
+    async def reregister_with_caps_update(
         self,
         *,
-        new_caps: dict[str, object],
+        updates: dict[str, object],
         drain_grace_sec: float | None = None,
     ) -> None:
         if not self._started:
-            raise RuntimeError("GridNodeService.reregister_with_stereotype called before start()")
+            raise RuntimeError("GridNodeService.reregister_with_caps_update called before start()")
 
         grace = self.config.session_timeout_sec if drain_grace_sec is None else drain_grace_sec
         await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
@@ -278,7 +272,7 @@ class GridNodeService:
         await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
         await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
 
-        self.state.replace_slot_stereotype(new_caps)
+        self.state.update_all_slot_caps(updates)
 
         await asyncio.sleep(0.25)
         await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))

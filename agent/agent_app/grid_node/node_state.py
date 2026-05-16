@@ -73,7 +73,7 @@ class NodeState:
     # "any slot non-FREE" guard before either flips a slot to RESERVED,
     # double-booking the device that the hub-side maxSessions=1 cap is meant
     # to protect. The single lock also keeps stereotype reads consistent with
-    # concurrent replace_slot_stereotype writes.
+    # concurrent update_all_slot_caps writes.
     def __init__(self, *, slots: list[Slot], now: Callable[[], float]) -> None:
         self._slots = [_SlotRuntime(slot=slot) for slot in slots]
         self._now = now
@@ -194,13 +194,24 @@ class NodeState:
                 drain=self._drain,
             )
 
-    def replace_slot_stereotype(self, new_caps: dict[str, object]) -> None:
+    def update_all_slot_caps(self, updates: dict[str, object]) -> None:
+        """Merge ``updates`` into every slot's stereotype, preserving per-slot caps.
+
+        Used for shared fields that change across the whole node (e.g.
+        ``gridfleet:run_id``). Per-slot identity caps such as
+        ``browserName="chrome"`` on the chrome slot of an Android device MUST
+        survive — overwriting the full caps dict from a single source would
+        collapse distinct slots into identical stereotypes and the hub would
+        stop matching browser sessions.
+        """
         with self._lock:
             for runtime in self._slots:
+                merged: dict[str, Any] = dict(runtime.slot.stereotype.caps)
+                merged.update(updates)
                 runtime.slot = Slot(
                     id=runtime.slot.id,
                     state=runtime.slot.state,
-                    stereotype=Stereotype(caps=dict(new_caps)),
+                    stereotype=Stereotype(caps=merged),
                 )
 
     def snapshot_slots(self) -> list[Slot]:

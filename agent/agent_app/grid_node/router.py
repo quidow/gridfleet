@@ -22,7 +22,6 @@ async def reregister_grid_node(
     service: GridNodeServiceDep,
     payload: GridNodeReregisterRequest,
 ) -> GridNodeReregisterResponse:
-    caps = service.slot_stereotype_caps()
-    caps["gridfleet:run_id"] = str(payload.target_run_id) if payload.target_run_id is not None else "free"
-    await service.reregister_with_stereotype(new_caps=caps)
+    run_id_value = str(payload.target_run_id) if payload.target_run_id is not None else "free"
+    await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
     return GridNodeReregisterResponse(grid_run_id=payload.target_run_id)

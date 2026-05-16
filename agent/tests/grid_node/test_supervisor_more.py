@@ -49,14 +49,11 @@ class RecordingService:
     def snapshot(self) -> dict[str, object]:
         return {"requested_stop": self.request_stop}
 
-    def slot_stereotype_caps(self) -> dict[str, object]:
-        return {}
-
     def has_active_session(self) -> bool:
         return False
 
-    async def reregister_with_stereotype(
-        self, *, new_caps: dict[str, object], drain_grace_sec: float | None = None
+    async def reregister_with_caps_update(
+        self, *, updates: dict[str, object], drain_grace_sec: float | None = None
     ) -> None:
         pass
 
