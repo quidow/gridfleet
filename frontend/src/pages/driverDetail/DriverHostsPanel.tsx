@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Server } from 'lucide-react';
-import LoadingSpinner from '../../components/LoadingSpinner';
+import { LoadingSpinner } from '../../components/LoadingSpinner';
 import FetchError from '../../components/ui/FetchError';
 import { Badge, DataTable, EmptyState, type DataTableColumn } from '../../components/ui';
 import { useDriverPackHosts } from '../../hooks/useDriverDetail';

@@ -8,7 +8,7 @@ type Props = {
   state: HardwareTelemetryState | undefined;
 };
 
-export default function HardwareTelemetryStateBadge({ state }: Props) {
+export function HardwareTelemetryStateBadge({ state }: Props) {
   const normalizedState = state ?? 'unknown';
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${HARDWARE_TELEMETRY_STATE_STYLES[normalizedState]}`}>

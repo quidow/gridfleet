@@ -4,7 +4,7 @@ import { Toaster } from 'sonner';
 import Sidebar from './Sidebar';
 import { useEventStream } from '../hooks/useEventStream';
 import { EventStreamContext } from '../context/EventStreamContext';
-import LoadingSpinner from './LoadingSpinner';
+import { LoadingSpinner } from './LoadingSpinner';
 import SidebarProvider from './SidebarProvider';
 import { PageErrorBoundary } from './ErrorBoundary';
 

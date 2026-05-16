@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { useApproveHost, useHost, useHostCapabilities, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import SetupVerificationModal from './devices/SetupVerificationModal';
 import HostDiscoveryModal from '../components/hosts/HostDiscoveryModal';
 import { useHostDiscoveryFlow } from '../components/hosts/useHostDiscoveryFlow';

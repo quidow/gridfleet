@@ -15,8 +15,8 @@ import {
   useDeviceCapabilities,
 } from '../hooks/useDevices';
 import { useHosts } from '../hooks/useHosts';
-import PlatformIcon from '../components/PlatformIcon';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { PlatformIcon } from '../components/PlatformIcon';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import SetupVerificationModal from './devices/SetupVerificationModal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import type { DeviceVerificationUpdate } from '../types';

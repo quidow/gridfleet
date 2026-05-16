@@ -1,6 +1,6 @@
 import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import ConfirmDialog from '../ui/ConfirmDialog';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import Modal from '../ui/Modal';
 import { usePlugins } from '../../hooks/usePlugins';
 import { usePluginRegistryAdmin } from './usePluginRegistryAdmin';

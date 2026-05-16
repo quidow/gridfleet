@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { exportPack } from '../api/driverPackAuthoring';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 import Card from '../components/ui/Card';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import FetchError from '../components/ui/FetchError';

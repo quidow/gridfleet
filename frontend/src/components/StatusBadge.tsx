@@ -32,7 +32,7 @@ type StatusBadgeProps = {
   label?: string;
 };
 
-export default function StatusBadge({ status, label }: StatusBadgeProps) {
+export function StatusBadge({ status, label }: StatusBadgeProps) {
   const tone: BadgeTone = STATUS_TONE_MAP[status] ?? 'neutral';
   return <Badge tone={tone}>{label ?? formatStatus(status)}</Badge>;
 }

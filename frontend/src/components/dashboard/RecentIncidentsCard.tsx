@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useDevices } from '../../hooks/useDevices';
 import { useRecentLifecycleIncidents } from '../../hooks/useLifecycle';
-import LifecyclePolicyBadge from '../LifecyclePolicyBadge';
+import { LifecyclePolicyBadge } from '../LifecyclePolicyBadge';
 import Badge from '../ui/Badge';
 import Card from '../ui/Card';
 import FetchError from '../ui/FetchError';

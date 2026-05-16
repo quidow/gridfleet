@@ -6,7 +6,7 @@ import { useDevices } from '../hooks/useDevices';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import EmptyState from '../components/ui/EmptyState';
 import SetupVerificationModal from './devices/SetupVerificationModal';
-import StatusBadge from '../components/StatusBadge';
+import { StatusBadge } from '../components/StatusBadge';
 import AddHostModal from '../components/hosts/AddHostModal';
 import HostDiscoveryModal from '../components/hosts/HostDiscoveryModal';
 import { formatHostLastHeartbeat } from '../components/hosts/hostFormatting';

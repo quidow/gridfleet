@@ -1,6 +1,6 @@
 import Modal from '../ui/Modal';
 import { Button, Checkbox } from '../ui';
-import ReadinessBadge from '../ReadinessBadge';
+import { ReadinessBadge } from '../ReadinessBadge';
 import { getDiscoveryImportActionLabel } from '../../lib/deviceWorkflow';
 import { resolvePlatformLabel } from '../../lib/labels';
 import { missingSetupFieldLabel } from '../readiness';

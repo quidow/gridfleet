@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { DeviceDetail, DeviceRead } from '../../types';
 import { resolvePlatformLabel } from '../../lib/labels';
-import EmulatorStateBadge from '../../components/EmulatorStateBadge';
+import { EmulatorStateBadge } from '../../components/EmulatorStateBadge';
 import ReservationPill from './ReservationPill';
 
 export function buildDeviceDetailSubtitleNode(

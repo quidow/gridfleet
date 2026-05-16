@@ -11,7 +11,7 @@ const STATE_TONE_MAP: Record<DeviceRead['lifecycle_policy_summary']['state'], Ba
   manual: 'neutral',
 };
 
-export default function LifecyclePolicyBadge({
+export function LifecyclePolicyBadge({
   summary,
 }: {
   summary: DeviceRead['lifecycle_policy_summary'];

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import NoDriverPacksBanner from './NoDriverPacksBanner';
+import { NoDriverPacksBanner } from './NoDriverPacksBanner';
 
 it('renders warning when no packs', () => {
   render(<NoDriverPacksBanner packCount={0} />, { wrapper: MemoryRouter });

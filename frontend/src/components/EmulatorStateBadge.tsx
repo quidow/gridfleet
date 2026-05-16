@@ -14,7 +14,7 @@ interface Props {
   className?: string;
 }
 
-export default function EmulatorStateBadge({ state, className }: Props) {
+export function EmulatorStateBadge({ state, className }: Props) {
   if (!state) return null;
 
   const config = STATE_CONFIG[state];

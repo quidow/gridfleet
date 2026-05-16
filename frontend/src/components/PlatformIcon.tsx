@@ -38,7 +38,7 @@ function stableColorClass(key: string | null | undefined): string {
   return PLATFORM_COLOR_CLASSES[hash % PLATFORM_COLOR_CLASSES.length];
 }
 
-export default function PlatformIcon({
+export function PlatformIcon({
   platformId,
   platformLabel,
   showLabel = true,

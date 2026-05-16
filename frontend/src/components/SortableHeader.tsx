@@ -10,7 +10,7 @@ interface SortableHeaderProps {
   align?: 'left' | 'center' | 'right';
 }
 
-export default function SortableHeader({
+export function SortableHeader({
   label,
   active,
   direction,

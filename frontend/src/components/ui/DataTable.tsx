@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import SortableHeader from '../SortableHeader';
-import RowActionsMenu, { type RowActionItem } from '../RowActionsMenu';
+import { SortableHeader } from '../SortableHeader';
+import { RowActionsMenu, type RowActionItem } from '../RowActionsMenu';
 import EmptyState from './EmptyState';
 import { Table } from 'lucide-react';
 

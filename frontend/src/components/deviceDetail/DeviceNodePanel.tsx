@@ -1,5 +1,5 @@
 import { Play, Power, RefreshCw, Square, Wrench } from 'lucide-react';
-import StatusBadge from '../../components/StatusBadge';
+import { StatusBadge } from '../../components/StatusBadge';
 import { isEmulatorRunning, isEmulatorStopped } from '../../lib/emulatorState';
 import {
   useEnterDeviceMaintenance,

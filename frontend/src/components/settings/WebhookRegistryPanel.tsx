@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2, Pencil, Play, RotateCcw, Trash2 } from 'lucide-react';
 import ConfirmDialog from '../ui/ConfirmDialog';
-import LoadingSpinner from '../LoadingSpinner';
+import { LoadingSpinner } from '../LoadingSpinner';
 import Modal from '../ui/Modal';
 import { useEventCatalog } from '../../hooks/useEventCatalog';
 import { useRetryWebhookDelivery, useWebhookDeliveries, useWebhooks } from '../../hooks/useWebhooks';
