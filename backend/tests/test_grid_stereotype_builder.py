@@ -108,3 +108,19 @@ def test_minimal_stereotype_device_id_wins_over_pack_collision() -> None:
     caps = build_grid_stereotype_caps(device, pack_stereotype=pack_stereotype)
 
     assert caps["appium:gridfleet:deviceId"] == str(device.id)
+
+
+def test_minimal_stereotype_skips_device_id_when_unset() -> None:
+    """Guard for transient device rows without an id assigned yet.
+
+    Persisted devices always have id, but the builder is called from synchronous
+    payload-construction paths that operate on Device instances before flush
+    can complete; emitting the literal "None" string would poison the Grid hub
+    routing index.
+    """
+    device = _device(id=None)
+
+    caps = build_grid_stereotype_caps(device, pack_stereotype={"platformName": "Android"})
+
+    assert "appium:gridfleet:deviceId" not in caps
+    assert caps["platformName"] == "Android"

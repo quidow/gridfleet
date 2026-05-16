@@ -464,10 +464,16 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
 
 
 async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() -> None:
-    """accepting_new_sessions=False no longer surfaces in stereotype — the
-    gridfleet:available sentinel was dropped (it had no readers). The agent still
-    accepts the flag from the backend; routing-suppression is enforced via the
-    in-process slot match in node_state._caps_match, not via the stereotype."""
+    """accepting_new_sessions=False no longer surfaces in stereotype.
+
+    The gridfleet:available sentinel was an opt-in routing filter — clients
+    would have to request gridfleet:available=true in caps for the hub to skip
+    unavailable slots. No client (testkit, frontend, docs) ever did. Removing
+    the key has no behaviour change for routing because the filter was inert.
+    The agent still accepts accepting_new_sessions from the backend; hard
+    routing-suppression goes through Selenium NodeStatus.availability=DRAINING
+    (mark_drain in node_state) or via stopping the node entirely.
+    """
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5678)
     configs: list[GridNodeConfig] = []
