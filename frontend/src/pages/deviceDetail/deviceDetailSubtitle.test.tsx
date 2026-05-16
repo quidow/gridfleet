@@ -93,4 +93,18 @@ describe('buildDeviceDetailSubtitleNode', () => {
     );
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
+
+  it('prefers os_version_display over os_version when present', () => {
+    render(
+      <MemoryRouter>
+        <p>
+          {buildDeviceDetailSubtitleNode(
+            baseDevice({ os_version: '6', os_version_display: '6.7.1.1' }),
+            'host-01',
+          )}
+        </p>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Android Mobile · 6.7.1.1 · host-01')).toBeInTheDocument();
+  });
 });
