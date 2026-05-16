@@ -361,6 +361,16 @@ async def record_recovery_suppressed(
     # Either way, by the time we re-lock here the row reflects the caller's
     # intent plus any concurrent committers' updates.
     fresh = policy_state(device)
+    # Dedup: a device parked in suppressed state with the same reason emits
+    # nothing new. ``device_connectivity_loop`` retries suppressed devices on
+    # every iteration; without this guard the events table and ``last_action_at``
+    # churn every few minutes for the lifetime of the suppression.
+    already_suppressed = (
+        fresh.get("last_action") == "recovery_suppressed"
+        and fresh.get("recovery_suppressed_reason") == suppression_reason
+    )
+    if already_suppressed:
+        return False
     fresh["recovery_suppressed_reason"] = suppression_reason
     set_action(fresh, "recovery_suppressed")
     write_state(device, fresh)

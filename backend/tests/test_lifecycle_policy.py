@@ -270,6 +270,74 @@ async def test_recovery_is_suppressed_when_auto_manage_disabled(
     assert policy["recovery_suppressed_reason"] == "Auto-manage is disabled"
 
 
+async def test_recovery_suppressed_event_is_deduplicated(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Repeated suppression for the same reason must emit one event, not a stream."""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-recover-dedup-1",
+        connection_target="policy-recover-dedup-1",
+        name="Spammy Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=False,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    for _ in range(5):
+        assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again") is False
+
+    events = await _event_types_for_device(db_session, device.id)
+    suppressed = [e for e in events if e == DeviceEventType.lifecycle_recovery_suppressed]
+    assert len(suppressed) == 1, f"expected 1 suppressed event, got {len(suppressed)}: {events}"
+
+
+async def test_recovery_suppressed_event_re_emits_when_reason_changes(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Suppression with a new reason must re-emit so operators see the change."""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="policy-recover-dedup-2",
+        connection_target="policy-recover-dedup-2",
+        name="Reason Changes",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        auto_manage=False,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="r1") is False
+    # Flip the blocking condition: auto_manage stays False, but now also not verified.
+    # Different suppression branches yield different ``suppression_reason`` strings.
+    device.verified_at = None
+    device.auto_manage = True  # not-ready branch now applies
+    await db_session.commit()
+
+    assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="r2") is False
+
+    events = await _event_types_for_device(db_session, device.id)
+    suppressed = [e for e in events if e == DeviceEventType.lifecycle_recovery_suppressed]
+    assert len(suppressed) == 2, f"expected 2 suppressed events, got {len(suppressed)}: {events}"
+
+
 async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
