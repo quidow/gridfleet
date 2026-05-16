@@ -85,6 +85,7 @@ platforms:
     capabilities:
       stereotype:
         "appium:platformName": "Android"
+        "appium:os_version": "{device.os_version}"
       session_required: []
     identity:
       scheme: android_serial
