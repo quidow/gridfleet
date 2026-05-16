@@ -17,6 +17,12 @@ from sqlalchemy.orm import Session  # noqa: TC002
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
 from app.core.observability import get_logger
+from app.events.catalog import (
+    PUBLIC_EVENT_NAME_SET,
+    EventSeverity,
+    allowed_severities_for,
+    default_severity_for,
+)
 from app.events.models import SystemEvent
 
 if TYPE_CHECKING:
@@ -35,18 +41,32 @@ class Event:
     data: dict[str, Any]
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    severity: EventSeverity = "neutral"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
             "id": self.id,
             "timestamp": self.timestamp,
+            "severity": self.severity,
             "data": self.data,
         }
 
     @classmethod
     def from_system_event(cls, row: SystemEvent) -> Event:
-        return cls(type=row.type, data=row.data, timestamp=row.created_at.isoformat(), id=row.event_id)
+        if row.severity is not None:
+            severity: EventSeverity = row.severity  # type: ignore[assignment]
+        elif row.type in PUBLIC_EVENT_NAME_SET:
+            severity = default_severity_for(row.type)
+        else:
+            severity = "neutral"
+        return cls(
+            type=row.type,
+            data=row.data,
+            timestamp=row.created_at.isoformat(),
+            id=row.event_id,
+            severity=severity,
+        )
 
 
 EventHandler = Callable[[Event], Awaitable[None] | None]
@@ -122,8 +142,15 @@ class EventBus:
         self._subscribers.discard(q)
         logger.info("SSE client unsubscribed (total: %d)", len(self._subscribers))
 
-    async def publish(self, event_type: str, data: dict[str, Any]) -> None:
-        event = Event(type=event_type, data=data)
+    async def publish(self, event_type: str, data: dict[str, Any], severity: EventSeverity | None = None) -> None:
+        if event_type in PUBLIC_EVENT_NAME_SET:
+            resolved: EventSeverity = severity if severity is not None else default_severity_for(event_type)
+            allowed = allowed_severities_for(event_type)
+            if resolved not in allowed:
+                raise ValueError(f"severity {resolved!r} not allowed for {event_type!r}; allowed: {sorted(allowed)!r}")
+        else:
+            resolved = severity if severity is not None else "neutral"
+        event = Event(type=event_type, data=data, severity=resolved)
         record_event_published(event_type)
         if self._session_factory is not None:
             await self._persist_system_event(event)
@@ -199,7 +226,7 @@ class EventBus:
     async def _persist_system_event(self, event: Event) -> None:
         assert self._session_factory is not None
         async with self._session_factory() as db:
-            row = SystemEvent(event_id=event.id, type=event.type, data=event.data)
+            row = SystemEvent(event_id=event.id, type=event.type, data=event.data, severity=event.severity)
             db.add(row)
             await db.flush()
             self._last_seen_system_event_id = max(self._last_seen_system_event_id, int(row.id))
