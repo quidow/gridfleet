@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.database import async_session
+from app.core.errors import InvalidTransitionError
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
@@ -107,8 +108,11 @@ async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) 
     device_id_str = info.get("device_id")
     if isinstance(device_id_str, str) and device_id_str:
         try:
-            device_uuid = uuid.UUID(device_id_str)
+            device_uuid: uuid.UUID | None = uuid.UUID(device_id_str)
         except ValueError:
+            logger.debug(
+                "Stereotype device_id %r is not a valid UUID; falling back to connection_target", device_id_str
+            )
             device_uuid = None
         if device_uuid is not None:
             device = (await db.execute(select(Device).where(Device.id == device_uuid))).scalar_one_or_none()
@@ -165,11 +169,23 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
         session.run_id = reservation_run.id
 
     if locked_device.operational_state == DeviceOperationalState.available:
-        await _MACHINE.transition(
-            locked_device,
-            TransitionEvent.SESSION_STARTED,
-            suppress_events=True,
-        )
+        # Belt-and-braces against re-entry: the row lock fences out other
+        # writers within this transaction, but a state-machine guard means
+        # we still log instead of crashing if the device somehow already
+        # left ``available`` between the read above and the transition.
+        try:
+            await _MACHINE.transition(
+                locked_device,
+                TransitionEvent.SESSION_STARTED,
+                suppress_events=True,
+            )
+        except InvalidTransitionError as exc:
+            logger.warning(
+                "Skipping SESSION_STARTED on device %s during hydration of %s: %s",
+                locked_device.id,
+                sid,
+                exc,
+            )
     await register_intents_and_reconcile(
         db,
         device_id=locked_device.id,
