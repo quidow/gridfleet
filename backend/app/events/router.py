@@ -3,10 +3,11 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.events import EVENT_CATEGORY_DISPLAY_NAMES, PUBLIC_EVENT_CATALOG, Event, event_bus
+from app.events.catalog import ALL_SEVERITIES
 from app.events.schemas import NotificationListRead
 from app.events.schemas_catalog import EventCatalogRead
 
@@ -85,14 +86,34 @@ async def event_stream(
     return EventSourceResponse(generate(), ping=KEEPALIVE_INTERVAL)
 
 
+def _parse_severity_filter(raw: str) -> list[str] | None:
+    values = [token.strip() for token in raw.split(",") if token.strip()]
+    if not values:
+        return None
+    invalid = sorted({v for v in values if v not in ALL_SEVERITIES})
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown severity value(s): {', '.join(invalid)}",
+        )
+    return values
+
+
 @router.get("/notifications", response_model=NotificationListRead)
 async def get_notifications(
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     types: str | None = Query(None, description="Comma-separated event types to filter"),
+    severity: str | None = Query(None, description="Comma-separated severities to filter"),
 ) -> dict[str, Any]:
     type_filter = [t.strip() for t in types.split(",")] if types else None
-    events, total = await event_bus.get_recent_events_persisted(limit=limit, offset=offset, event_types=type_filter)
+    severity_filter = _parse_severity_filter(severity) if severity is not None else None
+    events, total = await event_bus.get_recent_events_persisted(
+        limit=limit,
+        offset=offset,
+        event_types=type_filter,
+        severities=severity_filter,
+    )
     return {
         "items": events,
         "total": total,

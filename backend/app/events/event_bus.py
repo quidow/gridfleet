@@ -162,11 +162,14 @@ class EventBus:
         limit: int = 25,
         offset: int = 0,
         event_types: list[str] | None = None,
+        severities: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         if self._session_factory is None:
             events = list(self._log)
             if event_types:
                 events = [event for event in events if event.type in event_types]
+            if severities:
+                events = [event for event in events if event.severity in severities]
             events.reverse()
             total = len(events)
             items = events[offset : offset + limit]
@@ -175,6 +178,8 @@ class EventBus:
             stmt = select(SystemEvent)
             if event_types:
                 stmt = stmt.where(SystemEvent.type.in_(event_types))
+            if severities:
+                stmt = stmt.where(SystemEvent.severity.in_(severities))
             count_stmt = select(func.count()).select_from(stmt.subquery())
             total = int((await db.execute(count_stmt)).scalar_one())
             stmt = stmt.order_by(SystemEvent.id.desc()).offset(offset).limit(limit)
