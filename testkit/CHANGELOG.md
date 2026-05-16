@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.9.3](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.2...gridfleet-testkit-v0.9.3) (2026-05-16)
+
+
+### Bug Fixes
+
+* bind testkit-registered sessions to their device ([35030ef](https://github.com/quidow/gridfleet/commit/35030eff438b3d8cfa17b54f1329dfeb03dadf07))
+* **testkit:** stop sending client-derived device identity on register ([c025d1e](https://github.com/quidow/gridfleet/commit/c025d1e10d2bd793dadc4ca167aaaf4a7a2e23e7))
+
 ## [0.9.2](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.1...gridfleet-testkit-v0.9.2) (2026-05-16)
 
 
