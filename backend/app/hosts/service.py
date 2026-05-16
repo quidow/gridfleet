@@ -7,12 +7,21 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.events import queue_event_for_session
+from app.events.catalog import EventSeverity
 from app.hosts.models import Host, HostStatus
 from app.hosts.schemas import HostCreate, HostRegister, HostUpdate
 from app.settings import settings_service
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 2
+
+
+def _host_status_severity(old_status: str | None, new_status: str) -> EventSeverity:
+    if new_status == "offline" and old_status not in (None, "offline"):
+        return "warning"
+    if new_status == "online" and old_status not in (None, "online"):
+        return "success"
+    return "info"
 
 
 def _coerce_missing_prerequisites(value: object) -> list[str] | None:
@@ -193,6 +202,7 @@ async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
             "old_status": old_status,
             "new_status": "online",
         },
+        severity=_host_status_severity(old_status, "online"),
     )
     await db.commit()
     await db.refresh(host)
