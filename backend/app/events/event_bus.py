@@ -235,18 +235,26 @@ class EventBus:
         task.add_done_callback(self._handler_tasks.discard)
 
     async def _shutdown_handler_tasks(self, timeout: float = HANDLER_DRAIN_TIMEOUT_SEC) -> None:
-        tasks = {task for task in self._handler_tasks if not task.done()}
-        if not tasks:
-            self._handler_tasks.clear()
-            return
-
-        done, pending = await asyncio.wait(tasks, timeout=timeout)
-        if pending:
-            logger.warning("Cancelling %d system event handler task(s) during shutdown", len(pending))
-            for task in pending:
-                task.cancel()
-
-        await asyncio.gather(*done, *pending, return_exceptions=True)
+        # Handler tasks can spawn additional handler tasks (e.g. an
+        # ``after_commit`` callback awaits ``event_bus.publish`` which schedules
+        # ``_dispatch_handlers`` as a new tracked task). A one-shot
+        # ``asyncio.wait`` snapshot would let those children outlive shutdown
+        # and contend with ``DROP SCHEMA CASCADE`` in tests. Drain in a loop
+        # until the set quiesces or the deadline expires.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            tasks = {task for task in self._handler_tasks if not task.done()}
+            if not tasks:
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning("Cancelling %d system event handler task(s) during shutdown", len(tasks))
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
+            await asyncio.wait(tasks, timeout=remaining)
         self._handler_tasks.clear()
 
     async def _load_and_dispatch_system_event(self, row_id: int) -> None:

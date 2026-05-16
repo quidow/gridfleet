@@ -147,6 +147,33 @@ async def test_shutdown_handler_tasks_cancels_pending_tasks() -> None:
     assert bus._handler_tasks == set()
 
 
+async def test_shutdown_handler_tasks_drains_tasks_spawned_during_shutdown() -> None:
+    # ``after_commit`` hooks (queue_event_for_session) spawn a tracked task
+    # whose body awaits ``event_bus.publish``, which in turn schedules another
+    # tracked task via ``_remember_and_dispatch``. Shutdown must await the
+    # chain — otherwise the child task survives and may run queries against a
+    # schema the caller is about to drop.
+    bus = EventBus()
+    child_done = asyncio.Event()
+
+    async def child() -> None:
+        await asyncio.sleep(0.05)
+        child_done.set()
+
+    async def outer(_: Event) -> None:
+        task = asyncio.create_task(child())
+        bus._handler_tasks.add(task)
+        task.add_done_callback(bus._handler_tasks.discard)
+
+    bus.register_handler(outer)
+    bus._remember_and_dispatch(Event(type="demo", data={}))
+
+    await bus._shutdown_handler_tasks()
+
+    assert child_done.is_set()
+    assert bus._handler_tasks == set()
+
+
 async def test_dispatch_handlers_logs_and_continues_on_handler_error() -> None:
     bus = EventBus()
     received: list[str] = []
