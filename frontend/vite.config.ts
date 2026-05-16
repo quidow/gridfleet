@@ -24,4 +24,19 @@ export default defineConfig({
       '/api': apiTarget,
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Pull heavy deps out of the main bundle so initial pages load fast
+        // and only fetch these chunks when a panel that uses them mounts.
+        manualChunks(id) {
+          if (id.includes('node_modules/recharts/')) return 'charts'
+          if (id.includes('node_modules/@monaco-editor/')) return 'monaco'
+          if (id.includes('node_modules/monaco-editor/')) return 'monaco'
+          if (id.includes('node_modules/@xterm/')) return 'terminal'
+          return undefined
+        },
+      },
+    },
+  },
 })
