@@ -14,7 +14,7 @@ type RegistryEntry = {
   render: Renderer;
 };
 
-type EventLike = {
+export type EventLike = {
   type: string;
   severity?: EventSeverity | null;
   data?: EventData | null;
@@ -280,14 +280,6 @@ export function formatEventDetails(type: string, data: EventData | null | undefi
     return { kind: 'empty', text: 'No details' };
   }
   return { kind: 'json', text: JSON.stringify(payload, null, 2) };
-}
-
-/**
- * @deprecated Use `legacyFallbackSeverity(type) ?? 'neutral'` or `resolveEventSeverity(event)` instead.
- * This function will be removed in Task 14.
- */
-export function severityForEventType(type: string): EventSeverity {
-  return legacyFallbackSeverity(type) ?? 'neutral';
 }
 
 export const EVENT_SEVERITY_LABEL: Record<EventSeverity, string> = {

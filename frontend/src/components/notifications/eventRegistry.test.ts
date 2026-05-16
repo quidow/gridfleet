@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatEventDetails, severityForEventType, SEEDED_EVENT_TYPES } from './eventRegistry';
+import { formatEventDetails, SEEDED_EVENT_TYPES } from './eventRegistry';
 
 describe('eventRegistry', () => {
   it('covers every full-demo seeded event type', () => {
@@ -66,16 +66,6 @@ describe('eventRegistry', () => {
     expect(formatEventDetails('new.event', {})).toEqual({ kind: 'empty', text: 'No details' });
   });
 
-  it('derives severity from registry', () => {
-    expect(severityForEventType('run.failed')).toBe('critical');
-    expect(severityForEventType('run.completed')).toBe('success');
-    expect(severityForEventType('host.offline')).toBe('critical');
-    expect(severityForEventType('host.online')).toBe('success');
-    expect(severityForEventType('lifecycle.incident_open')).toBe('warning');
-    expect(severityForEventType('lifecycle.incident_resolved')).toBe('success');
-    expect(severityForEventType('node.restart')).toBe('info');
-    expect(severityForEventType('unknown.type')).toBe('neutral');
-  });
 });
 
 import { resolveEventSeverity, legacyFallbackSeverity } from './eventRegistry';
