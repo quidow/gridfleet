@@ -128,6 +128,7 @@ All flags below belong to `install`. `status`, `update`, and `uninstall` accept 
 |---|---|---|---|
 | `--manager-url` | `http://localhost:8000` | `AGENT_MANAGER_URL` | Manager base URL. |
 | `--port` | `5100` | `AGENT_AGENT_PORT` | Agent HTTP port. |
+| `--advertise-ip` | auto-detect | `AGENT_ADVERTISE_IP` | Hostname or IP the agent advertises to the manager. Set to `host.docker.internal` when the manager runs in Docker on the same host. |
 | `--manager-auth-username` | none | `AGENT_MANAGER_AUTH_USERNAME` | Required pair with `--manager-auth-password`. |
 | `--manager-auth-password` | none | `AGENT_MANAGER_AUTH_PASSWORD` | Required pair with `--manager-auth-username`. |
 | `--api-auth-username` | none | `AGENT_API_AUTH_USERNAME` | Required pair with `--api-auth-password`. |
@@ -136,7 +137,6 @@ All flags below belong to `install`. `status`, `update`, and `uninstall` accept 
 | `--grid-publish-url` | `tcp://localhost:4442` | `AGENT_GRID_PUBLISH_URL` | Grid event bus publish. |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | `AGENT_GRID_SUBSCRIBE_URL` | Grid event bus subscribe. |
 | `--grid-node-port-start` | `5555` | `AGENT_GRID_NODE_PORT_START` | First port allocated to relay nodes. |
-| `--advertise-ip` | auto-detect | `AGENT_ADVERTISE_IP` | Hostname or IP the agent advertises to the manager. Set to `host.docker.internal` when the manager runs in Docker on the same host. |
 | `--enable-web-terminal` | off | `AGENT_ENABLE_WEB_TERMINAL=true` | Requires `--terminal-token`. |
 | `--terminal-token` | none | `AGENT_TERMINAL_TOKEN` | Required when web terminal enabled. |
 

@@ -410,13 +410,13 @@ def test_render_config_env_omits_advertise_ip_when_unset() -> None:
     assert "AGENT_ADVERTISE_IP" not in rendered
 
 
-def test_render_config_env_writes_advertise_ip() -> None:
+def test_render_config_env_writes_advertise_ip_when_set() -> None:
     config = InstallConfig(advertise_ip="host.docker.internal")
     rendered = render_config_env(config, ToolDiscovery())
     assert "AGENT_ADVERTISE_IP=host.docker.internal" in rendered
 
 
-def test_render_launchd_plist_writes_advertise_ip() -> None:
+def test_render_launchd_plist_writes_advertise_ip_when_set() -> None:
     config = InstallConfig(advertise_ip="host.docker.internal")
     rendered = render_launchd_plist(config, ToolDiscovery())
     assert "<key>AGENT_ADVERTISE_IP</key>" in rendered
