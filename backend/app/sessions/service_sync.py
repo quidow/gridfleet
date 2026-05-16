@@ -93,6 +93,105 @@ async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
         await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
 
 
+async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) -> Device | None:
+    """Find the ``Device`` row a hub slot points at, preferring the
+    stereotype-derived ``device_id`` (a real UUID) over the
+    ``connection_target`` lookup.
+
+    ``connection_target`` (the udid the driver echoes back) is not globally
+    unique — Roku reuses the IP, AVDs share serials across hosts, iOS
+    simulators reuse a UDID across reboots — so it is only a fallback for
+    hubs/nodes that for whatever reason advertised a stereotype without
+    ``appium:gridfleet:deviceId``.
+    """
+    device_id_str = info.get("device_id")
+    if isinstance(device_id_str, str) and device_id_str:
+        try:
+            device_uuid = uuid.UUID(device_id_str)
+        except ValueError:
+            device_uuid = None
+        if device_uuid is not None:
+            device = (await db.execute(select(Device).where(Device.id == device_uuid))).scalar_one_or_none()
+            if device is not None:
+                return device
+    connection_target = info.get("connection_target")
+    if isinstance(connection_target, str) and connection_target:
+        return (
+            await db.execute(select(Device).where(Device.connection_target == connection_target))
+        ).scalar_one_or_none()
+    return None
+
+
+async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str, Any]) -> None:
+    """Bind a device-less ``Session`` row to its Device and fire the busy
+    transition.
+
+    Why orphan rows exist: the testkit's ``register_session_from_driver``
+    used to inspect ``driver.capabilities`` for vendor-prefixed identifying
+    caps that the Appium driver strips on the W3C echo, so every real
+    Appium client posted ``device_id=None`` / ``connection_target=None``.
+    Those caps cannot be made reliable on the client side (vendor namespaces
+    are not echoed back, plain udid is not globally unique), so the client
+    now sends only ``session_id`` and trusts the backend to bind the row.
+    This helper is the binding step.
+
+    Identity comes from ``slot.session.stereotype`` (parsed upstream by
+    ``app.grid.slot_parser``), which is prefix-stable. The Device row is
+    locked before the state machine fires so concurrent state writers
+    cannot lose the busy transition.
+    """
+    session_stmt = select(Session).where(
+        Session.session_id == sid,
+        Session.status == SessionStatus.running,
+        Session.ended_at.is_(None),
+        Session.device_id.is_(None),
+    )
+    session = (await db.execute(session_stmt)).scalar_one_or_none()
+    if session is None:
+        # Row was hydrated by a concurrent writer or moved off the running
+        # state since the parent cycle's snapshot. Nothing to do.
+        return
+
+    device = await _resolve_device_from_hub_info(db, info)
+    if device is None:
+        logger.warning("Cannot hydrate orphan session %s: device lookup failed (%r)", sid, info)
+        return
+
+    locked_device = await device_locking.lock_device(db, device.id)
+    session.device_id = locked_device.id
+
+    reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, locked_device.id)
+    if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry):
+        session.run_id = reservation_run.id
+
+    if locked_device.operational_state == DeviceOperationalState.available:
+        await _MACHINE.transition(
+            locked_device,
+            TransitionEvent.SESSION_STARTED,
+            suppress_events=True,
+        )
+    await register_intents_and_reconcile(
+        db,
+        device_id=locked_device.id,
+        intents=[
+            IntentRegistration(
+                source=f"active_session:{sid}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": PRIORITY_ACTIVE_SESSION},
+            )
+        ],
+        reason=f"Session {sid} hydrated",
+    )
+    activated_run = await run_service.signal_active_for_device_session_no_commit(db, locked_device.id)
+    session_service.queue_session_started_event(
+        db,
+        session,
+        device=locked_device,
+        run_id=str(activated_run.id) if activated_run and activated_run.state == RunState.active else None,
+    )
+    logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
+
+
 async def _sync_sessions(db: AsyncSession) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status()
@@ -116,7 +215,9 @@ async def _sync_sessions(db: AsyncSession) -> None:
         Session.ended_at.is_(None),
     )
     running_result = await db.execute(running_stmt)
-    known_running = {session.session_id: str(session.device_id) for session in running_result.scalars().all()}
+    known_running: dict[str, uuid.UUID | None] = {
+        session.session_id: session.device_id for session in running_result.scalars().all()
+    }
     known_session_ids: set[str] = set()
     if active:
         known_result = await db.execute(select(Session.session_id).where(Session.session_id.in_(active)))
@@ -124,6 +225,15 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
     # Process new sessions
     for sid, info in active.items():
+        if sid in known_running and known_running[sid] is None:
+            # Orphan row from a ``POST /api/sessions`` that ran before the
+            # backend could resolve the device (the testkit no longer sends
+            # ``device_id`` / ``connection_target`` from driver.capabilities
+            # because those caps are not reliable). Hydrate the row now
+            # using the prefix-stable hub stereotype.
+            await _hydrate_orphan_session_row(db, sid, info)
+            continue
+
         if sid in known_running or sid in known_session_ids:
             continue
 
