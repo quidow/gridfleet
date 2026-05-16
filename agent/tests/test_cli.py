@@ -350,7 +350,7 @@ def test_install_passes_advertise_ip_to_config(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery())
+    monkeypatch.setattr(cli, "discover_tools", ToolDiscovery)
     captured: dict[str, Any] = {}
 
     def fake_install(config: InstallConfig, discovery: ToolDiscovery, *, operator: OperatorIdentity) -> InstallResult:
