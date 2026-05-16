@@ -102,6 +102,7 @@ def test_load_installed_config_uses_defaults_when_file_missing(tmp_path: Path) -
                 "grid_publish_url": "tcp://localhost:4442",
                 "grid_subscribe_url": "tcp://localhost:4443",
                 "grid_node_port_start": 5555,
+                "advertise_ip": None,
                 "enable_web_terminal": False,
                 "terminal_token": None,
             },

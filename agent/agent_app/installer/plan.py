@@ -46,6 +46,7 @@ class InstallConfig:
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
     grid_node_port_start: int = 5555
+    advertise_ip: str | None = None
     enable_web_terminal: bool = False
     terminal_token: str | None = None
 
@@ -217,6 +218,8 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
         f"AGENT_RUNTIME_ROOT={config.agent_dir}/runtimes",
         f"PATH={build_service_path(discovery)}",
     ]
+    if config.advertise_ip:
+        lines.append(f"AGENT_ADVERTISE_IP={config.advertise_ip}")
     if discovery.android_home:
         lines.extend(
             [
@@ -288,6 +291,7 @@ def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfi
         grid_publish_url=values.get("AGENT_GRID_PUBLISH_URL", base.grid_publish_url),
         grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
         grid_node_port_start=_env_int(values, "AGENT_GRID_NODE_PORT_START", base.grid_node_port_start),
+        advertise_ip=values.get("AGENT_ADVERTISE_IP", base.advertise_ip),
         enable_web_terminal=values.get("AGENT_ENABLE_WEB_TERMINAL", str(base.enable_web_terminal)).lower() == "true",
         terminal_token=values.get("AGENT_TERMINAL_TOKEN", base.terminal_token),
     )
@@ -361,6 +365,8 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
         "AGENT_GRID_NODE_PORT_START": str(config.grid_node_port_start),
         "AGENT_RUNTIME_ROOT": f"{config.agent_dir}/runtimes",
     }
+    if config.advertise_ip:
+        entries["AGENT_ADVERTISE_IP"] = config.advertise_ip
     if discovery.android_home:
         entries["ANDROID_HOME"] = discovery.android_home
         entries["ANDROID_SDK_ROOT"] = discovery.android_home
@@ -413,6 +419,7 @@ Settings:
   Grid hub URL: {config.grid_hub_url}
   Grid publish URL: {config.grid_publish_url}
   Grid subscribe URL: {config.grid_subscribe_url}
+  Advertise IP: {config.advertise_ip or "<auto-detect>"}
   Web terminal: {"enabled" if config.enable_web_terminal else "disabled"}
 
 Detected tools:
@@ -445,6 +452,7 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
         grid_publish_url=config.grid_publish_url,
         grid_subscribe_url=config.grid_subscribe_url,
         grid_node_port_start=config.grid_node_port_start,
+        advertise_ip=config.advertise_ip,
         enable_web_terminal=config.enable_web_terminal,
         terminal_token="<redacted>" if config.terminal_token else None,
     )
