@@ -61,7 +61,7 @@ Live e2e requires backend, Postgres, and the frontend dev server running.
 
 ### Testkit
 ```bash
-cd testkit && uv run --extra dev --extra appium pytest -q
+cd testkit && uv run --extra dev pytest -q
 ```
 
 ### Stack
