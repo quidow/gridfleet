@@ -29,14 +29,17 @@ def upgrade() -> None:
         "system_events",
         "severity IN ('info','success','warning','critical','neutral')",
     )
+    # Index name matches the project's MetaData naming convention
+    # (ix → "<column_0_label>_idx"), so SQLAlchemy's mapped_column(index=True)
+    # on SystemEvent.severity and this migration agree.
     op.create_index(
-        "ix_system_events_severity",
+        "system_events_severity_idx",
         "system_events",
         ["severity"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_system_events_severity", table_name="system_events")
+    op.drop_index("system_events_severity_idx", table_name="system_events")
     op.drop_constraint("ck_system_events_severity", "system_events", type_="check")
     op.drop_column("system_events", "severity")

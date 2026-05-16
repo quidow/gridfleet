@@ -90,7 +90,7 @@ async def test_system_events_severity_index(severity_migration_engine: AsyncEngi
     async with severity_migration_engine.connect() as conn:
         indexes = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_indexes("system_events"))
     names = {idx["name"] for idx in indexes}
-    assert "ix_system_events_severity" in names, "index ix_system_events_severity must exist"
+    assert "system_events_severity_idx" in names, f"severity index must exist; got {names!r}"
 
 
 @pytest.mark.db
