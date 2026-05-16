@@ -255,6 +255,12 @@ async def refresh_device_properties(
         device.os_version = new_os_version
         changed = True
 
+    new_os_version_display = props.get("os_version_display")
+    new_display_str: str | None = new_os_version_display if isinstance(new_os_version_display, str) else None
+    if new_display_str and device.os_version_display != new_display_str:
+        device.os_version_display = new_display_str
+        changed = True
+
     new_software_versions = props.get("software_versions") or None
     if isinstance(new_software_versions, dict) and device.software_versions != new_software_versions:
         device.software_versions = new_software_versions

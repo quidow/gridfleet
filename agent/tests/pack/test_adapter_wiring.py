@@ -302,6 +302,51 @@ async def test_pack_device_properties_falls_back_to_adapter_normalize_for_endpoi
 
 
 @pytest.mark.asyncio
+async def test_pack_device_properties_includes_os_version_display_from_normalize() -> None:
+    pack = _make_adapter_pack()
+    adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
+
+    async def empty_discover(ctx: object) -> list[DiscoveryCandidate]:
+        return []
+
+    async def normalize_with_display(ctx: object) -> NormalizedDevice:
+        raw_input = cast("Any", ctx).raw_input
+        return NormalizedDevice(
+            identity_scheme="vendor_serial",
+            identity_scope="global",
+            identity_value="VENDOR-1",
+            connection_target=str(raw_input["connection_target"]),
+            ip_address=str(raw_input["connection_target"]),
+            device_type="real_device",
+            connection_type="network",
+            os_version="6",
+            os_version_display="6.7.1.1",
+            field_errors=[],
+            manufacturer="Amazon",
+            model="Fire TV Stick 4K",
+            model_number="AFTMM",
+            software_versions={"fire_os": "Fire OS 6.7.1.1"},
+        )
+
+    adapter.discover = empty_discover  # type: ignore[method-assign]
+    adapter.normalize_device = normalize_with_display  # type: ignore[method-assign]
+    registry = AdapterRegistry()
+    registry.set(pack.id, pack.release, adapter)
+
+    result = await pack_device_properties(
+        "192.168.1.50",
+        pack.id,
+        [pack],
+        adapter_registry=registry,
+        host_id="host-1",
+    )
+
+    assert result is not None
+    assert result["detected_properties"]["os_version"] == "6"
+    assert result["detected_properties"]["os_version_display"] == "6.7.1.1"
+
+
+@pytest.mark.asyncio
 async def test_adapter_normalize_device_preserves_extended_identity_fields() -> None:
     pack = _make_adapter_pack()
     adapter = _RecordingAdapter(pack_id=pack.id, pack_release=pack.release)
