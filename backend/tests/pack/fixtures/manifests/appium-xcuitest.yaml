@@ -35,8 +35,9 @@ platforms:
     grid_slots: [native]
     capabilities:
       stereotype:
-        "appium:platformName": "iOS"
-        "appium:automationName": "XCUITest"
+        "appium:platform": "{device.platform_id}"
+        "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
       session_required: ["appium:bundleId"]
     identity:
       scheme: apple_udid
@@ -152,8 +153,9 @@ platforms:
     grid_slots: [native]
     capabilities:
       stereotype:
-        "appium:platformName": "tvOS"
-        "appium:automationName": "XCUITest"
+        "appium:platform": "{device.platform_id}"
+        "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
       session_required: ["appium:bundleId"]
     identity:
       scheme: apple_udid

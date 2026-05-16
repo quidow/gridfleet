@@ -15,7 +15,13 @@ if TYPE_CHECKING:
     from app.packs.services.platform_resolver import ResolvedPackPlatform
 
 
-async def render_stereotype(session: AsyncSession, *, pack_id: str, platform_id: str) -> dict[str, Any]:
+async def render_stereotype(
+    session: AsyncSession,
+    *,
+    pack_id: str,
+    platform_id: str,
+    device_context: dict[str, object] | None = None,
+) -> dict[str, Any]:
     pack = await session.scalar(
         select(DriverPack)
         .where(DriverPack.id == pack_id)
@@ -28,11 +34,20 @@ async def render_stereotype(session: AsyncSession, *, pack_id: str, platform_id:
     if platform is None:
         raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
     stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
-    return {
+    rendered: dict[str, Any] = {
         "platformName": platform.appium_platform_name,
         "appium:automationName": platform.automation_name,
-        **stereotype_base,
     }
+    ctx = device_context or {}
+    for key, value in stereotype_base.items():
+        if isinstance(value, str):
+            interpolated = _interpolate(value, ctx)
+            if interpolated is None:
+                continue
+            rendered[key] = interpolated
+        else:
+            rendered[key] = value
+    return rendered
 
 
 async def resolve_workaround_env(

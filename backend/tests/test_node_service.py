@@ -549,8 +549,12 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
     # browserName is intentionally absent from stereotype_caps — the agent adds
     # a second relay slot for Chrome when building the Grid node TOML.
     assert "browserName" not in (payload["stereotype_caps"] or {})
+    # build_agent_start_payload emits the manager-owned slice of the stereotype
+    # (deviceId + run_id + tag fanout). Pack-derived routing keys
+    # (platformName, appium:platform, appium:os_version, …) are merged in by
+    # start_remote_node via build_pack_start_payload — not exercised here.
     assert payload["stereotype_caps"]["appium:gridfleet:deviceId"] == str(device.id)
-    assert payload["stereotype_caps"]["appium:platform"] == device.platform_id
+    assert payload["stereotype_caps"]["gridfleet:run_id"] == "free"
 
 
 @pytest.mark.asyncio

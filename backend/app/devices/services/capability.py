@@ -20,6 +20,7 @@ render_device_field_capabilities = pack_capability.render_device_field_capabilit
 render_stereotype = pack_capability.render_stereotype
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 resolve_pack_for_device = pack_start_shim.resolve_pack_for_device
+build_device_context = pack_start_shim.build_device_context
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +125,14 @@ async def get_device_capabilities(
     resolved = resolve_pack_for_device(device)
     if resolved is not None:
         pack_id, platform_id = resolved
+        device_context = build_device_context(device)
         try:
-            stereotype = await render_stereotype(db, pack_id=pack_id, platform_id=platform_id)
+            stereotype = await render_stereotype(
+                db,
+                pack_id=pack_id,
+                platform_id=platform_id,
+                device_context=device_context,
+            )
             automation_name = stereotype.get("appium:automationName")
             appium_platform_name = stereotype.get("platformName")
         except LookupError:
@@ -142,12 +149,6 @@ async def get_device_capabilities(
             )
             if appium_platform_name is None:
                 appium_platform_name = resolved_plat.appium_platform_name
-            device_context = {
-                "ip_address": device.ip_address,
-                "connection_target": getattr(device, "connection_target", None),
-                "identity_value": getattr(device, "identity_value", None),
-                "os_version": device.os_version,
-            }
             pack_caps.update(render_default_capabilities(resolved_plat, device_context=device_context))
             pack_caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
         except LookupError:

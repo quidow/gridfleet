@@ -31,6 +31,37 @@ async def test_render_stereotype_missing_platform_raises(db_session: AsyncSessio
 
 
 @pytest.mark.asyncio
+async def test_render_stereotype_interpolates_device_context(db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    caps = await render_stereotype(
+        db_session,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_context={"os_version": "14"},
+    )
+    assert caps["appium:os_version"] == "14"
+
+
+@pytest.mark.asyncio
+async def test_render_stereotype_drops_keys_with_missing_context(db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    caps = await render_stereotype(
+        db_session,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    # Template references device.os_version which is not in the (empty) context;
+    # the key is dropped, matching render_default_capabilities behaviour.
+    assert "appium:os_version" not in caps
+    # Renderer still emits the hard-coded platformName from the platform model.
+    assert caps["platformName"] == "Android"
+
+
+@pytest.mark.asyncio
 async def test_tvos_real_device_wda_fields_render_to_capabilities(db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     await db_session.flush()

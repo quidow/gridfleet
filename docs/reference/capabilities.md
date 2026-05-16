@@ -205,8 +205,20 @@ Manual request routing notes:
 
 - `appium:platform` is a Grid stereotype key, not raw Appium `platformName`
 - Choose the value from the enabled driver-pack catalog; add it manually if you build options without a testkit shortcut and need Grid routing.
-- To target a specific OS release, add `appium:os_version` (Grid stereotypes always emit it from the device column when known).
+- To target a specific OS release, add `appium:os_version` (declared by curated pack manifests with a `{device.os_version}` template; the renderer fills it from the device row).
 - If you want raw Appium control instead of the shortcut, omit `platform` and pass `platformName` directly as a normal capability key
+
+### Grid stereotype routing keys
+
+The Selenium Grid slot stereotype is the **routing surface**. It carries only the keys the hub needs to match a client request against a slot. As of release 2026.05 the stereotype contains:
+
+- `platformName`, `appium:automationName` — derived from the active pack/platform manifest.
+- `appium:gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity from the hub back to the manager.
+- `gridfleet:run_id` — `"free"` for the shared pool, or the active run UUID when the device is reserved for a run.
+- `appium:gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
+- Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
+
+Keys that describe the device for Appium's benefit (`appium:manufacturer`, `appium:model`, `appium:gridfleet:deviceName`, `appium:ip`, sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the Grid stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` plus Selenium's `NodeStatus.availability` cover the routing-suppression cases.
 
 ## Manager-Owned Session Caps
 

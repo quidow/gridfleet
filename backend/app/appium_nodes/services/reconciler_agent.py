@@ -60,6 +60,7 @@ from app.packs.services import start_shim as pack_start_shim
 from app.settings import settings_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
+build_device_context = pack_start_shim.build_device_context
 build_pack_start_payload = pack_start_shim.build_pack_start_payload
 device_is_virtual = pack_platform_catalog.device_is_virtual
 render_default_capabilities = pack_capability.render_default_capabilities
@@ -265,17 +266,12 @@ def build_agent_start_payload(
     accepting_new_sessions = node.accepting_new_sessions if node is not None else True
     stop_pending = node.stop_pending if node is not None else False
     grid_run_id = node.desired_grid_run_id if node is not None else None
-    stereotype_caps = (
-        build_grid_stereotype_caps(
-            device,
-            session_caps=allocated_caps,
-            extra_caps=extra_caps,
-            manager_owned_keys=manager_owned_keys,
-        )
-        or {}
-    )
+    # The minimal stereotype emitted here is the manager-owned routing surface
+    # (deviceId + tag fanout + run_id). Pack-rendered stereotype (platformName,
+    # automationName, manifest-declared filters) is merged in by start_remote_node
+    # via build_pack_start_payload — see below.
+    stereotype_caps = build_grid_stereotype_caps(device, pack_stereotype=None)
     stereotype_caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id else "free"
-    stereotype_caps["gridfleet:available"] = accepting_new_sessions
     return {
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
@@ -360,7 +356,12 @@ async def start_remote_node(
     resolved_pack = resolve_pack_for_device(device)
     if resolved_pack is None:
         raise NodeManagerError(f"Device {device.id} has no driver pack platform")
-    stereotype = await render_stereotype(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
+    stereotype = await render_stereotype(
+        db,
+        pack_id=resolved_pack[0],
+        platform_id=resolved_pack[1],
+        device_context=build_device_context(device),
+    )
     plat = await resolve_pack_platform(db, pack_id=resolved_pack[0], platform_id=resolved_pack[1])
     appium_platform_name = plat.appium_platform_name
     extra_caps = await _build_session_aligned_start_caps(

@@ -36,8 +36,9 @@ platforms:
         label: Developer Mode
     capabilities:
       stereotype:
-        "appium:platformName": "roku"
-        "appium:automationName": "Roku"
+        "appium:platform": "{device.platform_id}"
+        "appium:os_version": "{device.os_version}"
+        "appium:device_type": "{device.device_type}"
     default_capabilities:
       "appium:ip": "{device.ip_address}"
     identity:

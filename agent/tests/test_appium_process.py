@@ -136,7 +136,7 @@ class ReconfigurableGridNodeService:
         self.busy = busy
 
     def slot_stereotype_caps(self) -> dict[str, object]:
-        return {"platformName": "Android", "gridfleet:run_id": "free", "gridfleet:available": True}
+        return {"platformName": "Android", "gridfleet:run_id": "free"}
 
     def has_active_session(self) -> bool:
         return self.busy
@@ -459,12 +459,21 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         "platformName": "android_mobile",
         "appium:platform": "android_mobile",
         "gridfleet:run_id": "free",
-        "gridfleet:available": True,
     }
     await manager.shutdown()
 
 
-async def test_start_with_accepting_new_sessions_false_marks_grid_unavailable() -> None:
+async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() -> None:
+    """accepting_new_sessions=False no longer surfaces in stereotype.
+
+    The gridfleet:available sentinel was an opt-in routing filter — clients
+    would have to request gridfleet:available=true in caps for the hub to skip
+    unavailable slots. No client (testkit, frontend, docs) ever did. Removing
+    the key has no behaviour change for routing because the filter was inert.
+    The agent still accepts accepting_new_sessions from the backend; hard
+    routing-suppression goes through Selenium NodeStatus.availability=DRAINING
+    (mark_drain in node_state) or via stopping the node entirely.
+    """
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5678)
     configs: list[GridNodeConfig] = []
@@ -490,7 +499,7 @@ async def test_start_with_accepting_new_sessions_false_marks_grid_unavailable() 
         )
 
     caps = configs[0].slots[0].stereotype.caps
-    assert caps["gridfleet:available"] is False
+    assert "gridfleet:available" not in caps
     assert caps["gridfleet:run_id"] == str(run_id)
     await manager.shutdown()
 
@@ -514,7 +523,7 @@ async def test_reconfigure_updates_grid_stereotype() -> None:
         grid_run_id=run_id,
     )
 
-    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id), "gridfleet:available": False}]
+    assert service.calls == [{"platformName": "Android", "gridfleet:run_id": str(run_id)}]
 
 
 async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
