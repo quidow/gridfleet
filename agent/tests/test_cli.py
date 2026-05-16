@@ -346,6 +346,26 @@ def test_update_restart_error(capsys: pytest.CaptureFixture[str], monkeypatch: p
     assert "restart fail" in capsys.readouterr().err
 
 
+def test_install_passes_advertise_ip_to_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
+    )
+    monkeypatch.setattr(cli, "discover_tools", ToolDiscovery)
+    captured: dict[str, Any] = {}
+
+    def fake_install(config: InstallConfig, discovery: ToolDiscovery, *, operator: OperatorIdentity) -> InstallResult:
+        captured["advertise_ip"] = config.advertise_ip
+        return InstallResult(
+            config_env=Path("/etc/gridfleet-agent/config.env"),
+            service_file=Path("/etc/systemd/system/gridfleet-agent.service"),
+            started=False,
+        )
+
+    monkeypatch.setattr(cli, "install_no_start", fake_install)
+    assert cli.main(["install", "--no-start", "--advertise-ip", "host.docker.internal"]) == 0
+    assert captured["advertise_ip"] == "host.docker.internal"
+
+
 def test_main_no_args(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main([]) == 2
     assert "usage" in capsys.readouterr().out.lower() or "commands" in capsys.readouterr().out.lower()

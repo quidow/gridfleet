@@ -128,6 +128,7 @@ All flags below belong to `install`. `status`, `update`, and `uninstall` accept 
 |---|---|---|---|
 | `--manager-url` | `http://localhost:8000` | `AGENT_MANAGER_URL` | Manager base URL. |
 | `--port` | `5100` | `AGENT_AGENT_PORT` | Agent HTTP port. |
+| `--advertise-ip` | auto-detect | `AGENT_ADVERTISE_IP` | Hostname or IP the agent advertises to the manager. Set to `host.docker.internal` when the manager runs in Docker on the same host. |
 | `--manager-auth-username` | none | `AGENT_MANAGER_AUTH_USERNAME` | Required pair with `--manager-auth-password`. |
 | `--manager-auth-password` | none | `AGENT_MANAGER_AUTH_PASSWORD` | Required pair with `--manager-auth-username`. |
 | `--api-auth-username` | none | `AGENT_API_AUTH_USERNAME` | Required pair with `--api-auth-password`. |

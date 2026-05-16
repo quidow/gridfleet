@@ -68,6 +68,14 @@ def _build_parser() -> argparse.ArgumentParser:
     install.add_argument("--grid-publish-url", default="tcp://localhost:4442")
     install.add_argument("--grid-subscribe-url", default="tcp://localhost:4443")
     install.add_argument("--grid-node-port-start", type=int, default=5555)
+    install.add_argument(
+        "--advertise-ip",
+        default=None,
+        help=(
+            "Hostname or IP the agent advertises to the manager. "
+            "Set to `host.docker.internal` when the manager runs in Docker on the same host."
+        ),
+    )
     install.add_argument("--enable-web-terminal", action="store_true")
     install.add_argument("--terminal-token", default=None)
 
@@ -142,6 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 grid_publish_url=args.grid_publish_url,
                 grid_subscribe_url=args.grid_subscribe_url,
                 grid_node_port_start=args.grid_node_port_start,
+                advertise_ip=args.advertise_ip,
                 enable_web_terminal=args.enable_web_terminal,
                 terminal_token=args.terminal_token,
             )

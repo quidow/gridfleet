@@ -403,3 +403,47 @@ def test_default_install_config_rejects_unknown_os() -> None:
 
     with pytest.raises(RuntimeError, match="Unsupported OS"):
         default_install_config("Plan9")
+
+
+def test_render_config_env_omits_advertise_ip_when_unset() -> None:
+    rendered = render_config_env(InstallConfig(), ToolDiscovery())
+    assert "AGENT_ADVERTISE_IP" not in rendered
+
+
+def test_render_config_env_writes_advertise_ip_when_set() -> None:
+    config = InstallConfig(advertise_ip="host.docker.internal")
+    rendered = render_config_env(config, ToolDiscovery())
+    assert "AGENT_ADVERTISE_IP=host.docker.internal" in rendered
+
+
+def test_render_launchd_plist_writes_advertise_ip_when_set() -> None:
+    config = InstallConfig(advertise_ip="host.docker.internal")
+    rendered = render_launchd_plist(config, ToolDiscovery())
+    assert "<key>AGENT_ADVERTISE_IP</key>" in rendered
+    assert "<string>host.docker.internal</string>" in rendered
+
+
+def test_render_launchd_plist_omits_advertise_ip_when_unset() -> None:
+    rendered = render_launchd_plist(InstallConfig(), ToolDiscovery())
+    assert "<key>AGENT_ADVERTISE_IP</key>" not in rendered
+
+
+def test_load_installed_config_round_trips_advertise_ip(tmp_path: Path) -> None:
+    config_dir = tmp_path / "etc"
+    config_dir.mkdir()
+    base = InstallConfig(config_dir=str(config_dir), advertise_ip="host.docker.internal")
+    (config_dir / "config.env").write_text(render_config_env(base, ToolDiscovery()))
+
+    loaded = load_installed_config(InstallConfig(config_dir=str(config_dir)))
+    assert loaded.advertise_ip == "host.docker.internal"
+
+
+def test_format_dry_run_shows_advertise_ip() -> None:
+    config = InstallConfig(advertise_ip="host.docker.internal")
+    output = format_dry_run(config, ToolDiscovery(), os_name="Linux")
+    assert "Advertise IP: host.docker.internal" in output
+
+
+def test_format_dry_run_shows_auto_detect_when_advertise_ip_unset() -> None:
+    output = format_dry_run(InstallConfig(), ToolDiscovery(), os_name="Linux")
+    assert "Advertise IP: <auto-detect>" in output
