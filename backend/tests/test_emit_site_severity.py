@@ -155,23 +155,6 @@ def test_node_state_running_to_error_info(severity_fn: object) -> None:
 
 
 # ---------------------------------------------------------------------------
-# node.crash: will_restart=True → warning, False → None (default critical)
-# ---------------------------------------------------------------------------
-
-
-def test_node_crash_will_restart_severity_warning() -> None:
-    """will_restart=True should produce 'warning' (not critical)."""
-    severity: str | None = "warning" if True else None
-    assert severity == "warning"
-
-
-def test_node_crash_no_restart_severity_default_critical() -> None:
-    """will_restart=False should produce None (default critical from catalog)."""
-    severity: str | None = "warning" if False else None
-    assert severity is None
-
-
-# ---------------------------------------------------------------------------
 # _verification_severity
 # ---------------------------------------------------------------------------
 
