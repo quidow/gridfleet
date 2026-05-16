@@ -399,7 +399,7 @@ async def _finalize_success(
     locked.verified_at = datetime.now(UTC)
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:
-        await set_operational_state(locked, next_state, reason="verification")
+        await set_operational_state(locked, next_state, reason="verification", severity="info")
     await session_viability.record_session_viability_result(
         db,
         locked,

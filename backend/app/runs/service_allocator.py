@@ -214,6 +214,7 @@ async def _attempt_create_run(
             device,
             DeviceHold.reserved,
             reason=f"Reserved for run '{data.name}'",
+            severity="info",
         )
         device_infos.append(
             _build_device_info(

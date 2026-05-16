@@ -604,6 +604,7 @@ async def _apply_host_ping_result(
                 device,
                 DeviceOperationalState.offline,
                 reason=f"Host {host.hostname} offline",
+                severity="warning",
             )
 
 

@@ -78,6 +78,7 @@ async def _mark_offline_for_failed_signal(
         locked,
         DeviceOperationalState.offline,
         reason=reason,
+        severity="warning",
     )
 
 
@@ -101,6 +102,7 @@ async def _restore_available_for_healthy_signal(
         locked,
         DeviceOperationalState.available,
         reason="Health checks recovered",
+        severity="success",
     )
 
 

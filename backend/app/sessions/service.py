@@ -410,7 +410,7 @@ async def register_session(
         assert session is not None
         activated_run = None
         if device is not None:
-            await set_operational_state(device, DeviceOperationalState.busy, publish_event=False)
+            await set_operational_state(device, DeviceOperationalState.busy, publish_event=False, severity="info")
             activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         queue_session_started_event(
             db,
@@ -574,6 +574,7 @@ async def update_session_status(
                     locked_device,
                     await ready_operational_state(db, locked_device),
                     reason="Session ended",
+                    severity="info",
                 )
             deferred_stop_target = locked_device
 

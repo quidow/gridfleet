@@ -46,6 +46,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         *,
         reason: str | None = None,
         publish_event: bool = True,
+        severity: str | None = None,
     ) -> None:
         if device.id == device_id and operational_state == DeviceOperationalState.offline:
             inside_offline_branch.set()
@@ -61,6 +62,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             operational_state,
             reason=reason,
             publish_event=publish_event,
+            severity=severity,
         )
 
     _dead_result = HeartbeatPingResult(

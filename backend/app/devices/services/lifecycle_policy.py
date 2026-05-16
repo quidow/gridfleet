@@ -691,6 +691,7 @@ async def attempt_auto_recovery(
                 device,
                 DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
+                severity="info",
             )
             await db.commit()
         else:
@@ -698,6 +699,7 @@ async def attempt_auto_recovery(
                 device,
                 DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
+                severity="info",
             )
             await db.commit()
     else:

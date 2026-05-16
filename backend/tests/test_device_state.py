@@ -34,7 +34,7 @@ async def test_set_operational_state_writes_and_queues_event(
     device = await _persisted_device(db_session, default_host_id)
     captured: list[tuple[str, dict[str, object]]] = []
 
-    def fake_queue(session: object, name: str, payload: dict[str, object]) -> None:
+    def fake_queue(session: object, name: str, payload: dict[str, object], *, severity: object = None) -> None:
         captured.append((name, payload))
 
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", fake_queue)
@@ -62,7 +62,7 @@ async def test_set_hold_writes_and_queues_event(
     captured: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
         "app.devices.services.state.queue_event_for_session",
-        lambda s, n, p: captured.append((n, p)),
+        lambda s, n, p, *, severity=None: captured.append((n, p)),
     )
 
     changed = await device_state.set_hold(device, DeviceHold.reserved, reason="run-1")

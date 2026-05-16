@@ -178,7 +178,9 @@ async def mark_node_started(
             capability_key=key,
             value=value,
         )
-    await set_operational_state(device, await ready_operational_state(db, device), reason="Node started")
+    await set_operational_state(
+        device, await ready_operational_state(db, device), reason="Node started", severity="info"
+    )
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -210,7 +212,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped")
+    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped", severity="info")
     await device_health.apply_node_state_transition(
         db,
         device,

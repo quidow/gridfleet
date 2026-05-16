@@ -13,6 +13,7 @@ from app.devices.services.state import set_hold, set_operational_state
 
 if TYPE_CHECKING:
     from app.devices.models import Device
+    from app.events.catalog import EventSeverity
 
 
 # Operational-axis transitions. Hold is ignored unless the event explicitly
@@ -49,6 +50,31 @@ _OPERATIONAL_TRANSITIONS: dict[
         TransitionEvent.VERIFICATION_FAILED: DeviceOperationalState.offline,
         TransitionEvent.CONNECTIVITY_LOST: DeviceOperationalState.offline,
     },
+}
+
+# Per-transition severity for operational-axis events.
+_OPERATIONAL_SEVERITY: dict[TransitionEvent, EventSeverity] = {
+    TransitionEvent.DEVICE_DISCOVERED: "info",
+    TransitionEvent.MAINTENANCE_ENTERED: "info",
+    TransitionEvent.MAINTENANCE_EXITED: "info",
+    TransitionEvent.CONNECTIVITY_LOST: "warning",
+    TransitionEvent.CONNECTIVITY_RESTORED: "success",
+    TransitionEvent.SESSION_STARTED: "info",
+    TransitionEvent.SESSION_ENDED: "info",
+    TransitionEvent.AUTO_STOP_DEFERRED: "info",
+    TransitionEvent.AUTO_STOP_EXECUTED: "info",
+    TransitionEvent.PREPARATION_FAILED: "warning",
+    TransitionEvent.CLOUD_ESCROW: "info",
+    TransitionEvent.VERIFICATION_STARTED: "info",
+    TransitionEvent.VERIFICATION_PASSED: "success",
+    TransitionEvent.VERIFICATION_FAILED: "warning",
+}
+
+# Per-transition severity for hold-axis events.
+_HOLD_SEVERITY: dict[TransitionEvent, EventSeverity] = {
+    TransitionEvent.MAINTENANCE_ENTERED: "info",
+    TransitionEvent.MAINTENANCE_EXITED: "info",
+    TransitionEvent.CLOUD_ESCROW: "info",
 }
 
 # Idempotent self-loops the caller is allowed to re-issue without raising.
@@ -134,15 +160,31 @@ class DeviceStateMachine:
         target_operational, target_hold = targets
         changed = False
 
+        op_severity: EventSeverity = _OPERATIONAL_SEVERITY.get(event, "info")
+        hold_severity: EventSeverity = _HOLD_SEVERITY.get(event, "info")
+
         if target_operational != before.operational:
             changed = (
                 await set_operational_state(
-                    device, target_operational, reason=reason, publish_event=not suppress_events
+                    device,
+                    target_operational,
+                    reason=reason,
+                    publish_event=not suppress_events,
+                    severity=op_severity,
                 )
                 or changed
             )
         if target_hold != before.hold:
-            changed = await set_hold(device, target_hold, reason=reason, publish_event=not suppress_events) or changed
+            changed = (
+                await set_hold(
+                    device,
+                    target_hold,
+                    reason=reason,
+                    publish_event=not suppress_events,
+                    severity=hold_severity,
+                )
+                or changed
+            )
 
         if changed and not skip_hooks:
             after = DeviceStateModel.from_device(device)
