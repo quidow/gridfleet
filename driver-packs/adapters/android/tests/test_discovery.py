@@ -82,6 +82,30 @@ async def test_discover_firetv_keeps_model_code_as_model_number(mock_props: Asyn
         "build": "NS6711",
         "build_number": "5908",
     }
+    assert candidate.detected_properties["os_version_display"] == "6.7.1.1"
+
+
+@pytest.mark.asyncio
+@patch("adapter.discovery.run_cmd", new_callable=AsyncMock)
+@patch("adapter.discovery.get_android_properties", new_callable=AsyncMock)
+async def test_discover_firetv_without_marketing_version_omits_display(
+    mock_props: AsyncMock, mock_cmd: AsyncMock
+) -> None:
+    mock_cmd.return_value = "List of devices attached\n192.168.1.254:5555\tdevice"
+    mock_props.return_value = {
+        "android_version": "7.1.2",
+        "fireos_version": "6.0",
+        "serial_number": "G070VM2011740KW1",
+        "manufacturer": "Amazon",
+        "product_model": "AFTMM",
+        "characteristics": "tv",
+        "hardware": "mt8695",
+    }
+
+    candidates = await discover_adb_devices(_Ctx())
+
+    assert len(candidates) == 1
+    assert "os_version_display" not in candidates[0].detected_properties
 
 
 @pytest.mark.asyncio

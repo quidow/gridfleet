@@ -66,6 +66,11 @@ async def discover_adb_devices(ctx: DiscoveryContext) -> list[DiscoveryCandidate
             "platform": platform,
             "software_versions": software_versions(props),
         }
+        if props.get("fireos_version"):
+            marketing = props.get("fireos_marketing_version", "")
+            os_version_display = marketing.removeprefix("Fire OS ").strip() or None
+            if os_version_display:
+                detected["os_version_display"] = os_version_display
         for key in ("fireos_version", "characteristics", "hardware"):
             if props.get(key):
                 detected[key] = props[key]
