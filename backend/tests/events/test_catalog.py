@@ -67,3 +67,11 @@ def test_helpers_raise_for_unknown_event() -> None:
 def test_default_severity_spec(event_name: str, expected_default: str) -> None:
     assert event_name in PUBLIC_EVENT_NAMES
     assert default_severity_for(event_name) == expected_default
+
+
+def test_system_event_orm_exposes_severity() -> None:
+    from app.events.models import SystemEvent
+
+    column = SystemEvent.__table__.c.severity
+    assert column.nullable is True
+    assert column.type.length == 16  # type: ignore[attr-defined]
