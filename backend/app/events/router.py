@@ -36,6 +36,8 @@ async def get_event_catalog() -> dict[str, Any]:
                 "category": event.category,
                 "category_display_name": EVENT_CATEGORY_DISPLAY_NAMES[event.category],
                 "description": event.description,
+                "default_severity": event.default_severity,
+                "allowed_severities": sorted(event.allowed_severities),
                 "typical_data_fields": list(event.typical_data_fields),
             }
             for event in PUBLIC_EVENT_CATALOG
