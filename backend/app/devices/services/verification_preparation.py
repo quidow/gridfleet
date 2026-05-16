@@ -48,12 +48,20 @@ class PreparedVerificationContext:
 
 
 def _coerce_payload_enums(payload: dict[str, Any]) -> dict[str, Any]:
-    coerced = dict(payload)
-    if isinstance(coerced.get("device_type"), str):
-        coerced["device_type"] = DeviceType(coerced["device_type"])
-    if isinstance(coerced.get("connection_type"), str):
-        coerced["connection_type"] = ConnectionType(coerced["connection_type"])
-    return coerced
+    """Coerce device_type / connection_type to enum types in place.
+
+    Agent-normalized payloads return these fields as plain strings; downstream
+    code (`Device(...)` construction, `setattr` onto Mapped[Enum] columns) does
+    not validate, so leaving them as `str` corrupts the row and crashes any
+    later `.value` access.
+    """
+    device_type = payload.get("device_type")
+    if isinstance(device_type, str) and not isinstance(device_type, DeviceType):
+        payload["device_type"] = DeviceType(device_type)
+    connection_type = payload.get("connection_type")
+    if isinstance(connection_type, str) and not isinstance(connection_type, ConnectionType):
+        payload["connection_type"] = ConnectionType(connection_type)
+    return payload
 
 
 def build_transient_device(payload: dict[str, Any], host: Host | None) -> Device:
@@ -250,6 +258,7 @@ async def resolve_host_derived_payload(
         ):
             payload["name"] = resolved_name
 
+    _coerce_payload_enums(payload)
     return None
 
 
