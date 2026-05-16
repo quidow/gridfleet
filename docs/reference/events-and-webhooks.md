@@ -19,6 +19,22 @@ This page documents the shipped live-event contract used by SSE subscribers, rec
 | `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
 | `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic test event | path `webhook_id` | status object |
 
+## Severity
+
+Every system event includes a `severity` field at the top level:
+
+- `info` — routine state transition; no action needed.
+- `success` — recovery or positive outcome.
+- `warning` — operator attention warranted but not urgent.
+- `critical` — incident; investigate.
+- `neutral` — low-noise bookkeeping (settings, config, test_data updates).
+
+Severity is decided by the backend from the transition context (direction, reason, status) rather than the event type alone. For example a `device.operational_state_changed` from `available → busy` due to a session viability probe is `info`, while the same transition from a crash is `warning`.
+
+Old rows persisted before this field existed will have `severity = null`; consumers that need a value should fall back to the catalog's `default_severity` for that event type.
+
+The canonical per-event `default_severity` and `allowed_severities` values are available from `GET /api/events/catalog`. Refer to that endpoint rather than hard-coding per-type severity assumptions in clients.
+
 ## Event Envelope
 
 The manager publishes one shared event object shape:
@@ -28,6 +44,7 @@ The manager publishes one shared event object shape:
   "type": "device.operational_state_changed",
   "id": "0d5f0af1-7c2b-4ec4-98c3-90cf7b0d52ef",
   "timestamp": "2026-04-01T12:34:56.789012+00:00",
+  "severity": "info",
   "data": {
     "device_id": "uuid",
     "device_name": "Lab Fire TV",
@@ -60,16 +77,18 @@ The manager publishes one shared event object shape:
 
 ### Device and node lifecycle
 
-| Event | Typical `data` fields | Source |
-| --- | --- | --- |
-| `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state`, optional `reason` | node lifecycle, health recovery/failure, session-sync busy/idle flows |
-| `device.hold_changed` | `device_id`, `device_name`, `old_hold`, `new_hold`, optional `reason` | maintenance and run/reservation flows |
-| `device.verification.updated` | full verification job snapshot | verification pipeline |
-| `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | hardware telemetry loop |
-| `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | node start/stop/recovery paths |
-| `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | node-health failure handling |
-| `device.crashed` | `device_id`, `device_name`, `source`, `reason`, `will_restart`, `process` | persisted `node_crash` incidents |
-| `config.updated` | `device_id`, `device_name`, `changed_by` | device config writes |
+| Event | Typical `data` fields | Default severity | Allowed severities | Source |
+| --- | --- | --- | --- | --- |
+| `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state`, optional `reason` | `info` | all | node lifecycle, health recovery/failure, session-sync busy/idle flows |
+| `device.hold_changed` | `device_id`, `device_name`, `old_hold`, `new_hold`, optional `reason` | `info` | `info`, `neutral` | maintenance and run/reservation flows |
+| `device.verification.updated` | full verification job snapshot | `info` | `info`, `success`, `warning`, `critical` | verification pipeline |
+| `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | `warning` | `warning`, `critical`, `success` | hardware telemetry loop |
+| `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |
+| `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | `critical` | `critical`, `warning` | node-health failure handling |
+| `device.crashed` | `device_id`, `device_name`, `source`, `reason`, `will_restart`, `process` | `critical` | `critical`, `warning` | persisted `node_crash` incidents |
+| `device.health_changed` | `device_id`, `healthy`, `summary` | `info` | `info`, `success`, `warning` | aggregate health flip |
+| `config.updated` | `device_id`, `device_name`, `changed_by` | `neutral` | `neutral` | device config writes |
+| `test_data.updated` | `device_id`, `device_name`, `changed_by` | `neutral` | `neutral` | device test_data writes |
 
 ### `device.crashed`
 
@@ -90,35 +109,39 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 
 ### Host and discovery
 
-| Event | Typical `data` fields | Source |
-| --- | --- | --- |
-| `host.registered` | `host_id`, `hostname`, `status` | host self-registration |
-| `host.status_changed` | `host_id`, `hostname`, `old_status`, `new_status` | approval, heartbeat recovery, heartbeat loss |
-| `host.heartbeat_lost` | `host_id`, `hostname`, `missed_count` | heartbeat loop |
-| `host.discovery_completed` | discovery summary fields for the host | discovery API |
+| Event | Typical `data` fields | Default severity | Allowed severities | Source |
+| --- | --- | --- | --- | --- |
+| `host.registered` | `host_id`, `hostname`, `status` | `success` | `success`, `info` | host self-registration |
+| `host.status_changed` | `host_id`, `hostname`, `old_status`, `new_status` | `info` | `info`, `success`, `warning`, `critical` | approval, heartbeat recovery, heartbeat loss |
+| `host.heartbeat_lost` | `host_id`, `hostname`, `missed_count` | `critical` | `critical`, `warning` | heartbeat loop |
+| `host.discovery_completed` | discovery summary fields for the host | `info` | `info` | discovery API |
+| `host.circuit_breaker.opened` | `host`, `consecutive_failures`, `cooldown_seconds`, `last_error` | `critical` | `critical`, `warning` | in-memory circuit-breaker transition |
+| `host.circuit_breaker.closed` | `host` | `success` | `success` | in-memory circuit-breaker transition |
 
 ### Sessions and runs
 
-| Event | Typical `data` fields | Source |
-| --- | --- | --- |
-| `session.started` | `session_id`, `device_id`, `device_name`, optional `test_name`, optional `run_id`, optional requested-lane fields | Grid session sync and direct terminal setup-failure registration |
-| `session.ended` | `session_id`, `device_id`, `device_name`, `status`, optional requested-lane fields, optional `error_type`, optional `error_message` | Grid session sync and external terminal status reporting |
-| `run.created` | `run_id`, `name`, `device_count`, `created_by` | run creation |
-| `run.active` | `run_id`, `name` | run state transition |
-| `run.completed` | `run_id`, `name` | run completion |
-| `run.cancelled` | `run_id`, `name` | cancel and force-release flows |
-| `run.expired` | `run_id`, `name` | run TTL or heartbeat expiration |
+| Event | Typical `data` fields | Default severity | Allowed severities | Source |
+| --- | --- | --- | --- | --- |
+| `session.started` | `session_id`, `device_id`, `device_name`, optional `test_name`, optional `run_id`, optional requested-lane fields | `info` | `info` | Grid session sync and direct terminal setup-failure registration |
+| `session.ended` | `session_id`, `device_id`, `device_name`, `status`, optional requested-lane fields, optional `error_type`, optional `error_message` | `info` | `info`, `success`, `warning`, `critical` | Grid session sync and external terminal status reporting |
+| `run.created` | `run_id`, `name`, `device_count`, `created_by` | `info` | `info` | run creation |
+| `run.active` | `run_id`, `name` | `info` | `info` | run state transition |
+| `run.completed` | `run_id`, `name`, `duration` | `success` | `success`, `warning` | run completion |
+| `run.cancelled` | `run_id`, `name` | `warning` | `warning`, `info` | cancel and force-release flows |
+| `run.expired` | `run_id`, `name`, `reason` | `critical` | `critical`, `warning` | run TTL or heartbeat expiration |
 
 ### Groups, bulk actions, settings, and cleanup
 
-| Event | Typical `data` fields | Source |
-| --- | --- | --- |
-| `device_group.updated` | `group_id`, `action` | group create/update/delete |
-| `device_group.members_changed` | `group_id`, `added` or `removed` | static group membership writes |
-| `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | device and group bulk actions |
-| `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | settings writes |
-| `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted` | retention cleanup loop |
-| `webhook.test` | `webhook_id`, `webhook_name`, `message` | webhook test endpoint |
+| Event | Typical `data` fields | Default severity | Allowed severities | Source |
+| --- | --- | --- | --- | --- |
+| `device_group.updated` | `group_id`, `action` | `neutral` | `neutral`, `info` | group create/update/delete |
+| `device_group.members_changed` | `group_id`, `added`, `removed` | `neutral` | `neutral`, `info` | static group membership writes |
+| `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
+| `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
+| `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted` | `neutral` | `neutral`, `warning` | retention cleanup loop |
+| `webhook.test` | `webhook_id`, `webhook_name`, `message` | `neutral` | `neutral` | webhook test endpoint |
+| `pack_feature.degraded` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `warning` | `warning`, `critical` | driver pack feature monitor |
+| `pack_feature.recovered` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `success` | `success` | driver pack feature monitor |
 
 ## Event Delivery Semantics
 

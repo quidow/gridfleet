@@ -269,6 +269,37 @@ For CI jobs that should consume the currently available matching fleet slice, us
 | `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
 | `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic `webhook.test` event | path `webhook_id` | status object |
 
+`GET /api/notifications` returns a paginated list of `SystemEventRead` objects. Each object includes a top-level `severity` field alongside `id`, `type`, `timestamp`, and `data`:
+
+```json
+{
+  "items": [
+    {
+      "id": "0d5f0af1-7c2b-4ec4-98c3-90cf7b0d52ef",
+      "type": "device.operational_state_changed",
+      "timestamp": "2026-05-16T01:30:00Z",
+      "severity": "info",
+      "data": {
+        "device_id": "uuid",
+        "device_name": "Lab Fire TV",
+        "old_operational_state": "offline",
+        "new_operational_state": "available"
+      }
+    }
+  ],
+  "total": 1,
+  "limit": 25,
+  "offset": 0
+}
+```
+
+Rows persisted before the severity field was introduced will have `severity = null`. Clients that require a non-null value should fall back to the `default_severity` for that event type from `GET /api/events/catalog`.
+
+`GET /api/events/catalog` returns an object whose keys are event type names. Each entry now includes:
+
+- `default_severity` — the severity the backend assigns to this event type when no context-specific override applies. One of `info`, `success`, `warning`, `critical`, `neutral`.
+- `allowed_severities` — the set of severity values this event type may carry. The backend will never emit a severity outside this set for this event type. Clients can use this to validate or filter incoming events.
+
 `DeviceRead` / `DeviceDetail` expose device state as `operational_state` (`available`, `busy`, `offline`) plus nullable `hold` (`maintenance`, `reserved`, or `null`). UI clients derive the legacy status chip from `hold ?? operational_state`.
 
 They also return the latest hardware telemetry snapshot fields:
