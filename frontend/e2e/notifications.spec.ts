@@ -46,6 +46,13 @@ const SEVERITY_EVENTS = [
     timestamp: new Date(Date.UTC(2026, 4, 1, 9, 3, 0)).toISOString(),
     data: { key: 'heartbeat_interval_sec' },
   },
+  {
+    id: 'evt-degrade',
+    type: 'device.hardware_health_changed',
+    severity: 'warning',
+    timestamp: new Date(Date.UTC(2026, 4, 1, 9, 4, 0)).toISOString(),
+    data: { device_name: 'test-device', old_status: 'ok', new_status: 'warning' },
+  },
 ];
 
 async function mockNotificationsApis(page: Page) {
@@ -131,9 +138,16 @@ async function mockSeverityNotificationsApis(page: Page) {
     const urlObject = new URL(route.request().url());
     const limit = Number(urlObject.searchParams.get('limit') ?? '25');
     const offset = Number(urlObject.searchParams.get('offset') ?? '0');
+    const severityParam = urlObject.searchParams.get('severity');
+    const selected = severityParam
+      ? new Set(severityParam.split(',').map((s) => s.trim()).filter(Boolean))
+      : null;
+    const filtered = selected
+      ? SEVERITY_EVENTS.filter((e) => selected.has(e.severity))
+      : SEVERITY_EVENTS;
     await fulfillJson(route, {
-      items: SEVERITY_EVENTS.slice(offset, offset + limit),
-      total: SEVERITY_EVENTS.length,
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
       limit,
       offset,
     });
@@ -169,6 +183,25 @@ test.describe('Notifications Page — severity badges', () => {
     // evt-settings: settings.changed with severity=neutral => badge "Neutral"
     const settingsRow = table.locator('tr', { has: page.locator('code', { hasText: 'settings.changed' }) });
     await expect(settingsRow.getByText('Neutral')).toBeVisible();
+  });
+
+  test('chip filter narrows rows by severity', async ({ page }) => {
+    await page.goto('/notifications');
+    const table = page.locator('table');
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Critical' }).click();
+    await expect(page).toHaveURL(/severity=critical/);
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toBeVisible();
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'settings.changed' }) })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Warning' }).click();
+    await expect(page).toHaveURL(/severity=critical%2Cwarning|severity=critical,warning|severity=warning%2Ccritical|severity=warning,critical/);
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'device.hardware_health_changed' }) })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Critical' }).click();
+    await expect(page).toHaveURL(/severity=warning(?!.*critical)/);
+    await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toHaveCount(0);
   });
 });
 
