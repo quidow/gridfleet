@@ -142,6 +142,7 @@ def _normalized_device_to_candidate(
             "model": normalized.model,
             "model_number": normalized.model_number,
             "os_version": normalized.os_version,
+            "os_version_display": normalized.os_version_display,
             "software_versions": normalized.software_versions,
             "connection_target": normalized.connection_target,
             "ip_address": normalized.ip_address,

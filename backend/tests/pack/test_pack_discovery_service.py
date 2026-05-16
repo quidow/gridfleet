@@ -115,6 +115,78 @@ async def test_refresh_device_properties_updates_pack_device_rows(db_session: As
 
 
 @pytest.mark.asyncio
+async def test_refresh_device_properties_writes_os_version_display(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="fire-stick-serial",
+        connection_target="192.168.1.254:5555",
+        connection_type="network",
+        ip_address="192.168.1.254",
+        name="Fire TV Stick 4K (1st Gen)",
+        os_version="6.0",
+        operational_state="available",
+    )
+    assert device.os_version_display is None
+
+    async def fake_get_properties(host: str, port: int, connection_target: str, pack_id: str) -> dict[str, object]:
+        return {
+            "detected_properties": {
+                "os_version": "6",
+                "os_version_display": "6.7.1.1",
+            }
+        }
+
+    await refresh_device_properties(
+        db_session,
+        device,
+        agent_get_pack_device_properties=fake_get_properties,
+    )
+
+    await db_session.refresh(device)
+    assert device.os_version == "6"
+    assert device.os_version_display == "6.7.1.1"
+
+
+@pytest.mark.asyncio
+async def test_refresh_device_properties_ignores_non_string_display(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="serial-xyz",
+        connection_target="192.168.1.10:5555",
+        connection_type="network",
+        ip_address="192.168.1.10",
+        name="Some Device",
+        os_version="6",
+        operational_state="available",
+    )
+
+    async def fake_get_properties(host: str, port: int, connection_target: str, pack_id: str) -> dict[str, object]:
+        return {
+            "detected_properties": {
+                "os_version": "6",
+                "os_version_display": 671,
+            }
+        }
+
+    await refresh_device_properties(
+        db_session,
+        device,
+        agent_get_pack_device_properties=fake_get_properties,
+    )
+
+    await db_session.refresh(device)
+    assert device.os_version_display is None
+
+
+@pytest.mark.asyncio
 async def test_refresh_device_properties_preserves_registered_identity_and_descriptors(
     db_session: AsyncSession,
     db_host: Host,
