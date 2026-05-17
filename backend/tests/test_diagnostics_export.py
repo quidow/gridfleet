@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
+from app.devices.services.data_cleanup import _cleanup_old_data
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.devices.services.review import mark_review_required
 from app.hosts.models import Host
@@ -255,4 +256,67 @@ async def test_mark_review_required_still_flips_flag_when_snapshot_fails(
     result = await db_session.execute(
         select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
     )
+    assert result.scalars().all() == []
+
+
+@pytest.mark.db
+async def test_data_cleanup_deletes_snapshots_past_retention(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="retention-device",
+        identity_value="ret",
+    )
+    old = DeviceDiagnosticSnapshot(
+        device_id=device.id,
+        trigger="operator",
+        reason=None,
+        payload={"schema_version": 1},
+        captured_at=datetime.now(UTC) - timedelta(days=60),
+    )
+    fresh = DeviceDiagnosticSnapshot(
+        device_id=device.id,
+        trigger="operator",
+        reason=None,
+        payload={"schema_version": 1},
+        captured_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    db_session.add_all([old, fresh])
+    await db_session.commit()
+    await _cleanup_old_data(db_session)
+    result = await db_session.execute(
+        select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
+    )
+    remaining = result.scalars().all()
+    assert {row.id for row in remaining} == {fresh.id}
+
+
+@pytest.mark.db
+async def test_device_delete_cascades_diagnostic_snapshots(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="cascade-device",
+        identity_value="cascade",
+    )
+    db_session.add(
+        DeviceDiagnosticSnapshot(
+            device_id=device.id,
+            trigger="operator",
+            reason=None,
+            payload={"schema_version": 1},
+        )
+    )
+    await db_session.commit()
+    await db_session.delete(device)
+    await db_session.commit()
+    result = await db_session.execute(select(DeviceDiagnosticSnapshot))
     assert result.scalars().all() == []
