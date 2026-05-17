@@ -12,7 +12,10 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
-from app.devices.services.lifecycle_policy_state import clear_maintenance_recovery_suppression
+from app.devices.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
+    clear_maintenance_recovery_suppression,
+)
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
@@ -46,7 +49,17 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
         IntentRegistration(
             source=f"maintenance:recovery:{device_id}",
             axis=RECOVERY,
-            payload={"allowed": False, "priority": PRIORITY_MAINTENANCE, "reason": "Device in maintenance"},
+            # Reason must match ``MAINTENANCE_HOLD_SUPPRESSION_REASON`` exactly:
+            # ``clear_maintenance_recovery_suppression`` (called from
+            # ``exit_maintenance``) only clears
+            # ``lifecycle_policy_state.recovery_suppressed_reason`` when its
+            # value equals that constant. Any drift here freezes the device's
+            # node ``effective_state`` at "blocked" after an operator exit.
+            payload={
+                "allowed": False,
+                "priority": PRIORITY_MAINTENANCE,
+                "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON,
+            },
         ),
     ]
 
