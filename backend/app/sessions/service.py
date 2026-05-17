@@ -18,6 +18,7 @@ from app.devices.services import state as device_state
 from app.events import queue_event_for_session
 from app.events.catalog import EventSeverity
 from app.runs import service as run_service
+from app.runs.models import RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.models import Session, SessionStatus
 
@@ -384,7 +385,11 @@ async def register_session(
     reservation_run_id: uuid.UUID | None = None
     if device is not None:
         reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
-        if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry):
+        if (
+            reservation_run is not None
+            and reservation_run.state == RunState.active
+            and not run_service.reservation_entry_is_excluded(reservation_entry)
+        ):
             reservation_run_id = reservation_run.id
 
     # Insert idempotently. Only ``running`` rows are guarded by the partial
@@ -427,15 +432,13 @@ async def register_session(
 
         session = await db.get(Session, inserted_id)
         assert session is not None
-        activated_run = None
         if device is not None:
             await set_operational_state(device, DeviceOperationalState.busy, publish_event=False, severity="info")
-            activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         queue_session_started_event(
             db,
             session,
             device=device,
-            run_id=str(activated_run.id) if activated_run is not None else None,
+            run_id=str(reservation_run_id) if reservation_run_id is not None else None,
         )
         await db.commit()
         await db.refresh(session)
