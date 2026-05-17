@@ -1190,7 +1190,12 @@ class AppiumProcessManager:
 
     def _is_appium_port_bindable(self, port: int) -> bool:
         # Mirror Appium's own bind (0.0.0.0, no SO_REUSEADDR) so the probe
-        # returns the same EADDRINUSE outcome the subprocess would hit.
+        # returns the same EADDRINUSE outcome the subprocess would hit. The
+        # probe never calls listen()/accept() — the socket is closed by the
+        # context manager immediately after bind, so no traffic from any
+        # interface can reach it. (CodeQL py/bind-socket-all-network-interfaces
+        # flags the literal 0.0.0.0; the alert is dismissed as a false
+        # positive — see PR #283.)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             try:
                 probe.bind(("0.0.0.0", port))
