@@ -13,10 +13,6 @@ from app.runs.service_lifecycle_release import (
 )
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
-from app.runs.service_reservation_lookup import (
-    get_device_reservation_with_entry,
-    reservation_entry_is_excluded,
-)
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -65,39 +61,6 @@ async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await get_run(db, run_id)
     assert run is not None
     return run
-
-
-async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run = await signal_active_for_device_session_no_commit(db, device_id)
-    if run is None:
-        return None
-    await db.commit()
-    refreshed_run = await get_run(db, run.id)
-    assert refreshed_run is not None
-    return refreshed_run
-
-
-async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or reservation_entry_is_excluded(entry):
-        return None
-    locked_run = await _get_run_for_update(db, run.id)
-    if locked_run is None:
-        return None
-    if locked_run.state == RunState.active:
-        if locked_run.started_at is None:
-            now = datetime.now(UTC)
-            locked_run.started_at = now
-            locked_run.last_heartbeat = locked_run.last_heartbeat or now
-        return locked_run
-    if locked_run.state != RunState.preparing:
-        return None
-    now = datetime.now(UTC)
-    locked_run.state = RunState.active
-    locked_run.started_at = now
-    locked_run.last_heartbeat = now
-    queue_event_for_session(db, "run.active", {"run_id": str(locked_run.id), "name": locked_run.name})
-    return locked_run
 
 
 async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
