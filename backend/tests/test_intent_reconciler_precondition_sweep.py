@@ -347,3 +347,24 @@ async def test_allocator_registers_reservation_active_precondition(
         "run_id": str(run.id),
         "device_id": str(device.id),
     }
+
+
+@pytest.mark.db
+async def test_maintenance_intents_carry_device_hold_precondition(db_session: AsyncSession, db_host: Host) -> None:
+    from app.devices.services.maintenance import _maintenance_intents
+
+    device = await create_device(db_session, host_id=db_host.id, name="maint-prec")
+    intents = _maintenance_intents(device.id)
+    expected = {
+        "kind": "device_hold",
+        "device_id": str(device.id),
+        "hold": "maintenance",
+    }
+    sources = {intent.source for intent in intents}
+    assert sources == {
+        f"maintenance:node:{device.id}",
+        f"maintenance:grid:{device.id}",
+        f"maintenance:recovery:{device.id}",
+    }
+    for intent in intents:
+        assert intent.precondition == expected

@@ -10,6 +10,7 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_MAINTENANCE,
     RECOVERY,
+    DeviceHoldPrecondition,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -35,16 +36,23 @@ def _maintenance_sources(device_id: uuid.UUID) -> list[str]:
 
 
 def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
+    precondition: DeviceHoldPrecondition = {
+        "kind": "device_hold",
+        "device_id": str(device_id),
+        "hold": "maintenance",
+    }
     return [
         IntentRegistration(
             source=f"maintenance:node:{device_id}",
             axis=NODE_PROCESS,
             payload={"action": "stop", "priority": PRIORITY_MAINTENANCE, "stop_mode": "graceful"},
+            precondition=precondition,
         ),
         IntentRegistration(
             source=f"maintenance:grid:{device_id}",
             axis=GRID_ROUTING,
             payload={"accepting_new_sessions": False, "priority": PRIORITY_MAINTENANCE},
+            precondition=precondition,
         ),
         IntentRegistration(
             source=f"maintenance:recovery:{device_id}",
@@ -60,6 +68,7 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
                 "priority": PRIORITY_MAINTENANCE,
                 "reason": MAINTENANCE_HOLD_SUPPRESSION_REASON,
             },
+            precondition=precondition,
         ),
     ]
 
