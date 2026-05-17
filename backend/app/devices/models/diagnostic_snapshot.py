@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime  # noqa: TC003 - SQLAlchemy resolves mapped annotations at runtime.
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Index, Text, func, text

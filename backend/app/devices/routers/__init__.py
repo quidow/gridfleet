@@ -6,6 +6,7 @@ __all__ = [
     "catalog",
     "control",
     "core",
+    "diagnostics",
     "groups",
     "helpers",
     "lifecycle_incidents",

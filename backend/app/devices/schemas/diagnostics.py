@@ -1,7 +1,5 @@
 """Pydantic schemas for the device diagnostic export feature."""
 
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import Any, Literal

@@ -80,7 +80,7 @@ async def mark_review_required(
         await db.flush()
         await db.refresh(device)
         await diagnostics_export.capture_snapshot(db, device, trigger="review_required", reason=reason)
-    except Exception:
+    except Exception:  # noqa: BLE001 - snapshot capture must not block the review flag flip.
         logger.warning(
             "Failed to capture diagnostic snapshot for device %s; flag flip proceeds",
             device.id,

@@ -84,18 +84,12 @@ def _project_device(device: Device) -> dict[str, Any]:
         "battery_level_percent": device.battery_level_percent,
         "battery_temperature_c": device.battery_temperature_c,
         "charging_state": device.charging_state.value if device.charging_state else None,
-        "hardware_health_status": (
-            device.hardware_health_status.value if device.hardware_health_status else None
-        ),
+        "hardware_health_status": (device.hardware_health_status.value if device.hardware_health_status else None),
         "hardware_telemetry_support_status": (
-            device.hardware_telemetry_support_status.value
-            if device.hardware_telemetry_support_status
-            else None
+            device.hardware_telemetry_support_status.value if device.hardware_telemetry_support_status else None
         ),
         "hardware_telemetry_reported_at": (
-            device.hardware_telemetry_reported_at.isoformat()
-            if device.hardware_telemetry_reported_at
-            else None
+            device.hardware_telemetry_reported_at.isoformat() if device.hardware_telemetry_reported_at else None
         ),
         "device_checks_healthy": device.device_checks_healthy,
         "device_checks_summary": device.device_checks_summary,
@@ -105,9 +99,7 @@ def _project_device(device: Device) -> dict[str, Any]:
         "session_viability_status": device.session_viability_status,
         "session_viability_error": device.session_viability_error,
         "session_viability_checked_at": (
-            device.session_viability_checked_at.isoformat()
-            if device.session_viability_checked_at
-            else None
+            device.session_viability_checked_at.isoformat() if device.session_viability_checked_at else None
         ),
         "recovery_allowed": device.recovery_allowed,
         "recovery_blocked_reason": device.recovery_blocked_reason,
@@ -146,9 +138,7 @@ async def _read_appium_node(db: AsyncSession, device: Device) -> dict[str, Any] 
         "grid_run_id": str(node.grid_run_id) if node.grid_run_id else None,
         "started_at": node.started_at.isoformat() if node.started_at else None,
         "consecutive_health_failures": node.consecutive_health_failures,
-        "last_health_checked_at": (
-            node.last_health_checked_at.isoformat() if node.last_health_checked_at else None
-        ),
+        "last_health_checked_at": (node.last_health_checked_at.isoformat() if node.last_health_checked_at else None),
         "health_running": node.health_running,
         "health_state": node.health_state,
         "observed_running": node.observed_running,
@@ -307,10 +297,7 @@ async def _read_outbox(db: AsyncSession, device: Device) -> list[dict[str, Any]]
         select(AgentReconfigureOutbox)
         .where(
             AgentReconfigureOutbox.device_id == device.id,
-            (
-                AgentReconfigureOutbox.delivered_at.is_not(None)
-                | AgentReconfigureOutbox.abandoned_at.is_not(None)
-            ),
+            (AgentReconfigureOutbox.delivered_at.is_not(None) | AgentReconfigureOutbox.abandoned_at.is_not(None)),
         )
         .order_by(AgentReconfigureOutbox.created_at.desc())
         .limit(_OUTBOX_DELIVERED_CAP)
@@ -332,9 +319,7 @@ async def _read_outbox(db: AsyncSession, device: Device) -> list[dict[str, Any]]
             "abandoned_at": row.abandoned_at.isoformat() if row.abandoned_at else None,
         }
 
-    return [project(row) for row in pending.scalars().all()] + [
-        project(row) for row in delivered.scalars().all()
-    ]
+    return [project(row) for row in pending.scalars().all()] + [project(row) for row in delivered.scalars().all()]
 
 
 async def assemble_bundle(
@@ -391,9 +376,7 @@ async def _get_or_create_redaction_salt(db: AsyncSession) -> str:
     if isinstance(stored, str) and stored:
         return stored
     fresh = secrets.token_hex(32)
-    inserted = await control_plane_state_store.try_claim_value(
-        db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY, fresh
-    )
+    inserted = await control_plane_state_store.try_claim_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY, fresh)
     if inserted:
         await db.commit()
         return fresh

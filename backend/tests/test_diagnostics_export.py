@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
 from app.devices.services.data_cleanup import _cleanup_old_data
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.devices.services.review import mark_review_required
-from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
 from tests.helpers import create_device
+
+if TYPE_CHECKING:
+    from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -217,9 +222,7 @@ async def test_mark_review_required_records_snapshot(
         name="auto-snapshot-device",
         identity_value="auto",
     )
-    changed = await mark_review_required(
-        db_session, device, reason="health_failure:threshold", source="recovery_loop"
-    )
+    changed = await mark_review_required(db_session, device, reason="health_failure:threshold", source="recovery_loop")
     await db_session.commit()
     assert changed is True
     result = await db_session.execute(
@@ -320,3 +323,121 @@ async def test_device_delete_cascades_diagnostic_snapshots(
     await db_session.commit()
     result = await db_session.execute(select(DeviceDiagnosticSnapshot))
     assert result.scalars().all() == []
+
+
+@pytest.mark.db
+async def test_export_endpoint_returns_payload_and_persists(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="endpoint-device",
+        identity_value="endpoint",
+    )
+    response = await client.post(
+        f"/api/devices/{device.id}/diagnostics/export",
+        params={"persist": "true", "redact": "false"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["payload"]["schema_version"] == 1
+    assert body["snapshot_id"] is not None
+    assert body["warnings"] == []
+    result = await db_session.execute(
+        select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.id == uuid.UUID(body["snapshot_id"]))
+    )
+    assert result.scalar_one().trigger == "operator"
+
+
+@pytest.mark.db
+async def test_export_endpoint_rate_limits_within_window(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="ratelimit-device",
+        identity_value="rate",
+    )
+    first = await client.post(f"/api/devices/{device.id}/diagnostics/export")
+    assert first.status_code == 200
+    second = await client.post(f"/api/devices/{device.id}/diagnostics/export")
+    assert second.status_code == 429
+    assert "Retry-After" in second.headers
+    assert int(second.headers["Retry-After"]) >= 1
+
+
+@pytest.mark.db
+async def test_snapshots_list_paginates_descending(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="page-device",
+        identity_value="page",
+    )
+    base = datetime.now(UTC)
+    for index in range(5):
+        db_session.add(
+            DeviceDiagnosticSnapshot(
+                device_id=device.id,
+                trigger="operator",
+                reason=f"r{index}",
+                payload={"schema_version": 1, "i": index},
+                captured_at=base - timedelta(minutes=index),
+            )
+        )
+    await db_session.commit()
+    resp = await client.get(f"/api/devices/{device.id}/diagnostics/snapshots", params={"limit": 2})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["items"]) == 2
+    assert body["next_before"] is not None
+    resp2 = await client.get(
+        f"/api/devices/{device.id}/diagnostics/snapshots",
+        params={"limit": 2, "before": body["next_before"]},
+    )
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+    assert len(body2["items"]) == 2
+    ids_a = {item["id"] for item in body["items"]}
+    ids_b = {item["id"] for item in body2["items"]}
+    assert ids_a.isdisjoint(ids_b)
+
+
+@pytest.mark.db
+async def test_snapshot_detail_redacts_on_read(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="redact-detail-device",
+        identity_value="emulator-5556",
+    )
+    snapshot_id = await capture_snapshot(db_session, device, trigger="operator", reason=None)
+    await db_session.commit()
+    plain = await client.get(f"/api/devices/{device.id}/diagnostics/snapshots/{snapshot_id}")
+    redacted = await client.get(
+        f"/api/devices/{device.id}/diagnostics/snapshots/{snapshot_id}",
+        params={"redact": "true"},
+    )
+    assert plain.status_code == 200
+    assert redacted.status_code == 200
+    assert plain.json()["payload"]["device"]["identity_value"] == "emulator-5556"
+    assert redacted.json()["payload"]["device"]["identity_value"] != "emulator-5556"
+    assert redacted.json()["payload"]["redacted"] is True
