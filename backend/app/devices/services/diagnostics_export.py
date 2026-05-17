@@ -253,7 +253,10 @@ async def _read_events(db: AsyncSession, device: Device) -> list[dict[str, Any]]
         {
             "id": str(event.id),
             "device_id": str(event.device_id),
-            "event_type": event.event_type.value if event.event_type else None,
+            # ``DeviceEvent.event_type`` is a NOT NULL enum column — direct
+            # ``.value`` access. The previous ``if event_type else None`` was
+            # unreachable.
+            "event_type": event.event_type.value,
             "details": event.details,
             "created_at": event.created_at.isoformat() if event.created_at else None,
         }
@@ -378,6 +381,13 @@ async def _get_or_create_redaction_salt(db: AsyncSession) -> str:
     fresh = secrets.token_hex(32)
     inserted = await control_plane_state_store.try_claim_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY, fresh)
     if inserted:
+        # The salt is a per-deployment one-shot write. The commit here also
+        # flushes any co-pending writes already in the caller's transaction
+        # (e.g. the export route's rate-limit set_value and the in-flight
+        # ``capture_snapshot`` insert when this path is reached from
+        # ``POST /export?redact=true``). That is intentional and benign — all
+        # three writes belong to the same successful operator action — but
+        # callers must not rely on this commit being isolated.
         await db.commit()
         return fresh
     again = await control_plane_state_store.get_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY)
@@ -510,9 +520,6 @@ async def redact_bundle(db: AsyncSession, bundle: dict[str, Any]) -> dict[str, A
 
     redacted["redacted"] = True
     return redacted
-
-
-_redact_bundle = redact_bundle
 
 
 async def capture_snapshot(

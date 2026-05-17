@@ -5,11 +5,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import DateTime, cast, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
-from app.core.leader import state_store as control_plane_state_store
+from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.models import DeviceDiagnosticSnapshot
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.diagnostics import (
@@ -29,9 +30,45 @@ _RATE_LIMIT_NAMESPACE = "diagnostics_export_throttle"
 
 
 async def _enforce_rate_limit(db: AsyncSession, device_id: uuid.UUID) -> None:
+    """Atomic per-device rate limit using a single conditional upsert.
+
+    Replaces an earlier get-then-set pattern that had a TOCTOU window —
+    two concurrent operator clicks on the same device could both pass the
+    freshness check before either wrote the timestamp. The upsert below
+    is one statement: it inserts when no row exists, and updates only
+    when the existing ``captured_at`` is older than the rate-limit
+    window. When the row exists and is still fresh, the WHERE clause
+    rejects the update, the RETURNING clause yields no row, and the
+    request is throttled.
+    """
     key = str(device_id)
     now = datetime.now(UTC)
-    stored = await control_plane_state_store.get_value(db, _RATE_LIMIT_NAMESPACE, key)
+    cutoff = now - _RATE_LIMIT_WINDOW
+    value = {"captured_at": now.isoformat()}
+    insert_stmt = pg_insert(ControlPlaneStateEntry).values(
+        namespace=_RATE_LIMIT_NAMESPACE,
+        key=key,
+        value=value,
+    )
+    stmt = insert_stmt.on_conflict_do_update(
+        constraint="uq_control_plane_state_entries_namespace_key",
+        set_={"value": insert_stmt.excluded.value},
+        where=(cast(ControlPlaneStateEntry.value["captured_at"].astext, DateTime(timezone=True)) < cutoff),
+    ).returning(ControlPlaneStateEntry.value)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none() is not None:
+        return
+    # Conflict and WHERE rejected the update — still inside the cooldown
+    # window. Compute Retry-After from the row we did not touch.
+    stored = (
+        await db.execute(
+            select(ControlPlaneStateEntry.value).where(
+                ControlPlaneStateEntry.namespace == _RATE_LIMIT_NAMESPACE,
+                ControlPlaneStateEntry.key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    remaining = 1
     if isinstance(stored, dict):
         captured_at_raw = stored.get("captured_at")
         if isinstance(captured_at_raw, str):
@@ -45,12 +82,11 @@ async def _enforce_rate_limit(db: AsyncSession, device_id: uuid.UUID) -> None:
                 elapsed = now - captured_at
                 if elapsed < _RATE_LIMIT_WINDOW:
                     remaining = max(1, int((_RATE_LIMIT_WINDOW - elapsed).total_seconds()) + 1)
-                    raise HTTPException(
-                        status_code=429,
-                        detail="Diagnostic export rate-limited; retry after cooldown",
-                        headers={"Retry-After": str(remaining)},
-                    )
-    await control_plane_state_store.set_value(db, _RATE_LIMIT_NAMESPACE, key, {"captured_at": now.isoformat()})
+    raise HTTPException(
+        status_code=429,
+        detail="Diagnostic export rate-limited; retry after cooldown",
+        headers={"Retry-After": str(remaining)},
+    )
 
 
 @router.post(
