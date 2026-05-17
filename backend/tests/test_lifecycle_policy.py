@@ -1277,6 +1277,89 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
     assert outcome is DeferredStopOutcome.NO_PENDING
 
 
+async def test_handle_session_finished_applies_held_graceful_stop_intent(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """End-to-end: a graceful-stop intent registered while a client session is
+    running stays held by the intent reconciler, then applies on the same tick
+    the session ends via ``handle_session_finished``.
+
+    Exercises the lifecycle-policy → reconciler handshake added so that
+    intent-driven deferrals (which do not touch ``lifecycle_policy_state``)
+    still converge promptly when the held session finishes; without the
+    up-front reconcile, the held intent would wait for the next full scan.
+    """
+    from app.devices.services.intent_reconciler import reconcile_device
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="lifecycle-held-intent",
+        connection_target="lifecycle-held-intent",
+        name="Held Intent",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4796,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4796,
+        pid=42,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    session = Session(
+        session_id="held-intent-session",
+        device_id=device.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source=f"health_failure:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+        reason="held intent integration",
+    )
+    await db_session.commit()
+
+    # Held while the session is running.
+    await reconcile_device(db_session, device.id)
+    await db_session.commit()
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+    # Session ends, then the handshake applies the held intent.
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    outcome = await handle_session_finished(db_session, reloaded)
+    assert outcome is DeferredStopOutcome.NO_PENDING
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+
 async def test_handle_session_finished_returns_running_session_exists_under_lock(
     db_session: AsyncSession,
     db_host: Host,
