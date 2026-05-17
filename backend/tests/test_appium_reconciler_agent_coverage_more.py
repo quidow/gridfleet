@@ -524,8 +524,6 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     )
     set_extra = AsyncMock()
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", set_extra)
-    monkeypatch.setattr(node_agent, "ready_operational_state", AsyncMock(return_value=DeviceOperationalState.available))
-    monkeypatch.setattr(node_agent, "set_operational_state", AsyncMock())
     monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
 
     node = await node_agent.mark_node_started(
@@ -560,8 +558,6 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
-    monkeypatch.setattr(node_agent, "ready_operational_state", AsyncMock(return_value=DeviceOperationalState.available))
-    monkeypatch.setattr(node_agent, "set_operational_state", AsyncMock())
     monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
 
     await node_agent.mark_node_started(

@@ -15,6 +15,10 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy
 from app.devices.services import state as device_state
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
+from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.devices.services.state import appium_node_stop_in_flight
 from app.events import queue_event_for_session
 from app.events.catalog import EventSeverity
 from app.runs import service as run_service
@@ -24,6 +28,8 @@ from app.sessions.models import Session, SessionStatus
 
 ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
+
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
@@ -588,16 +594,28 @@ async def update_session_status(
         running_result = await db.execute(running_stmt)
         still_running = running_result.scalars().first() is not None
         if not still_running:
-            # Restore from busy on the busy-side; lifecycle cleanup must run
-            # for any non-busy state too, so the deferred-stop target is
-            # captured regardless of the current operational_state branch.
+            # Restore from busy via the state machine (busy → available).
+            # Transient signals (stale ``health_running``, in-flight node
+            # restart) must not produce a spurious offline detour with reason
+            # "Session ended" — the connectivity + node_health loops are
+            # authoritative for offline transitions and emit their own reasons.
+            # An in-flight graceful stop (``appium_node_stop_in_flight``) IS
+            # load-bearing: the relay is deregistering, so a follow-up
+            # AUTO_STOP_EXECUTED takes the device offline before a new run can
+            # allocate it. Lifecycle cleanup runs for any non-busy state too,
+            # so capture ``deferred_stop_target`` outside the busy branch.
             if locked_device.operational_state == DeviceOperationalState.busy:
-                await set_operational_state(
+                await _MACHINE.transition(
                     locked_device,
-                    await ready_operational_state(db, locked_device),
+                    TransitionEvent.SESSION_ENDED,
                     reason="Session ended",
-                    severity="info",
                 )
+                if appium_node_stop_in_flight(locked_device):
+                    await _MACHINE.transition(
+                        locked_device,
+                        TransitionEvent.AUTO_STOP_EXECUTED,
+                        reason="Session ended with pending node stop",
+                    )
             deferred_stop_target = locked_device
 
     if should_publish_ended:

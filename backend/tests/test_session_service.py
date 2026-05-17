@@ -1,15 +1,17 @@
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services.lifecycle_policy import handle_health_failure
 from app.hosts.models import Host
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -386,3 +388,68 @@ async def test_register_session_running_returns_existing_on_conflict(
 
     rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-conflict"))).scalars().all()
     assert len(rows) == 1
+
+
+async def test_update_session_status_does_not_flap_offline_on_session_end(
+    db_session: AsyncSession,
+    default_host_id: str,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Regression: session-end must not flap operational_state through offline.
+
+    Reproduces toast-spam during active runs (busy → "Session ended" → offline,
+    then health loop restores → "Health checks recovered" → available). The
+    session-end writer must use the SESSION_ENDED state-machine transition
+    (busy → available) and leave offline transitions to the health and
+    connectivity loops. Transient signals (stale ``health_running``, in-flight
+    node restart) must not produce a spurious offline detour with reason
+    ``"Session ended"``.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="flap-repro",
+        connection_target="flap-repro",
+        name="Flap Repro",
+        os_version="14",
+        operational_state="busy",
+    )
+    device.verified_at = datetime.now(UTC)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4730,
+        grid_url="http://hub.invalid:4444",
+        pid=12345,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4730,
+        health_running=False,
+        health_state="error",
+    )
+    db_session.add(node)
+    db_session.add(Session(session_id="flap-sess", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    event_bus_capture.clear()
+
+    updated = await session_service.update_session_status(db_session, "flap-sess", SessionStatus.passed)
+    await settle_after_commit_tasks()
+
+    assert updated is not None
+    op_events = [
+        payload
+        for name, payload in event_bus_capture
+        if name == "device.operational_state_changed" and payload["device_id"] == str(device.id)
+    ]
+    spurious_offline = [
+        p for p in op_events if p["new_operational_state"] == "offline" and p["reason"] == "Session ended"
+    ]
+    assert spurious_offline == [], (
+        "session-end must not project transient signals into operational_state; "
+        f"got spurious offline event(s) {spurious_offline}"
+    )
+    assert len(op_events) == 1, f"expected single busy→available transition, got {op_events}"
+    assert op_events[0]["old_operational_state"] == "busy"
+    assert op_events[0]["new_operational_state"] == "available"
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available

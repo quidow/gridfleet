@@ -118,14 +118,17 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
 
     entered_restore = asyncio.Event()
     allow_restore = asyncio.Event()
-    original_restore = session_service.ready_operational_state
+    from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 
-    async def gated_restore(db: AsyncSession, dev: Device) -> DeviceOperationalState:
-        entered_restore.set()
-        await asyncio.wait_for(allow_restore.wait(), timeout=2.0)
-        return await original_restore(db, dev)
+    original_transition = session_service._MACHINE.transition
 
-    monkeypatch.setattr(session_service, "ready_operational_state", gated_restore)
+    async def gated_transition(dev: Device, event: TransitionEvent, **kwargs: object) -> bool:
+        if event is TransitionEvent.SESSION_ENDED:
+            entered_restore.set()
+            await asyncio.wait_for(allow_restore.wait(), timeout=2.0)
+        return await original_transition(dev, event, **kwargs)
+
+    monkeypatch.setattr(session_service._MACHINE, "transition", gated_transition)
 
     async def finish_session() -> None:
         async with db_session_maker() as session:

@@ -43,15 +43,16 @@ from app.appium_nodes.services.reconciler_allocation import (
 from app.core.database import async_session
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import health as device_health
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.lifecycle_policy_actions import (
     clear_manual_recovery_suppression_state,
     reset_reconciler_start_failure_state,
 )
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
+from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
-from app.devices.services.state import ready_operational_state, set_operational_state
 from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -74,9 +75,12 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.devices.models import Device
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
+
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 RESTART_BACKOFF_BASE = 2
 
@@ -182,9 +186,13 @@ async def mark_node_started(
             capability_key=key,
             value=value,
         )
-    await set_operational_state(
-        device, await ready_operational_state(db, device), reason="Node started", severity="info"
-    )
+    # Device-axis restoration is owned by ``apply_node_state_transition``'s
+    # ``_restore_available_for_healthy_signal``, which transitions offline →
+    # available iff signals are stably healthy. A direct ``set_operational_state``
+    # with the ``ready_operational_state`` projection here would flap the
+    # device offline whenever transient signals (stale ``health_running``,
+    # ``device_checks_healthy``) lag the node-axis update — operators see
+    # spurious "Node started" → offline → "Health checks recovered" toasts.
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -217,7 +225,13 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    await set_operational_state(device, DeviceOperationalState.offline, reason="Node stopped", severity="info")
+    # Route through the state machine so AUTO_STOP_EXECUTED records the
+    # ``auto_stopped`` DeviceEvent and idempotent self-loops (already-offline)
+    # produce no spurious ``device.operational_state_changed`` event. The
+    # previous direct ``set_operational_state(offline)`` write bypassed the
+    # machine, fired an event on every node-stop regardless of prior state,
+    # and skipped audit-log rows.
+    await _MACHINE.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, reason="Node stopped")
     await device_health.apply_node_state_transition(
         db,
         device,
