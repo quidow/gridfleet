@@ -134,3 +134,64 @@ async def test_reservation_active_unsatisfied_when_missing(db_session: AsyncSess
         },
     )
     assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_node_running_expected_false_satisfied_when_stopped(db_session: AsyncSession, db_host: Host) -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = await create_device(db_session, host_id=db_host.id, name="prec-noderun-stopped")
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        desired_state=AppiumDesiredState.stopped,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"auto_recovery:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+    )
+    assert await is_satisfied(db_session, intent) is True
+
+
+@pytest.mark.db
+async def test_node_running_expected_false_unsatisfied_when_running(db_session: AsyncSession, db_host: Host) -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = await create_device(db_session, host_id=db_host.id, name="prec-noderun-running")
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1234,
+        active_connection_target="http://grid:4444",
+        grid_url="http://grid:4444",
+        desired_state=AppiumDesiredState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"auto_recovery:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+    )
+    assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_node_running_unsatisfied_when_node_missing(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-noderun-miss")
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"auto_recovery:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+    )
+    assert await is_satisfied(db_session, intent) is False

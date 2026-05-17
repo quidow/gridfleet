@@ -23,6 +23,8 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
         return await _eval_run_active(db, precondition)
     if kind == "reservation_active":
         return await _eval_reservation_active(db, precondition)
+    if kind == "node_running":
+        return await _eval_node_running(db, precondition)
     logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
     return True
 
@@ -67,3 +69,22 @@ async def _eval_reservation_active(db: AsyncSession, precondition: dict[str, obj
         )
     ).scalar_one_or_none()
     return row is not None
+
+
+async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
+
+    raw_device_id = precondition.get("device_id")
+    expected = precondition.get("expected")
+    if not isinstance(raw_device_id, str) or not isinstance(expected, bool):
+        return False
+    try:
+        device_uuid = UUID(raw_device_id)
+    except ValueError:
+        return False
+    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_uuid))).scalar_one_or_none()
+    if node is None:
+        return False
+    return node.observed_running == expected
