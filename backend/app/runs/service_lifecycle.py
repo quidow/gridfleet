@@ -213,11 +213,30 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         await db.commit()
         return
 
-    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=reason)
+    expired_from_preparing = locked_run.state == RunState.preparing
+    effective_reason = (
+        f"{reason}; run was still in `preparing` — `/api/runs/{{id}}/active` was never signaled"
+        if expired_from_preparing
+        else reason
+    )
+
+    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=effective_reason)
     locked_run.state = RunState.expired
-    locked_run.error = reason
+    locked_run.error = effective_reason
     locked_run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
+
+    if expired_from_preparing:
+        queue_event_for_session(
+            db,
+            "run.never_activated",
+            {
+                "run_id": str(locked_run.id),
+                "name": locked_run.name,
+                "reason": effective_reason,
+            },
+            severity="warning",
+        )
 
     queue_event_for_session(
         db,
@@ -225,7 +244,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         {
             "run_id": str(locked_run.id),
             "name": locked_run.name,
-            "reason": reason,
+            "reason": effective_reason,
         },
         severity="critical",
     )
