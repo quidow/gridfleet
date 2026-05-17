@@ -215,6 +215,24 @@ describe('deriveUnifiedHealth', () => {
     expect(result.reasons).toContain('Pending verification');
   });
 
+  it('surfaces review_required as an error-tone reason', () => {
+    const device = makeDevice({
+      review_required: true,
+      review_reason: 'Recovery probe failed 5 times',
+    });
+    const result = deriveUnifiedHealth(device);
+    expect(result.tone).toBe('error');
+    expect(result.label).toBe('Unhealthy');
+    expect(result.reasons).toContain('Recovery probe failed 5 times');
+  });
+
+  it('falls back to a generic reason when review_required has no message', () => {
+    const device = makeDevice({ review_required: true, review_reason: null });
+    const result = deriveUnifiedHealth(device);
+    expect(result.tone).toBe('error');
+    expect(result.reasons).toContain('Operator review required');
+  });
+
   it('combines liveness failure and lifecycle suppression in reasons', () => {
     const device = makeDevice({
       health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null },

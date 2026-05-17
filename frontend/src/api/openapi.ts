@@ -2530,6 +2530,15 @@ export interface components {
             /** Readiness State */
             readiness_state: string;
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
+            /** Review Reason */
+            review_reason?: string | null;
+            /**
+             * Review Required
+             * @default false
+             */
+            review_required: boolean;
+            /** Review Set At */
+            review_set_at?: string | null;
             /** Sessions */
             sessions?: components["schemas"]["SessionRead"][];
             /** Software Versions */
@@ -2859,6 +2868,15 @@ export interface components {
             /** Readiness State */
             readiness_state: string;
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
+            /** Review Reason */
+            review_reason?: string | null;
+            /**
+             * Review Required
+             * @default false
+             */
+            review_required: boolean;
+            /** Review Set At */
+            review_set_at?: string | null;
             /** Software Versions */
             software_versions: {
                 [key: string]: unknown;

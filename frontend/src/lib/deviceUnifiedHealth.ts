@@ -27,6 +27,11 @@ export function deriveUnifiedHealth(device: DeviceRead): UnifiedHealth {
   const reasons: string[] = [];
   let tone: UnifiedHealthTone = 'ok';
 
+  if (device.review_required) {
+    reasons.push(device.review_reason || 'Operator review required');
+    tone = 'error';
+  }
+
   if (liveness === false) {
     reasons.push(livenessDetail || 'Device unhealthy');
     tone = 'error';

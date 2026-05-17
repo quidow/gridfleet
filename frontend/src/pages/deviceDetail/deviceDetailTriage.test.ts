@@ -213,6 +213,38 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
+  it('prioritizes review_required card over every other branch', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        review_required: true,
+        review_reason: 'Recovery probe failed 5 times',
+        review_set_at: '2026-05-17T15:00:00Z',
+        // Conditions that would otherwise drive a lower-tone card; review must win.
+        operational_state: 'offline',
+        hardware_health_status: 'warning',
+        appium_node: null,
+      }),
+      { health: makeHealth(), canTestSession: false },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'error',
+      eyebrow: 'Review required',
+      title: 'Device shelved — operator review required',
+      detail: 'Recovery probe failed 5 times',
+      action: { kind: 'open-control' },
+    });
+    expect(triage.evidence[0]).toMatchObject({ label: 'Reason', value: 'Recovery probe failed 5 times' });
+  });
+
+  it('falls back to a generic detail when review_reason is missing', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({ review_required: true, review_reason: null }),
+      { health: makeHealth(), canTestSession: false },
+    );
+    expect(triage.detail).toContain('Automated recovery hit the failure threshold');
+  });
+
   it('keeps unsupported telemetry passive while surfacing stale telemetry', () => {
     const unsupported = deriveDeviceDetailTriage(
       makeDevice({ hardware_telemetry_state: 'unsupported' }),
