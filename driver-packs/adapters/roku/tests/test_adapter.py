@@ -52,3 +52,57 @@ async def test_health_check_uses_manifest_check_ids(monkeypatch: pytest.MonkeyPa
 
     assert [check.check_id for check in result] == ["ping", "ecp"]
     assert all(check.ok for check in result)
+
+
+@pytest.mark.asyncio
+async def test_health_check_retries_once_on_transient_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single transient TCP probe failure must not flip ``ping``/``ecp`` to
+    unhealthy — the adapter retries once with a short backoff."""
+
+    class _Ctx:
+        device_identity_value = "192.168.1.51"
+        allow_boot = False
+
+    attempts = {"count": 0}
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        attempts["count"] += 1
+        return attempts["count"] > 1
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.asyncio.sleep", fake_sleep)
+
+    result = await Adapter().health_check(_Ctx())
+
+    assert attempts["count"] == 2
+    assert all(check.ok for check in result)
+
+
+@pytest.mark.asyncio
+async def test_health_check_fails_when_both_attempts_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two consecutive TCP probe failures correctly mark the checks unhealthy."""
+
+    class _Ctx:
+        device_identity_value = "192.168.1.52"
+        allow_boot = False
+
+    attempts = {"count": 0}
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        attempts["count"] += 1
+        return False
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.asyncio.sleep", fake_sleep)
+
+    result = await Adapter().health_check(_Ctx())
+
+    assert attempts["count"] == 2
+    assert not any(check.ok for check in result)
+    assert all(check.detail == "Roku ECP port 8060 unreachable" for check in result)
