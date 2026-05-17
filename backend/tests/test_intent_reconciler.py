@@ -22,6 +22,7 @@ from app.devices.services.intent_reconciler import (
     run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
+from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -274,6 +275,91 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     assert outbox.port == 4723
     assert outbox.stop_pending is True
     assert outbox.accepting_new_sessions is False
+
+
+async def test_graceful_stop_holds_node_running_while_session_active(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A graceful stop intent must not flip ``desired_state=stopped`` while a
+    client session is running on the device.
+
+    The convergence layer's ``stop_pending`` no-op currently guards the kill,
+    but it is the only safety net. This test pins the contract that the
+    intent reconciler itself holds the soft-stop while a session is active —
+    so any caller (heartbeat-driven crash, future code path, evaluator change)
+    that forgets to set ``stop_pending`` cannot terminate the relay mid-session.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="graceful-session")
+    node = await _seed_node(db_session, device.id, generation=2)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    db_session.add(Session(session_id="active-sess-1", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source=f"health_failure:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
+        reason="health failure",
+    )
+    await db_session.commit()
+
+    await _reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+
+async def test_graceful_stop_applies_once_session_ends(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """After the held session ends, the next reconcile must apply the held
+    graceful stop and flip ``desired_state=stopped`` with ``stop_pending=True``.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="graceful-end")
+    node = await _seed_node(db_session, device.id, generation=2)
+    node.desired_state = AppiumDesiredState.running
+    node.desired_port = 4723
+    node.port = 4723
+    node.pid = 1234
+    node.active_connection_target = device.connection_target
+    session = Session(session_id="ending-sess-1", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source=f"health_failure:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
+        reason="health failure",
+    )
+    await db_session.commit()
+
+    await _reconcile_device(db_session, device.id)
+    await db_session.commit()
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+
+    session.status = SessionStatus.passed
+    session.ended_at = datetime.now(UTC)
+    await db_session.commit()
+    await _reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
 
 
 async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSession, db_host: Host) -> None:

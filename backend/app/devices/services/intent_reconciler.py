@@ -27,6 +27,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
+from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
 
 if TYPE_CHECKING:
@@ -202,6 +203,23 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     reservation_decision = evaluate_reservation([intent for intent in intents if intent.axis == RESERVATION], now)
     recovery_decision = evaluate_recovery([intent for intent in intents if intent.axis == RECOVERY], now)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
+    # Universal session-safety invariant: a graceful-stop intent must never
+    # flip ``desired_state=stopped`` while a client session is active. The
+    # convergence layer's ``stop_pending`` no-op is one safety net; this
+    # downgrade is the second — any future caller that registers a soft stop
+    # (``stop_mode == "graceful"``) is automatically session-safe without
+    # having to repeat the deferred-stop pattern from
+    # ``lifecycle_policy.handle_health_failure``. Hard stops (``stop_mode ==
+    # "hard"``) — operator force-release, bulk operator stop — still execute
+    # immediately; the operator owns that override.
+    if (
+        target_state == AppiumDesiredState.stopped
+        and node_decision.stop_mode == "graceful"
+        and await _device_has_active_client_session(db, device_id)
+    ):
+        target_state = AppiumDesiredState.running
+        node_accepting_new_sessions = False
+        stop_pending = True
     accepting_new_sessions = node_accepting_new_sessions and grid_decision.accepting_new_sessions
 
     old = {
@@ -291,6 +309,19 @@ async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     if should_stage_reconfigure:
         await _stage_agent_reconfigure(db, node)
     await db.flush()
+
+
+async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
+    count = await db.scalar(
+        select(func.count())
+        .select_from(Session)
+        .where(
+            Session.device_id == device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+        )
+    )
+    return bool(count)
 
 
 async def _apply_reservation_decision(db: AsyncSession, device_id: uuid.UUID, decision: ReservationDecision) -> None:
