@@ -7,15 +7,19 @@ serializable global snapshot.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import logging
+import secrets
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models.node import AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceIntent, DeviceReservation
 from app.devices.schemas.diagnostics import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
 from app.runs.models import TestRun
@@ -34,6 +38,17 @@ _INTENT_CAP = 200
 _RECENT_ENDED_SESSIONS_CAP = 20
 _EVENTS_CAP = 50
 _OUTBOX_DELIVERED_CAP = 5
+_UUID_LIKE_LENGTH = 36
+_EVENT_DETAILS_KEY_SET = frozenset(
+    {
+        "identity_value",
+        "connection_target",
+        "ip_address",
+        "host_ip",
+        "active_connection_target",
+        "session_id",
+    }
+)
 
 
 def _utcnow_iso() -> str:
@@ -371,5 +386,147 @@ async def assemble_bundle(
     return bundle
 
 
+async def _get_or_create_redaction_salt(db: AsyncSession) -> str:
+    stored = await control_plane_state_store.get_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY)
+    if isinstance(stored, str) and stored:
+        return stored
+    fresh = secrets.token_hex(32)
+    inserted = await control_plane_state_store.try_claim_value(
+        db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY, fresh
+    )
+    if inserted:
+        await db.commit()
+        return fresh
+    again = await control_plane_state_store.get_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY)
+    if not isinstance(again, str) or not again:
+        raise RuntimeError("Failed to materialise diagnostic redaction salt")
+    return again
+
+
+def _hash_value(value: str, salt: str) -> str:
+    digest = hashlib.sha256((value + salt).encode("utf-8")).hexdigest()
+    return f"redacted:{digest[:8]}"
+
+
+def _looks_uuid(value: str) -> bool:
+    if len(value) != _UUID_LIKE_LENGTH:
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _hash_if_str(obj: dict[str, Any], key: str, salt: str) -> None:
+    value = obj.get(key)
+    if isinstance(value, str) and value:
+        obj[key] = _hash_value(value, salt)
+
+
+def _collect_sensitive_ids(bundle: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    device = bundle.get("device")
+    if isinstance(device, dict):
+        for key in ("id", "host_id"):
+            value = device.get(key)
+            if isinstance(value, str) and value:
+                ids.add(value)
+    for reservation in bundle.get("reservations") or []:
+        if isinstance(reservation, dict):
+            for key in ("id", "run_id"):
+                value = reservation.get(key)
+                if isinstance(value, str) and value:
+                    ids.add(value)
+    for intent in bundle.get("intents") or []:
+        if isinstance(intent, dict):
+            value = intent.get("run_id")
+            if isinstance(value, str) and value:
+                ids.add(value)
+    sessions = bundle.get("sessions")
+    if isinstance(sessions, dict):
+        for bucket in ("running", "recent_ended"):
+            for session in sessions.get(bucket) or []:
+                if isinstance(session, dict):
+                    for key in ("id", "run_id"):
+                        value = session.get(key)
+                        if isinstance(value, str) and value:
+                            ids.add(value)
+    for run in bundle.get("related_runs") or []:
+        if isinstance(run, dict):
+            value = run.get("id")
+            if isinstance(value, str) and value:
+                ids.add(value)
+    return ids
+
+
+def _redact_event_details(
+    obj: object,
+    *,
+    salt: str,
+    sensitive_ids: set[str],
+) -> object:
+    if isinstance(obj, dict):
+        details = cast("dict[object, object]", obj)
+        for key, value in list(details.items()):
+            if isinstance(value, str):
+                if (isinstance(key, str) and key in _EVENT_DETAILS_KEY_SET and value) or (
+                    _looks_uuid(value) and value in sensitive_ids
+                ):
+                    details[key] = _hash_value(value, salt)
+            elif isinstance(value, (dict, list)):
+                _redact_event_details(value, salt=salt, sensitive_ids=sensitive_ids)
+    elif isinstance(obj, list):
+        values = cast("list[object]", obj)
+        for index, value in enumerate(values):
+            if isinstance(value, str) and _looks_uuid(value) and value in sensitive_ids:
+                values[index] = _hash_value(value, salt)
+            elif isinstance(value, (dict, list)):
+                _redact_event_details(value, salt=salt, sensitive_ids=sensitive_ids)
+    return obj
+
+
 async def redact_bundle(db: AsyncSession, bundle: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError("filled in by Task 6")
+    """Apply the diagnostic bundle redaction rules."""
+    salt = await _get_or_create_redaction_salt(db)
+    sensitive_ids = _collect_sensitive_ids(bundle)
+    redacted = copy.deepcopy(bundle)
+
+    device = redacted.get("device")
+    if isinstance(device, dict):
+        _hash_if_str(device, "identity_value", salt)
+        _hash_if_str(device, "connection_target", salt)
+        _hash_if_str(device, "ip_address", salt)
+
+    node = redacted.get("appium_node")
+    if isinstance(node, dict):
+        _hash_if_str(node, "active_connection_target", salt)
+
+    for reservation in redacted.get("reservations") or []:
+        if isinstance(reservation, dict):
+            _hash_if_str(reservation, "identity_value", salt)
+            _hash_if_str(reservation, "connection_target", salt)
+            _hash_if_str(reservation, "host_ip", salt)
+
+    sessions = redacted.get("sessions")
+    if isinstance(sessions, dict):
+        for bucket in ("running", "recent_ended"):
+            for session in sessions.get(bucket) or []:
+                if isinstance(session, dict):
+                    _hash_if_str(session, "session_id", salt)
+
+    for run in redacted.get("related_runs") or []:
+        if isinstance(run, dict):
+            _hash_if_str(run, "name", salt)
+
+    for event in redacted.get("events") or []:
+        if isinstance(event, dict):
+            details = event.get("details")
+            if isinstance(details, (dict, list)):
+                _redact_event_details(details, salt=salt, sensitive_ids=sensitive_ids)
+
+    redacted["redacted"] = True
+    return redacted
+
+
+_redact_bundle = redact_bundle

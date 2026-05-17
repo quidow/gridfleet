@@ -129,3 +129,49 @@ async def test_assemble_bundle_full_state_respects_caps_and_ordering(
     assert ended_times == sorted(ended_times, reverse=True)
     event_created = [event["created_at"] for event in bundle["events"]]
     assert event_created == sorted(event_created, reverse=True)
+
+
+@pytest.mark.db
+async def test_assemble_bundle_redaction_hashes_named_fields(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="redact-device",
+        identity_value="emulator-5554",
+        connection_target="emulator-5554",
+        ip_address="10.0.0.42",
+    )
+    db_session.add(
+        DeviceEvent(
+            device_id=device.id,
+            event_type=DeviceEventType.connectivity_lost,
+            details={
+                "identity_value": "emulator-5554",
+                "nested": {"connection_target": "emulator-5554"},
+                "device_id": str(device.id),
+                "harmless": "keep-me",
+            },
+        )
+    )
+    await db_session.commit()
+
+    unredacted = await assemble_bundle(db_session, device, redact=False)
+    redacted = await assemble_bundle(db_session, device, redact=True)
+
+    assert redacted["redacted"] is True
+    assert redacted["device"]["identity_value"] != "emulator-5554"
+    assert redacted["device"]["connection_target"] != "emulator-5554"
+    assert redacted["device"]["ip_address"] != "10.0.0.42"
+    assert redacted["device"]["name"] == "redact-device"
+    event = redacted["events"][0]
+    assert event["details"]["identity_value"] != "emulator-5554"
+    assert event["details"]["nested"]["connection_target"] != "emulator-5554"
+    assert event["details"]["device_id"] != str(device.id)
+    assert event["details"]["harmless"] == "keep-me"
+    redacted2 = await assemble_bundle(db_session, device, redact=True)
+    assert redacted["device"]["identity_value"] == redacted2["device"]["identity_value"]
+    assert unredacted["device"]["identity_value"] == "emulator-5554"
