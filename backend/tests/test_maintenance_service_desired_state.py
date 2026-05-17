@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceIntent
+from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -91,7 +92,7 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     assert node.stop_pending is True
     await db_session.refresh(device)
     assert device.recovery_allowed is False
-    assert device.recovery_blocked_reason == "Device in maintenance"
+    assert device.recovery_blocked_reason == MAINTENANCE_HOLD_SUPPRESSION_REASON
     assert node.observed_running
     intents = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
