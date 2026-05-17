@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from sqlalchemy import select
+
+from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.core.observability import get_logger
+from app.devices.models import DeviceIntent
+from app.devices.services.intent_reconciler import _reconcile_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-
-    from app.devices.models import DeviceIntent
 
 logger = get_logger(__name__)
 
@@ -29,6 +32,24 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
         return await _eval_device_hold(db, precondition)
     logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
     return True
+
+
+async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
+    """Delete intents whose precondition no longer holds, then re-reconcile."""
+    rows = (await db.execute(select(DeviceIntent).where(DeviceIntent.precondition.is_not(None)))).scalars().all()
+    affected: set[UUID] = set()
+    for intent in rows:
+        if await is_satisfied(db, intent):
+            continue
+        affected.add(intent.device_id)
+        await db.delete(intent)
+    if not affected:
+        return
+    await db.flush()
+    for device_id in sorted(affected):
+        await _reconcile_device(db, device_id)
+        await db.commit()
+        await deliver_agent_reconfigures(db, device_id)
 
 
 async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) -> bool:

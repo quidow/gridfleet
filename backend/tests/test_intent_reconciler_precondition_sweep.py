@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pytest
+from sqlalchemy import select
+
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import DeviceIntent
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
+from app.runs.models import RunState
+from tests.helpers import create_device, create_reserved_run
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
+
+
+async def _seed_node(db_session: AsyncSession, device_id: uuid.UUID) -> AppiumNode:
+    node = AppiumNode(
+        device_id=device_id,
+        port=4723,
+        grid_url="http://grid:4444",
+        desired_state=AppiumDesiredState.stopped,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    return node
+
+
+@pytest.mark.db
+async def test_sweep_deletes_intent_when_run_terminal(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="sweep-term")
+    await _seed_node(db_session, device.id)
+    run = await create_reserved_run(db_session, name="sweep-run", devices=[device])
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="cooldown",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    run.state = RunState.completed
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    rows = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.db
+async def test_sweep_leaves_satisfied_intents_intact(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="sweep-keep")
+    await _seed_node(db_session, device.id)
+    run = await create_reserved_run(db_session, name="sweep-keep-run", devices=[device])
+    run.state = RunState.active
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="cooldown",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    rows = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.db
+async def test_sweep_is_noop_when_no_precondition_intents(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="sweep-noop")
+    await _seed_node(db_session, device.id)
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="plain",
+        intents=[
+            IntentRegistration(
+                source="baseline:start",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 10},
+                precondition=None,
+            )
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    rows = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.db
+async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSession, db_host: Host) -> None:
+    from datetime import timedelta
+
+    from app.devices.services.intent_reconciler import _reconcile_expired_intents
+
+    device = await create_device(db_session, host_id=db_host.id, name="sweep-orthogonal")
+    await _seed_node(db_session, device.id)
+    run = await create_reserved_run(db_session, name="sweep-orthogonal-run", devices=[device])
+    run.state = RunState.active
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="hybrid",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                expires_at=datetime.now(UTC) - timedelta(seconds=1),
+                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    await db_session.commit()
+
+    await _reconcile_expired_intents(db_session)
+    await db_session.commit()
+
+    remaining = (
+        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    )
+    assert remaining == []
+
+
+@pytest.mark.db
+async def test_sweep_reconciles_affected_device_only(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.devices.services import intent_preconditions as module
+
+    reconciled: list[uuid.UUID] = []
+
+    async def fake_reconcile(db: AsyncSession, device_id: uuid.UUID) -> None:
+        reconciled.append(device_id)
+
+    async def fake_deliver(db: AsyncSession, device_id: uuid.UUID, *, limit: int = 5) -> None:
+        return None
+
+    monkeypatch.setattr(module, "_reconcile_device", fake_reconcile)
+    monkeypatch.setattr(module, "deliver_agent_reconfigures", fake_deliver)
+
+    device_a = await create_device(db_session, host_id=db_host.id, name="sweep-a")
+    device_b = await create_device(db_session, host_id=db_host.id, name="sweep-b")
+    await _seed_node(db_session, device_a.id)
+    await _seed_node(db_session, device_b.id)
+    run = await create_reserved_run(db_session, name="run-a", devices=[device_a])
+    await IntentService(db_session).register_intents(
+        device_id=device_a.id,
+        reason="cooldown",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    run.state = RunState.completed
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+    assert reconciled == [device_a.id]
