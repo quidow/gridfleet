@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.15.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.1...gridfleet-agent-v0.15.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* **agent:** raise grid node session inactivity timeout default to 1800s ([a794993](https://github.com/quidow/gridfleet/commit/a79499303b638fcee50427a5c79bea4351042443))
+* session-safe graceful node stops + adapter probe + idle timeout ([0cc0689](https://github.com/quidow/gridfleet/commit/0cc068958c1c7df2529b6146e1446e3fc0ca180f))
+
 ## [0.15.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.0...gridfleet-agent-v0.15.1) (2026-05-17)
 
 
