@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -67,3 +68,69 @@ async def test_is_satisfied_returns_true_when_precondition_is_none(db_session: A
     device = await create_device(db_session, host_id=db_host.id, name="prec-none")
     intent = DeviceIntent(device_id=device.id, source="baseline", axis=NODE_PROCESS, payload={}, precondition=None)
     assert await is_satisfied(db_session, intent) is True
+
+
+@pytest.mark.db
+async def test_reservation_active_satisfied_when_unreleased(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-res-ok")
+    run = await create_reserved_run(db_session, name="prec-res", devices=[device])
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"run:{run.id}",
+        axis="grid_routing",
+        payload={},
+        precondition={
+            "kind": "reservation_active",
+            "run_id": str(run.id),
+            "device_id": str(device.id),
+        },
+    )
+    assert await is_satisfied(db_session, intent) is True
+
+
+@pytest.mark.db
+async def test_reservation_active_unsatisfied_when_released(db_session: AsyncSession, db_host: Host) -> None:
+    from sqlalchemy import select
+
+    from app.devices.models import DeviceReservation
+
+    device = await create_device(db_session, host_id=db_host.id, name="prec-res-released")
+    run = await create_reserved_run(db_session, name="prec-res-rel", devices=[device])
+    reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == run.id, DeviceReservation.device_id == device.id
+            )
+        )
+    ).scalar_one()
+    reservation.released_at = datetime.now(UTC)
+    await db_session.commit()
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"run:{run.id}",
+        axis="grid_routing",
+        payload={},
+        precondition={
+            "kind": "reservation_active",
+            "run_id": str(run.id),
+            "device_id": str(device.id),
+        },
+    )
+    assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_reservation_active_unsatisfied_when_missing(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-res-miss")
+    intent = DeviceIntent(
+        device_id=device.id,
+        source="run:none",
+        axis="grid_routing",
+        payload={},
+        precondition={
+            "kind": "reservation_active",
+            "run_id": str(uuid4()),
+            "device_id": str(device.id),
+        },
+    )
+    assert await is_satisfied(db_session, intent) is False
