@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_base_url, agent_health, appium_stop
@@ -729,7 +730,14 @@ async def _load_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) ->
 
 
 async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
-    return await device_locking.lock_device(db, device_id)
+    # The device row can be deleted between a start attempt and the failure
+    # write (e.g. verification cleanup removing a candidate device). Treat
+    # that as "nothing to record" — every caller already handles None.
+    try:
+        return await device_locking.lock_device(db, device_id)
+    except NoResultFound:
+        logger.info("reconciler_lock_device_missing", extra={"device_id": str(device_id)})
+        return None
 
 
 async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
