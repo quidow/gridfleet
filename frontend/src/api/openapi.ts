@@ -726,6 +726,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/devices/{device_id}/diagnostics/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Device Diagnostics */
+        post: operations["export_device_diagnostics_api_devices__device_id__diagnostics_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/{device_id}/diagnostics/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Device Diagnostic Snapshots */
+        get: operations["list_device_diagnostic_snapshots_api_devices__device_id__diagnostics_snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/{device_id}/diagnostics/snapshots/{snapshot_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Device Diagnostic Snapshot */
+        get: operations["get_device_diagnostic_snapshot_api_devices__device_id__diagnostics_snapshots__snapshot_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices/{device_id}/health": {
         parameters: {
             query?: never;
@@ -3112,6 +3163,71 @@ export interface components {
             tags?: {
                 [key: string]: string;
             } | null;
+        };
+        /**
+         * DiagnosticExportResponse
+         * @description Response from POST /devices/{id}/diagnostics/export.
+         */
+        DiagnosticExportResponse: {
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Snapshot Id */
+            snapshot_id?: string | null;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /**
+         * DiagnosticSnapshotDetail
+         * @description One snapshot, including the bundle payload.
+         */
+        DiagnosticSnapshotDetail: {
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Reason */
+            reason?: string | null;
+            /** Trigger */
+            trigger: string;
+        };
+        /** DiagnosticSnapshotListResponse */
+        DiagnosticSnapshotListResponse: {
+            /** Items */
+            items: components["schemas"]["DiagnosticSnapshotSummary"][];
+            /** Next Before */
+            next_before?: string | null;
+        };
+        /**
+         * DiagnosticSnapshotSummary
+         * @description One row in the snapshot history list.
+         */
+        DiagnosticSnapshotSummary: {
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reason */
+            reason?: string | null;
+            /** Trigger */
+            trigger: string;
         };
         /** DiscoveredDevice */
         DiscoveredDevice: {
@@ -8142,6 +8258,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_device_diagnostics_api_devices__device_id__diagnostics_export_post: {
+        parameters: {
+            query?: {
+                persist?: boolean;
+                redact?: boolean;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticExportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_device_diagnostic_snapshots_api_devices__device_id__diagnostics_snapshots_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticSnapshotListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_device_diagnostic_snapshot_api_devices__device_id__diagnostics_snapshots__snapshot_id__get: {
+        parameters: {
+            query?: {
+                redact?: boolean;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+                snapshot_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticSnapshotDetail"];
                 };
             };
             /** @description Validation Error */
