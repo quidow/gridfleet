@@ -192,6 +192,46 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert rows[0].requested_capabilities[PROBE_CHECKED_BY_CAP_KEY] == "verification"
 
 
+async def test_run_probe_drives_immediate_convergence_after_start_node(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_probe must kick converge_device_now after start_node so verification does
+    not wait for the next reconciler tick. Without this, wait_for_node_running races
+    appium_reconciler.interval_sec (default 30s) against appium.startup_timeout_sec
+    (default 30s) — a common cause of `node_start failed` → cleanup skipped for new
+    devices.
+    """
+    monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
+    existing = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-converge-immediate",
+        connection_target="verify-converge-immediate",
+        name="Verify Converge",
+        operational_state=DeviceOperationalState.available,
+    )
+    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=fake_node))
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
+    )
+    converge_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.converge_device_now",
+        converge_mock,
+        raising=False,
+    )
+
+    await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+
+    converge_mock.assert_awaited_once()
+    call_args = converge_mock.await_args
+    assert call_args is not None
+    assert call_args.args[0] == existing.id or call_args.kwargs.get("device_id") == existing.id
+
+
 async def test_save_verified_context_and_cleanup_error_paths(
     db_session: AsyncSession,
     db_host: Host,

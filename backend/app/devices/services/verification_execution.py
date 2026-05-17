@@ -12,6 +12,7 @@ from app.agent_comm.operations import pack_device_health as fetch_pack_device_he
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
+from app.appium_nodes.services.reconciler import converge_device_now
 from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wait_for_node_running
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
@@ -195,6 +196,14 @@ async def run_probe(
         await set_stage(job, "node_start", "failed", detail=detail)
         await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
         return None, detail
+
+    # Drive an immediate convergence pass so verification does not have to wait up
+    # to appium_reconciler.interval_sec for the leader loop to start the node.
+    # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
+    try:
+        await converge_device_now(device.id, db=db)
+    except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
+        logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
     timeout = int(settings_service.get("appium.startup_timeout_sec"))
     started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
