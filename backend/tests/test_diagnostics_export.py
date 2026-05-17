@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
+from app.devices.services.review import mark_review_required
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
@@ -200,3 +202,57 @@ async def test_capture_snapshot_persists_row_with_trigger_and_reason(
     assert row.reason == "manual click"
     assert row.payload["schema_version"] == 1
     assert row.payload["redacted"] is False
+
+
+@pytest.mark.db
+async def test_mark_review_required_records_snapshot(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="auto-snapshot-device",
+        identity_value="auto",
+    )
+    changed = await mark_review_required(
+        db_session, device, reason="health_failure:threshold", source="recovery_loop"
+    )
+    await db_session.commit()
+    assert changed is True
+    result = await db_session.execute(
+        select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
+    )
+    snapshots = result.scalars().all()
+    assert len(snapshots) == 1
+    snap = snapshots[0]
+    assert snap.trigger == "review_required"
+    assert snap.reason == "health_failure:threshold"
+    assert snap.payload["device"]["review_required"] is True
+
+
+@pytest.mark.db
+async def test_mark_review_required_still_flips_flag_when_snapshot_fails(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="snapshot-fails-device",
+        identity_value="fails",
+    )
+    with patch(
+        "app.devices.services.review.diagnostics_export.capture_snapshot",
+        side_effect=RuntimeError("forced failure"),
+    ):
+        changed = await mark_review_required(db_session, device, reason="forced", source="test")
+        await db_session.commit()
+    assert changed is True
+    assert device.review_required is True
+    result = await db_session.execute(
+        select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
+    )
+    assert result.scalars().all() == []
