@@ -368,3 +368,33 @@ async def test_maintenance_intents_carry_device_hold_precondition(db_session: As
     }
     for intent in intents:
         assert intent.precondition == expected
+
+
+@pytest.mark.db
+async def test_node_health_registers_node_running_precondition(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.appium_nodes.services import node_health
+
+    captured: list[IntentRegistration] = []
+
+    async def fake_register(
+        db: AsyncSession,
+        *,
+        device_id: uuid.UUID,
+        intents: list[IntentRegistration],
+        reason: str,
+    ) -> None:
+        captured.extend(intents)
+
+    monkeypatch.setattr(node_health, "register_intents_and_reconcile", fake_register)
+
+    device = await create_device(db_session, host_id=db_host.id, name="autorec-prec")
+    await _seed_node(db_session, device.id)
+    await node_health._attempt_node_restart(db_session, device=device)
+
+    node_intent = next(intent for intent in captured if intent.source == f"auto_recovery:node:{device.id}")
+    recovery_intent = next(intent for intent in captured if intent.source == f"auto_recovery:recovery:{device.id}")
+    expected = {"kind": "node_running", "device_id": str(device.id), "expected": False}
+    assert node_intent.precondition == expected
+    assert recovery_intent.precondition == expected
