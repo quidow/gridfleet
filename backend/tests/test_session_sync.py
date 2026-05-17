@@ -224,6 +224,129 @@ async def test_sync_hydrates_orphan_session_row_from_hub_stereotype(db_session: 
     assert device.operational_state == DeviceOperationalState.busy
 
 
+async def test_sync_hydrate_orphan_does_not_attach_run_id_when_preparing(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    from tests.helpers import create_reserved_run
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="hydrate-prep",
+        connection_target="hydrate-prep",
+        name="Hydrate Prep Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    run = await create_reserved_run(db_session, name="Prep Hydration Run", devices=[device], state=RunState.preparing)
+
+    orphan = Session(
+        session_id="orphan-prep",
+        device_id=None,
+        test_name="prep-warmup",
+        status=SessionStatus.running,
+    )
+    db_session.add(orphan)
+    await db_session.commit()
+
+    grid_data = _grid_response([_grid_session("orphan-prep", "hydrate-prep", device_id=str(device.id))])
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(orphan)
+    assert orphan.device_id == device.id
+    assert orphan.run_id is None
+
+    await db_session.refresh(run)
+    assert run.state == RunState.preparing
+    assert run.started_at is None
+
+
+async def test_sync_hydrate_orphan_attaches_run_id_when_active(db_session: AsyncSession, db_host: Host) -> None:
+    from tests.helpers import create_reserved_run
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="hydrate-active",
+        connection_target="hydrate-active",
+        name="Hydrate Active Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    run = await create_reserved_run(db_session, name="Active Hydration Run", devices=[device], state=RunState.active)
+
+    orphan = Session(
+        session_id="orphan-active",
+        device_id=None,
+        test_name="real-test",
+        status=SessionStatus.running,
+    )
+    db_session.add(orphan)
+    await db_session.commit()
+
+    grid_data = _grid_response([_grid_session("orphan-active", "hydrate-active", device_id=str(device.id))])
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(orphan)
+    assert orphan.device_id == device.id
+    assert orphan.run_id == run.id
+
+
+async def test_sync_creates_session_does_not_attach_run_id_when_preparing(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    from tests.helpers import create_reserved_run
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="sync-prep",
+        connection_target="sync-prep",
+        name="Sync Prep Phone",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    run = await create_reserved_run(db_session, name="Sync Prep Run", devices=[device], state=RunState.preparing)
+
+    grid_data = _grid_response([_grid_session("sync-prep-sid", "sync-prep", "prep-warmup", device_id=str(device.id))])
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    result = await db_session.execute(select(Session).where(Session.session_id == "sync-prep-sid"))
+    session = result.scalar_one()
+    assert session.run_id is None
+
+    await db_session.refresh(run)
+    assert run.state == RunState.preparing
+    assert run.started_at is None
+
+
 async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",

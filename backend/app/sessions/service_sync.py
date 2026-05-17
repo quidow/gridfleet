@@ -165,8 +165,14 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
     session.device_id = locked_device.id
 
     reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, locked_device.id)
-    if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry):
-        session.run_id = reservation_run.id
+    reservation_run_id: uuid.UUID | None = None
+    if (
+        reservation_run is not None
+        and reservation_run.state == RunState.active
+        and not run_service.reservation_entry_is_excluded(reservation_entry)
+    ):
+        reservation_run_id = reservation_run.id
+        session.run_id = reservation_run_id
 
     if locked_device.operational_state == DeviceOperationalState.available:
         # Belt-and-braces against re-entry: the row lock fences out other
@@ -198,12 +204,11 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
         ],
         reason=f"Session {sid} hydrated",
     )
-    activated_run = await run_service.signal_active_for_device_session_no_commit(db, locked_device.id)
     session_service.queue_session_started_event(
         db,
         session,
         device=locked_device,
-        run_id=str(activated_run.id) if activated_run and activated_run.state == RunState.active else None,
+        run_id=str(reservation_run_id) if reservation_run_id is not None else None,
     )
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
@@ -276,7 +281,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
         reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
         reservation_run_id = (
             reservation_run.id
-            if reservation_run is not None and not run_service.reservation_entry_is_excluded(reservation_entry)
+            if (
+                reservation_run is not None
+                and reservation_run.state == RunState.active
+                and not run_service.reservation_entry_is_excluded(reservation_entry)
+            )
             else None
         )
 
@@ -336,12 +345,11 @@ async def _sync_sessions(db: AsyncSession) -> None:
             ],
             reason=f"Session {sid} started",
         )
-        activated_run = await run_service.signal_active_for_device_session_no_commit(db, device.id)
         session_service.queue_session_started_event(
             db,
             session,
             device=device,
-            run_id=str(activated_run.id) if activated_run and activated_run.state == RunState.active else None,
+            run_id=str(reservation_run_id) if reservation_run_id is not None else None,
         )
         logger.info("Tracked new session %s on device %s (%s)", sid, device.name, connection_target)
 
