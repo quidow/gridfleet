@@ -694,7 +694,6 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
 
     held = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     held.bind(("127.0.0.1", 0))
-    held.listen(1)
     held_port = held.getsockname()[1]
 
     monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_start", 1)

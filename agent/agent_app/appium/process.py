@@ -1191,7 +1191,7 @@ class AppiumProcessManager:
     def _is_appium_port_bindable(self, port: int) -> bool:
         # Mirror Appium's own bind (0.0.0.0, no SO_REUSEADDR) so the probe
         # returns the same EADDRINUSE outcome the subprocess would hit.
-        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             try:
                 probe.bind(("0.0.0.0", port))
             except OSError:
