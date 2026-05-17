@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceDiagnosticSnapshot
 from app.hosts.models import Host
+from app.settings import settings_service
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -48,3 +49,12 @@ async def test_diagnostic_snapshot_persists_with_payload(
     assert isinstance(persisted.id, uuid.UUID)
     assert isinstance(persisted.captured_at, datetime)
     assert persisted.captured_at.tzinfo is not None
+
+
+@pytest.mark.db
+async def test_diagnostic_snapshots_retention_setting_defaults_to_30(
+    db_session: AsyncSession,
+) -> None:
+    del db_session
+    value = settings_service.get("retention.diagnostic_snapshots_days")
+    assert value == 30
