@@ -81,7 +81,7 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
 async def _reconcile_all_devices_once(db: AsyncSession) -> None:
     rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     for device_id in rows:
-        await _reconcile_device(db, device_id)
+        await reconcile_device(db, device_id)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id)
 
@@ -95,7 +95,7 @@ async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> Non
     for row in rows:
         device_id = row.device_id
         generation = row.generation
-        await _reconcile_device(db, device_id)
+        await reconcile_device(db, device_id)
         current = await db.get(DeviceIntentDirty, device_id, populate_existing=True)
         if current is not None and current.generation == generation:
             await db.delete(current)
@@ -120,7 +120,7 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
         return
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
     for device_id in sorted(set(device_ids)):
-        await _reconcile_device(db, device_id)
+        await reconcile_device(db, device_id)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id)
 
@@ -153,12 +153,12 @@ async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
         delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
     )
     for device_id in sorted(set(device_ids)):
-        await _reconcile_device(db, device_id)
+        await reconcile_device(db, device_id)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id)
 
 
-async def _reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
+async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     device = await device_locking.lock_device(db, device_id)
     node = device.appium_node

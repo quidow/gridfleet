@@ -15,10 +15,10 @@ from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceReservatio
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
     _reconcile_all_devices_once,
-    _reconcile_device,
     _reconcile_dirty_devices,
     _reconcile_expired_intents,
     _stage_agent_reconfigure,
+    reconcile_device,
     run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
@@ -48,7 +48,7 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     device = await create_device(db_session, host_id=db_host.id, name="baseline")
     await _seed_node(db_session, device.id)
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
@@ -107,7 +107,7 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
@@ -264,7 +264,7 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -309,7 +309,7 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -345,7 +345,7 @@ async def test_graceful_stop_applies_once_session_ends(
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
@@ -353,7 +353,7 @@ async def test_graceful_stop_applies_once_session_ends(
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
     await db_session.commit()
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -378,7 +378,7 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
@@ -425,7 +425,7 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
         row.generation += 1
         await db.flush()
 
-    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
 
     await _reconcile_dirty_devices(db_session, limit=10)
     await db_session.commit()
@@ -453,7 +453,7 @@ async def test_full_scan_reconciles_each_intent_device(
     async def fake_reconcile(_db: AsyncSession, device_id: object) -> None:
         reconciled.append(device_id)
 
-    monkeypatch.setattr("app.devices.services.intent_reconciler._reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
     monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", deliver)
 
     await _reconcile_all_devices_once(db_session)

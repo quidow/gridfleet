@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.devices.models import DeviceIntent, DeviceIntentDirty
-from app.devices.services.intent_reconciler import _reconcile_device
+from app.devices.services.intent_reconciler import reconcile_device
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -184,7 +184,7 @@ async def register_intents_and_reconcile(
 ) -> None:
     service = IntentService(db)
     await service.register_intents(device_id=device_id, intents=intents, reason=reason)
-    await _reconcile_device(db, device_id)
+    await reconcile_device(db, device_id)
 
 
 async def revoke_intents_and_reconcile(
@@ -196,4 +196,4 @@ async def revoke_intents_and_reconcile(
 ) -> None:
     service = IntentService(db)
     await service.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-    await _reconcile_device(db, device_id)
+    await reconcile_device(db, device_id)

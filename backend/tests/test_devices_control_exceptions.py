@@ -15,7 +15,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.routers import control as devices_control
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_reconciler import _reconcile_device
+from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_CONNECTIVITY_LOST,
@@ -103,7 +103,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             ),
         ],
     )
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
     await db_session.refresh(device)
     assert device.session_viability_status == "failed"
