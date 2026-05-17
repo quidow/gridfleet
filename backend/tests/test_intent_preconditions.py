@@ -195,3 +195,46 @@ async def test_node_running_unsatisfied_when_node_missing(db_session: AsyncSessi
         precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
     )
     assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_device_hold_satisfied_when_value_matches(db_session: AsyncSession, db_host: Host) -> None:
+    from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+    from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+
+    device = await create_device(db_session, host_id=db_host.id, name="prec-hold-match")
+    await DeviceStateMachine().transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="test")
+    await db_session.commit()
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"maintenance:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "device_hold", "device_id": str(device.id), "hold": "maintenance"},
+    )
+    assert await is_satisfied(db_session, intent) is True
+
+
+@pytest.mark.db
+async def test_device_hold_unsatisfied_when_value_changes(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-hold-other")
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"maintenance:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "device_hold", "device_id": str(device.id), "hold": "maintenance"},
+    )
+    assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_device_hold_unsatisfied_when_device_missing(db_session: AsyncSession, db_host: Host) -> None:
+    intent = DeviceIntent(
+        device_id=uuid4(),
+        source="maintenance:node:none",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "device_hold", "device_id": str(uuid4()), "hold": "maintenance"},
+    )
+    assert await is_satisfied(db_session, intent) is False

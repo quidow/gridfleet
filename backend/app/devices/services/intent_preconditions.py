@@ -25,6 +25,8 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
         return await _eval_reservation_active(db, precondition)
     if kind == "node_running":
         return await _eval_node_running(db, precondition)
+    if kind == "device_hold":
+        return await _eval_device_hold(db, precondition)
     logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
     return True
 
@@ -88,3 +90,21 @@ async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) 
     if node is None:
         return False
     return node.observed_running == expected
+
+
+async def _eval_device_hold(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from app.devices.models import Device, DeviceHold  # noqa: PLC0415
+
+    raw_device_id = precondition.get("device_id")
+    expected_hold = precondition.get("hold")
+    if not isinstance(raw_device_id, str) or not isinstance(expected_hold, str):
+        return False
+    try:
+        device_uuid = UUID(raw_device_id)
+        expected = DeviceHold(expected_hold)
+    except ValueError:
+        return False
+    device = await db.get(Device, device_uuid)
+    if device is None:
+        return False
+    return device.hold == expected
