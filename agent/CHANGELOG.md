@@ -2,6 +2,19 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.15.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.0...gridfleet-agent-v0.15.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **agent:** fail fast on non-appium port squatter ([ef2a30c](https://github.com/quidow/gridfleet/commit/ef2a30c5ef2e5e45dfba34eb841aa389ef3df4f8))
+* rotate past occupied appium ports during verification ([52b62c0](https://github.com/quidow/gridfleet/commit/52b62c0e3017a19b9dd87a2db69c62fe90d8149e))
+
+
+### Documentation
+
+* **agent:** explain bind-probe safety and CodeQL dismissal ([fec82bb](https://github.com/quidow/gridfleet/commit/fec82bb680ad03c812fe0c74985521b4658f8b67))
+
 ## [0.15.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.14.0...gridfleet-agent-v0.15.0) (2026-05-16)
 
 
