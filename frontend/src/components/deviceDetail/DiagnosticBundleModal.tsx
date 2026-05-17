@@ -8,6 +8,7 @@ type Props = {
   payload: unknown;
   redacted: boolean;
   loading?: boolean;
+  toggling?: boolean;
   error?: string | null;
   onClose: () => void;
   onToggleRedact: () => void;
@@ -19,6 +20,7 @@ export default function DiagnosticBundleModal({
   payload,
   redacted,
   loading,
+  toggling,
   error,
   onClose,
   onToggleRedact,
@@ -47,7 +49,7 @@ export default function DiagnosticBundleModal({
       size="xl"
       footer={
         <>
-          <Button onClick={onToggleRedact} variant="secondary" size="sm">
+          <Button onClick={onToggleRedact} variant="secondary" size="sm" loading={toggling}>
             {redacted ? 'Show unredacted' : 'Redact'}
           </Button>
           <Button onClick={handleCopy} variant="secondary" size="sm">
