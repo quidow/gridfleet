@@ -29,7 +29,13 @@ from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, RECOVERY, IntentRegistration
+from app.devices.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_AUTO_RECOVERY,
+    RECOVERY,
+    IntentRegistration,
+    NodeRunningPrecondition,
+)
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.grid import service as grid_service
@@ -84,6 +90,45 @@ def _grid_registration_grace_active(node: AppiumNode) -> bool:
         started_at = started_at.replace(tzinfo=UTC)
     age_seconds = (datetime.now(UTC) - started_at).total_seconds()
     return 0 <= age_seconds < int(settings_service.get("appium.startup_timeout_sec"))
+
+
+async def _attempt_node_restart(db: AsyncSession, *, device: Device) -> None:
+    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
+    if node is None:
+        return
+    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+    deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
+    precondition: NodeRunningPrecondition = {
+        "kind": "node_running",
+        "device_id": str(device.id),
+        "expected": False,
+    }
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"auto_recovery:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={
+                    "action": "start",
+                    "priority": PRIORITY_AUTO_RECOVERY,
+                    "desired_port": node.port,
+                    "transition_token": str(uuid.uuid4()),
+                    "transition_deadline": deadline.isoformat(),
+                },
+                precondition=precondition,
+            ),
+            IntentRegistration(
+                source=f"auto_recovery:recovery:{device.id}",
+                axis=RECOVERY,
+                payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": "Node health restart"},
+                precondition=precondition,
+            ),
+        ],
+        reason="Max node health failures reached",
+    )
+    await db.commit()
 
 
 async def _process_node_health(
@@ -293,33 +338,7 @@ async def _process_node_health(
             return
 
         logger.error("Node for device %s reached max failures, attempting restart", device.name)
-
-        window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-        deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
-        await register_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"auto_recovery:node:{device.id}",
-                    axis=NODE_PROCESS,
-                    payload={
-                        "action": "start",
-                        "priority": PRIORITY_AUTO_RECOVERY,
-                        "desired_port": node.port,
-                        "transition_token": str(uuid.uuid4()),
-                        "transition_deadline": deadline.isoformat(),
-                    },
-                ),
-                IntentRegistration(
-                    source=f"auto_recovery:recovery:{device.id}",
-                    axis=RECOVERY,
-                    payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": "Node health restart"},
-                ),
-            ],
-            reason="Max node health failures reached",
-        )
-        await db.commit()
+        await _attempt_node_restart(db, device=device)
         return
 
 

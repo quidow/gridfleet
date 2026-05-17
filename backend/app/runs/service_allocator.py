@@ -184,6 +184,27 @@ def _resolve_run_options(data: RunCreate) -> tuple[int, int]:
     return ttl_minutes, heartbeat_timeout_sec
 
 
+async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id: uuid.UUID) -> None:
+    await register_intents_and_reconcile(
+        db,
+        device_id=device_id,
+        intents=[
+            IntentRegistration(
+                source=f"run:{run.id}",
+                axis=GRID_ROUTING,
+                run_id=run.id,
+                payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
+                precondition={
+                    "kind": "reservation_active",
+                    "run_id": str(run.id),
+                    "device_id": str(device_id),
+                },
+            )
+        ],
+        reason=f"reserved for run {run.id}",
+    )
+
+
 async def _attempt_create_run(
     db: AsyncSession,
     data: RunCreate,
@@ -256,19 +277,7 @@ async def _attempt_create_run(
     await db.flush()
 
     for device in all_matched:
-        await register_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"run:{run.id}",
-                    axis=GRID_ROUTING,
-                    run_id=run.id,
-                    payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
-                )
-            ],
-            reason=f"reserved for run {run.id}",
-        )
+        await _register_run_grid_intent(db, run=run, device_id=device.id)
 
     return run, device_infos
 

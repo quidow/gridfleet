@@ -11,7 +11,7 @@ from app.devices.models import Device, DeviceIntent, DeviceIntentDirty
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, IntentRegistration
 from app.runs.models import TestRun
-from tests.helpers import create_device
+from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -244,3 +244,64 @@ async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db
 
     assert await service.register_intents(device_id=device.id, intents=[], reason="noop") == []
     assert await db_session.get(DeviceIntentDirty, device.id) is None
+
+
+@pytest.mark.db
+async def test_register_intents_persists_precondition(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-svc")
+    run = await create_reserved_run(db_session, name="prec-run", devices=[device])
+    service = IntentService(db_session)
+    expires_at = datetime.now(UTC) + timedelta(minutes=5)
+
+    [intent] = await service.register_intents(
+        device_id=device.id,
+        reason="cooldown",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                expires_at=expires_at,
+                payload={"action": "stop", "stop_mode": "defer", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    await db_session.commit()
+    assert intent.precondition == {"kind": "run_active", "run_id": str(run.id)}
+
+
+@pytest.mark.db
+async def test_register_intents_upsert_overwrites_precondition(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="prec-svc-up")
+    service = IntentService(db_session)
+    src = "auto_recovery:node:overwrite"
+
+    await service.register_intents(
+        device_id=device.id,
+        reason="r1",
+        intents=[
+            IntentRegistration(
+                source=src,
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20},
+                precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+            )
+        ],
+    )
+    await db_session.commit()
+
+    [intent] = await service.register_intents(
+        device_id=device.id,
+        reason="r2",
+        intents=[
+            IntentRegistration(
+                source=src,
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20},
+                precondition=None,
+            )
+        ],
+    )
+    await db_session.commit()
+    assert intent.precondition is None

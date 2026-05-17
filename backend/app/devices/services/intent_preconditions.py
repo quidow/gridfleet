@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from sqlalchemy import select
+
+from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
+from app.core.observability import get_logger
+from app.devices.models import DeviceEventType, DeviceIntent
+from app.devices.services.event import record_event
+from app.devices.services.intent_reconciler import _reconcile_device
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = get_logger(__name__)
+
+
+async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
+    """Evaluate the precondition stored on ``intent``."""
+    precondition = intent.precondition
+    if precondition is None:
+        return True
+    kind = precondition.get("kind")
+    if kind == "run_active":
+        return await _eval_run_active(db, precondition)
+    if kind == "reservation_active":
+        return await _eval_reservation_active(db, precondition)
+    if kind == "node_running":
+        return await _eval_node_running(db, precondition)
+    if kind == "device_hold":
+        return await _eval_device_hold(db, precondition)
+    logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
+    return True
+
+
+async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
+    """Delete intents whose precondition no longer holds, then re-reconcile."""
+    rows = (await db.execute(select(DeviceIntent).where(DeviceIntent.precondition.is_not(None)))).scalars().all()
+    affected: set[UUID] = set()
+    for intent in rows:
+        if await is_satisfied(db, intent):
+            continue
+        precondition_kind = (intent.precondition or {}).get("kind") if intent.precondition else None
+        await record_event(
+            db,
+            intent.device_id,
+            DeviceEventType.desired_state_changed,
+            {
+                "field": "device_intent",
+                "old_value": {"source": intent.source, "axis": intent.axis},
+                "new_value": None,
+                "caller": "intent_reconciler",
+                "reason": "precondition_unsatisfied",
+                "intent_source": intent.source,
+                "precondition_kind": precondition_kind,
+            },
+        )
+        affected.add(intent.device_id)
+        await db.delete(intent)
+    if not affected:
+        return
+    await db.flush()
+    for device_id in sorted(affected):
+        await _reconcile_device(db, device_id)
+        await db.commit()
+        await deliver_agent_reconfigures(db, device_id)
+
+
+async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from app.runs.models import TERMINAL_STATES, TestRun  # noqa: PLC0415
+
+    raw_run_id = precondition.get("run_id")
+    if not isinstance(raw_run_id, str):
+        return False
+    try:
+        run_uuid = UUID(raw_run_id)
+    except ValueError:
+        return False
+    run = await db.get(TestRun, run_uuid)
+    if run is None:
+        return False
+    return run.state not in TERMINAL_STATES
+
+
+async def _eval_reservation_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.devices.models import DeviceReservation  # noqa: PLC0415
+
+    raw_run_id = precondition.get("run_id")
+    raw_device_id = precondition.get("device_id")
+    if not isinstance(raw_run_id, str) or not isinstance(raw_device_id, str):
+        return False
+    try:
+        run_uuid = UUID(raw_run_id)
+        device_uuid = UUID(raw_device_id)
+    except ValueError:
+        return False
+    row = (
+        await db.execute(
+            select(DeviceReservation.id).where(
+                DeviceReservation.run_id == run_uuid,
+                DeviceReservation.device_id == device_uuid,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
+async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
+
+    raw_device_id = precondition.get("device_id")
+    expected = precondition.get("expected")
+    if not isinstance(raw_device_id, str) or not isinstance(expected, bool):
+        return False
+    try:
+        device_uuid = UUID(raw_device_id)
+    except ValueError:
+        return False
+    node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_uuid))).scalar_one_or_none()
+    if node is None:
+        return False
+    return node.observed_running == expected
+
+
+async def _eval_device_hold(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from app.devices.models import Device, DeviceHold  # noqa: PLC0415
+
+    raw_device_id = precondition.get("device_id")
+    expected_hold = precondition.get("hold")
+    if not isinstance(raw_device_id, str) or not isinstance(expected_hold, str):
+        return False
+    try:
+        device_uuid = UUID(raw_device_id)
+        expected = DeviceHold(expected_hold)
+    except ValueError:
+        return False
+    device = await db.get(Device, device_uuid)
+    if device is None:
+        return False
+    return device.hold == expected

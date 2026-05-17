@@ -20,6 +20,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     RESERVATION,
     IntentRegistration,
+    RunActivePrecondition,
 )
 from app.runs.models import TERMINAL_STATES, TestRun
 from app.runs.service_reservation import get_run
@@ -43,6 +44,7 @@ def _cooldown_intents(
     count: int,
     expires_at: datetime,
 ) -> list[IntentRegistration]:
+    precondition: RunActivePrecondition = {"kind": "run_active", "run_id": str(run_id)}
     return [
         IntentRegistration(
             source=f"cooldown:node:{run_id}",
@@ -50,6 +52,7 @@ def _cooldown_intents(
             run_id=run_id,
             expires_at=expires_at,
             payload={"action": "stop", "priority": PRIORITY_COOLDOWN, "stop_mode": "defer"},
+            precondition=precondition,
         ),
         IntentRegistration(
             source=f"cooldown:grid:{run_id}",
@@ -57,6 +60,7 @@ def _cooldown_intents(
             run_id=run_id,
             expires_at=expires_at,
             payload={"accepting_new_sessions": False, "priority": PRIORITY_COOLDOWN},
+            precondition=precondition,
         ),
         IntentRegistration(
             source=f"cooldown:reservation:{run_id}",
@@ -69,6 +73,7 @@ def _cooldown_intents(
                 "exclusion_reason": reason,
                 "cooldown_count": count,
             },
+            precondition=precondition,
         ),
         IntentRegistration(
             source=f"cooldown:recovery:{run_id}",
@@ -76,6 +81,7 @@ def _cooldown_intents(
             run_id=run_id,
             expires_at=expires_at,
             payload={"allowed": False, "priority": PRIORITY_COOLDOWN, "reason": reason},
+            precondition=precondition,
         ),
     ]
 

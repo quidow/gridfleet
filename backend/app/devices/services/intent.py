@@ -31,6 +31,7 @@ class IntentService:
         reason: str,
         run_id: UUID | None = None,
         expires_at: datetime | None = None,
+        precondition: dict[str, Any] | None = None,
     ) -> DeviceIntent:
         now = datetime.now(UTC)
         stmt = (
@@ -41,6 +42,7 @@ class IntentService:
                 axis=axis,
                 run_id=run_id,
                 payload=dict(payload),
+                precondition=dict(precondition) if precondition is not None else None,
                 expires_at=expires_at,
                 created_at=now,
                 updated_at=now,
@@ -51,6 +53,7 @@ class IntentService:
                     "axis": axis,
                     "run_id": run_id,
                     "payload": dict(payload),
+                    "precondition": dict(precondition) if precondition is not None else None,
                     "expires_at": expires_at,
                     "updated_at": now,
                 },
@@ -92,6 +95,7 @@ class IntentService:
                     "axis": intent.axis,
                     "run_id": intent.run_id,
                     "payload": dict(intent.payload),
+                    "precondition": dict(intent.precondition) if intent.precondition is not None else None,
                     "expires_at": intent.expires_at,
                     "created_at": now,
                     "updated_at": now,
@@ -105,6 +109,7 @@ class IntentService:
                 "axis": stmt.excluded.axis,
                 "run_id": stmt.excluded.run_id,
                 "payload": stmt.excluded.payload,
+                "precondition": stmt.excluded.precondition,
                 "expires_at": stmt.excluded.expires_at,
                 "updated_at": stmt.excluded.updated_at,
             },

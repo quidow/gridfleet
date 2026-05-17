@@ -66,6 +66,11 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
     await _reconcile_terminal_run_intents(db)
+    from app.devices.services.intent_preconditions import (  # noqa: PLC0415
+        reconcile_unsatisfied_preconditions,
+    )
+
+    await reconcile_unsatisfied_preconditions(db)
     if cycle % full_scan_every == 0:
         await _reconcile_all_devices_once(db)
     else:

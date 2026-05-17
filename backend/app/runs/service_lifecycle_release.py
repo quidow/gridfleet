@@ -113,6 +113,7 @@ async def _clear_desired_grid_run_id_for_run(
                         axis=NODE_PROCESS,
                         run_id=run.id,
                         payload={"action": "stop", "priority": PRIORITY_FORCED_RELEASE, "stop_mode": "hard"},
+                        precondition={"kind": "run_active", "run_id": str(run.id)},
                     )
                 ],
                 reason=reason or f"force release run {run.id}",
