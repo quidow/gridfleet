@@ -310,11 +310,17 @@ async def _update_reservation_exclusion(
     reservation: DeviceReservation,
     decision: ReservationDecision,
 ) -> None:
+    # The reservation row is the authority on cooldown_count; the intent
+    # payload only mirrors the value that was current when the intent was
+    # registered. Take the max so a stale or lower payload (e.g. a
+    # non-cooldown reservation intent like ``health_failure:reservation``)
+    # never walks the counter backwards.
+    next_cooldown_count = max(reservation.cooldown_count, decision.cooldown_count or 0)
     changed = (
         reservation.excluded is not True
         or reservation.exclusion_reason != decision.exclusion_reason
         or reservation.excluded_until != decision.expires_at
-        or reservation.cooldown_count != (decision.cooldown_count or 0)
+        or reservation.cooldown_count != next_cooldown_count
     )
     if not changed:
         return
@@ -327,7 +333,7 @@ async def _update_reservation_exclusion(
     reservation.excluded = True
     reservation.exclusion_reason = decision.exclusion_reason
     reservation.excluded_until = decision.expires_at
-    reservation.cooldown_count = decision.cooldown_count or 0
+    reservation.cooldown_count = next_cooldown_count
     if reservation.excluded_at is None:
         reservation.excluded_at = datetime.now(UTC)
     await record_event(
@@ -361,7 +367,11 @@ async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceRese
     reservation.excluded = False
     reservation.exclusion_reason = None
     reservation.excluded_until = None
-    reservation.cooldown_count = 0
+    # ``cooldown_count`` deliberately persists across exclusion clear/reset. It
+    # tracks "how many cooldowns has this reservation seen" for the duration
+    # of the reservation, so the escalation threshold is reachable even when
+    # the cooldown TTL keeps lapsing between flakes. The counter is zeroed
+    # only when the reservation is released or explicitly restored.
     await record_event(
         db,
         reservation.device_id,
@@ -369,7 +379,12 @@ async def _clear_reservation_exclusion(db: AsyncSession, reservation: DeviceRese
         {
             "field": "reservation_exclusion",
             "old_value": old,
-            "new_value": {"excluded": False, "exclusion_reason": None, "excluded_until": None, "cooldown_count": 0},
+            "new_value": {
+                "excluded": False,
+                "exclusion_reason": None,
+                "excluded_until": None,
+                "cooldown_count": reservation.cooldown_count,
+            },
             "caller": "intent_reconciler",
             "reason": reason,
         },

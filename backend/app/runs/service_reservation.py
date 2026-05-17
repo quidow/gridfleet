@@ -133,6 +133,9 @@ async def restore_device_to_run(
     entry.exclusion_reason = None
     entry.excluded_at = None
     entry.excluded_until = None
+    # Explicit restore is the sanctioned reset point for the cooldown
+    # counter — the intent-TTL clear path deliberately leaves it sticky.
+    entry.cooldown_count = 0
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
