@@ -65,6 +65,7 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
     full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
+    await _reconcile_terminal_run_intents(db)
     if cycle % full_scan_every == 0:
         await _reconcile_all_devices_once(db)
     else:
@@ -112,6 +113,39 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
     if not device_ids:
         return
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
+    for device_id in sorted(set(device_ids)):
+        await _reconcile_device(db, device_id)
+        await db.commit()
+        await deliver_agent_reconfigures(db, device_id)
+
+
+async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
+    """Defense-in-depth sweep for intents tied to runs that are already terminal.
+
+    The release path (``_clear_desired_grid_run_id_for_run``) is the primary
+    cleanup for run-scoped intents. This sweep guards against any release path
+    skipping a source or crashing mid-release — a run-bound intent must never
+    outlive its owning run.
+    """
+    from app.runs.models import TERMINAL_STATES, TestRun  # noqa: PLC0415
+
+    terminal_run_subq = select(TestRun.id).where(TestRun.state.in_(TERMINAL_STATES))
+    device_ids = (
+        (
+            await db.execute(
+                select(DeviceIntent.device_id)
+                .where(DeviceIntent.run_id.is_not(None))
+                .where(DeviceIntent.run_id.in_(terminal_run_subq))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not device_ids:
+        return
+    await db.execute(
+        delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
+    )
     for device_id in sorted(set(device_ids)):
         await _reconcile_device(db, device_id)
         await db.commit()

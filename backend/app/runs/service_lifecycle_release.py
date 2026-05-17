@@ -98,6 +98,10 @@ async def _clear_desired_grid_run_id_for_run(
             f"cooldown:grid:{run.id}",
             f"cooldown:reservation:{run.id}",
             f"cooldown:recovery:{run.id}",
+            # Health-failure exclusion is keyed by device_id so it can survive
+            # successive reservations of the same device. Drop it on release so
+            # the next run does not inherit the exclusion verdict.
+            f"health_failure:reservation:{device.id}",
         ]
         if caller == "run_force_release":
             await register_intents_and_reconcile(
