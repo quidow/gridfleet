@@ -727,6 +727,17 @@ async def start_node(
         caller=caller,
         desired_port=desired_port,
     )
+    # Operator-driven start signals "give the device another chance" — clear
+    # the review-shelving flag so automated recovery picks it back up.
+    if caller in {"operator_route", "operator_restart"}:
+        from app.devices.services.review import clear_review_required  # noqa: PLC0415
+
+        await clear_review_required(
+            db,
+            device,
+            reason="Operator started Appium node",
+            source="start_node",
+        )
     await db.commit()
     await db.refresh(node)
     return node
@@ -792,6 +803,17 @@ async def restart_node(
         transition_token=uuid.uuid4(),
         transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
     )
+    # Operator-driven restart signals "give the device another chance" —
+    # clear the review-shelving flag so automated recovery picks it back up.
+    if caller == "operator_restart":
+        from app.devices.services.review import clear_review_required  # noqa: PLC0415
+
+        await clear_review_required(
+            db,
+            device,
+            reason="Operator restarted Appium node",
+            source="restart_node",
+        )
     await db.commit()
     await db.refresh(node)
     return node

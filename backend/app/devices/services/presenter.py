@@ -208,6 +208,9 @@ async def serialize_device(
         "health_summary": health_summary,
         "emulator_state": emulator_state_value,
         "blocked_reason": blocked_reason,
+        "review_required": device.review_required,
+        "review_reason": device.review_reason,
+        "review_set_at": device.review_set_at,
         "created_at": device.created_at,
         "updated_at": device.updated_at,
     }

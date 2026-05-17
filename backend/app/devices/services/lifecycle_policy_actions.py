@@ -17,7 +17,6 @@ from app.devices.services.intent_types import (
     PRIORITY_CONNECTIVITY_LOST,
     PRIORITY_HEALTH_FAILURE,
     PRIORITY_RUN_ROUTING,
-    RECOVERY,
     RESERVATION,
     IntentRegistration,
 )
@@ -244,6 +243,7 @@ async def restore_run_if_needed(
 
 
 def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRegistration]:
+    del reason
     if source == "connectivity":
         return [
             IntentRegistration(
@@ -252,16 +252,19 @@ def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRe
                 payload={"action": "stop", "priority": PRIORITY_CONNECTIVITY_LOST, "stop_mode": "defer"},
             )
         ]
+    # Only the NODE_PROCESS stop intent is registered. The RECOVERY-axis
+    # ``health_failure:recovery`` deny intent used to live here too, but it
+    # had no expiry and gated the only code path that revoked it, deadlocking
+    # any device that hit a transient probe failure. Recovery throttling is
+    # now governed exclusively by the backoff window on
+    # ``lifecycle_policy_state``; persistent failures eventually flip
+    # ``Device.review_required`` and remove the device from the automated
+    # recovery scope until an operator intervenes.
     return [
         IntentRegistration(
             source=f"health_failure:node:{device.id}",
             axis=NODE_PROCESS,
             payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
-        ),
-        IntentRegistration(
-            source=f"health_failure:recovery:{device.id}",
-            axis=RECOVERY,
-            payload={"allowed": False, "priority": PRIORITY_HEALTH_FAILURE, "reason": reason},
         ),
     ]
 

@@ -379,6 +379,9 @@ class DeviceRead(BaseModel):
     health_summary: DeviceHealthSummaryRead
     emulator_state: str | None = None
     blocked_reason: str | None = None
+    review_required: bool = False
+    review_reason: str | None = None
+    review_set_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

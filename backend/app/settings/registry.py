@@ -317,6 +317,20 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=1,
         max_value=86400,
     ),
+    SettingDefinition(
+        key="general.lifecycle_recovery_review_threshold",
+        category="general",
+        setting_type="int",
+        default=5,
+        description=(
+            "Consecutive automatic recovery failures before the device is shelved into "
+            "``review_required`` state. Once shelved, automated recovery loops skip the device "
+            "until an operator action (exit maintenance, restore from run, re-verify, restart node) "
+            "clears the flag."
+        ),
+        min_value=1,
+        max_value=100,
+    ),
     # ── Device Checks ──
     SettingDefinition(
         key="device_checks.ip_ping.consecutive_fail_threshold",

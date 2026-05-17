@@ -841,6 +841,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
             side_effect=lambda key: {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 20,
+                "general.lifecycle_recovery_review_threshold": 5,
                 "appium.port_range_start": 4720,
                 "appium.port_range_end": 4800,
                 "grid.hub_url": "http://hub:4444",
@@ -1424,6 +1425,8 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         hold=DeviceHold.maintenance,
         lifecycle_policy_state={},
         recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         auto_manage=True,
@@ -1479,6 +1482,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
         auto_manage=True,
@@ -1531,6 +1536,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.busy,
         auto_manage=True,
@@ -1563,6 +1570,8 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     device = SimpleNamespace(
         id=uuid.uuid4(),
         recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
@@ -1630,6 +1639,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     device = SimpleNamespace(
         id=uuid.uuid4(),
         recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
@@ -1659,7 +1670,15 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(lifecycle_policy_module.settings_service, "get", lambda _key: "http://grid:4444")
+    monkeypatch.setattr(
+        lifecycle_policy_module.settings_service,
+        "get",
+        lambda key: {
+            "general.lifecycle_recovery_backoff_base_sec": 5,
+            "general.lifecycle_recovery_backoff_max_sec": 20,
+            "general.lifecycle_recovery_review_threshold": 5,
+        }.get(key, "http://grid:4444"),
+    )
     monkeypatch.setattr(lifecycle_policy_module, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())

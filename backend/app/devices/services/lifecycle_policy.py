@@ -345,6 +345,17 @@ async def attempt_auto_recovery(
     device = await _reload_device(db, device)
     current_state = policy_state(device)
 
+    if device.review_required:
+        return await record_recovery_suppressed(
+            db,
+            device,
+            current_state,
+            source=source,
+            reason=reason,
+            suppression_reason=device.review_reason or "Device shelved — operator review required",
+            run=None,
+        )
+
     if not device.recovery_allowed:
         return await record_recovery_suppressed(
             db,
@@ -652,7 +663,25 @@ async def attempt_auto_recovery(
             run_name=run.name if run is not None else None,
             backoff_until=backoff_until_iso,
         )
-        await db.commit()
+        # Promote to review_required once consecutive failures cross the
+        # operator-configurable threshold. After this point the device drops
+        # out of automated recovery scope and only a sanctioned operator
+        # action (exit maintenance, restore from run, re-verify, restart
+        # node) clears the flag.
+        review_threshold = int(settings_service.get("general.lifecycle_recovery_review_threshold"))
+        attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
+        if attempts >= review_threshold:
+            from app.devices.services.review import mark_review_required  # noqa: PLC0415
+
+            await mark_review_required(
+                db,
+                device,
+                reason=failure_reason,
+                source="session_viability",
+            )
+            await db.commit()
+        else:
+            await db.commit()
         return False
 
     # Re-lock and rebuild state from fresh DB row: run_session_viability_probe

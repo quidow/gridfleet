@@ -108,6 +108,17 @@ async def exit_maintenance(
         reason="Operator exited maintenance",
     )
     clear_maintenance_recovery_suppression(device)
+    # Maintenance exit is a sanctioned "give it another chance" signal —
+    # clear the review-shelving flag so the recovery loop picks the device
+    # back up.
+    from app.devices.services.review import clear_review_required  # noqa: PLC0415
+
+    await clear_review_required(
+        db,
+        device,
+        reason="Operator exited maintenance",
+        source="exit_maintenance",
+    )
 
     await revoke_intents_and_reconcile(
         db,

@@ -141,6 +141,24 @@ async def restore_device_to_run(
     # Explicit restore is the sanctioned reset point for the cooldown
     # counter — the intent-TTL clear path deliberately leaves it sticky.
     entry.cooldown_count = 0
+    # Same signal applies to the review-shelving flag: restoring a device
+    # is an operator promise that it is ready for another attempt.
+    try:
+        device = await device_locking.lock_device(db, device_id, load_sessions=False)
+    except (NoResultFound, AttributeError):
+        # AttributeError reaches us only from in-process unit tests that
+        # stub the session with a Fake that has no ``execute``. Production
+        # callers always pass a real AsyncSession.
+        device = None
+    if device is not None:
+        from app.devices.services.review import clear_review_required  # noqa: PLC0415
+
+        await clear_review_required(
+            db,
+            device,
+            reason="Reservation restored to run",
+            source="restore_device_to_run",
+        )
     if commit:
         await db.commit()
         run = await get_run(db, run.id)

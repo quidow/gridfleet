@@ -175,6 +175,14 @@ class Device(Base):
     session_viability_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recovery_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     recovery_blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ``review_required`` is the terminal "device shelved, operator action
+    # required" flag. Auto-recovery loops skip devices where this is True.
+    # Cleared by sanctioned operator actions: exit maintenance, restore
+    # reservation, re-verify, restart node. See ``app.devices.services.review``
+    # for the helper used by those paths.
+    review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     emulator_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
