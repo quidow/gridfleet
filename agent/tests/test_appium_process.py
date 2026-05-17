@@ -37,6 +37,10 @@ from agent_app.tools.paths import _parse_node_version
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
 PACK_START_KWARGS = {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}
 
+# Captured at import so tests that need the real bind probe can opt out of the
+# autouse stub below.
+_REAL_IS_APPIUM_PORT_BINDABLE = AppiumProcessManager._is_appium_port_bindable
+
 
 @pytest.fixture(autouse=True)
 def stub_port_probe() -> object:
@@ -45,6 +49,10 @@ def stub_port_probe() -> object:
             "agent_app.appium.process.AppiumProcessManager._can_connect_to_appium",
             new_callable=AsyncMock,
             return_value=False,
+        ),
+        patch(
+            "agent_app.appium.process.AppiumProcessManager._is_appium_port_bindable",
+            return_value=True,
         ),
         patch("agent_app.appium.process.start_grid_node_supervisor", return_value=RecordingGridNodeHandle()),
         patch("agent_app.registration.get_local_ip", return_value="127.0.0.1"),
@@ -677,6 +685,44 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
         )
 
     create_proc.assert_not_awaited()
+
+
+async def test_start_fails_fast_when_port_held_by_non_appium_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket as _socket
+
+    held = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    held.bind(("127.0.0.1", 0))
+    held.listen(1)
+    held_port = held.getsockname()[1]
+
+    monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_start", 1)
+    monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_end", 65535)
+
+    manager = AppiumProcessManager()
+    try:
+        with (
+            patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+            patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+            patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
+            patch.object(
+                AppiumProcessManager,
+                "_is_appium_port_bindable",
+                _REAL_IS_APPIUM_PORT_BINDABLE,
+            ),
+            patch("agent_app.appium.process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+            pytest.raises(PortOccupiedError, match="non-Appium listener"),
+        ):
+            await manager.start(
+                connection_target="device-non-appium-squatter",
+                port=held_port,
+                grid_url="http://grid:4444",
+                **PACK_START_KWARGS,
+            )
+        create_proc.assert_not_awaited()
+    finally:
+        held.close()
 
 
 async def test_start_rejects_port_outside_configured_range_before_localhost_probe(
