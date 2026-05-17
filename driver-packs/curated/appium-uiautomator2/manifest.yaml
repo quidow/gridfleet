@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-uiautomator2
-release: 2026.05.0
+release: 2026.05.1
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0

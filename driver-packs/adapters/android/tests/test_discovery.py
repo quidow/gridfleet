@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from adapter.discovery import discover_adb_devices
+from adapter.tools import get_android_properties
 
 
 class _Ctx:
@@ -133,3 +136,77 @@ async def test_discover_emulator(mock_avd: AsyncMock, mock_props: AsyncMock, moc
 async def test_discover_no_adb(mock_cmd: AsyncMock) -> None:
     candidates = await discover_adb_devices(_Ctx())
     assert candidates == []
+
+
+@pytest.mark.asyncio
+@patch("adapter.discovery.run_cmd", new_callable=AsyncMock)
+@patch("adapter.discovery.get_android_properties", new_callable=AsyncMock)
+async def test_discover_isolates_per_device_failures(mock_props: AsyncMock, mock_cmd: AsyncMock) -> None:
+    mock_cmd.return_value = "List of devices attached\nGOOD123\tdevice\nBAD456\tdevice"
+
+    async def fake_props(adb: str, serial: str) -> dict[str, str]:
+        if serial == "BAD456":
+            raise RuntimeError("device offline")
+        return {
+            "android_version": "14",
+            "model": "Pixel 8",
+            "manufacturer": "Google",
+            "serial_number": serial,
+        }
+
+    mock_props.side_effect = fake_props
+    candidates = await discover_adb_devices(_Ctx())
+    assert [c.identity_value for c in candidates] == ["GOOD123"]
+
+
+@pytest.mark.asyncio
+@patch("adapter.discovery.run_cmd", new_callable=AsyncMock)
+@patch("adapter.discovery.get_android_properties", new_callable=AsyncMock)
+async def test_discover_parallelizes_property_fetches(mock_props: AsyncMock, mock_cmd: AsyncMock) -> None:
+    # Three devices, each with a 200ms property fetch. Sequential would take
+    # ~600ms; concurrent must complete well under that.
+    mock_cmd.return_value = "List of devices attached\nDEV1\tdevice\nDEV2\tdevice\nDEV3\tdevice"
+
+    async def slow_props(adb: str, serial: str) -> dict[str, str]:
+        await asyncio.sleep(0.2)
+        return {"android_version": "14", "serial_number": serial}
+
+    mock_props.side_effect = slow_props
+    start = time.perf_counter()
+    candidates = await discover_adb_devices(_Ctx())
+    elapsed = time.perf_counter() - start
+    assert {c.identity_value for c in candidates} == {"DEV1", "DEV2", "DEV3"}
+    assert elapsed < 0.5, f"Per-device fetches not parallelised (took {elapsed:.3f}s)"
+
+
+@pytest.mark.asyncio
+@patch("adapter.tools.run_cmd", new_callable=AsyncMock)
+async def test_get_android_properties_parses_bulk_getprop(mock_cmd: AsyncMock) -> None:
+    mock_cmd.return_value = "\n".join(
+        [
+            "[ro.build.version.release]: [14]",
+            "[ro.product.model]: [Pixel 8]",
+            "[ro.product.manufacturer]: [Google]",
+            "[ro.serialno]: [ABC123]",
+            "[ro.build.characteristics]: [default]",
+            "[some.unrelated.prop]: [ignored]",
+        ]
+    )
+    props = await get_android_properties("adb", "ABC123")
+    assert props == {
+        "android_version": "14",
+        "product_model": "Pixel 8",
+        "manufacturer": "Google",
+        "serial_number": "ABC123",
+        "characteristics": "default",
+    }
+    # Single subprocess invocation, not 20+.
+    assert mock_cmd.await_count == 1
+
+
+@pytest.mark.asyncio
+@patch("adapter.tools.run_cmd", new_callable=AsyncMock, return_value="")
+async def test_get_android_properties_returns_empty_when_adb_fails(
+    mock_cmd: AsyncMock,
+) -> None:
+    assert await get_android_properties("adb", "ABC123") == {}

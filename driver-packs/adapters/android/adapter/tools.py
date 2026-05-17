@@ -4,10 +4,42 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from agent_app.pack.adapter_utils import find_tool, run_cmd
 
 logger = logging.getLogger(__name__)
+
+# Per-call timeout for adb invocations during discovery. Kept short so a
+# single unresponsive device cannot eat the 30s adapter-hook budget.
+_ADB_DISCOVERY_TIMEOUT_SECONDS: float = 5.0
+
+_GETPROP_LINE_RE = re.compile(r"^\[([^\]]+)\]:\s*\[(.*)\]$")
+
+_PROPERTY_KEYS: dict[str, str] = {
+    "android_version": "ro.build.version.release",
+    "fireos_version": "ro.build.version.fireos",
+    "fireos_marketing_version": "ro.build.mktg.fireos",
+    "fireos_version_name": "ro.build.version.name",
+    "model": "ro.product.marketname",
+    "product_model": "ro.product.model",
+    "product_name": "ro.product.name",
+    "vendor_model": "ro.product.vendor.model",
+    "odm_model": "ro.product.odm.model",
+    "manufacturer": "ro.product.manufacturer",
+    "build_id": "ro.build.display.id",
+    "build_number": "ro.build.lab126.build",
+    "product_type": "ro.build.product",
+    "product_device": "ro.product.device",
+    "netflix_model_group": "ro.nrdp.modelgroup",
+    "sdk_version": "ro.build.version.sdk",
+    "characteristics": "ro.build.characteristics",
+    "hardware": "ro.hardware",
+    "serial_number": "ro.serialno",
+    "boot_serial": "ro.boot.serialno",
+    "oem_key": "ro.oem.key1",
+    "brand": "ro.product.brand",
+}
 
 _ANDROID_SDK_PATHS = [
     os.path.expanduser("~/Library/Android/sdk"),
@@ -27,6 +59,8 @@ _EMULATOR_SEARCH_PATHS = [
     "/opt/android-sdk/emulator",
     "/usr/local/android-sdk/emulator",
 ]
+
+
 def find_android_home() -> str | None:
     for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
         val = os.environ.get(var)
@@ -63,35 +97,28 @@ def read_avd_config(avd_name: str) -> dict[str, str]:
 
 
 async def get_running_emulator_avd_name(adb: str, serial: str) -> str:
-    output = await run_cmd([adb, "-s", serial, "emu", "avd", "name"])
+    output = await run_cmd(
+        [adb, "-s", serial, "emu", "avd", "name"],
+        timeout=_ADB_DISCOVERY_TIMEOUT_SECONDS,
+    )
     lines = [line.strip() for line in output.splitlines() if line.strip() and line.strip().upper() != "OK"]
     return lines[0] if lines else ""
 
 
 async def get_android_properties(adb: str, udid: str) -> dict[str, str]:
-    prop_keys = {
-        "android_version": "ro.build.version.release",
-        "fireos_version": "ro.build.version.fireos",
-        "fireos_marketing_version": "ro.build.mktg.fireos",
-        "fireos_version_name": "ro.build.version.name",
-        "model": "ro.product.marketname",
-        "product_model": "ro.product.model",
-        "product_name": "ro.product.name",
-        "vendor_model": "ro.product.vendor.model",
-        "odm_model": "ro.product.odm.model",
-        "manufacturer": "ro.product.manufacturer",
-        "build_id": "ro.build.display.id",
-        "build_number": "ro.build.lab126.build",
-        "product_type": "ro.build.product",
-        "product_device": "ro.product.device",
-        "netflix_model_group": "ro.nrdp.modelgroup",
-        "sdk_version": "ro.build.version.sdk",
-        "characteristics": "ro.build.characteristics",
-        "hardware": "ro.hardware",
-        "serial_number": "ro.serialno",
-        "boot_serial": "ro.boot.serialno",
-        "oem_key": "ro.oem.key1",
-        "brand": "ro.product.brand",
-    }
-    values = [await run_cmd([adb, "-s", udid, "shell", "getprop", prop]) for prop in prop_keys.values()]
-    return {key: value for key, value in zip(prop_keys.keys(), values, strict=True) if value}
+    # Single bulk `getprop` invocation. Previously we issued one subprocess per
+    # property (~20 sequential adb shell calls per device), which serialised on
+    # a single unresponsive device and routinely tripped the 30s adapter-hook
+    # timeout for hosts with multiple devices.
+    raw = await run_cmd(
+        [adb, "-s", udid, "shell", "getprop"],
+        timeout=_ADB_DISCOVERY_TIMEOUT_SECONDS,
+    )
+    if not raw:
+        return {}
+    parsed: dict[str, str] = {}
+    for line in raw.splitlines():
+        match = _GETPROP_LINE_RE.match(line.strip())
+        if match:
+            parsed[match.group(1)] = match.group(2)
+    return {friendly: parsed[raw_key] for friendly, raw_key in _PROPERTY_KEYS.items() if parsed.get(raw_key)}
