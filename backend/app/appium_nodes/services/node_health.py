@@ -113,7 +113,6 @@ async def _attempt_node_restart(db: AsyncSession, *, device: Device) -> None:
                 payload={
                     "action": "start",
                     "priority": PRIORITY_AUTO_RECOVERY,
-                    "desired_port": node.port,
                     "transition_token": str(uuid.uuid4()),
                     "transition_deadline": deadline.isoformat(),
                 },

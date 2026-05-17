@@ -536,7 +536,6 @@ async def attempt_auto_recovery(
                         payload={
                             "action": "start",
                             "priority": PRIORITY_AUTO_RECOVERY,
-                            "desired_port": desired_port,
                         },
                     ),
                     IntentRegistration(

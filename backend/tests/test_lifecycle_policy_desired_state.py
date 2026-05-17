@@ -88,7 +88,62 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         )
     ).scalar_one()
     assert intent.payload["action"] == "start"
-    assert intent.payload["desired_port"] == 4723
+    # Auto-recovery must not pin a stale port. Pinning desired_port in the
+    # intent payload causes port-mismatch flap once the agent restarts the
+    # node on a different allocator-picked port: when this intent becomes the
+    # priority winner after higher-priority transient intents (active_session,
+    # health_failure) clear, ``decide_convergence_action`` sees observed.port
+    # != row.desired_port and fires ``stop``, taking the device offline. The
+    # intent_reconciler falls back to live ``node.port`` when the payload
+    # omits ``desired_port`` (see app/devices/services/intent_reconciler.py).
+    assert "desired_port" not in intent.payload
+
+
+async def test_auto_recovery_intent_falls_back_to_live_node_port(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression: live ``node.port`` wins over any port the intent payload
+    might carry, so a restart on a new port does not produce a phantom stop
+    on the next intent-reconciliation cycle.
+
+    Scenario reproduces the firetv-12 flap pattern: auto_recovery registered
+    when node.port was P1; agent later restarted on P2 (allocator-picked);
+    intent_reconciler must drive ``node.desired_port == P2``, not P1.
+    """
+    from app.devices.services.intent_reconciler import reconcile_device
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY
+
+    device = await create_device(db_session, host_id=db_host.id, name="port-flap-repro", verified=True)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4757,
+        grid_url="http://hub:4444",
+        desired_port=None,
+        pid=12345,
+        active_connection_target="127.0.0.1:4757",
+        desired_state=AppiumDesiredState.running,
+    )
+    db_session.add(node)
+    await db_session.flush()
+    db_session.add(
+        DeviceIntent(
+            device_id=device.id,
+            source=f"auto_recovery:node:{device.id}",
+            axis=NODE_PROCESS,
+            payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+        )
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.desired_port == 4757, (
+        f"intent_reconciler must drive desired_port to live node.port (4757); got {node.desired_port}"
+    )
 
 
 async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
