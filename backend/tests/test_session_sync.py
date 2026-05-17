@@ -811,58 +811,6 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
     assert sessions[0].status == SessionStatus.passed
 
 
-async def test_sync_backfills_started_at_for_active_run(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-006",
-        connection_target="dev-006",
-        name="Reserved Phone",
-        os_version="14",
-        host_id=db_host.id,
-        hold=DeviceHold.reserved,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    db_session.add(device)
-    await db_session.flush()
-
-    run = TestRun(
-        name="Active Run",
-        state=RunState.active,
-        requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
-        ttl_minutes=60,
-        heartbeat_timeout_sec=120,
-        reserved_devices=[
-            {
-                "device_id": str(device.id),
-                "identity_value": device.identity_value,
-                "connection_target": device.connection_target,
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "os_version": device.os_version,
-                "host_ip": None,
-            }
-        ],
-    )
-    db_session.add(run)
-    await db_session.commit()
-
-    grid_data = _grid_response([_grid_session("sess-6", "dev-006", "reservation_test")])
-
-    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
-        await _sync_sessions(db_session)
-
-    await db_session.refresh(run, ["device_reservations"])
-    await db_session.refresh(device)
-    assert run.state == RunState.active
-    assert run.started_at is not None
-    assert device.operational_state == DeviceOperationalState.busy
-
-
 async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     db_session: AsyncSession,
     db_host: Host,

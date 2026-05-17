@@ -52,53 +52,11 @@ async def test_signal_active_and_device_session_state_branches(monkeypatch: pyte
     with pytest.raises(ValueError, match="Cannot signal active"):
         await run_service.signal_active(db, terminal.id)
 
-    device_id = __import__("uuid").uuid4()
-    entry = object()
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle.get_device_reservation_with_entry", AsyncMock(return_value=(run, entry))
-    )
-    monkeypatch.setattr("app.runs.service_lifecycle.reservation_entry_is_excluded", lambda _entry: False)
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.preparing))
-    )
-    activated = await run_service.signal_active_for_device_session_no_commit(db, device_id)
-    assert activated is not None
-    assert activated.state == RunState.active
-
-    locked_active = _run(RunState.active)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=locked_active))
-    assert await run_service.signal_active_for_device_session_no_commit(db, device_id) is locked_active
-    assert locked_active.started_at is not None
-
-    monkeypatch.setattr("app.runs.service_lifecycle.reservation_entry_is_excluded", lambda _entry: True)
-    assert await run_service.signal_active_for_device_session_no_commit(db, device_id) is None
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle.get_device_reservation_with_entry", AsyncMock(return_value=(None, None))
-    )
-    assert await run_service.signal_active_for_device_session_no_commit(db, device_id) is None
-
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle.get_device_reservation_with_entry", AsyncMock(return_value=(run, entry))
-    )
-    monkeypatch.setattr("app.runs.service_lifecycle.reservation_entry_is_excluded", lambda _entry: False)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-    assert await run_service.signal_active_for_device_session_no_commit(db, device_id) is None
-
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.cancelled))
-    )
-    assert await run_service.signal_active_for_device_session_no_commit(db, device_id) is None
-
-    wrapper_run = _run(RunState.preparing)
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle.signal_active_for_device_session_no_commit", AsyncMock(return_value=wrapper_run)
-    )
-    monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=wrapper_run))
-    assert await run_service.signal_active_for_device_session(db, device_id) is wrapper_run
-    monkeypatch.setattr(
-        "app.runs.service_lifecycle.signal_active_for_device_session_no_commit", AsyncMock(return_value=None)
-    )
-    assert await run_service.signal_active_for_device_session(db, device_id) is None
+    # Regression: there is no observed-session helper. The only public path
+    # out of preparing is signal_ready / signal_active, both driven by an
+    # explicit client signal.
+    assert not hasattr(run_service, "signal_active_for_device_session")
+    assert not hasattr(run_service, "signal_active_for_device_session_no_commit")
 
 
 async def test_run_terminal_transitions_success_and_guard_paths(monkeypatch: pytest.MonkeyPatch) -> None:
