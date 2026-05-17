@@ -309,3 +309,41 @@ async def test_forced_release_registers_run_active_precondition(
     forced = [intent for intent in captured if intent.source.startswith("forced_release:")]
     assert len(forced) == 1
     assert forced[0].precondition == {"kind": "run_active", "run_id": str(run.id)}
+
+
+@pytest.mark.db
+async def test_allocator_registers_reservation_active_precondition(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.runs import service_allocator
+
+    captured: list[IntentRegistration] = []
+
+    async def fake_register(
+        db: AsyncSession,
+        *,
+        device_id: uuid.UUID,
+        intents: list[IntentRegistration],
+        reason: str,
+    ) -> None:
+        captured.extend(intents)
+
+    monkeypatch.setattr(service_allocator, "register_intents_and_reconcile", fake_register)
+
+    device = await create_device(db_session, host_id=db_host.id, name="alloc-reg")
+    run = await create_reserved_run(db_session, name="alloc-reg-run", devices=[device])
+    await db_session.commit()
+
+    await service_allocator._register_run_grid_intent(
+        db_session,
+        run=run,
+        device_id=device.id,
+    )
+
+    run_routing = [intent for intent in captured if intent.source == f"run:{run.id}"]
+    assert len(run_routing) == 1
+    assert run_routing[0].precondition == {
+        "kind": "reservation_active",
+        "run_id": str(run.id),
+        "device_id": str(device.id),
+    }
