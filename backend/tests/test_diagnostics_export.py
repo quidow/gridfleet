@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
-from app.devices.services.diagnostics_export import assemble_bundle
+from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
@@ -175,3 +175,28 @@ async def test_assemble_bundle_redaction_hashes_named_fields(
     redacted2 = await assemble_bundle(db_session, device, redact=True)
     assert redacted["device"]["identity_value"] == redacted2["device"]["identity_value"]
     assert unredacted["device"]["identity_value"] == "emulator-5554"
+
+
+@pytest.mark.db
+async def test_capture_snapshot_persists_row_with_trigger_and_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="capture-device",
+        identity_value="capture",
+    )
+    snapshot_id = await capture_snapshot(db_session, device, trigger="operator", reason="manual click")
+    await db_session.commit()
+    assert isinstance(snapshot_id, uuid.UUID)
+    result = await db_session.execute(
+        select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.id == snapshot_id)
+    )
+    row = result.scalar_one()
+    assert row.trigger == "operator"
+    assert row.reason == "manual click"
+    assert row.payload["schema_version"] == 1
+    assert row.payload["redacted"] is False

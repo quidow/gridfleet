@@ -20,7 +20,7 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models.node import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
-from app.devices.models import DeviceEvent, DeviceIntent, DeviceReservation
+from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceIntent, DeviceReservation
 from app.devices.schemas.diagnostics import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
 from app.runs.models import TestRun
 from app.sessions.models import Session, SessionStatus
@@ -530,3 +530,26 @@ async def redact_bundle(db: AsyncSession, bundle: dict[str, Any]) -> dict[str, A
 
 
 _redact_bundle = redact_bundle
+
+
+async def capture_snapshot(
+    db: AsyncSession,
+    device: Device,
+    *,
+    trigger: str,
+    reason: str | None,
+) -> uuid.UUID:
+    """Assemble an unredacted bundle and insert a snapshot row.
+
+    Does not commit; the caller owns the transaction boundary.
+    """
+    payload = await assemble_bundle(db, device, redact=False)
+    row = DeviceDiagnosticSnapshot(
+        device_id=device.id,
+        trigger=trigger,
+        reason=reason,
+        payload=payload,
+    )
+    db.add(row)
+    await db.flush()
+    return row.id
