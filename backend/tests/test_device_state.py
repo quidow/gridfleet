@@ -262,6 +262,37 @@ async def test_ready_operational_state_returns_offline_when_desired_state_stoppe
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_appium_node_stop_in_flight_returns_false_when_unloaded(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """Lazy-load guard: an unloaded ``appium_node`` relationship must not
+    trigger a sync IO inside the AsyncSession context. The predicate must
+    return False without touching the attribute.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = await _persisted_device(db_session, default_host_id)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        stop_pending=True,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    db_session.expire(device, ["appium_node"])
+    assert "appium_node" in sa_inspect(device).unloaded
+
+    assert device_state.appium_node_stop_in_flight(device) is False
+    # Predicate must not have lazy-loaded the relationship.
+    assert "appium_node" in sa_inspect(device).unloaded
+
+
 def test_appium_node_stop_in_flight_predicate() -> None:
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
