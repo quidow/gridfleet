@@ -58,6 +58,43 @@ async def test_mark_review_required_is_idempotent(db_session: AsyncSession, db_h
     assert second is False
 
 
+async def test_mark_review_required_audits_reason_updates(db_session: AsyncSession, db_host: Host) -> None:
+    """A reason change on an already-flagged device must record an audit
+    event so the operator-visible history is not silently rewritten."""
+    from sqlalchemy import select
+
+    from app.devices.models import DeviceEvent, DeviceEventType
+
+    device = await create_device(db_session, host_id=db_host.id, name="review-reason-audit")
+    await mark_review_required(db_session, device, reason="first reason", source="session_viability")
+    await db_session.commit()
+
+    result_changed = await mark_review_required(db_session, device, reason="second reason", source="session_viability")
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    assert result_changed is False  # still already-flagged semantics
+    assert device.review_reason == "second reason"
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent)
+                .where(DeviceEvent.device_id == device.id)
+                .where(DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed)
+                .order_by(DeviceEvent.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(events) == 2  # initial set + reason update
+    update_event = events[-1]
+    assert update_event.details.get("reason_updated") is True
+    assert update_event.details.get("previous_reason") == "first reason"
+    assert update_event.details.get("review_reason") == "second reason"
+
+
 async def test_exit_maintenance_clears_review_required(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(
         db_session,

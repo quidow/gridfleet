@@ -33,12 +33,30 @@ async def mark_review_required(
     source: str,
 ) -> bool:
     """Flag ``device`` as needing operator review. Idempotent — returns False
-    if already flagged."""
+    if the flag was already on (regardless of whether the reason changed).
+
+    A reason update on an already-flagged device emits its own
+    ``lifecycle_recovery_suppressed`` audit event so the operator-visible
+    history is not silently rewritten.
+    """
     if not hasattr(device, "review_required"):
         return False
     if device.review_required:
         if device.review_reason != reason:
+            previous_reason = device.review_reason
             device.review_reason = reason
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.lifecycle_recovery_suppressed,
+                {
+                    "review_required": True,
+                    "review_reason": reason,
+                    "previous_reason": previous_reason,
+                    "source": source,
+                    "reason_updated": True,
+                },
+            )
         return False
     device.review_required = True
     device.review_reason = reason

@@ -4,9 +4,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
+from app.devices.services.review import clear_review_required
 from app.runs.models import TestRun
 
 if TYPE_CHECKING:
@@ -138,11 +141,6 @@ async def restore_device_to_run(
     entry.cooldown_count = 0
     # Same signal applies to the review-shelving flag: restoring a device
     # is an operator promise that it is ready for another attempt.
-    from sqlalchemy.exc import NoResultFound  # noqa: PLC0415
-
-    from app.devices import locking as device_locking  # noqa: PLC0415
-    from app.devices.services.review import clear_review_required  # noqa: PLC0415
-
     try:
         device = await device_locking.lock_device(db, device_id, load_sessions=False)
     except (NoResultFound, AttributeError):
