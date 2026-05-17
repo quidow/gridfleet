@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -32,6 +33,18 @@ def _desired_row(**overrides: object) -> DesiredRow:
     }
     values.update(overrides)
     return DesiredRow(**values)  # type: ignore[arg-type]
+
+
+async def test_lock_device_for_reconciler_returns_none_when_row_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        appium_reconciler.device_locking,
+        "lock_device",
+        AsyncMock(side_effect=NoResultFound),
+    )
+    result = await appium_reconciler._lock_device_for_reconciler(AsyncMock(), uuid.uuid4())
+    assert result is None
 
 
 async def test_reconcile_host_and_loop_tick_skip_invalid_payloads_and_hosts() -> None:

@@ -164,6 +164,7 @@ async def test_pack_start_default_caps_use_appium_platform_name(
     mgr.set_runtime_registry(registry)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
+    monkeypatch.setattr(mgr, "_is_appium_port_bindable", lambda port: True)
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
     monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 
@@ -230,6 +231,7 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
     mgr.set_adapter_registry(adapter_registry)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
+    monkeypatch.setattr(mgr, "_is_appium_port_bindable", lambda port: True)
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
     monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 

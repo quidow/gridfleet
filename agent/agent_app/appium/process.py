@@ -698,6 +698,16 @@ class AppiumProcessManager:
                 "stop the existing process before starting a new managed node"
             )
 
+        if not self._is_appium_port_bindable(spec.port):
+            # Appium binds on 0.0.0.0; a non-Appium listener on this port would
+            # otherwise pass the HTTP probe above, then fail subprocess bind
+            # with EADDRINUSE — surfacing as a 30s readiness timeout instead of
+            # a fast 409.
+            raise PortOccupiedError(
+                f"Port {spec.port} is already bound on this host by a non-Appium listener; "
+                "stop the existing process before starting a new managed node"
+            )
+
         try:
             appium_proc = await asyncio.create_subprocess_exec(
                 *appium_cmd,
@@ -1177,6 +1187,21 @@ class AppiumProcessManager:
 
     async def _can_connect_to_appium(self, port: int) -> bool:
         return await self._fetch_appium_status(port) is not None
+
+    def _is_appium_port_bindable(self, port: int) -> bool:
+        # Mirror Appium's own bind (0.0.0.0, no SO_REUSEADDR) so the probe
+        # returns the same EADDRINUSE outcome the subprocess would hit. The
+        # probe never calls listen()/accept() — the socket is closed by the
+        # context manager immediately after bind, so no traffic from any
+        # interface can reach it. (CodeQL py/bind-socket-all-network-interfaces
+        # flags the literal 0.0.0.0; the alert is dismissed as a false
+        # positive — see PR #283.)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("0.0.0.0", port))
+            except OSError:
+                return False
+        return True
 
     async def _wait_for_readiness(self, port: int, process: asyncio.subprocess.Process) -> bool:
         deadline = asyncio.get_event_loop().time() + READINESS_TIMEOUT
