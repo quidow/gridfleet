@@ -295,6 +295,77 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     assert device.operational_state == DeviceOperationalState.available
 
 
+async def test_sync_ends_session_marks_offline_when_node_stop_pending(db_session: AsyncSession, db_host: Host) -> None:
+    """When a session ends and the device's Appium node already has a
+    graceful-stop intent registered, the device must transition
+    busy → offline, not busy → available.
+
+    The intent reconciler was held while the session was running (the
+    session-safety invariant) and now applies, writing
+    ``desired_state=stopped`` + ``stop_pending=True``. Without the
+    ``appium_node_stop_in_flight`` gate in ``ready_operational_state``,
+    the allocator could briefly pick the device before the agent finishes
+    deregistering the relay from the hub.
+    """
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services.intent import IntentService
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-stop-pending",
+        connection_target="dev-stop-pending",
+        name="Stop Pending Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=42,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    session = Session(session_id="sess-stop-pending", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    service = IntentService(db_session)
+    await service.register_intent(
+        device_id=device.id,
+        source=f"health_failure:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+        reason="held graceful stop",
+    )
+    await db_session.commit()
+
+    grid_data = _grid_response([])
+
+    with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+        await _sync_sessions(db_session)
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.offline
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is True
+
+
 async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db_host: Host) -> None:
     """Two Session rows share the same session_id with status=running.
 

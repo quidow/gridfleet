@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect as sa_inspect
 
+from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
@@ -92,10 +93,43 @@ async def set_hold(
     return True
 
 
+def appium_node_stop_in_flight(device: Device) -> bool:
+    """Return True when a stop intent has been written to the device's Appium
+    node row but the agent has not yet finished tearing the relay down.
+
+    The reconciler may write ``desired_state=stopped`` or ``stop_pending=True``
+    well before the agent observes the change and disconnects the relay from
+    the Selenium hub. During that window the node row still looks
+    operational (``pid``, ``active_connection_target`` populated), so any
+    caller that gates on ``operational_state == available`` alone could hand
+    the device to a new run only to have the session removed as soon as the
+    relay deregisters. Callers must consult this predicate alongside the
+    operational axis.
+
+    Lazy-load safety: if ``appium_node`` is not eager-loaded, return False
+    rather than trigger a sync IO under an AsyncSession (which raises
+    ``MissingGreenlet``). Critical gating call sites — ``service_sync``,
+    ``verification_execution`` — already eager-load via
+    ``device_locking.lock_device``; non-eager call sites get a conservative
+    answer that matches the pre-existing behavior.
+    """
+    if "appium_node" in sa_inspect(device).unloaded:
+        return False
+    node = device.appium_node
+    if node is None:
+        return False
+    return node.desired_state == AppiumDesiredState.stopped or bool(node.stop_pending)
+
+
 async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOperationalState:
     """Project readiness into the operational axis."""
     if device.operational_state is DeviceOperationalState.verifying:
         return DeviceOperationalState.verifying
+    if appium_node_stop_in_flight(device):
+        # Intent-driven stops (graceful health-failure deferral, cooldown,
+        # maintenance) must not surface as ``available``. The relay is on
+        # its way out; the device is offline-bound until the intent clears.
+        return DeviceOperationalState.offline
     if await is_ready_for_use_async(db, device) and device_allows_allocation(device):
         return DeviceOperationalState.available
     return DeviceOperationalState.offline

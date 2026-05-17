@@ -197,6 +197,116 @@ async def test_ready_operational_state_returns_available_when_signals_unset(
     assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.available
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ready_operational_state_returns_offline_when_node_stop_pending(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An intent-driven stop signal on the Appium node row must not surface as
+    ``available``.
+
+    Without this gate, the allocator could pick the device between the
+    reconciler writing ``stop_pending=True`` and the agent actually
+    deregistering the relay — the resulting session would be removed as
+    soon as the relay disconnects from the hub.
+    """
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = await _persisted_device(db_session, default_host_id)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=42,
+        active_connection_target=device.connection_target,
+        stop_pending=True,
+        accepting_new_sessions=False,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ready_operational_state_returns_offline_when_desired_state_stopped(
+    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = await _persisted_device(db_session, default_host_id)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        pid=42,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
+        return True
+
+    monkeypatch.setattr("app.devices.services.state.is_ready_for_use_async", fake_ready)
+    assert await device_state.ready_operational_state(db_session, device) == DeviceOperationalState.offline
+
+
+def test_appium_node_stop_in_flight_predicate() -> None:
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="predicate",
+        connection_target="predicate",
+        name="Predicate",
+        host_id=None,  # type: ignore[arg-type]
+    )
+
+    device.appium_node = None
+    assert device_state.appium_node_stop_in_flight(device) is False
+
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        stop_pending=False,
+    )
+    assert device_state.appium_node_stop_in_flight(device) is False
+
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        stop_pending=True,
+    )
+    assert device_state.appium_node_stop_in_flight(device) is True
+
+    device.appium_node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.stopped,
+        stop_pending=False,
+    )
+    assert device_state.appium_node_stop_in_flight(device) is True
+
+
 def test_operational_state_and_hold_value_sets_are_disjoint() -> None:
     op_values = {v.value for v in DeviceOperationalState}
     hold_values = {v.value for v in DeviceHold}
