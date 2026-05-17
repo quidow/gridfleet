@@ -607,7 +607,11 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
         entry.exclusion_reason = None
         entry.excluded_at = None
         entry.excluded_until = None
-        entry.cooldown_count = 0
+        # ``cooldown_count`` is sticky across TTL clears (see
+        # ``intent_reconciler._clear_reservation_exclusion``). Zeroing here
+        # makes the escalation threshold unreachable for slow-burn flakes
+        # where each cooldown TTL expires before the next failure lands.
+        # Only ``restore_device_to_run`` (operator-driven) resets the counter.
         await reconcile_device(db, entry.device_id)
     await db.commit()
 

@@ -188,3 +188,46 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
 
     await db_session.refresh(reservation)
     assert reservation.cooldown_count == 1
+
+
+async def test_legacy_expired_cooldown_sweep_preserves_counter(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression: ``_check_expired_cooldowns`` (legacy compatibility sweep)
+    must not zero ``cooldown_count``.
+
+    Symptom seen in production: operators set escalation threshold = 3, ran a
+    long test run, devices accrued 5/6/11 cooldowns yet never escalated to
+    maintenance. Each TTL window expired between cooldowns; the connectivity
+    loop's transitional sweep was finding those rows and resetting the
+    counter back to 0, so ``cooldown_device``'s ``cooldown_count_after >=
+    threshold`` check could never fire on subsequent increments.
+
+    Design contract (``_clear_reservation_exclusion``): the counter persists
+    across exclusion clears. Only operator-driven ``restore_device_to_run``
+    resets it.
+    """
+    from app.devices.services.connectivity import _check_expired_cooldowns
+
+    device = await create_device(db_session, host_id=db_host.id, name="legacy-sweep-no-reset")
+    await _seed_node(db_session, device.id)
+    await create_reserved_run(db_session, name="legacy-sweep-no-reset-run", devices=[device])
+
+    reservation = await _reservation_for(db_session, device.id)
+    excluded_at = datetime.now(UTC) - timedelta(seconds=120)
+    reservation.excluded = True
+    reservation.exclusion_reason = "flaky"
+    reservation.excluded_at = excluded_at
+    reservation.excluded_until = datetime.now(UTC) - timedelta(seconds=1)
+    reservation.cooldown_count = 2
+    await db_session.commit()
+
+    await _check_expired_cooldowns(db_session)
+
+    await db_session.refresh(reservation)
+    assert reservation.excluded is False
+    assert reservation.cooldown_count == 2, (
+        "legacy expired-cooldown sweep must not zero the counter — "
+        "escalation threshold must remain reachable across flakes"
+    )
