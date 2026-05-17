@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.core.observability import get_logger
-from app.devices.models import DeviceIntent
+from app.devices.models import DeviceEventType, DeviceIntent
+from app.devices.services.event import record_event
 from app.devices.services.intent_reconciler import _reconcile_device
 
 if TYPE_CHECKING:
@@ -41,6 +42,21 @@ async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
     for intent in rows:
         if await is_satisfied(db, intent):
             continue
+        precondition_kind = (intent.precondition or {}).get("kind") if intent.precondition else None
+        await record_event(
+            db,
+            intent.device_id,
+            DeviceEventType.desired_state_changed,
+            {
+                "field": "device_intent",
+                "old_value": {"source": intent.source, "axis": intent.axis},
+                "new_value": None,
+                "caller": "intent_reconciler",
+                "reason": "precondition_unsatisfied",
+                "intent_source": intent.source,
+                "precondition_kind": precondition_kind,
+            },
+        )
         affected.add(intent.device_id)
         await db.delete(intent)
     if not affected:

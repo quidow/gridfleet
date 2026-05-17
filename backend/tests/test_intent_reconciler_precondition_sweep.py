@@ -191,3 +191,51 @@ async def test_sweep_reconciles_affected_device_only(
     await reconcile_unsatisfied_preconditions(db_session)
     await db_session.commit()
     assert reconciled == [device_a.id]
+
+
+@pytest.mark.db
+async def test_sweep_emits_desired_state_changed_event(db_session: AsyncSession, db_host: Host) -> None:
+    from app.devices.models import DeviceEvent, DeviceEventType
+
+    device = await create_device(db_session, host_id=db_host.id, name="sweep-event")
+    await _seed_node(db_session, device.id)
+    run = await create_reserved_run(db_session, name="sweep-event-run", devices=[device])
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="cooldown",
+        intents=[
+            IntentRegistration(
+                source=f"cooldown:node:{run.id}",
+                axis=NODE_PROCESS,
+                run_id=run.id,
+                payload={"action": "stop", "priority": 70},
+                precondition={"kind": "run_active", "run_id": str(run.id)},
+            )
+        ],
+    )
+    run.state = RunState.completed
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent)
+                .where(DeviceEvent.device_id == device.id)
+                .where(DeviceEvent.event_type == DeviceEventType.desired_state_changed)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    details = [event.details for event in events]
+    assert any(
+        detail is not None
+        and detail.get("caller") == "intent_reconciler"
+        and detail.get("reason") == "precondition_unsatisfied"
+        and detail.get("intent_source") == f"cooldown:node:{run.id}"
+        and detail.get("precondition_kind") == "run_active"
+        for detail in details
+    )
