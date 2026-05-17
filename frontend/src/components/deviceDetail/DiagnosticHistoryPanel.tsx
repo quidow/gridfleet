@@ -5,6 +5,7 @@ import {
   useDeviceDiagnosticSnapshots,
 } from '../../hooks/useDeviceDiagnostics';
 import Badge, { type BadgeTone } from '../ui/Badge';
+import Card from '../ui/Card';
 import DiagnosticBundleModal from './DiagnosticBundleModal';
 import { formatDate } from './utils';
 
@@ -23,7 +24,7 @@ export default function DiagnosticHistoryPanel({ deviceId }: Props) {
   const items = data?.items ?? [];
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+    <Card padding="none" className="overflow-hidden">
       <div className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-text-1">Diagnostic history</h2>
       </div>
@@ -90,6 +91,6 @@ export default function DiagnosticHistoryPanel({ deviceId }: Props) {
         onClose={() => setOpenSnapshotId(null)}
         onToggleRedact={() => setRedacted((prev) => !prev)}
       />
-    </div>
+    </Card>
   );
 }
