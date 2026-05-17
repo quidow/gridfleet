@@ -155,7 +155,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `GET` | `/api/runs` | List runs | filters: `state`, `created_from`, `created_to`, `limit`, `offset`, `sort_by`, `sort_dir` | `{ items: RunRead[], total, limit, offset }` |
 | `GET` | `/api/runs/{run_id}` | Read full run detail | path `run_id` | `RunDetail` |
 | `POST` | `/api/runs/{run_id}/ready` | Compatibility alias that transitions a preparing run to `active` | path `run_id` | `RunRead` |
-| `POST` | `/api/runs/{run_id}/active` | Transition run to `active` | path `run_id` | `RunRead` |
+| `POST` | `/api/runs/{run_id}/active` | Transition run from `preparing` to `active`. Required to begin associating Appium sessions with the run — sessions started while the run is `preparing` have `run_id = NULL` and never show up in Run Detail. | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/heartbeat` | Refresh heartbeat and read current state | path `run_id` | `HeartbeatResponse` |
 | `POST` | `/api/runs/{run_id}/complete` | Complete a run and release devices | path `run_id` | `RunRead` |

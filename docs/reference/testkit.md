@@ -143,7 +143,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
 | `GridFleetClient.signal_ready(run_id)` | Compatibility alias that moves a preparing run to `active` |
-| `GridFleetClient.signal_active(run_id)` | Move a run to `active` |
+| `GridFleetClient.signal_active(run_id)` | Move a run from `preparing` to `active`. **Required** between preparation and real tests — Appium sessions registered before this call are not linked to the run (`run_id = NULL`) and do not appear in Run Detail. |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
 | `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
@@ -242,6 +242,8 @@ client.report_preparation_failure(
 
 client.signal_active(run_id)
 ```
+
+`signal_active` is the prep/test boundary. Anything before it (build installs, smoke checks, warm-up Appium sessions on reserved devices) is considered preparation: those sessions land in the Session table with `run_id = NULL` and are visible only on **Sessions (advanced)**. After `signal_active`, new sessions on reserved devices are linked to the run. If the client never calls `signal_active` and the run hits its TTL, the manager emits a `run.never_activated` event and the run expires with a clear error reason.
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
 

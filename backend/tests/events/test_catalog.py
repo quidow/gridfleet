@@ -19,6 +19,17 @@ def test_device_crashed_is_registered() -> None:
     assert "device.crashed" in PUBLIC_EVENT_NAME_SET
 
 
+def test_run_never_activated_is_registered_in_catalog() -> None:
+    assert "run.never_activated" in PUBLIC_EVENT_NAME_SET
+
+    definition = next(e for e in PUBLIC_EVENT_CATALOG if e.name == "run.never_activated")
+    assert definition.category == "sessions_and_runs"
+    assert definition.default_severity == "warning"
+    assert "warning" in definition.allowed_severities
+    assert "run_id" in definition.typical_data_fields
+    assert "reason" in definition.typical_data_fields
+
+
 def test_every_event_has_default_and_allowed_severities() -> None:
     for definition in PUBLIC_EVENT_CATALOG:
         assert definition.default_severity in definition.allowed_severities, (

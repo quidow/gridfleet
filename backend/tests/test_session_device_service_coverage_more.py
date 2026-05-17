@@ -10,7 +10,7 @@ from app.devices.models import ConnectionType, DeviceHold, DeviceOperationalStat
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import service as device_service
-from app.runs.models import TestRun
+from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
@@ -180,7 +180,7 @@ async def test_register_and_finish_session_guard_paths(
         "app.sessions.service.lifecycle_policy.complete_deferred_stop_if_session_ended",
         AsyncMock(),
     )
-    run = TestRun(name="terminal reservation", requirements=[])
+    run = TestRun(name="terminal reservation", requirements=[], state=RunState.active)
     db_session.add(run)
     await db_session.flush()
     monkeypatch.setattr(

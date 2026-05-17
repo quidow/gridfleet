@@ -272,6 +272,14 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("run_id", "name", "reason"),
     ),
     PublicEventDefinition(
+        name="run.never_activated",
+        category="sessions_and_runs",
+        description="Run expired while still in `preparing` because the client never signaled active.",
+        default_severity="warning",
+        allowed_severities=frozenset({"warning"}),
+        typical_data_fields=("run_id", "name", "reason"),
+    ),
+    PublicEventDefinition(
         name="device_group.updated",
         category="operations_and_settings",
         description="Device group was created, updated, or deleted.",

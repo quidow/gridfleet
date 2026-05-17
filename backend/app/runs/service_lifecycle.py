@@ -13,10 +13,6 @@ from app.runs.service_lifecycle_release import (
 )
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
-from app.runs.service_reservation_lookup import (
-    get_device_reservation_with_entry,
-    reservation_entry_is_excluded,
-)
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -65,39 +61,6 @@ async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run = await get_run(db, run_id)
     assert run is not None
     return run
-
-
-async def signal_active_for_device_session(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run = await signal_active_for_device_session_no_commit(db, device_id)
-    if run is None:
-        return None
-    await db.commit()
-    refreshed_run = await get_run(db, run.id)
-    assert refreshed_run is not None
-    return refreshed_run
-
-
-async def signal_active_for_device_session_no_commit(db: AsyncSession, device_id: uuid.UUID) -> TestRun | None:
-    run, entry = await get_device_reservation_with_entry(db, device_id)
-    if run is None or reservation_entry_is_excluded(entry):
-        return None
-    locked_run = await _get_run_for_update(db, run.id)
-    if locked_run is None:
-        return None
-    if locked_run.state == RunState.active:
-        if locked_run.started_at is None:
-            now = datetime.now(UTC)
-            locked_run.started_at = now
-            locked_run.last_heartbeat = locked_run.last_heartbeat or now
-        return locked_run
-    if locked_run.state != RunState.preparing:
-        return None
-    now = datetime.now(UTC)
-    locked_run.state = RunState.active
-    locked_run.started_at = now
-    locked_run.last_heartbeat = now
-    queue_event_for_session(db, "run.active", {"run_id": str(locked_run.id), "name": locked_run.name})
-    return locked_run
 
 
 async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
@@ -213,11 +176,30 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         await db.commit()
         return
 
-    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=reason)
+    expired_from_preparing = locked_run.state == RunState.preparing
+    effective_reason = (
+        f"{reason}; run was still in `preparing` — `/api/runs/{{id}}/active` was never signaled"
+        if expired_from_preparing
+        else reason
+    )
+
+    await _clear_desired_grid_run_id_for_run(db, run=locked_run, caller="run_expire", reason=effective_reason)
     locked_run.state = RunState.expired
-    locked_run.error = reason
+    locked_run.error = effective_reason
     locked_run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
+
+    if expired_from_preparing:
+        queue_event_for_session(
+            db,
+            "run.never_activated",
+            {
+                "run_id": str(locked_run.id),
+                "name": locked_run.name,
+                "reason": effective_reason,
+            },
+            severity="warning",
+        )
 
     queue_event_for_session(
         db,
@@ -225,7 +207,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
         {
             "run_id": str(locked_run.id),
             "name": locked_run.name,
-            "reason": reason,
+            "reason": effective_reason,
         },
         severity="critical",
     )

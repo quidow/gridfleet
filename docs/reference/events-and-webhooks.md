@@ -129,6 +129,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `run.completed` | `run_id`, `name`, `duration` | `success` | `success`, `warning` | run completion |
 | `run.cancelled` | `run_id`, `name` | `warning` | `warning`, `info` | cancel and force-release flows |
 | `run.expired` | `run_id`, `name`, `reason` | `critical` | `critical`, `warning` | run TTL or heartbeat expiration |
+| `run.never_activated` | `run_id`, `name`, `reason` | `warning` | `warning` | Run hit its TTL / heartbeat budget while still in `preparing` — `/api/runs/{id}/active` was never signaled. Fired immediately before `run.expired`. |
 
 ### Groups, bulk actions, settings, and cleanup
 

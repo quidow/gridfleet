@@ -18,8 +18,6 @@ from app.runs.service_lifecycle import (
     force_release,
     heartbeat,
     signal_active,
-    signal_active_for_device_session,
-    signal_active_for_device_session_no_commit,
     signal_ready,
 )
 from app.runs.service_lifecycle_failures import _cooldown_intents, cooldown_device, report_preparation_failure
@@ -111,7 +109,5 @@ __all__ = [
     "reservation_entry_is_excluded",
     "restore_device_to_run",
     "signal_active",
-    "signal_active_for_device_session",
-    "signal_active_for_device_session_no_commit",
     "signal_ready",
 ]

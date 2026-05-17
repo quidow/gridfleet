@@ -137,6 +137,7 @@ async def test_expire_run_queues_run_expired(
     _, device = await seed_host_and_device(db_session, identity="run-expire-1")
     event_bus_capture.clear()
     run, _ = await run_service.create_run(db_session, _build_request(device, "expire-run"))
+    await run_service.signal_active(db_session, run.id)
     event_bus_capture.clear()
 
     await run_service.expire_run(db_session, run, "ttl")
@@ -145,3 +146,29 @@ async def test_expire_run_queues_run_expired(
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
     assert len(expired) == 1
     assert expired[0]["reason"] == "ttl"
+    never_activated = [p for n, p in event_bus_capture if n == "run.never_activated"]
+    assert never_activated == []
+
+
+async def test_expire_run_from_preparing_queues_never_activated_and_expired(
+    db_session: AsyncSession,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    _, device = await seed_host_and_device(db_session, identity="run-expire-prep-1")
+    event_bus_capture.clear()
+    run, _ = await run_service.create_run(db_session, _build_request(device, "expire-prep-run"))
+    event_bus_capture.clear()
+
+    await run_service.expire_run(db_session, run, "ttl")
+    await settle_after_commit_tasks()
+
+    expired = [p for n, p in event_bus_capture if n == "run.expired"]
+    assert len(expired) == 1
+    assert isinstance(expired[0]["reason"], str)
+    assert "preparing" in expired[0]["reason"]
+
+    never_activated = [p for n, p in event_bus_capture if n == "run.never_activated"]
+    assert len(never_activated) == 1
+    assert never_activated[0]["run_id"] == str(run.id)
+    assert isinstance(never_activated[0]["reason"], str)
+    assert "preparing" in never_activated[0]["reason"]

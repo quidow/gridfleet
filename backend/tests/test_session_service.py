@@ -153,6 +153,71 @@ async def test_update_session_status_clears_stop_pending(
     )
 
 
+async def test_register_session_does_not_attach_run_id_when_run_is_preparing(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from app.runs.models import RunState
+    from tests.helpers import create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="prep-session-device",
+        connection_target="prep-session-device",
+        name="Prep Session Device",
+        os_version="14",
+        operational_state="available",
+    )
+    device.verified_at = datetime.now(UTC)
+    await db_session.commit()
+    run = await create_reserved_run(db_session, name="Prep Phase Run", devices=[device], state=RunState.preparing)
+
+    registered = await session_service.register_session(
+        db_session,
+        session_id="prep-session-1",
+        test_name="prep-warmup",
+        device_id=device.id,
+    )
+
+    assert registered.run_id is None
+    await db_session.refresh(run)
+    assert run.state == RunState.preparing
+    assert run.started_at is None
+
+
+async def test_register_session_attaches_run_id_when_run_is_active(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    from app.runs.models import RunState
+    from tests.helpers import create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="active-session-device",
+        connection_target="active-session-device",
+        name="Active Session Device",
+        os_version="14",
+        operational_state="available",
+    )
+    device.verified_at = datetime.now(UTC)
+    await db_session.commit()
+    run = await create_reserved_run(db_session, name="Active Phase Run", devices=[device], state=RunState.active)
+
+    registered = await session_service.register_session(
+        db_session,
+        session_id="active-session-1",
+        test_name="real-test",
+        device_id=device.id,
+    )
+
+    assert registered.run_id == run.id
+    await db_session.refresh(run)
+    assert run.state == RunState.active
+
+
 async def test_register_session_with_terminal_status_clears_stop_pending(
     db_session: AsyncSession,
     db_host: Host,

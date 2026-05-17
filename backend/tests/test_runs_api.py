@@ -1022,6 +1022,53 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
 
 
 @pytest.mark.asyncio
+async def test_sessions_straddle_active_signal_boundary(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Sessions started while a run is preparing carry run_id=NULL; sessions
+    started after the explicit /active signal are linked to the run."""
+    from app.runs.models import RunState
+    from app.sessions import service as session_service
+    from tests.helpers import create_reserved_run
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="straddle-boundary",
+        connection_target="straddle-boundary",
+        name="Straddle Boundary Device",
+        os_version="14",
+        operational_state="available",
+    )
+    device.verified_at = datetime.now(UTC)
+    await db_session.commit()
+    run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
+
+    prep_session = await session_service.register_session(
+        db_session,
+        session_id="sess-prep",
+        test_name="prep-warmup",
+        device_id=device.id,
+    )
+    assert prep_session.run_id is None
+
+    await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed)
+
+    await run_service.signal_active(db_session, run.id)
+    await db_session.refresh(run)
+    assert run.state == RunState.active
+    assert run.started_at is not None
+
+    real_session = await session_service.register_session(
+        db_session,
+        session_id="sess-real",
+        test_name="real-test",
+        device_id=device.id,
+    )
+    assert real_session.run_id == run.id
+
+
 async def test_create_run_excludes_device_mid_appium_restart(
     client: AsyncClient,
     db_session: AsyncSession,

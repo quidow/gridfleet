@@ -55,11 +55,8 @@ The normal reservation path today is:
 3. the run starts in `preparing`
 4. CI prepares the reserved devices
 5. if one reserved device fails preparation, CI can call `/api/runs/{id}/devices/{device_id}/preparation-failed` to exclude only that device and preserve the exact failure reason
-6. CI or an operator signals `active` after the remaining devices finish preparation
-7. the run is also considered `active` when:
-   - `/api/runs/{id}/active` is called explicitly, or
-   - session sync observes a reserved device start work
-8. the run ends as `completed`, `cancelled`, or `expired`
+6. CI must explicitly call `POST /api/runs/{id}/active` after preparation finishes to leave `preparing`. There is no implicit transition based on observed session activity. Sessions started before `/active` are preparation sessions and are not linked to the run.
+7. the run ends as `completed`, `cancelled`, or `expired`
 
 Run creation supports two allocation modes per requirement:
 
@@ -71,12 +68,22 @@ Run creation supports two allocation modes per requirement:
 | State | What It Means Today | Typical Cause |
 | --- | --- | --- |
 | `preparing` | devices are reserved and preparation can happen | run was just created |
-| `active` | reserved devices are in use or explicitly activated | explicit `active` or observed session use |
+| `active` | reserved devices are in use, real test sessions are now linked to the run | explicit `POST /api/runs/{id}/active` call |
 | `completed` | normal finish and release | CI called `complete` |
 | `cancelled` | operator-initiated stop and release | `cancel` or `force-release` |
 | `expired` | safety timeout released the fleet | missed heartbeat or TTL exceeded |
 
 The UI contract also recognizes `pending`, `completing`, and `failed`, but the current run service does not normally transition runs into those states during standard operator/CI flow.
+
+## Preparation Sessions
+
+CI often opens one or more Appium sessions on reserved devices while the run is still `preparing` — installing builds, warming caches, signing in, or running smoke checks. GridFleet does not link those sessions to the run:
+
+- `Session.run_id` is `NULL` for any session that starts while the owning reservation's run is in `preparing`.
+- These sessions are visible under **Sessions (advanced)** only. They never appear in Run Detail.
+- The run state does not auto-flip on observed session activity. CI must call `POST /api/runs/{id}/active` between the preparation stage and the real test stage. The testkit exposes this as `GridFleetClient.signal_active(run_id)`.
+
+If a run reaches its TTL or heartbeat budget still in `preparing` (the client never called `/active`), the reaper emits a `run.never_activated` event (severity `warning`) before the usual `run.expired` event, and sets the run's `error` to a message stating the run was never activated. This surfaces misconfigured CI in Run Detail's error banner.
 
 ## What Reservation Does To Devices
 
