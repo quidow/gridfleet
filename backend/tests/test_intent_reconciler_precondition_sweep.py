@@ -263,3 +263,49 @@ async def test_cooldown_intents_carry_run_active_precondition(db_session: AsyncS
     }
     for intent in intents:
         assert intent.precondition == {"kind": "run_active", "run_id": str(run_id)}
+
+
+@pytest.mark.db
+async def test_forced_release_registers_run_active_precondition(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.runs import service_lifecycle_release
+    from app.runs.models import TestRun
+
+    captured: list[IntentRegistration] = []
+
+    async def fake_register(
+        db: AsyncSession,
+        *,
+        device_id: uuid.UUID,
+        intents: list[IntentRegistration],
+        reason: str,
+    ) -> None:
+        captured.extend(intents)
+
+    async def fake_revoke(
+        db: AsyncSession,
+        *,
+        device_id: uuid.UUID,
+        sources: list[str],
+        reason: str,
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(service_lifecycle_release, "register_intents_and_reconcile", fake_register)
+    monkeypatch.setattr(service_lifecycle_release, "revoke_intents_and_reconcile", fake_revoke)
+
+    device = await create_device(db_session, host_id=db_host.id, name="forced-reg")
+    run = await create_reserved_run(db_session, name="forced-reg-run", devices=[device])
+    refreshed_run = await db_session.get(TestRun, run.id)
+    assert refreshed_run is not None
+
+    await service_lifecycle_release._clear_desired_grid_run_id_for_run(
+        db_session,
+        run=refreshed_run,
+        caller="run_force_release",
+        reason="test",
+    )
+    forced = [intent for intent in captured if intent.source.startswith("forced_release:")]
+    assert len(forced) == 1
+    assert forced[0].precondition == {"kind": "run_active", "run_id": str(run.id)}
