@@ -453,3 +453,86 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
+
+
+async def test_update_session_status_emits_single_offline_when_stop_in_flight(
+    db_session: AsyncSession,
+    default_host_id: str,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Regression: stop-in-flight session-end must NOT pass through ``available``.
+
+    With an active graceful-stop intent flagged on the AppiumNode
+    (``stop_pending=True``), the session ending must take the device directly
+    from busy to offline via a single AUTO_STOP_EXECUTED transition. Routing
+    through SESSION_ENDED first (busy→available) and then AUTO_STOP_EXECUTED
+    (available→offline) produces two ``device.operational_state_changed``
+    events back-to-back and a phantom ``available`` snapshot — operators see
+    a wasted transition pair and the SESSION_ENDED state-machine event fires
+    against a session that ended into an unhealthy outcome, not a clean
+    busy→available restore.
+    """
+    from app.devices.models import DeviceIntent
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="stop-inflight-repro",
+        connection_target="stop-inflight-repro",
+        name="Stop Inflight Repro",
+        os_version="14",
+        operational_state="busy",
+    )
+    device.verified_at = datetime.now(UTC)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4731,
+        grid_url="http://hub.invalid:4444",
+        pid=23456,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4731,
+        stop_pending=True,
+    )
+    db_session.add(node)
+    db_session.add(Session(session_id="stop-inflight-sess", device_id=device.id, status=SessionStatus.running))
+    # Realistic shape: a graceful-stop intent registered by
+    # ``handle_health_failure`` during the session. While the session is
+    # active, intent_reconciler holds the node at desired_state=running with
+    # stop_pending=True (universal session-safety downgrade). When the
+    # session ends, the active_session intent is revoked and reconcile picks
+    # the stop intent as the winner, taking the node to desired_state=stopped.
+    db_session.add(
+        DeviceIntent(
+            device_id=device.id,
+            source=f"health_failure:node:{device.id}",
+            axis=NODE_PROCESS,
+            payload={
+                "action": "stop",
+                "priority": PRIORITY_HEALTH_FAILURE,
+                "stop_mode": "graceful",
+            },
+        )
+    )
+    await db_session.commit()
+    event_bus_capture.clear()
+
+    updated = await session_service.update_session_status(db_session, "stop-inflight-sess", SessionStatus.passed)
+    await settle_after_commit_tasks()
+
+    assert updated is not None
+    op_events = [
+        payload
+        for name, payload in event_bus_capture
+        if name == "device.operational_state_changed" and payload["device_id"] == str(device.id)
+    ]
+    assert len(op_events) == 1, (
+        f"stop-in-flight session-end must emit exactly one transition (busy→offline); got {op_events}"
+    )
+    assert op_events[0]["old_operational_state"] == "busy"
+    assert op_events[0]["new_operational_state"] == "offline"
+    assert op_events[0]["reason"] == "Session ended with pending node stop"
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.offline

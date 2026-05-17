@@ -15,6 +15,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy
 from app.devices.services import state as device_state
+from app.devices.services.intent import revoke_intents_and_reconcile
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
@@ -583,6 +584,21 @@ async def update_session_status(
         session.ended_at = datetime.now(UTC)
 
     if status != SessionStatus.running and session.device_id is not None:
+        # Revoke the active_session intent for this specific session before
+        # locking the device. Mirror the Grid-driven session-end path in
+        # service_sync.py:390-395 — without this, testkit-driven terminal
+        # status calls leak an ``active_session:{sid}`` intent per session
+        # served, and the intent table accumulates a NODE_PROCESS row per
+        # session-the-device-ever-ran. ``reconcile_device`` runs inside the
+        # helper so ``node.stop_pending`` and ``node.desired_state`` reflect
+        # the post-session intent set when the row lock is taken below.
+        await revoke_intents_and_reconcile(
+            db,
+            device_id=session.device_id,
+            sources=[f"active_session:{session_id}"],
+            reason=f"Session {session_id} ended",
+        )
+
         locked_device = await device_locking.lock_device(db, session.device_id)
         event_device = locked_device
         running_stmt = select(Session).where(
@@ -594,27 +610,38 @@ async def update_session_status(
         running_result = await db.execute(running_stmt)
         still_running = running_result.scalars().first() is not None
         if not still_running:
-            # Restore from busy via the state machine (busy → available).
+            # Restore from busy via the state machine. The transition is
+            # decided BEFORE firing so the device never passes through a
+            # phantom ``available`` snapshot when a graceful stop is already
+            # in flight: SESSION_ENDED would map busy → available, then a
+            # follow-up AUTO_STOP_EXECUTED would map available → offline,
+            # producing two events back-to-back and an intermediate state
+            # that was never reality. Branch up front:
+            #
+            #   * stop-in-flight (relay deregistering, graceful health-failure
+            #     deferral): single AUTO_STOP_EXECUTED, busy → offline.
+            #   * healthy session-end: single SESSION_ENDED, busy → available.
+            #
             # Transient signals (stale ``health_running``, in-flight node
-            # restart) must not produce a spurious offline detour with reason
-            # "Session ended" — the connectivity + node_health loops are
-            # authoritative for offline transitions and emit their own reasons.
-            # An in-flight graceful stop (``appium_node_stop_in_flight``) IS
-            # load-bearing: the relay is deregistering, so a follow-up
-            # AUTO_STOP_EXECUTED takes the device offline before a new run can
-            # allocate it. Lifecycle cleanup runs for any non-busy state too,
-            # so capture ``deferred_stop_target`` outside the busy branch.
+            # restart that has NOT been promoted to ``stop_pending``) must
+            # not flap the device offline at session-end; the connectivity
+            # and node_health loops are authoritative for those offline
+            # transitions and emit their own reasons.
+            #
+            # Lifecycle cleanup runs for any non-busy state too, so capture
+            # ``deferred_stop_target`` outside the busy branch.
             if locked_device.operational_state == DeviceOperationalState.busy:
-                await _MACHINE.transition(
-                    locked_device,
-                    TransitionEvent.SESSION_ENDED,
-                    reason="Session ended",
-                )
                 if appium_node_stop_in_flight(locked_device):
                     await _MACHINE.transition(
                         locked_device,
                         TransitionEvent.AUTO_STOP_EXECUTED,
                         reason="Session ended with pending node stop",
+                    )
+                else:
+                    await _MACHINE.transition(
+                        locked_device,
+                        TransitionEvent.SESSION_ENDED,
+                        reason="Session ended",
                     )
             deferred_stop_target = locked_device
 
