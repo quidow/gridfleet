@@ -21,7 +21,7 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.intent import register_intents_and_reconcile
-from app.devices.services.intent_reconciler import _reconcile_device, _reconcile_expired_intents
+from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
@@ -608,7 +608,7 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
         entry.excluded_at = None
         entry.excluded_until = None
         entry.cooldown_count = 0
-        await _reconcile_device(db, entry.device_id)
+        await reconcile_device(db, entry.device_id)
     await db.commit()
 
 

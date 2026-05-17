@@ -75,7 +75,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_GRID_PUBLISH_URL` | `tcp://localhost:4442` | agent process | Grid event-bus publish URL |
 | `AGENT_GRID_SUBSCRIBE_URL` | `tcp://localhost:4443` | agent process | Grid event-bus subscribe URL |
 | `AGENT_GRID_NODE_HEARTBEAT_SEC` | `5` | agent process | Seconds between Python Grid Node `NODE_STATUS` heartbeats. |
-| `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC` | `300` | agent process | Maximum session age before the Python Grid Node asks Appium to delete the session and frees the slot. |
+| `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC` | `1800` | agent process | Maximum session age before the Python Grid Node asks Appium to delete the session and frees the slot. Raise for workflows that quietly block on external-login or post-test artifact collection between WebDriver calls; the previous 300s default closed legitimate idle gaps as `session timed out due to inactivity`. |
 | `AGENT_GRID_NODE_PROXY_TIMEOUT_SEC` | `60` | agent process | Upstream Appium request timeout for proxied Grid Node HTTP commands. |
 | `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |

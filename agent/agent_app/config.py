@@ -65,7 +65,14 @@ class GridNodeSettings(BaseSettings):
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
     grid_node_heartbeat_sec: float = 5.0
-    grid_node_session_timeout_sec: float = 300.0
+    # Selenium Grid session inactivity timeout. The agent's `expire_idle` will
+    # close any active session that has not seen a WebDriver call within this
+    # window. The previous 300s default was tight for workflows that quietly
+    # block on external-login or post-test artifact collection between
+    # WebDriver calls — those legitimate idle gaps would trigger spurious
+    # `session timed out due to inactivity` removals. 1800s (30min) is the
+    # new floor; override via `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC`.
+    grid_node_session_timeout_sec: float = 1800.0
     grid_node_proxy_timeout_sec: float = 60.0
     grid_node_bind_host: str = "0.0.0.0"
     grid_node_port_start: int = 5555

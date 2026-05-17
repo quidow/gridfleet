@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from agent_app.pack.adapter_types import (
@@ -24,6 +25,15 @@ from agent_app.pack.adapter_types import (
 )
 from agent_app.pack.adapter_utils import tcp_reachable
 
+_HEALTH_PROBE_RETRY_BACKOFF_SEC = 0.5
+
+
+async def _tcp_reachable_with_retry(host: str, port: int, *, timeout: float = 5.0) -> bool:
+    if await tcp_reachable(host, port, timeout=timeout):
+        return True
+    await asyncio.sleep(_HEALTH_PROBE_RETRY_BACKOFF_SEC)
+    return await tcp_reachable(host, port, timeout=timeout)
+
 
 class Adapter:
     pack_id: str = ""
@@ -40,7 +50,10 @@ class Adapter:
 
     async def health_check(self, ctx: HealthContext) -> list[HealthCheckResult]:
         target = ctx.device_identity_value
-        reachable = await tcp_reachable(target, 8060, timeout=5.0)
+        # Single-shot TCP probes were flipping ``ping``/``ecp`` to unhealthy
+        # on transient network blips during high-traffic sessions. One retry
+        # with a short backoff debounces these without hiding genuine outages.
+        reachable = await _tcp_reachable_with_retry(target, 8060, timeout=5.0)
         return [
             HealthCheckResult(
                 check_id="ping",

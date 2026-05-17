@@ -17,6 +17,7 @@ from app.devices.services import lifecycle_incidents as lifecycle_incident_servi
 from app.devices.services import lifecycle_policy_summary as lifecycle_policy_summary
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
@@ -244,6 +245,15 @@ async def handle_health_failure(
 
 async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredStopOutcome:
     device = await _reload_device(db, device)
+    # Re-run intent reconciliation now that the session has ended. A previous
+    # reconcile may have held a graceful-stop intent because the session was
+    # running (see ``intent_reconciler.reconcile_device`` session-safety
+    # invariant); with the session done, the held intent now applies and the
+    # node converges to ``desired_state=stopped``. Independent of and runs
+    # before the ``policy_state["stop_pending"]`` path below — that path
+    # tracks lifecycle-policy-driven deferrals; this one covers
+    # intent-driven deferrals registered by any caller.
+    await reconcile_device(db, device.id)
     current_state = policy_state(device)
     if not current_state.get("stop_pending"):
         return DeferredStopOutcome.NO_PENDING

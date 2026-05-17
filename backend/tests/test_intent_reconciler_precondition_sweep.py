@@ -164,7 +164,7 @@ async def test_sweep_reconciles_affected_device_only(
     async def fake_deliver(db: AsyncSession, device_id: uuid.UUID, *, limit: int = 5) -> None:
         return None
 
-    monkeypatch.setattr(module, "_reconcile_device", fake_reconcile)
+    monkeypatch.setattr(module, "reconcile_device", fake_reconcile)
     monkeypatch.setattr(module, "deliver_agent_reconfigures", fake_deliver)
 
     device_a = await create_device(db_session, host_id=db_host.id, name="sweep-a")

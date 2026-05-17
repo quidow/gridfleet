@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_reconciler import _reconcile_device, _reconcile_expired_intents
+from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
 from app.runs import service as run_service
 from tests.helpers import create_device, create_reserved_run
@@ -183,7 +183,7 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     )
     await db_session.commit()
 
-    await _reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id)
     await db_session.commit()
 
     await db_session.refresh(reservation)
