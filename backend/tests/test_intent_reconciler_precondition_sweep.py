@@ -239,3 +239,27 @@ async def test_sweep_emits_desired_state_changed_event(db_session: AsyncSession,
         and detail.get("precondition_kind") == "run_active"
         for detail in details
     )
+
+
+@pytest.mark.db
+async def test_cooldown_intents_carry_run_active_precondition(db_session: AsyncSession, db_host: Host) -> None:
+    from uuid import uuid4
+
+    from app.runs.service_lifecycle_failures import _cooldown_intents
+
+    run_id = uuid4()
+    intents = _cooldown_intents(
+        run_id=run_id,
+        reason="flaky",
+        count=1,
+        expires_at=datetime.now(UTC),
+    )
+    sources = {intent.source for intent in intents}
+    assert sources == {
+        f"cooldown:node:{run_id}",
+        f"cooldown:grid:{run_id}",
+        f"cooldown:reservation:{run_id}",
+        f"cooldown:recovery:{run_id}",
+    }
+    for intent in intents:
+        assert intent.precondition == {"kind": "run_active", "run_id": str(run_id)}
