@@ -9,6 +9,10 @@ export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
 export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 ```
 
+## 0. Capture a diagnostic bundle
+
+First capture a diagnostic bundle to attach to the investigation. See [Device diagnostic export](../reference/diagnostics.md).
+
 ## 1. Inspect the device record first
 
 ```bash
