@@ -137,7 +137,7 @@ async def _discover_simulators() -> list[DiscoveryCandidate]:
             name = str(device.get("name") or "Simulator")
             candidates.append(
                 DiscoveryCandidate(
-                    identity_scheme="apple_udid",
+                    identity_scheme="simulator_udid",
                     identity_value=udid,
                     suggested_name=name,
                     detected_properties={

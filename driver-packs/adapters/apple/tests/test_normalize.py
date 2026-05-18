@@ -31,4 +31,26 @@ async def test_normalize_preserves_network_real_device_connection_type() -> None
     assert result.connection_type == "network"
     assert result.connection_target == "apple-tv-udid"
     assert result.os_version == "26.4"
+    assert result.identity_scheme == "apple_udid"
+    assert result.identity_scope == "global"
+
+
+@pytest.mark.asyncio
+async def test_normalize_simulator_uses_simulator_udid_scheme() -> None:
+    result = await normalize_device(
+        _Ctx(
+            raw_input={
+                "identity_value": "4F847D1B-8D26-48F4-8DE6-D39B5E3CEAEB",
+                "device_type": "simulator",
+                "connection_type": "virtual",
+                "os_version": "26.4",
+            },
+            platform_id="ios",
+        )
+    )
+
+    assert result.identity_scheme == "simulator_udid"
+    assert result.identity_scope == "host"
+    assert result.device_type == "simulator"
+    assert result.connection_type == "virtual"
 

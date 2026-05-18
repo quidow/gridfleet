@@ -17,7 +17,7 @@ async def normalize_device(ctx: NormalizeDeviceContext) -> NormalizedDevice:
     if connection_type not in {"usb", "network", "virtual"}:
         connection_type = "usb" if device_type == "real_device" else "virtual"
     return NormalizedDevice(
-        identity_scheme="apple_udid",
+        identity_scheme="simulator_udid" if device_type == "simulator" else "apple_udid",
         identity_scope="host" if device_type == "simulator" else "global",
         identity_value=udid,
         connection_target=udid,

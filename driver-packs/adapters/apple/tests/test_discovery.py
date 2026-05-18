@@ -135,8 +135,10 @@ async def test_discover_real_device_and_simulator(mock_cmd: AsyncMock) -> None:
     candidates = await discover_apple_devices(_Ctx())
     assert len(candidates) == 2
     assert candidates[0].identity_value == "UDID123"
+    assert candidates[0].identity_scheme == "apple_udid"
     assert candidates[0].detected_properties["device_type"] == "real_device"
     assert candidates[1].identity_value == "SIM123"
+    assert candidates[1].identity_scheme == "simulator_udid"
     assert candidates[1].detected_properties["device_type"] == "simulator"
 
 
