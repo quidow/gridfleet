@@ -10,16 +10,30 @@ does not wedge real-time session sync until the next process restart.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 
 from app.core.observability import get_logger, observe_background_loop
 from app.grid import grid_settings
-from app.grid.event_bus import DecodedEvent, HubEventBusSubscriber
+from app.grid.event_bus import (
+    GRID_EVENT_BUS_LAST_EVENT_AGE_SECONDS,
+    DecodedEvent,
+    HubEventBusSubscriber,
+    SubscriberMetrics,
+)
 from app.sessions.service_sync import wake_session_sync
 
 logger = get_logger(__name__)
 LOOP_NAME = "grid_event_bus_subscriber"
 _RESTART_DELAY_SEC = 1.0
 _HEARTBEAT_INTERVAL_SEC = 5.0
+
+
+async def _refresh_last_event_age(metrics: SubscriberMetrics) -> None:
+    while True:
+        if metrics.last_event_received_at is not None:
+            GRID_EVENT_BUS_LAST_EVENT_AGE_SECONDS.set(time.monotonic() - metrics.last_event_received_at)
+        await asyncio.sleep(1.0)
 
 
 def _handle_event(event: DecodedEvent) -> None:
@@ -37,12 +51,16 @@ async def event_bus_subscriber_loop() -> None:
         )
         try:
             await subscriber.start()
-            async with observe_background_loop(LOOP_NAME, _HEARTBEAT_INTERVAL_SEC).cycle():
-                # Park forever in a cancellable wait. The subscriber's
-                # own receive task is doing the real work; we just need
-                # this coroutine to stay alive so leader-loop shutdown
-                # can cancel it cleanly.
-                await asyncio.Event().wait()
+            refresher = asyncio.create_task(
+                _refresh_last_event_age(subscriber.metrics), name="grid_event_bus_age_refresher"
+            )
+            try:
+                async with observe_background_loop(LOOP_NAME, _HEARTBEAT_INTERVAL_SEC).cycle():
+                    await asyncio.Event().wait()
+            finally:
+                refresher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await refresher
         except asyncio.CancelledError:
             await subscriber.stop()
             raise

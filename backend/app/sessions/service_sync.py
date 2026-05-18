@@ -1,10 +1,10 @@
 import asyncio
-import contextlib
 import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from prometheus_client import Counter
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,12 @@ register_intents_and_reconcile = intent_service.register_intents_and_reconcile
 revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
+
+SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
+    "gridfleet_session_sync_wake_source",
+    "Why session_sync_loop ran a cycle: doorbell (bus event) or tick (timeout).",
+    labelnames=("source",),
+)
 
 # Doorbell that lets the hub event-bus subscriber wake this loop the
 # moment Selenium publishes session-created / session-closed, instead
@@ -510,7 +516,9 @@ async def session_sync_loop() -> None:
             os._exit(70)
         except Exception:
             logger.exception("Session sync failed")
-        # Tick fallback: no bus event in `interval` seconds, run anyway.
-        with contextlib.suppress(TimeoutError):
+        try:
             await asyncio.wait_for(doorbell.wait(), timeout=interval)
+            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
+        except TimeoutError:
+            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
         doorbell.clear()

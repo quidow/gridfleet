@@ -20,9 +20,28 @@ from typing import TYPE_CHECKING, Any
 
 import zmq
 import zmq.asyncio
+from prometheus_client import Counter, Gauge
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+GRID_EVENT_BUS_CONNECTED = Gauge(
+    "gridfleet_grid_event_bus_connected",
+    "1 = subscriber connected to hub event bus, 0 = disconnected / connecting.",
+)
+GRID_EVENT_BUS_EVENTS_RECEIVED_TOTAL = Counter(
+    "gridfleet_grid_event_bus_events_received",
+    "Total event-bus frames received, by event type.",
+    labelnames=("event_type",),
+)
+GRID_EVENT_BUS_DECODE_FAILURES_TOTAL = Counter(
+    "gridfleet_grid_event_bus_decode_failures",
+    "Total frames discarded due to decode failure.",
+)
+GRID_EVENT_BUS_LAST_EVENT_AGE_SECONDS = Gauge(
+    "gridfleet_grid_event_bus_last_event_age_seconds",
+    "Seconds since the last well-formed event was received. NaN until first event.",
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +103,7 @@ class SubscriberMetrics:
     def record_event(self, event_type: str) -> None:
         self.events_received[event_type] = self.events_received.get(event_type, 0) + 1
         self.last_event_received_at = time.monotonic()
+        GRID_EVENT_BUS_EVENTS_RECEIVED_TOTAL.labels(event_type=event_type).inc()
 
 
 class HubEventBusSubscriber:
@@ -114,6 +134,7 @@ class HubEventBusSubscriber:
         self._socket.setsockopt(zmq.SUBSCRIBE, b"")
         self._socket.connect(self._subscribe_url)
         self._task = asyncio.create_task(self._receive_loop(), name="grid_event_bus_subscriber")
+        GRID_EVENT_BUS_CONNECTED.set(1)
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -128,6 +149,7 @@ class HubEventBusSubscriber:
         if self._socket is not None:
             self._socket.close(linger=0)
             self._socket = None
+        GRID_EVENT_BUS_CONNECTED.set(0)
 
     async def _receive_loop(self) -> None:
         socket = self._socket
@@ -141,6 +163,7 @@ class HubEventBusSubscriber:
                 # Malformed frame; demoted to debug because stray TCP probes hit
                 # the XPUB port in dev. Counter exposes real malformed traffic.
                 self.metrics.decode_failures += 1
+                GRID_EVENT_BUS_DECODE_FAILURES_TOTAL.inc()
                 logger.debug("discarding malformed grid event bus frames", exc_info=True)
                 continue
             self.metrics.record_event(event.type)
