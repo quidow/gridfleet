@@ -31,30 +31,20 @@ def _driver_returned_caps() -> dict[str, Any]:
     }
 
 
-def test_session_response_merges_stereotype_caps_into_w3c_value() -> None:
-    """W3C ``value.capabilities`` must echo every stereotype cap."""
+def test_stereotype_caps_overwrite_driver_caps() -> None:
+    """Stereotype caps must overwrite driver caps for shared keys."""
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(
-        slot=slot,
-        driver_caps=_driver_returned_caps(),
-        session_id="session-1",
-    )
-    caps = response["value"]["capabilities"]
+    merged = http_server.merge_stereotype_caps(slot, _driver_returned_caps())
     for key, value in _stereotype().items():
-        assert caps.get(key) == value, f"stereotype cap {key!r} missing from response"
+        assert merged.get(key) == value, f"stereotype cap {key!r} missing from merged caps"
 
 
-def test_session_response_preserves_driver_only_caps() -> None:
+def test_merge_preserves_driver_only_caps() -> None:
     """Driver-returned caps not in the stereotype must survive the merge."""
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(
-        slot=slot,
-        driver_caps=_driver_returned_caps(),
-        session_id="session-1",
-    )
-    caps = response["value"]["capabilities"]
-    assert caps.get("platformVersion") == "13"
-    assert caps.get("deviceManufacturer") == "Google"
+    merged = http_server.merge_stereotype_caps(slot, _driver_returned_caps())
+    assert merged.get("platformVersion") == "13"
+    assert merged.get("deviceManufacturer") == "Google"
 
 
 @pytest.mark.parametrize(
@@ -63,9 +53,5 @@ def test_session_response_preserves_driver_only_caps() -> None:
 )
 def test_individual_stereotype_caps_echoed(cap: str) -> None:
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(
-        slot=slot,
-        driver_caps=_driver_returned_caps(),
-        session_id="session-1",
-    )
-    assert response["value"]["capabilities"][cap] == _stereotype()[cap]
+    merged = http_server.merge_stereotype_caps(slot, _driver_returned_caps())
+    assert merged[cap] == _stereotype()[cap]
