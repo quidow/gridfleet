@@ -51,6 +51,8 @@ async def test_normalize_network_ip_connects_adb_and_uses_stable_serial(monkeypa
     )
 
     assert result.field_errors == []
+    assert result.identity_scheme == "android_serial"
+    assert result.identity_scope == "host"
     assert result.identity_value == "G070VM1234567890"
     assert result.connection_target == "192.168.1.99:5555"
     assert result.ip_address == "192.168.1.99"
@@ -153,3 +155,49 @@ async def test_normalize_plain_android_leaves_os_version_display_none(monkeypatc
     assert result.os_version == "14"
     assert result.os_version_display is None
     assert "fire_os" not in result.software_versions
+    assert result.identity_scope == "host"
+
+
+@pytest.mark.asyncio
+async def test_normalize_emulator_uses_host_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str]) -> str:
+        if cmd[:3] == ["adb", "-s", "emulator-5554"] and cmd[-3:] == ["emu", "avd", "name"]:
+            return "Pixel_6\nOK"
+        return ""
+
+    async def fake_get_android_properties(adb: str, target: str) -> dict[str, str]:
+        return {
+            "android_version": "14",
+            "serial_number": "EMULATOR30X0X0X0",
+            "hardware": "ranchu",
+            "manufacturer": "Google",
+            "product_model": "sdk_gphone16k_arm64",
+            "build_id": "UQ1A.240105.002",
+            "sdk_version": "34",
+        }
+
+    monkeypatch.setattr("adapter.normalize.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.normalize.run_cmd", fake_run_cmd, raising=False)
+    monkeypatch.setattr("adapter.normalize.get_android_properties", fake_get_android_properties)
+    monkeypatch.setattr(
+        "adapter.normalize.get_running_emulator_avd_name",
+        lambda adb, target: _coro("Pixel_6"),
+    )
+
+    result = await normalize_device(
+        _Ctx(
+            {
+                "connection_target": "emulator-5554",
+                "connection_type": "virtual",
+            }
+        )
+    )
+
+    assert result.identity_scheme == "android_serial"
+    assert result.identity_scope == "host"
+    assert result.identity_value == "avd:Pixel_6"
+    assert result.device_type == "emulator"
+
+
+async def _coro(value: str) -> str:
+    return value

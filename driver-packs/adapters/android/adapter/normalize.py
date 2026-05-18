@@ -70,7 +70,7 @@ async def normalize_device(ctx: NormalizeDeviceContext) -> NormalizedDevice:
         os_version_display = None
     return NormalizedDevice(
         identity_scheme="android_serial",
-        identity_scope="host" if is_emulator else "global",
+        identity_scope="host",
         identity_value=identity_value,
         connection_target=connection_target,
         ip_address=target.split(":", 1)[0] if connection_type == "network" else "",
