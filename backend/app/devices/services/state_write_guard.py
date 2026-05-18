@@ -158,6 +158,12 @@ def _resolve_caller_name(name_iter: Iterable[str | None]) -> str:
     skipped. Names whose ``str.startswith("sqlalchemy")`` returns ``True`` are
     SQLAlchemy internals and skipped. Returns the first remaining name or
     ``"<unknown>"`` if the iterable is exhausted.
+
+    ``inspect.getmodule()`` is contracted to return either ``None`` (for
+    exec-generated frames such as SQLAlchemy's ``_declarative_constructor``)
+    or a module with a non-empty ``__name__``. An empty-string name is
+    therefore not skipped: the caller is responsible for yielding ``None``
+    when the frame has no resolvable module.
     """
     for name in name_iter:
         if name is None:

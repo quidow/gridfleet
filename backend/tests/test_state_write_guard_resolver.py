@@ -55,3 +55,12 @@ def test_match_is_anchored_at_start_of_name() -> None:
     # Names where "sqlalchemy" appears anywhere except position 0 are not
     # treated as internals.
     assert _resolve_caller_name(iter(["foo.sqlalchemy.bar"])) == "foo.sqlalchemy.bar"
+
+
+def test_empty_string_name_is_returned_documents_inspect_getmodule_contract() -> None:
+    # inspect.getmodule() never returns a Module with __name__ == "" for real
+    # frames (exec-generated frames produce None, not an empty-name module).
+    # The resolver therefore does not need a separate empty-string guard; this
+    # test documents that contract. If inspect.getmodule() semantics ever change,
+    # this will surface as a behavior shift here before the wider suite breaks.
+    assert _resolve_caller_name(iter([""])) == ""
