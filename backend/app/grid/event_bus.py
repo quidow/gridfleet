@@ -11,9 +11,18 @@ the decoder and session-closed payload parser are exposed here.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from dataclasses import dataclass
-from typing import Any
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import zmq
+import zmq.asyncio
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)
@@ -56,3 +65,88 @@ def parse_session_closed_id(payload: Any) -> str | None:  # noqa: ANN401
         if isinstance(candidate, str) and candidate:
             return candidate
     return None
+
+
+logger = logging.getLogger(__name__)
+
+# Selenium hub emits many event types; the subscriber forwards only
+# the ones session_sync_loop reacts to. Other types still count toward
+# events_received (bus-liveness signal) but do not invoke on_event.
+_ACTIONABLE_EVENT_TYPES: frozenset[str] = frozenset({"session-created", "session-closed"})
+
+
+@dataclass
+class SubscriberMetrics:
+    events_received: dict[str, int] = field(default_factory=dict)
+    decode_failures: int = 0
+    last_event_received_at: float | None = None
+
+    def record_event(self, event_type: str) -> None:
+        self.events_received[event_type] = self.events_received.get(event_type, 0) + 1
+        self.last_event_received_at = time.monotonic()
+
+
+class HubEventBusSubscriber:
+    """Subscribes to the Selenium hub ZMQ event bus.
+
+    Read-only against the bus. Every actionable event invokes
+    ``on_event``; all state mutation happens in the consumer (the
+    session-sync doorbell handler) so this class never touches the DB.
+    """
+
+    def __init__(
+        self,
+        *,
+        subscribe_url: str,
+        on_event: Callable[[DecodedEvent], None],
+    ) -> None:
+        self._subscribe_url = subscribe_url
+        self._on_event = on_event
+        self._context = zmq.asyncio.Context.instance()
+        self._socket: zmq.asyncio.Socket | None = None
+        self._task: asyncio.Task[None] | None = None
+        self.metrics = SubscriberMetrics()
+
+    async def start(self) -> None:
+        if self._socket is not None or self._task is not None:
+            return
+        self._socket = self._context.socket(zmq.SUB)
+        self._socket.setsockopt(zmq.SUBSCRIBE, b"")
+        self._socket.connect(self._subscribe_url)
+        self._task = asyncio.create_task(self._receive_loop(), name="grid_event_bus_subscriber")
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                logger.warning("grid event bus subscriber task failed during shutdown", exc_info=True)
+            self._task = None
+        if self._socket is not None:
+            self._socket.close(linger=0)
+            self._socket = None
+
+    async def _receive_loop(self) -> None:
+        socket = self._socket
+        if socket is None:
+            return
+        while True:
+            frames = await socket.recv_multipart()
+            try:
+                event = decode_event_frames(list(frames))
+            except ValueError:
+                # Malformed frame; demoted to debug because stray TCP probes hit
+                # the XPUB port in dev. Counter exposes real malformed traffic.
+                self.metrics.decode_failures += 1
+                logger.debug("discarding malformed grid event bus frames", exc_info=True)
+                continue
+            self.metrics.record_event(event.type)
+            if event.type not in _ACTIONABLE_EVENT_TYPES:
+                continue
+            try:
+                self._on_event(event)
+            except Exception:  # noqa: BLE001
+                logger.warning("grid event bus handler failed", exc_info=True)
