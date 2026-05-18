@@ -11,6 +11,16 @@ class GridConfig(BaseSettings):
     itself stays in the DB settings registry (``grid.hub_url``) because
     operators routinely reconfigure it from the Settings UI; bus URLs
     are infra-level and only change at deploy time.
+
+    Bus port assignments (Selenium Grid 4 defaults):
+      * 4442 — hub XPUB. Backend connects its ZMQ SUB socket here to read events.
+      * 4443 — hub XSUB. Backend connects a ZMQ PUB socket here only if it ever
+        needs to inject events into the bus (currently never).
+
+    ``event_bus_subscribe_url`` MUST point at the XPUB port (default 4442).
+    ``event_bus_publish_url`` MUST point at the XSUB port (default 4443).
+    See the agent twin ``agent_app/grid_node/event_bus.py`` for the matching
+    wire format and Selenium ``UnboundZmqEventBus`` for the reference impl.
     """
 
     model_config = SettingsConfigDict(
