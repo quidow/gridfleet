@@ -156,10 +156,12 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
 async def reset_control_plane_state() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
+    from app.grid import grid_settings
     from app.packs import packs_settings
 
     agent_snapshot = agent_settings.model_dump()
     auth_snapshot = auth_settings.model_dump()
+    grid_snapshot = grid_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
     leader_settings_provider.reset_for_tests()
@@ -182,12 +184,14 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     agent_circuit_breaker.reset()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
-    # snapshots taken before yield so auth, agent, and pack storage state
+    # snapshots taken before yield so auth, agent, pack, and grid state
     # does not leak between tests.
     for key, value in agent_snapshot.items():
         setattr(agent_settings, key, value)
     for key, value in auth_snapshot.items():
         setattr(auth_settings, key, value)
+    for key, value in grid_snapshot.items():
+        setattr(grid_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
     leader_settings_provider.reset_for_tests()
