@@ -55,12 +55,23 @@ _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusio
 # clears it on wake; clears are idempotent so a burst of events
 # coalesces into one ``_sync_sessions`` cycle. See
 # .superpowers/specs/2026-05-18-grid-stability-perf-design.md.
-_doorbell = asyncio.Event()
+#
+# Lazy-bound so the first caller on the active event loop creates the
+# Event; this avoids the cross-loop binding error pytest hits when a
+# module-level ``asyncio.Event()`` is reused across test functions.
+_doorbell: asyncio.Event | None = None
+
+
+def _get_doorbell() -> asyncio.Event:
+    global _doorbell
+    if _doorbell is None:
+        _doorbell = asyncio.Event()
+    return _doorbell
 
 
 def wake_session_sync() -> None:
     """Public entry point used by the hub event-bus subscriber."""
-    _doorbell.set()
+    _get_doorbell().set()
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -484,11 +495,7 @@ async def session_sync_loop() -> None:
     run as a drift reconciler against any bus event that was missed
     (hub restart, network partition, slow joiner).
     """
-    global _doorbell
-    # Rebind to a fresh Event on the current loop so the module-level
-    # placeholder (which may have been bound to a different loop in
-    # tests or a previous process) does not raise RuntimeError.
-    _doorbell = asyncio.Event()
+    doorbell = _get_doorbell()
     while True:
         interval = float(settings_service.get("grid.session_poll_interval_sec"))
         try:
@@ -505,5 +512,5 @@ async def session_sync_loop() -> None:
             logger.exception("Session sync failed")
         # Tick fallback: no bus event in `interval` seconds, run anyway.
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(_doorbell.wait(), timeout=interval)
-        _doorbell.clear()
+            await asyncio.wait_for(doorbell.wait(), timeout=interval)
+        doorbell.clear()

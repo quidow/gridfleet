@@ -20,10 +20,13 @@ from app.sessions import service_sync
 
 @pytest.fixture(autouse=True)
 def _reset_doorbell() -> None:
-    # Replace with a fresh Event so each test starts unset and unbound
-    # to any previous event loop (asyncio.Event binds to the first loop
-    # that uses it; module-level instances break across test functions).
-    service_sync._doorbell = asyncio.Event()
+    """Force a fresh Event on the current test's event loop.
+
+    Setting the module-level attr to ``None`` makes the lazy getter
+    create a new Event on the next call — which happens in the test
+    body when ``session_sync_loop`` starts.
+    """
+    service_sync._doorbell = None
 
 
 async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) -> None:
