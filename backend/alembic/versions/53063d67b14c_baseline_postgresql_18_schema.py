@@ -541,9 +541,7 @@ def upgrade() -> None:
         sa.Column("last_health_checked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("health_running", sa.Boolean(), nullable=True),
         sa.Column("health_state", sa.Text(), nullable=True),
-        sa.CheckConstraint(
-            "desired_state = 'running' OR desired_port IS NULL", name="desired_port_requires_running"
-        ),
+        sa.CheckConstraint("desired_state = 'running' OR desired_port IS NULL", name="desired_port_requires_running"),
         sa.CheckConstraint("desired_state IN ('running', 'stopped')", name="desired_state"),
         sa.ForeignKeyConstraint(["device_id"], ["devices.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

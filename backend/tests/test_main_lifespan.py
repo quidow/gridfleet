@@ -136,6 +136,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
     monkeypatch.setattr(main, "heartbeat_loop", _forever)
     monkeypatch.setattr(main, "session_sync_loop", _forever)
+    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
     monkeypatch.setattr(main, "node_health_loop", _forever)
     monkeypatch.setattr(main, "device_connectivity_loop", _forever)
     monkeypatch.setattr(main, "property_refresh_loop", _forever)
@@ -155,6 +156,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
             "control_plane_leader_keepalive",
             "heartbeat_loop",
             "session_sync_loop",
+            "grid_event_bus_subscriber_loop",
             "node_health_loop",
             "device_connectivity_loop",
             "property_refresh_loop",
@@ -335,6 +337,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
     monkeypatch.setattr(main, "heartbeat_loop", _forever)
     monkeypatch.setattr(main, "session_sync_loop", _forever)
+    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
     monkeypatch.setattr(main, "node_health_loop", _forever)
     monkeypatch.setattr(main, "device_connectivity_loop", _forever)
     monkeypatch.setattr(main, "property_refresh_loop", _forever)

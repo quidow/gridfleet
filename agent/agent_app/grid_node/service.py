@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from agent_app.grid_node.config import GridNodeConfig
 
-_GRID_NODE_VERSION = "4.41.0"
+_GRID_NODE_VERSION = "4.43.0"
 logger = logging.getLogger(__name__)
 
 

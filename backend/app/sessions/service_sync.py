@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from prometheus_client import Counter
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,36 @@ register_intents_and_reconcile = intent_service.register_intents_and_reconcile
 revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
+
+SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
+    "gridfleet_session_sync_wake_source",
+    "Why session_sync_loop ran a cycle: doorbell (bus event) or tick (timeout).",
+    labelnames=("source",),
+)
+
+# Doorbell that lets the hub event-bus subscriber wake this loop the
+# moment Selenium publishes session-created / session-closed, instead
+# of waiting for the ``grid.session_poll_interval_sec`` tick. The loop
+# clears it on wake; clears are idempotent so a burst of events
+# coalesces into one ``_sync_sessions`` cycle. See
+# .superpowers/specs/2026-05-18-grid-stability-perf-design.md.
+#
+# Lazy-bound so the first caller on the active event loop creates the
+# Event; this avoids the cross-loop binding error pytest hits when a
+# module-level ``asyncio.Event()`` is reused across test functions.
+_doorbell: asyncio.Event | None = None
+
+
+def _get_doorbell() -> asyncio.Event:
+    global _doorbell
+    if _doorbell is None:
+        _doorbell = asyncio.Event()
+    return _doorbell
+
+
+def wake_session_sync() -> None:
+    """Public entry point used by the hub event-bus subscriber."""
+    _get_doorbell().set()
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -462,7 +493,15 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
 
 async def session_sync_loop() -> None:
-    """Background loop that syncs Grid sessions."""
+    """Background loop that syncs Grid sessions.
+
+    Wakes on either the doorbell (set by the hub event-bus subscriber
+    on ``session-created`` / ``session-closed``) or the registry-
+    configured timeout, whichever comes first. The poll continues to
+    run as a drift reconciler against any bus event that was missed
+    (hub restart, network partition, slow joiner).
+    """
+    doorbell = _get_doorbell()
     while True:
         interval = float(settings_service.get("grid.session_poll_interval_sec"))
         try:
@@ -477,4 +516,9 @@ async def session_sync_loop() -> None:
             os._exit(70)
         except Exception:
             logger.exception("Session sync failed")
-        await asyncio.sleep(interval)
+        try:
+            await asyncio.wait_for(doorbell.wait(), timeout=interval)
+            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
+        except TimeoutError:
+            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
+        doorbell.clear()

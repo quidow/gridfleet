@@ -23,6 +23,7 @@ dependencies = [
     "python-multipart>=0.0.29",
     "tenacity>=9.0,<10",
     "PyJWT>=2.10,<3",
+    "pyzmq>=26",
 ]
 
 [project.urls]
@@ -47,6 +48,7 @@ dev = [
 asyncio_mode = "auto"
 markers = [
     "db: test uses the backend Postgres test database",
+    "grid: test requires a live Selenium Grid hub (run with pytest -m grid)",
 ]
 
 [tool.mypy]

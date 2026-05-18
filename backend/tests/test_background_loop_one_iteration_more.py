@@ -13,6 +13,17 @@ from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
 
 
+@pytest.fixture(autouse=True)
+def _reset_session_sync_doorbell() -> None:
+    """Force a fresh doorbell Event on each test's event loop.
+
+    ``session_sync_loop`` lazy-binds ``_doorbell`` on first call. Across
+    pytest-xdist workers this can re-use an Event from a dead loop and
+    raise ``RuntimeError: bound to a different event loop``.
+    """
+    session_sync._doorbell = None
+
+
 class _Cycle:
     def cycle(self) -> "_Cycle":
         return self
@@ -86,7 +97,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
-    monkeypatch.setattr(session_sync.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(session_sync.asyncio, "wait_for", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
         await session_sync.session_sync_loop()
@@ -99,7 +110,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(session_sync.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(session_sync.asyncio, "wait_for", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
         await session_sync.session_sync_loop()
