@@ -16,6 +16,9 @@ from app.devices.services import state_write_guard
 
 
 def _device() -> Device:
+    # Pattern for fixture builders: wrap construction in bypass() to seed
+    # state directly. SQLAlchemy fires the ``set`` event for each constructor
+    # kwarg, so unguarded construction would trip the guard.
     with state_write_guard.bypass():
         return Device(
             id=uuid.uuid4(),

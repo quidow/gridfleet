@@ -41,8 +41,20 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("devices", "lifecycle_policy_state"): frozenset({"app.devices.services.lifecycle_policy_state"}),
     ("appium_nodes", "desired_state"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
     ("appium_nodes", "desired_port"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
-    ("appium_nodes", "transition_token"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
-    ("appium_nodes", "transition_deadline"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
+    ("appium_nodes", "transition_token"): frozenset(
+        {
+            "app.appium_nodes.services.desired_state_writer",
+            "app.appium_nodes.services.reconciler_agent",
+            "app.appium_nodes.routers.admin",
+        }
+    ),
+    ("appium_nodes", "transition_deadline"): frozenset(
+        {
+            "app.appium_nodes.services.desired_state_writer",
+            "app.appium_nodes.services.reconciler_agent",
+            "app.appium_nodes.routers.admin",
+        }
+    ),
     ("appium_nodes", "pid"): frozenset(
         {
             "app.appium_nodes.services.reconciler_agent",
@@ -152,7 +164,7 @@ def register() -> None:
     from app.appium_nodes.models import AppiumNode  # noqa: PLC0415
     from app.devices.models import Device  # noqa: PLC0415
 
-    model_by_table: dict[str, type[object]] = {
+    model_by_table: dict[str, type[Any]] = {
         "devices": Device,
         "appium_nodes": AppiumNode,
     }
