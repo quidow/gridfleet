@@ -2,6 +2,29 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.16.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.2...gridfleet-agent-v0.16.0) (2026-05-18)
+
+
+### Features
+
+* selenium grid stability + performance wins ([b5370cc](https://github.com/quidow/gridfleet/commit/b5370ccd539e6692dcec500efe9cf3f7ce59268f))
+
+
+### Bug Fixes
+
+* **agent:** merge stereotype caps into session creation response ([9255c52](https://github.com/quidow/gridfleet/commit/9255c525dcae75154a941f019970b0e62c6c02e4))
+* **agent:** report grid node version 4.43.0 matching hub pin ([450423b](https://github.com/quidow/gridfleet/commit/450423bb3f7f2153e27bfaef3fb8e9dec1a6baf7))
+* **backend,agent:** close cooldown→grid-routing race window ([ba734a7](https://github.com/quidow/gridfleet/commit/ba734a72a5a57f7c3c8afd4a841864364ae7e906))
+* **backend,agent:** close cooldown→grid-routing race window ([39a4886](https://github.com/quidow/gridfleet/commit/39a48868e52fc0135189da6205beea90df4defe8))
+* **backend,agent:** deliver agent reconfigure inline on cooldown escalation ([bfd72e6](https://github.com/quidow/gridfleet/commit/bfd72e6f58bab2e782b0dd8ec0e4dac087c0169c))
+* **backend:** bound inline cooldown reconfigure timeout to 5s ([0d8429a](https://github.com/quidow/gridfleet/commit/0d8429a7afa974af0158961b8eada59fd320362c))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /agent ([#294](https://github.com/quidow/gridfleet/issues/294)) ([0f82674](https://github.com/quidow/gridfleet/commit/0f826741fbd1ebb90eeff8ab169b4aee4da7c91e))
+* **deps:** bump uvicorn[standard] in /agent ([#293](https://github.com/quidow/gridfleet/issues/293)) ([96f8ec9](https://github.com/quidow/gridfleet/commit/96f8ec904f08572855b5481e5f02be83f979bb21))
+
 ## [0.15.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.1...gridfleet-agent-v0.15.2) (2026-05-17)
 
 
