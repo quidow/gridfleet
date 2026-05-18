@@ -255,13 +255,14 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=4321,
-        active_connection_target=device.connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=4321,
+            active_connection_target=device.connection_target,
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -301,13 +302,14 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=4321,
-        active_connection_target=device.connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=4321,
+            active_connection_target=device.connection_target,
+        )
     db_session.add(node)
     await db_session.commit()
 
