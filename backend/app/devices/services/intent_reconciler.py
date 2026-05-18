@@ -75,7 +75,11 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
     full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
-    await _sweep_orphaned_intents(db)
+    try:
+        await _sweep_orphaned_intents(db)
+    except Exception:
+        await db.rollback()
+        logger.exception("stale_intent_sweep_failed")
     await _reconcile_terminal_run_intents(db)
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
