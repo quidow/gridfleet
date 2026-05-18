@@ -35,6 +35,9 @@ class GridNodeServiceProtocol(Protocol):
     ) -> None:
         raise NotImplementedError
 
+    async def drain_to_block_new_sessions(self) -> None:
+        raise NotImplementedError
+
 
 class Clock(Protocol):
     async def sleep(self, delay: float) -> None:

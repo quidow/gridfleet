@@ -21,8 +21,21 @@ MAX_DELIVERY_ATTEMPTS = 10
 ABANDONED_REASON_MAX_ATTEMPTS = "max delivery attempts exceeded"
 ABANDONED_REASON_HOST_MISSING = "host missing"
 
+# Inline callers (e.g. cooldown HTTP handler) want fast failure on an
+# unresponsive agent so the request does not stretch out to the default
+# 10 s agent-call budget — testkit's cooldown timeout is also 10 s, so the
+# combined latency could time the testkit-side call out. Background loop
+# delivery keeps the original 10 s default.
+INLINE_AGENT_CALL_TIMEOUT_SEC = 5.0
 
-async def deliver_agent_reconfigures(db: AsyncSession, device_id: object, *, limit: int = DELIVERY_BATCH_SIZE) -> None:
+
+async def deliver_agent_reconfigures(
+    db: AsyncSession,
+    device_id: object,
+    *,
+    limit: int = DELIVERY_BATCH_SIZE,
+    agent_call_timeout: float | None = None,
+) -> None:
     await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
         int(
@@ -72,14 +85,25 @@ async def deliver_agent_reconfigures(db: AsyncSession, device_id: object, *, lim
             await db.commit()
             continue
         try:
-            await agent_operations.agent_appium_reconfigure(
-                device.host.ip,
-                device.host.agent_port,
-                port=row.port,
-                accepting_new_sessions=row.accepting_new_sessions,
-                stop_pending=row.stop_pending,
-                grid_run_id=row.grid_run_id,
-            )
+            if agent_call_timeout is None:
+                await agent_operations.agent_appium_reconfigure(
+                    device.host.ip,
+                    device.host.agent_port,
+                    port=row.port,
+                    accepting_new_sessions=row.accepting_new_sessions,
+                    stop_pending=row.stop_pending,
+                    grid_run_id=row.grid_run_id,
+                )
+            else:
+                await agent_operations.agent_appium_reconfigure(
+                    device.host.ip,
+                    device.host.agent_port,
+                    port=row.port,
+                    accepting_new_sessions=row.accepting_new_sessions,
+                    stop_pending=row.stop_pending,
+                    grid_run_id=row.grid_run_id,
+                    timeout=agent_call_timeout,
+                )
         except (AgentUnreachableError, AgentResponseError):
             _record_delivery_failure(row)
             await db.commit()

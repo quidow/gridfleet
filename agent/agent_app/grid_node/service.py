@@ -248,6 +248,23 @@ class GridNodeService:
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
+    async def drain_to_block_new_sessions(self) -> None:
+        """Mark the relay as DRAINING without removing or re-adding it.
+
+        The full DRAIN → REMOVED → ADDED cycle in ``reregister_with_caps_update``
+        republishes the node, which restores hub routing before the device
+        process is actually torn down — that is why cooldown / maintenance
+        flows must use this path instead. After ``mark_drain`` the local
+        ``NodeState`` rejects new reservations, and Selenium's hub stops
+        routing once it processes the ``node-drain-started`` event. The node
+        leaves the hub for real only when the process is stopped (and the
+        heartbeat loop publishes ``node-removed``).
+        """
+        if not self._started:
+            raise RuntimeError("GridNodeService.drain_to_block_new_sessions called before start()")
+        self.state.mark_drain()
+        await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
+
     async def reregister_with_caps_update(
         self,
         *,

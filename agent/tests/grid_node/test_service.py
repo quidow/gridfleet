@@ -205,6 +205,33 @@ async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence()
 
 
 @pytest.mark.asyncio
+async def test_drain_to_block_new_sessions_publishes_drain_only() -> None:
+    """``drain_to_block_new_sessions`` flips the relay into Selenium DRAINING
+    state — the hub stops routing new sessions to the node — without removing
+    or re-adding it. Existing sessions continue until completion. The full
+    NODE_DRAIN → NODE_DRAIN_COMPLETE → NODE_REMOVED → NODE_ADDED cycle in
+    ``reregister_with_caps_update`` is wrong for cooldown because it re-adds
+    the relay before the device process is torn down, restoring routability
+    while the cooldown is still active."""
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    bus.events.clear()
+
+    await service.drain_to_block_new_sessions()
+
+    assert [event["type"] for event in bus.events] == ["node-drain-started"]
+    assert service.state.snapshot().drain is True
+
+
+@pytest.mark.asyncio
+async def test_drain_to_block_new_sessions_before_start_raises() -> None:
+    service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
+    with pytest.raises(RuntimeError, match="drain_to_block_new_sessions"):
+        await service.drain_to_block_new_sessions()
+
+
+@pytest.mark.asyncio
 async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
