@@ -12,6 +12,7 @@ from httpx import AsyncClient  # noqa: TC002
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
@@ -325,6 +326,9 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     assert kwargs["port"] == 4723
     assert kwargs["accepting_new_sessions"] is False
     assert kwargs["stop_pending"] is True
+    # Inline delivery must pass a bounded timeout — testkit's cooldown call
+    # times out at 10 s, so the agent-call budget here has to leave headroom.
+    assert kwargs["timeout"] == INLINE_AGENT_CALL_TIMEOUT_SEC
 
 
 async def test_cooldown_does_not_mutate_operational_state(

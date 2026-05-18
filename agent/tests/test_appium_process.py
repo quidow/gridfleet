@@ -538,6 +538,33 @@ async def test_reconfigure_accepting_true_updates_grid_stereotype() -> None:
     assert service.drain_only_calls == 0
 
 
+async def test_reconfigure_accepting_false_ignores_grid_run_id() -> None:
+    """A caller passing ``accepting_new_sessions=False`` with a non-None
+    ``grid_run_id`` must not stamp a run-id update onto the relay — the
+    drain branch deliberately drops it because run-id rotation belongs to
+    the ``accepting=True`` re-register path.
+    """
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService()
+    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=123,
+        connection_target="device-1",
+        platform_id="android_mobile",
+    )
+
+    await manager.reconfigure(
+        4723,
+        accepting_new_sessions=False,
+        stop_pending=False,
+        grid_run_id=uuid4(),
+    )
+
+    assert service.drain_only_calls == 1
+    assert service.calls == []
+
+
 async def test_reconfigure_accepting_false_routes_through_drain_only() -> None:
     """Cooldown / maintenance path must NOT re-`NODE_ADDED` the relay — that
     cancels the DRAINING state and the hub starts routing again. Use a

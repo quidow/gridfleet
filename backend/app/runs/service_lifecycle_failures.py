@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 import app.devices.services.health as device_health
 import app.devices.services.lifecycle_incidents as lifecycle_incident_service
 import app.devices.services.lifecycle_policy_actions as lifecycle_policy_actions
-from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
+from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -248,7 +248,7 @@ async def cooldown_device(
         # next ``device_intent_reconciler_loop`` tick (default 5 s) drains
         # the outbox, and testkit can re-pick the same device during that
         # window.
-        await deliver_agent_reconfigures(db, device.id)
+        await deliver_agent_reconfigures(db, device.id, agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC)
         return excluded_until, cooldown_count_after, False, threshold
 
     # Escalation path
@@ -283,5 +283,5 @@ async def cooldown_device(
     # the maintenance intents. Push the reconfigure inline for the same
     # reason as the non-escalate branch above — without it the Grid hub keeps
     # routing to the relay until the next reconciler tick.
-    await deliver_agent_reconfigures(db, device.id)
+    await deliver_agent_reconfigures(db, device.id, agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC)
     return None, cooldown_count_after, True, threshold
