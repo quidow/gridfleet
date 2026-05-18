@@ -16,7 +16,6 @@ import pytest
 from app.grid.event_bus import (
     DecodedEvent,
     decode_event_frames,
-    parse_session_closed_id,
 )
 
 
@@ -56,19 +55,3 @@ def test_decode_rejects_malformed_json() -> None:
     frames = [b"session-created", b'""', b"id", b"not-json"]
     with pytest.raises(ValueError, match="malformed grid event-bus frames"):
         decode_event_frames(frames)
-
-
-def test_parse_session_closed_id_legacy_string() -> None:
-    """Selenium <4.44 emits the session id as a bare JSON string."""
-    assert parse_session_closed_id("session-1") == "session-1"
-
-
-def test_parse_session_closed_id_object_payload() -> None:
-    """Selenium 4.44+ wraps the id in an object. Lenient parser accepts both."""
-    assert parse_session_closed_id({"id": "session-1"}) == "session-1"
-
-
-def test_parse_session_closed_id_unknown_shape_returns_none() -> None:
-    assert parse_session_closed_id({"foo": "bar"}) is None
-    assert parse_session_closed_id(None) is None
-    assert parse_session_closed_id(42) is None

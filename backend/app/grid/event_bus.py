@@ -6,7 +6,7 @@ Both decode the same four-frame wire format produced by Selenium's
 the decoders in sync — any wire-format change must touch both files.
 
 The subscriber class lives in this module too (added in Task 7); only
-the decoder and session-closed payload parser are exposed here.
+the decoder is exposed here alongside the subscriber.
 """
 
 from __future__ import annotations
@@ -67,23 +67,6 @@ def decode_event_frames(frames: list[bytes]) -> DecodedEvent:
     if not event_type:
         raise ValueError("missing event type frame")
     return DecodedEvent(type=event_type, data=data)
-
-
-def parse_session_closed_id(payload: Any) -> str | None:  # noqa: ANN401
-    """Extract the session id from a ``session-closed`` payload.
-
-    Lenient by design. Selenium <4.44 emits the bare session id as a
-    JSON string; 4.44+ wraps it (#17343). Either is accepted; anything
-    else returns ``None`` so the subscriber falls back to the
-    reconciler instead of crashing.
-    """
-    if isinstance(payload, str) and payload:
-        return payload
-    if isinstance(payload, dict):
-        candidate = payload.get("id")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
 
 
 logger = logging.getLogger(__name__)
