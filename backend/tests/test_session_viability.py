@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -1196,3 +1197,97 @@ async def test_write_session_viability_persists_error_category(
     assert after_pass is not None
     assert after_pass["status"] == "passed"
     assert after_pass["error_category"] is None
+
+
+async def test_run_session_viability_probe_passes_does_not_flap_offline_when_stop_pending(
+    db_session: AsyncSession,
+    db_host: Host,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Regression: a passing probe must not flap the device offline when a
+    stale graceful-stop intent has marked ``node.stop_pending=True``.
+
+    A stale ``connectivity:*`` stop intent can leave
+    ``node.stop_pending=True`` on a fully-healthy device. The scheduled
+    viability probe then runs, passes (Grid acks), and the post-probe
+    restore path used the ``ready_operational_state(...)`` projection —
+    which folded ``appium_node_stop_in_flight`` into the operational
+    axis and returned ``offline``. The device transitioned busy →
+    offline ("Session viability probe finished"), and seconds later the
+    health-recovery loop flipped it back ("Health checks recovered"),
+    producing a toast pair per probe cycle.
+
+    The probe-passed branch is an event ("probe ok"), not a projection.
+    It must drive SESSION_ENDED (busy → available) directly. Real offline
+    transitions for in-flight stops belong to the connectivity loop and
+    node_health, which fire on their own schedules with their own
+    reasons.
+    """
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-stop-pending-repro",
+        connection_target="probe-stop-pending-repro",
+        name="Probe Stop Pending Repro",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://hub:4444",
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target="probe-stop-pending-repro",
+        stop_pending=True,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    loaded_device = await db_session.get(Device, device.id)
+    assert loaded_device is not None
+    loaded_node = await db_session.get(AppiumNode, node.id)
+    assert loaded_node is not None
+    loaded_device.appium_node = loaded_node
+
+    event_bus_capture.clear()
+    with (
+        patch(
+            "app.sessions.service_viability.capability_service.get_device_capabilities",
+            new_callable=AsyncMock,
+            return_value={"platformName": "Android"},
+        ),
+        patch(
+            "app.sessions.service_viability.probe_session_via_grid",
+            new_callable=AsyncMock,
+            return_value=(True, None),
+        ),
+    ):
+        await run_session_viability_probe(
+            db_session,
+            loaded_device,
+            checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        )
+
+    op_events = [
+        payload
+        for name, payload in event_bus_capture
+        if name == "device.operational_state_changed" and payload["device_id"] == str(loaded_device.id)
+    ]
+    spurious_offline = [p for p in op_events if p["new_operational_state"] == "offline"]
+    assert spurious_offline == [], (
+        "passing probe must not project transient stop_pending into operational_state; "
+        f"got spurious offline event(s) {spurious_offline}"
+    )
+    await db_session.refresh(loaded_device)
+    assert loaded_device.operational_state == DeviceOperationalState.available

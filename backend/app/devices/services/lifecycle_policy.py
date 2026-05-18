@@ -405,6 +405,26 @@ async def attempt_auto_recovery(
         and device.operational_state != DeviceOperationalState.offline
         and not run_reservation_service.reservation_entry_is_excluded(entry)
     ):
+        # Device is already healthy — recovery has nothing to start. Revoke
+        # the stale stop intents anyway: a transient connectivity blip can
+        # register a ``connectivity:{device_id}`` graceful-stop intent
+        # without ever flipping the device offline (``_stop_disconnected_node``
+        # only marks offline when the device is currently available). If the
+        # blip clears and we land here, the intent persists at priority 50
+        # forever, then a viability probe briefly holds a session, the
+        # session-safety downgrade pins ``stop_pending=True``, and the
+        # device flaps offline every probe cycle. Mirrors the revoke that
+        # already fires in the start-node branch below.
+        await revoke_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            sources=[
+                f"connectivity:{device.id}",
+                f"health_failure:node:{device.id}",
+                f"health_failure:recovery:{device.id}",
+            ],
+            reason=reason,
+        )
         return False
 
     # Defensive: current callers (device_connectivity_loop) pre-filter on

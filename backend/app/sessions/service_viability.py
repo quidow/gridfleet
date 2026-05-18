@@ -17,6 +17,9 @@ from app.devices.services import capability as capability_service
 from app.devices.services import health as device_health
 from app.devices.services import readiness as device_readiness
 from app.devices.services import state as device_state
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
+from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -63,6 +66,8 @@ is_ready_for_use_async = device_readiness.is_ready_for_use_async
 readiness_error_detail_async = device_readiness.readiness_error_detail_async
 ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
+
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 # Shared httpx.AsyncClient for grid probe calls. Per-call instantiation leaks
 # ~0.8 MB on macOS (TLS contexts not released by the native allocator).
@@ -421,13 +426,33 @@ async def run_session_viability_probe(
 
         relocked = await device_locking.lock_device(db, device.id)
         if relocked.operational_state == DeviceOperationalState.busy:
-            await set_operational_state(
-                relocked,
-                await ready_operational_state(db, relocked),
-                reason="Session viability probe finished",
-                publish_event=True,
-                severity="info",
-            )
+            # Branch on probe outcome — the EVENT — not on
+            # ``ready_operational_state``'s projection. The previous code
+            # fed ``ready_op`` into ``set_operational_state``, which folded
+            # ``appium_node_stop_in_flight`` into the operational axis: a
+            # stale graceful-stop intent (e.g. a leftover ``connectivity:*``
+            # row whose recovery never revoked it) would flag stop_pending,
+            # and a passing probe would still flap the device offline with
+            # reason "Session viability probe finished". Operators saw a
+            # toast pair (offline → "Health checks recovered") every probe
+            # cycle even though the device was healthy.
+            #
+            # State transitions fire on probe outcome only. Real offline
+            # transitions for in-flight stops or unhealthy nodes are
+            # emitted by the connectivity / node_health / health writers
+            # on their own schedules with their own reasons.
+            if ok:
+                await _MACHINE.transition(
+                    relocked,
+                    TransitionEvent.SESSION_ENDED,
+                    reason="Session viability probe finished",
+                )
+            else:
+                await _MACHINE.transition(
+                    relocked,
+                    TransitionEvent.AUTO_STOP_EXECUTED,
+                    reason="Session viability probe finished",
+                )
             await db.commit()
         else:
             logger.info(
