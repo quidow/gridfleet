@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidTransitionError
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.hosts.models import Host
@@ -18,21 +19,22 @@ async def _seed_device(
     hold: DeviceHold | None,
     name_suffix: str,
 ) -> Device:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"sm-{name_suffix}",
-        connection_target=f"sm-{name_suffix}",
-        name=f"SM Device {name_suffix}",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=operational,
-        hold=hold,
-        device_type="real_device",
-        connection_type="usb",
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"sm-{name_suffix}",
+            connection_target=f"sm-{name_suffix}",
+            name=f"SM Device {name_suffix}",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=operational,
+            hold=hold,
+            device_type="real_device",
+            connection_type="usb",
+        )
     db_session.add(device)
     await db_session.flush()
     return device

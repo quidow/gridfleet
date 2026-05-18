@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -24,15 +25,16 @@ async def test_stop_disconnected_node_registers_connectivity_intent(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-conn", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        active_connection_target="",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=77,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=77,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -36,13 +37,14 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
 
     device = await create_device(db_session, host_id=db_host.id, name="bk-restart", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=12345,
-        active_connection_target="device-1",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            active_connection_target="device-1",
+        )
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
@@ -90,15 +92,17 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
-        return AppiumNode(
-            device_id=dev.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-        )
+        with state_write_guard.bypass():
+            _bypass_tmp = AppiumNode(
+                device_id=dev.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        return _bypass_tmp
 
     from app.devices.services import bulk as bulk_service
 
@@ -121,15 +125,17 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
         captured.append(caller)
-        return AppiumNode(
-            device_id=dev.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=0,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-        )
+        with state_write_guard.bypass():
+            _bypass_tmp = AppiumNode(
+                device_id=dev.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=0,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        return _bypass_tmp
 
     from app.devices.services import bulk as bulk_service
 

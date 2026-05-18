@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
     _check_connectivity,
     _get_agent_devices,
@@ -43,36 +44,38 @@ async def _setup_host_and_device(
     db_session.add(host)
     await db_session.flush()
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=connection_target,
-        connection_target=connection_target,
-        name="Test Phone",
-        os_version="14",
-        host_id=host.id,
-        operational_state=device_operational_state,
-        hold=device_hold,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=connection_target,
+            connection_target=connection_target,
+            name="Test Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=device_operational_state,
+            hold=device_hold,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
     node = None
     if with_node:
-        node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
+        with state_write_guard.bypass():
+            node = AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=0,
+                active_connection_target="",
+            )
         db_session.add(node)
 
     await db_session.commit()
@@ -208,22 +211,23 @@ async def test_endpoint_health_branch_handles_top_level_failure_and_ip_ping_hyst
     failing.identity_value = "endpoint-failing"
     failing.connection_type = ConnectionType.network
     failing.ip_address = "192.168.1.51"
-    ping_miss = Device(
-        pack_id="appium-roku-dlenroc",
-        platform_id="roku_network",
-        identity_scheme="roku_serial",
-        identity_scope="global",
-        identity_value="endpoint-ping-miss",
-        connection_target="192.168.1.52",
-        name="Endpoint Ping Miss",
-        os_version="14",
-        host_id=_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-        ip_address="192.168.1.52",
-    )
+    with state_write_guard.bypass():
+        ping_miss = Device(
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku_network",
+            identity_scheme="roku_serial",
+            identity_scope="global",
+            identity_value="endpoint-ping-miss",
+            connection_target="192.168.1.52",
+            name="Endpoint Ping Miss",
+            os_version="14",
+            host_id=_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.network,
+            ip_address="192.168.1.52",
+        )
     db_session.add(ping_miss)
     await db_session.commit()
 
@@ -263,39 +267,41 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
     not_ready.identity_value = "endpoint-not-ready"
     not_ready.connection_type = ConnectionType.network
     not_ready.ip_address = "192.168.1.53"
-    manual = Device(
-        pack_id="appium-roku-dlenroc",
-        platform_id="roku_network",
-        identity_scheme="roku_serial",
-        identity_scope="global",
-        identity_value="endpoint-manual",
-        connection_target="192.168.1.54",
-        name="Endpoint Manual",
-        os_version="14",
-        host_id=_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-        ip_address="192.168.1.54",
-        auto_manage=False,
-    )
-    failed_recovery = Device(
-        pack_id="appium-roku-dlenroc",
-        platform_id="roku_network",
-        identity_scheme="roku_serial",
-        identity_scope="global",
-        identity_value="endpoint-failed-recovery",
-        connection_target="192.168.1.55",
-        name="Endpoint Failed Recovery",
-        os_version="14",
-        host_id=_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-        ip_address="192.168.1.55",
-    )
+    with state_write_guard.bypass():
+        manual = Device(
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku_network",
+            identity_scheme="roku_serial",
+            identity_scope="global",
+            identity_value="endpoint-manual",
+            connection_target="192.168.1.54",
+            name="Endpoint Manual",
+            os_version="14",
+            host_id=_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.network,
+            ip_address="192.168.1.54",
+            auto_manage=False,
+        )
+    with state_write_guard.bypass():
+        failed_recovery = Device(
+            pack_id="appium-roku-dlenroc",
+            platform_id="roku_network",
+            identity_scheme="roku_serial",
+            identity_scope="global",
+            identity_value="endpoint-failed-recovery",
+            connection_target="192.168.1.55",
+            name="Endpoint Failed Recovery",
+            os_version="14",
+            host_id=_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.network,
+            ip_address="192.168.1.55",
+        )
     db_session.add_all([manual, failed_recovery])
     await db_session.commit()
 

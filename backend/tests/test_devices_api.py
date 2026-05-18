@@ -13,6 +13,7 @@ from app.core.observability import BACKGROUND_LOOP_NAMES, build_background_loop_
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.devices.services import service as device_service
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from tests.helpers import create_device_record, create_host
@@ -122,15 +123,16 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
 
 
 async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=12345,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=12345,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
+        )
     db.add(node)
     await db.commit()
     await db.refresh(node)
@@ -465,8 +467,10 @@ async def test_list_devices_filter_status(
 
     from app.devices.models import DeviceOperationalState
 
-    offline_device.operational_state = DeviceOperationalState.offline
-    online_device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        offline_device.operational_state = DeviceOperationalState.offline
+    with state_write_guard.bypass():
+        online_device.operational_state = DeviceOperationalState.available
     await db_session.commit()
 
     resp = await client.get("/api/devices", params={"status": "offline"})
@@ -506,12 +510,18 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
 
     from app.devices.models import DeviceHold, DeviceOperationalState
 
-    busy_reserved.operational_state = DeviceOperationalState.busy
-    busy_reserved.hold = DeviceHold.reserved
-    plain_reserved.operational_state = DeviceOperationalState.available
-    plain_reserved.hold = DeviceHold.reserved
-    verifying_reserved.operational_state = DeviceOperationalState.verifying
-    verifying_reserved.hold = DeviceHold.reserved
+    with state_write_guard.bypass():
+        busy_reserved.operational_state = DeviceOperationalState.busy
+    with state_write_guard.bypass():
+        busy_reserved.hold = DeviceHold.reserved
+    with state_write_guard.bypass():
+        plain_reserved.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        plain_reserved.hold = DeviceHold.reserved
+    with state_write_guard.bypass():
+        verifying_reserved.operational_state = DeviceOperationalState.verifying
+    with state_write_guard.bypass():
+        verifying_reserved.hold = DeviceHold.reserved
     await db_session.commit()
 
     busy_resp = await client.get("/api/devices", params={"status": "busy"})
@@ -919,17 +929,18 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    device.lifecycle_policy_state = {
-        "last_failure_reason": "ADB not responsive",
-        "last_action": "auto_stop_deferred",
-        "last_action_at": "2026-03-30T10:00:00+00:00",
-        "stop_pending": True,
-        "stop_pending_reason": "ADB not responsive",
-        "stop_pending_since": "2026-03-30T10:00:00+00:00",
-        "recovery_suppressed_reason": None,
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
-    }
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "last_failure_reason": "ADB not responsive",
+            "last_action": "auto_stop_deferred",
+            "last_action_at": "2026-03-30T10:00:00+00:00",
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-03-30T10:00:00+00:00",
+            "recovery_suppressed_reason": None,
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        }
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")
@@ -948,26 +959,28 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    device.lifecycle_policy_state = {
-        "last_failure_reason": "Node restart failed",
-        "last_action": "recovery_failed",
-        "last_action_at": "2026-03-30T10:00:00+00:00",
-        "stop_pending": False,
-        "stop_pending_reason": None,
-        "stop_pending_since": None,
-        "recovery_suppressed_reason": "Auto recovery suppressed",
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
-    }
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "last_failure_reason": "Node restart failed",
+            "last_action": "recovery_failed",
+            "last_action_at": "2026-03-30T10:00:00+00:00",
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "recovery_suppressed_reason": "Auto recovery suppressed",
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        }
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")
@@ -1128,8 +1141,10 @@ async def test_enter_device_maintenance_stops_running_node(
 
     node = await db_session.get(_AppiumNode, uuid.UUID(start_resp.json()["id"]))
     assert node is not None
-    node.pid = 12345
-    node.active_connection_target = "emulator-5554"
+    with state_write_guard.bypass():
+        node.pid = 12345
+    with state_write_guard.bypass():
+        node.active_connection_target = "emulator-5554"
     await db_session.commit()
 
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})

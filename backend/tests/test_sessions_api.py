@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from app.devices.services import state_write_guard
 from app.events import event_bus
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run
@@ -366,17 +367,18 @@ async def test_register_session_by_active_connection_target(
         identity_value="avd:Pixel_6",
         connection_target="Pixel_6",
     )
-    db_session.add(
-        AppiumNode(
-            device_id=device["id"],
-            port=4723,
-            grid_url="http://hub:4444",
-            active_connection_target="emulator-5554",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device["id"],
+                port=4723,
+                grid_url="http://hub:4444",
+                active_connection_target="emulator-5554",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=0,
+            )
         )
-    )
     await db_session.commit()
 
     resp = await client.post(

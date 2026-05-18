@@ -23,6 +23,7 @@ from app.appium_nodes.services.node_health import _check_nodes
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 
@@ -130,20 +131,21 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     host = Host(hostname="test-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()  # generate host.id before referencing it
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-hb",
-        connection_target="dev-hb",
-        name="HB Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-hb",
+            connection_target="dev-hb",
+            name="HB Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -178,20 +180,21 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     )
     db_session.add(host)
     await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-cascade",
-        connection_target="dev-cascade",
-        name="Cascade Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-cascade",
+            connection_target="dev-cascade",
+            name="Cascade Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -318,32 +321,34 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     db_session.add(host)
     await db_session.flush()
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-agent-1",
-        connection_target="dev-agent-1",
-        name="Agent Restart Phone",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-agent-1",
+            connection_target="dev-agent-1",
+            name="Agent Restart Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=1111,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=1111,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -447,32 +452,34 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     db_session.add(host)
     await db_session.flush()
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-agent-2",
-        connection_target="dev-agent-2",
-        name="Fallback Phone",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-agent-2",
+            connection_target="dev-agent-2",
+            name="Fallback Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4724,
-        grid_url="http://hub:4444",
-        pid=3333,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4724,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4724,
+            grid_url="http://hub:4444",
+            pid=3333,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -554,32 +561,34 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     db_session.add(host)
     await db_session.flush()
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-agent-3",
-        connection_target="dev-agent-3",
-        name="Relay Phone",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-agent-3",
+            connection_target="dev-agent-3",
+            name="Relay Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4725,
-        grid_url="http://hub:4444",
-        pid=4444,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4725,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            grid_url="http://hub:4444",
+            pid=4444,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -671,32 +680,34 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
     db_session.add(host)
     await db_session.flush()
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-agent-4",
-        connection_target="dev-agent-4",
-        name="Relay Exhausted Phone",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-agent-4",
+            connection_target="dev-agent-4",
+            name="Relay Exhausted Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4726,
-        grid_url="http://hub:4444",
-        pid=5555,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4726,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4726,
+            grid_url="http://hub:4444",
+            pid=5555,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4726,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 

@@ -9,6 +9,7 @@ from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.services import state_write_guard
 from app.devices.services import verification as device_verification
 from app.devices.services import verification_execution as execution
 from app.devices.services import verification_preparation as preparation
@@ -25,20 +26,21 @@ def _job() -> dict[str, object]:
 
 
 def _device(host: Host | None = None) -> Device:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="verify-unit-001",
-        connection_target="verify-unit-001",
-        name="Verify Unit",
-        os_version="14",
-        host_id=host.id if host else None,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="verify-unit-001",
+            connection_target="verify-unit-001",
+            name="Verify Unit",
+            os_version="14",
+            host_id=host.id if host else None,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     if host is not None:
         device.host = host
     return device
@@ -108,7 +110,10 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         name="Verify Existing",
         operational_state=DeviceOperationalState.available,
     )
-    node = AppiumNode(device_id=existing.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="live")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=existing.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="live"
+        )
     existing.appium_node = node
     context = PreparedVerificationContext(
         mode="update",
@@ -133,7 +138,8 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert started is None
     assert error == "no node"
 
-    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+    with state_write_guard.bypass():
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
     monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=fake_node))
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
@@ -142,14 +148,15 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
 
-    running_node = AppiumNode(
-        id=__import__("uuid").uuid4(),
-        device_id=existing.id,
-        port=4723,
-        grid_url="http://grid",
-        pid=1,
-        active_connection_target="live",
-    )
+    with state_write_guard.bypass():
+        running_node = AppiumNode(
+            id=__import__("uuid").uuid4(),
+            device_id=existing.id,
+            port=4723,
+            grid_url="http://grid",
+            pid=1,
+            active_connection_target="live",
+        )
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=running_node)
     )
@@ -212,7 +219,8 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         name="Verify Converge",
         operational_state=DeviceOperationalState.available,
     )
-    fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+    with state_write_guard.bypass():
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
     monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=fake_node))
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
@@ -275,7 +283,8 @@ async def test_save_verified_context_and_cleanup_error_paths(
     assert saved is None
     assert error == "Device was not found"
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
     monkeypatch.setattr(
         "app.devices.services.verification_execution.stop_node", AsyncMock(side_effect=RuntimeError("boom"))
     )
@@ -305,7 +314,10 @@ async def test_verification_execution_remaining_error_branches(
             SimpleNamespace(id=__import__("uuid").uuid4(), appium_node=None),
         )
 
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid", pid=123, active_connection_target="live")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id, port=4723, grid_url="http://grid", pid=123, active_connection_target="live"
+        )
     fake_device = SimpleNamespace(id=device.id, appium_node=node)
     monkeypatch.setattr("app.devices.services.verification_execution.write_desired_state", AsyncMock())
     stopped = await execution._stop_managed_node_for_verification(fake_db, fake_device)

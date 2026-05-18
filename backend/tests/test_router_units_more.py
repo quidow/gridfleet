@@ -49,6 +49,7 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
+from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events import router as events
 from app.grid import router as grid
@@ -1747,11 +1748,13 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router._assert_device_not_reserved(device, db=object())
     assert exc.value.status_code == 409
 
-    device.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.maintenance
     with pytest.raises(HTTPException) as exc:
         nodes_router._assert_startable_outside_maintenance(device)
     assert exc.value.status_code == 409
-    device.hold = None
+    with state_write_guard.bypass():
+        device.hold = None
 
     setup_required = SimpleNamespace(readiness_state="setup_required", missing_setup_fields=["identity_value"])
     with patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=setup_required)):

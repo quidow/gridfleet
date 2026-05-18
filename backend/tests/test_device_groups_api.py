@@ -5,6 +5,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.services import state_write_guard
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -299,18 +300,20 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
         tags={"team": "qa", "lane": "smoke"},
     )
 
-    matching.lifecycle_policy_state = {
-        "last_failure_reason": "ADB not responsive",
-        "last_action": "auto_stop_deferred",
-        "last_action_at": "2026-03-30T10:00:00+00:00",
-        "stop_pending": True,
-        "stop_pending_reason": "ADB not responsive",
-        "stop_pending_since": "2026-03-30T10:00:00+00:00",
-        "recovery_suppressed_reason": None,
-        "backoff_until": None,
-        "recovery_backoff_attempts": 0,
-    }
-    non_matching_lifecycle.lifecycle_policy_state = {}
+    with state_write_guard.bypass():
+        matching.lifecycle_policy_state = {
+            "last_failure_reason": "ADB not responsive",
+            "last_action": "auto_stop_deferred",
+            "last_action_at": "2026-03-30T10:00:00+00:00",
+            "stop_pending": True,
+            "stop_pending_reason": "ADB not responsive",
+            "stop_pending_since": "2026-03-30T10:00:00+00:00",
+            "recovery_suppressed_reason": None,
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        }
+    with state_write_guard.bypass():
+        non_matching_lifecycle.lifecycle_policy_state = {}
     await db_session.commit()
 
     group = await _create_group(

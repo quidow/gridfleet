@@ -3,6 +3,7 @@
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.state import set_operational_state
 
 pytestmark = pytest.mark.asyncio
@@ -21,7 +22,8 @@ def _transient_device() -> Device:
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
     return device
 
 

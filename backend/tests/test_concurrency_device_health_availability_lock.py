@@ -10,6 +10,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import health as device_health
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -50,7 +51,8 @@ async def test_health_failure_offline_write_serializes_with_reservation(
         await asyncio.sleep(0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            locked.hold = DeviceHold.reserved
+            with state_write_guard.bypass():
+                locked.hold = DeviceHold.reserved
             await session.commit()
 
     await asyncio.wait_for(asyncio.gather(health_writer(), reservation_writer()), timeout=5.0)
@@ -77,17 +79,18 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         verified=True,
         auto_manage=True,
     )
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=0,
+                active_connection_target="",
+            )
         )
-    )
     device.device_checks_healthy = True
     device.session_viability_status = "passed"
     await db_session.commit()
@@ -110,7 +113,8 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         await asyncio.sleep(0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            locked.hold = DeviceHold.maintenance
+            with state_write_guard.bypass():
+                locked.hold = DeviceHold.maintenance
             await session.commit()
 
     await asyncio.wait_for(asyncio.gather(recovery_writer(), maintenance_writer()), timeout=5.0)

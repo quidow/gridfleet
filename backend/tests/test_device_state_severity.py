@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import set_hold, set_operational_state
@@ -154,7 +155,8 @@ async def test_state_machine_connectivity_lost_emits_warning(
     captured = _make_severity_capture(monkeypatch)
 
     # Put device in available state first
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(device, TransitionEvent.CONNECTIVITY_LOST, reason="ADB lost")
@@ -193,7 +195,8 @@ async def test_state_machine_session_started_emits_info(
     """SESSION_STARTED → severity='info' (available→busy)."""
     captured = _make_severity_capture(monkeypatch)
 
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(device, TransitionEvent.SESSION_STARTED, reason="session started")
@@ -213,7 +216,8 @@ async def test_state_machine_verification_failed_emits_warning(
     """VERIFICATION_FAILED → severity='warning' (verifying→offline)."""
     captured = _make_severity_capture(monkeypatch)
 
-    device.operational_state = DeviceOperationalState.verifying
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.verifying
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(
@@ -235,7 +239,8 @@ async def test_state_machine_verification_passed_emits_success(
     """VERIFICATION_PASSED → severity='success' (verifying→available)."""
     captured = _make_severity_capture(monkeypatch)
 
-    device.operational_state = DeviceOperationalState.verifying
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.verifying
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(
@@ -257,7 +262,8 @@ async def test_state_machine_maintenance_entered_emits_info_on_hold(
     """MAINTENANCE_ENTERED changes hold → severity='info' on hold_changed event."""
     captured = _make_severity_capture(monkeypatch)
 
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator")

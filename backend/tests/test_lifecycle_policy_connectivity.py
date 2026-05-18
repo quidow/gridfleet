@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import RunState, TestRun
@@ -20,22 +21,23 @@ async def test_connectivity_loss_keeps_device_in_run(
     db_host: Host,
 ) -> None:
     """note_connectivity_loss must NOT mark the reservation entry excluded."""
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="conn-loss-d1-1",
-        connection_target="conn-loss-d1-1",
-        name="Connectivity Loss D1 Device",
-        os_version="14",
-        host_id=db_host.id,
-        hold=DeviceHold.reserved,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="conn-loss-d1-1",
+            connection_target="conn-loss-d1-1",
+            name="Connectivity Loss D1 Device",
+            os_version="14",
+            host_id=db_host.id,
+            hold=DeviceHold.reserved,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 

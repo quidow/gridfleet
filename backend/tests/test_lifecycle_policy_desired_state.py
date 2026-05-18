@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -27,15 +28,16 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-recover", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_port=None,
-        pid=None,
-        active_connection_target=None,
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -58,8 +60,10 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
         ).scalar_one_or_none()
         if observed_node is not None:
-            observed_node.pid = 12345
-            observed_node.active_connection_target = "127.0.0.1:4723"
+            with state_write_guard.bypass():
+                observed_node.pid = 12345
+            with state_write_guard.bypass():
+                observed_node.active_connection_target = "127.0.0.1:4723"
 
     with (
         patch.object(
@@ -115,15 +119,16 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY
 
     device = await create_device(db_session, host_id=db_host.id, name="port-flap-repro", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4757,
-        grid_url="http://hub:4444",
-        desired_port=None,
-        pid=12345,
-        active_connection_target="127.0.0.1:4757",
-        desired_state=AppiumDesiredState.running,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4757,
+            grid_url="http://hub:4444",
+            desired_port=None,
+            pid=12345,
+            active_connection_target="127.0.0.1:4757",
+            desired_state=AppiumDesiredState.running,
+        )
     db_session.add(node)
     await db_session.flush()
     db_session.add(
@@ -181,15 +186,16 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         verified=True,
         operational_state=DeviceOperationalState.available,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_port=4723,
-        pid=12345,
-        active_connection_target="127.0.0.1:4723",
-        desired_state=AppiumDesiredState.running,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_port=4723,
+            pid=12345,
+            active_connection_target="127.0.0.1:4723",
+            desired_state=AppiumDesiredState.running,
+        )
     db_session.add(node)
     await db_session.flush()
     db_session.add(
@@ -228,15 +234,16 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-crash", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        active_connection_target="",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=99,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=99,
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -274,15 +281,16 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-crash-stopped", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=None,
-        active_connection_target=None,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
     db_session.add(node)
     await db_session.commit()
 

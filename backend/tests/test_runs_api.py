@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
@@ -647,7 +648,8 @@ async def test_force_release_restores_busy_run_devices(
     )
     device_row = await db_session.get(Device, device_id)
     assert device_row is not None
-    device_row.operational_state = DeviceOperationalState.busy
+    with state_write_guard.bypass():
+        device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
     async def fake_terminate(_session_id: str) -> bool:
@@ -1090,30 +1092,31 @@ async def test_create_run_excludes_device_mid_appium_restart(
         name="Ready Node",
         operational_state="available",
     )
-    db_session.add_all(
-        [
-            AppiumNode(
-                device_id=restarting.id,
-                port=4723,
-                grid_url="http://hub:4444",
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-                desired_state=AppiumDesiredState.running,
-                transition_token=uuid.uuid4(),
-                transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
-            ),
-            AppiumNode(
-                device_id=available.id,
-                port=4724,
-                grid_url="http://hub:4444",
-                desired_port=4724,
-                pid=0,
-                active_connection_target="",
-                desired_state=AppiumDesiredState.running,
-            ),
-        ]
-    )
+    with state_write_guard.bypass():
+        db_session.add_all(
+            [
+                AppiumNode(
+                    device_id=restarting.id,
+                    port=4723,
+                    grid_url="http://hub:4444",
+                    desired_port=4723,
+                    pid=0,
+                    active_connection_target="",
+                    desired_state=AppiumDesiredState.running,
+                    transition_token=uuid.uuid4(),
+                    transition_deadline=datetime.now(UTC) + timedelta(seconds=60),
+                ),
+                AppiumNode(
+                    device_id=available.id,
+                    port=4724,
+                    grid_url="http://hub:4444",
+                    desired_port=4724,
+                    pid=0,
+                    active_connection_target="",
+                    desired_state=AppiumDesiredState.running,
+                ),
+            ]
+        )
     await db_session.commit()
 
     data = await _create_run(client)

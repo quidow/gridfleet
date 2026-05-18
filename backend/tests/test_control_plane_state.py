@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
     get_connectivity_control_plane_state,
     reset_connectivity_control_plane_state,
@@ -36,21 +37,22 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
         session_factory=session_factory,
     )
     device_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
-    device = Device(
-        id=device_id,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="control-plane-device",
-        connection_target="control-plane-device",
-        name="Control Plane Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            id=device_id,
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="control-plane-device",
+            connection_target="control-plane-device",
+            name="Control Plane Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     session = Session(session_id="sess-1", device_id=device_id, status=SessionStatus.running)
     db_session.add(session)
@@ -88,21 +90,22 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
 
 
 async def test_set_operational_state_publishes_only_on_change(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="availability-status-1",
-        connection_target="availability-status-1",
-        name="Availability Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="availability-status-1",
+            connection_target="availability-status-1",
+            name="Availability Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -125,21 +128,22 @@ async def test_ready_operational_state_leaves_hold_independent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="availability-status-2",
-        connection_target="availability-status-2",
-        name="Reserved Availability Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="availability-status-2",
+            connection_target="availability-status-2",
+            name="Reserved Availability Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -167,7 +171,8 @@ async def test_ready_operational_state_leaves_hold_independent(
     db_session.add(run)
     await db_session.commit()
 
-    device.hold = DeviceHold.reserved
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.reserved
     restored = await ready_operational_state(db_session, device)
 
     assert restored == DeviceOperationalState.offline

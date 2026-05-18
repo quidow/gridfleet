@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services import state_write_guard
 from app.runs.models import RunState, TestRun
 from app.settings import settings_service
 from tests.helpers import create_device_record
@@ -206,15 +207,16 @@ async def test_cooldown_preserves_desired_grid_run_id(
     run_id = uuid.UUID(run["id"])
 
     # Set up an AppiumNode with the run's grid_run_id
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=1234,
-        active_connection_target=device.connection_target,
-        desired_grid_run_id=run_id,
-        grid_run_id=run_id,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_grid_run_id=run_id,
+            grid_run_id=run_id,
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -243,7 +245,8 @@ async def test_cooldown_does_not_mutate_operational_state(
     run_id = run["id"]
 
     # Simulate an active session by flipping to busy after reservation.
-    device.operational_state = DeviceOperationalState.busy
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
     resp = await client.post(
@@ -305,16 +308,17 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
     run = await _create_run(client)
     run_id = uuid.UUID(run["id"])
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=1234,
-        active_connection_target=device.connection_target,
-        desired_grid_run_id=run_id,
-        grid_run_id=run_id,
-        desired_state=AppiumDesiredState.running,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_grid_run_id=run_id,
+            grid_run_id=run_id,
+            desired_state=AppiumDesiredState.running,
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -351,14 +355,15 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     db_session.add(run)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=1234,
-        active_connection_target=device.connection_target,
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
 
     reservation = DeviceReservation(
@@ -468,14 +473,15 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
     db_session.add(run)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=1234,
-        active_connection_target=device.connection_target,
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
 
     reservation = DeviceReservation(
@@ -495,7 +501,8 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
     db_session.add(reservation)
 
     # Operator puts device in maintenance after cooldown began
-    device.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.maintenance
     await db_session.commit()
 
     await _check_expired_cooldowns(db_session)
@@ -533,14 +540,15 @@ async def test_expired_cooldown_does_not_restart_auto_manage_off(
     db_session.add(run)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        pid=1234,
-        active_connection_target=device.connection_target,
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            pid=1234,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
 
     reservation = DeviceReservation(

@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
+from app.devices.services import state_write_guard
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
@@ -44,15 +45,16 @@ async def _seed_schedulable_node(
         os_version="14",
         operational_state="available",
     )
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=port,
-            grid_url="http://grid.example",
-            pid=1000 + port,
-            active_connection_target=identity_value,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=port,
+                grid_url="http://grid.example",
+                pid=1000 + port,
+                active_connection_target=identity_value,
+            )
         )
-    )
     await db_session.commit()
     return device.id
 

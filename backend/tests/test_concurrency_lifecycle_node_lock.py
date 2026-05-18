@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -29,15 +30,16 @@ async def test_handle_node_crash_locks_appium_node(
         operational_state=DeviceOperationalState.busy,
         verified=True,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

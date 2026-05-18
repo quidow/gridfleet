@@ -10,6 +10,7 @@ from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.settings import settings_service
 from tests.helpers import create_device
@@ -90,7 +91,8 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         async with db_session_maker() as db:
             race_attempted_lock.set()
             device = await device_locking.lock_device(db, device_id)
-            device.hold = DeviceHold.reserved
+            with state_write_guard.bypass():
+                device.hold = DeviceHold.reserved
             await db.commit()
         race_committed.set()
 

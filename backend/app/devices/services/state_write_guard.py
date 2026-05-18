@@ -30,17 +30,46 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
         {
             "app.devices.services.state",
             "app.devices.services.lifecycle_state_machine",
+            # Device creation paths: initial state is set at construction time, not via the
+            # state machine (device does not exist yet so there is no prior state to transition).
+            "app.devices.services.write",
+            "app.seeding.factories.device",
+            # Seeding scenarios write operational_state directly to create demo/test fixtures.
+            "app.seeding.scenarios.minimal",
+            "app.seeding.scenarios.chaos",
+            "app.seeding.scenarios.full_demo",
         }
     ),
     ("devices", "hold"): frozenset(
         {
             "app.devices.services.state",
             "app.devices.services.lifecycle_state_machine",
+            # Seeding factories and demo scenarios set hold at construction/seed time.
+            "app.seeding.factories.device",
+            "app.seeding.scenarios.full_demo",
         }
     ),
-    ("devices", "lifecycle_policy_state"): frozenset({"app.devices.services.lifecycle_policy_state"}),
-    ("appium_nodes", "desired_state"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
-    ("appium_nodes", "desired_port"): frozenset({"app.appium_nodes.services.desired_state_writer"}),
+    ("devices", "lifecycle_policy_state"): frozenset(
+        {
+            "app.devices.services.lifecycle_policy_state",
+            # Demo seeding writes lifecycle_policy_state directly for realistic fixture data.
+            "app.seeding.scenarios.full_demo",
+        }
+    ),
+    ("appium_nodes", "desired_state"): frozenset(
+        {
+            "app.appium_nodes.services.desired_state_writer",
+            # Demo seeding creates fully-formed AppiumNode rows with desired_state set.
+            "app.seeding.scenarios.full_demo",
+        }
+    ),
+    ("appium_nodes", "desired_port"): frozenset(
+        {
+            "app.appium_nodes.services.desired_state_writer",
+            # Demo seeding creates fully-formed AppiumNode rows with desired_port set.
+            "app.seeding.scenarios.full_demo",
+        }
+    ),
     ("appium_nodes", "transition_token"): frozenset(
         {
             "app.appium_nodes.services.desired_state_writer",
@@ -60,12 +89,22 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler_agent",
             "app.appium_nodes.services.reconciler",
             "app.appium_nodes.services.heartbeat",
+            # Demo seeding creates fully-formed AppiumNode rows with pid set.
+            "app.seeding.scenarios.full_demo",
+            # Verification teardown clears pid to signal the node has stopped.
+            "app.devices.services.verification_execution",
         }
     ),
     ("appium_nodes", "port"): frozenset(
         {
             "app.appium_nodes.services.reconciler_agent",
             "app.appium_nodes.services.reconciler",
+            # Node creation paths: port is set at construction time when the AppiumNode row
+            # does not yet exist.  These modules create the row; subsequent port changes go
+            # through the reconciler.
+            "app.devices.services.bulk",
+            "app.devices.services.lifecycle_policy",
+            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "active_connection_target"): frozenset(
@@ -73,18 +112,24 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler_agent",
             "app.devices.services.capability",
             "app.devices.services.verification_execution",
+            # Demo seeding creates fully-formed AppiumNode rows with active_connection_target set.
+            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "health_running"): frozenset(
         {
             "app.devices.services.health",
             "app.appium_nodes.services.heartbeat",
+            # Reconciler agent clears health_running when stale health state is detected.
+            "app.appium_nodes.services.reconciler_agent",
         }
     ),
     ("appium_nodes", "health_state"): frozenset(
         {
             "app.devices.services.health",
             "app.appium_nodes.services.heartbeat",
+            # Reconciler agent clears health_state when stale health state is detected.
+            "app.appium_nodes.services.reconciler_agent",
         }
     ),
     ("appium_nodes", "last_health_checked_at"): frozenset({"app.devices.services.health"}),
@@ -116,21 +161,32 @@ def _calling_module() -> str:
     #   5: sqlalchemy.orm.attributes.__set__  (the descriptor)
     #   6: actual caller (the module we want to report)
     #
-    # If the exact SQLAlchemy call chain differs (e.g. during ORM init), we
-    # scan up until we find the first non-sqlalchemy frame beyond frame 1.
+    # When the write originates from a constructor kwarg (e.g. ``Device(operational_state=...)``),
+    # SQLAlchemy's declarative metaclass generates ``_declarative_constructor`` via ``exec``
+    # into a ``<string>`` code object.  ``inspect.getmodule`` returns ``None`` for those frames
+    # because they have no real source file.  We skip those unnamed ``<string>`` frames so the
+    # walk continues to the real application or test frame that issued the constructor call.
     frame = inspect.currentframe()
     # skip frames 0 and 1 unconditionally
     for _ in range(2):
         if frame is None:
             return "<unknown>"
         frame = frame.f_back
-    # scan past any remaining SQLAlchemy internal frames
+    # scan past SQLAlchemy internal frames AND unnamed exec-generated frames (SA declarative
+    # constructor, SA safe_reraise wrapper, etc.) — both are not real application calls.
     while frame is not None:
         module = inspect.getmodule(frame)
         name = module.__name__ if module is not None else ""
-        if not name.startswith("sqlalchemy"):
-            return name if name else "<unknown>"
-        frame = frame.f_back
+        if name.startswith("sqlalchemy"):
+            # definitely an SA internal — keep walking
+            frame = frame.f_back
+            continue
+        if not name:
+            # exec-generated frame (filename is "<string>") — skip it too
+            frame = frame.f_back
+            continue
+        # found a real named application or test frame
+        return name
     return "<unknown>"
 
 

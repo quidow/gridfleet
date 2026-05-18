@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation
+from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
@@ -29,12 +30,13 @@ if TYPE_CHECKING:
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object) -> AppiumNode:
-    node = AppiumNode(
-        device_id=device_id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device_id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
     await db_session.commit()
     return node

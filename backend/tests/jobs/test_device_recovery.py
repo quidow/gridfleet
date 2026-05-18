@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
@@ -39,11 +40,14 @@ async def _make_device_available(
     del intents, reason, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
     node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
     if node is not None:
-        node.pid = 12345
-        node.active_connection_target = "127.0.0.1:4723"
+        with state_write_guard.bypass():
+            node.pid = 12345
+        with state_write_guard.bypass():
+            node.active_connection_target = "127.0.0.1:4723"
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -94,23 +98,24 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     (available, hold=reserved).
     """
     # Build a device already verified.
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="reserved-maint-rejoin-1",
-        connection_target="reserved-maint-rejoin-1",
-        name="Reserved Maintenance Rejoin Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.reserved,
-        verified_at=datetime.now(UTC),
-        auto_manage=True,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="reserved-maint-rejoin-1",
+            connection_target="reserved-maint-rejoin-1",
+            name="Reserved Maintenance Rejoin Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            hold=DeviceHold.reserved,
+            verified_at=datetime.now(UTC),
+            auto_manage=True,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -125,8 +130,10 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     # Now simulate enter_maintenance(allow_reserved=True) — put device into
     # (offline, maintenance) while the reservation entry remains intact.
     locked = await device_locking.lock_device(db_session, device.id)
-    locked.operational_state = DeviceOperationalState.offline
-    locked.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        locked.operational_state = DeviceOperationalState.offline
+    with state_write_guard.bypass():
+        locked.hold = DeviceHold.maintenance
     await db_session.commit()
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.

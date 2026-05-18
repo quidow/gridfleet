@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.devices.services.fleet_capacity import (
     _count_schedulable_capacity,
     _extract_grid_counts,
@@ -369,55 +370,56 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         name="Stopped Phone",
         operational_state=DeviceOperationalState.available,
     )
-    db_session.add_all(
-        [
-            AppiumNode(
-                device_id=schedulable.id,
-                port=4723,
-                grid_url="http://grid",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=0,
-                active_connection_target="",
-            ),
-            AppiumNode(
-                device_id=busy.id,
-                port=4724,
-                grid_url="http://grid",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4724,
-                pid=0,
-                active_connection_target="",
-            ),
-            AppiumNode(
-                device_id=unverified.id,
-                port=4725,
-                grid_url="http://grid",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4725,
-                pid=0,
-                active_connection_target="",
-            ),
-            AppiumNode(
-                device_id=offline.id,
-                port=4726,
-                grid_url="http://grid",
-                desired_state=AppiumDesiredState.running,
-                desired_port=4726,
-                pid=0,
-                active_connection_target="",
-            ),
-            AppiumNode(
-                device_id=stopped.id,
-                port=4727,
-                grid_url="http://grid",
-                desired_state=AppiumDesiredState.stopped,
-                desired_port=None,
-                pid=None,
-                active_connection_target=None,
-            ),
-        ]
-    )
+    with state_write_guard.bypass():
+        db_session.add_all(
+            [
+                AppiumNode(
+                    device_id=schedulable.id,
+                    port=4723,
+                    grid_url="http://grid",
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4723,
+                    pid=0,
+                    active_connection_target="",
+                ),
+                AppiumNode(
+                    device_id=busy.id,
+                    port=4724,
+                    grid_url="http://grid",
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4724,
+                    pid=0,
+                    active_connection_target="",
+                ),
+                AppiumNode(
+                    device_id=unverified.id,
+                    port=4725,
+                    grid_url="http://grid",
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4725,
+                    pid=0,
+                    active_connection_target="",
+                ),
+                AppiumNode(
+                    device_id=offline.id,
+                    port=4726,
+                    grid_url="http://grid",
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4726,
+                    pid=0,
+                    active_connection_target="",
+                ),
+                AppiumNode(
+                    device_id=stopped.id,
+                    port=4727,
+                    grid_url="http://grid",
+                    desired_state=AppiumDesiredState.stopped,
+                    desired_port=None,
+                    pid=None,
+                    active_connection_target=None,
+                ),
+            ]
+        )
     await db_session.commit()
 
     with patch(
@@ -447,17 +449,18 @@ async def test_count_schedulable_capacity_uses_pid_not_state(
         name="Capacity No PID",
         operational_state=DeviceOperationalState.available,
     )
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://grid",
-            desired_port=4723,
-            desired_state=AppiumDesiredState.running,
-            pid=None,
-            active_connection_target=None,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid",
+                desired_port=4723,
+                desired_state=AppiumDesiredState.running,
+                pid=None,
+                active_connection_target=None,
+            )
         )
-    )
     await db_session.commit()
 
     assert await _count_schedulable_capacity(db_session) == 0

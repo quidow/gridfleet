@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
 from app.grid import service as grid_service
 from app.hosts.models import Host
@@ -19,20 +20,21 @@ async def test_force_release_clears_stop_pending(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-stuck-stop-3",
-        connection_target="policy-stuck-stop-3",
-        name="Stuck Deferred Stop Device 3",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-stuck-stop-3",
+            connection_target="policy-stuck-stop-3",
+            name="Stuck Deferred Stop Device 3",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),
@@ -94,20 +96,21 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     ``handle_node_crash``). Audit P1 — collect device IDs during
     ``_release_devices`` and run cleanup only after the run-state commit.
     """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-release-commit-boundary",
-        connection_target="policy-release-commit-boundary",
-        name="Release Commit Boundary",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-release-commit-boundary",
+            connection_target="policy-release-commit-boundary",
+            name="Release Commit Boundary",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     run = TestRun(
         id=uuid4(),

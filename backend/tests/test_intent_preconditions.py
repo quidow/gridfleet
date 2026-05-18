@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.devices.models import DeviceIntent
+from app.devices.services import state_write_guard
 from app.devices.services.intent_preconditions import is_satisfied
 from app.devices.services.intent_types import NODE_PROCESS
 from app.runs.models import RunState
@@ -141,12 +142,13 @@ async def test_node_running_expected_false_satisfied_when_stopped(db_session: As
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await create_device(db_session, host_id=db_host.id, name="prec-noderun-stopped")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
     await db_session.commit()
     intent = DeviceIntent(
@@ -164,14 +166,15 @@ async def test_node_running_expected_false_unsatisfied_when_running(db_session: 
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await create_device(db_session, host_id=db_host.id, name="prec-noderun-running")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        pid=1234,
-        active_connection_target="http://grid:4444",
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=1234,
+            active_connection_target="http://grid:4444",
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+        )
     db_session.add(node)
     await db_session.commit()
     intent = DeviceIntent(
