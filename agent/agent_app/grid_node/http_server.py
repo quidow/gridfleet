@@ -274,12 +274,7 @@ def build_app(
             id=reservation.slot_id,
             stereotype=Stereotype(caps=stereotype_caps),
         )
-        merged_response = build_session_response(
-            slot=slot_for_merge,
-            driver_caps=returned_caps,
-            session_id=session_id,
-        )
-        merged_caps = merged_response["value"]["capabilities"]
+        merged_caps = _merge_stereotype_caps(slot_for_merge, returned_caps)
         session_payload: dict[str, object] = {
             "sessionId": session_id,
             "uri": node_uri or "",
@@ -326,6 +321,17 @@ def build_app(
     )
 
 
+def _merge_stereotype_caps(slot: Slot, driver_caps: dict[str, Any]) -> dict[str, Any]:
+    """Merge stereotype caps over driver-returned caps.
+
+    Stereotype caps overwrite driver-returned caps for any shared key.
+    Driver-only keys survive. Mirrors Selenium 4.41 fix #17097.
+    """
+    merged: dict[str, Any] = dict(driver_caps)
+    merged.update(slot.stereotype.caps)
+    return merged
+
+
 def build_session_response(
     *,
     slot: Slot,
@@ -334,12 +340,9 @@ def build_session_response(
 ) -> dict[str, Any]:
     """Build the W3C session-creation response with stereotype caps merged in.
 
-    Stereotype caps overwrite driver-returned caps for any key present in
-    both. Driver-only keys survive. Mirrors Selenium 4.41 fix #17097.
+    See ``_merge_stereotype_caps`` for the merge semantics.
     """
-    merged: dict[str, Any] = dict(driver_caps)
-    merged.update(slot.stereotype.caps)
-    return {"value": {"capabilities": merged, "sessionId": session_id}}
+    return {"value": {"capabilities": _merge_stereotype_caps(slot, driver_caps), "sessionId": session_id}}
 
 
 def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:

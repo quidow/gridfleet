@@ -34,7 +34,7 @@ def _driver_returned_caps() -> dict[str, Any]:
 def test_session_response_merges_stereotype_caps_into_w3c_value() -> None:
     """W3C ``value.capabilities`` must echo every stereotype cap."""
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(  # type: ignore[attr-defined]
+    response = http_server.build_session_response(
         slot=slot,
         driver_caps=_driver_returned_caps(),
         session_id="session-1",
@@ -47,7 +47,7 @@ def test_session_response_merges_stereotype_caps_into_w3c_value() -> None:
 def test_session_response_preserves_driver_only_caps() -> None:
     """Driver-returned caps not in the stereotype must survive the merge."""
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(  # type: ignore[attr-defined]
+    response = http_server.build_session_response(
         slot=slot,
         driver_caps=_driver_returned_caps(),
         session_id="session-1",
@@ -63,7 +63,7 @@ def test_session_response_preserves_driver_only_caps() -> None:
 )
 def test_individual_stereotype_caps_echoed(cap: str) -> None:
     slot = protocol.Slot(id="slot-1", stereotype=protocol.Stereotype(caps=_stereotype()))
-    response = http_server.build_session_response(  # type: ignore[attr-defined]
+    response = http_server.build_session_response(
         slot=slot,
         driver_caps=_driver_returned_caps(),
         session_id="session-1",
