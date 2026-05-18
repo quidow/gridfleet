@@ -164,6 +164,15 @@ def _resolve_caller_name(name_iter: Iterable[str | None]) -> str:
     or a module with a non-empty ``__name__``. An empty-string name is
     therefore not skipped: the caller is responsible for yielding ``None``
     when the frame has no resolvable module.
+
+    Note for bisecting: the predecessor ``_calling_module`` used
+    ``if not name: continue`` which would have skipped empty-string names too.
+    This resolver skips only ``None``. The change is behavior-preserving in
+    practice because ``inspect.getmodule()`` does not yield modules with an
+    empty ``__name__`` for any real Python frame; the loose guard in the old
+    code was defensive dead code. If you are bisecting a behavior drift on
+    ``<string>`` exec frames or dynamically-created modules, this is the
+    relevant context.
     """
     for name in name_iter:
         if name is None:
