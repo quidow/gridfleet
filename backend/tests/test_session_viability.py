@@ -1022,7 +1022,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
         )
 
-    assert set_state.await_args_list[-1].args[1] != DeviceOperationalState.offline
+    assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.available
 
 
 def test_classify_session_error_recognises_grid_no_slot() -> None:
