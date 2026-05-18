@@ -522,6 +522,76 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
     assert f"auto_recovery:recovery:{device.id}" in sources
 
 
+@pytest.mark.db
+async def test_auto_recovery_registers_node_running_precondition_on_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Both auto_recovery:* sibling intents must carry the node_running precondition.
+
+    Without it, the rows persist until the next recovery cycle overwrites them.
+    With it, the precondition sweep auto-retires them once the node is observed running.
+    """
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="auto-recovery-precondition",
+            connection_target="auto-recovery-precondition",
+            name="Auto Recovery Precondition Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    with state_write_guard.bypass():
+        db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+    await db_session.commit()
+
+    with patch(
+        "app.sessions.service_viability.run_session_viability_probe",
+        new_callable=AsyncMock,
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        },
+    ):
+        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+
+    assert recovered is True
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceIntent).where(
+                    DeviceIntent.device_id == device.id,
+                    DeviceIntent.source.in_([f"auto_recovery:node:{device.id}", f"auto_recovery:recovery:{device.id}"]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2, f"expected both auto_recovery siblings, got {[r.source for r in rows]}"
+    expected_precondition = {
+        "kind": "node_running",
+        "device_id": str(device.id),
+        "expected": False,
+    }
+    for row in rows:
+        assert row.precondition == expected_precondition, (
+            f"{row.source} missing node_running precondition: {row.precondition!r}"
+        )
+
+
 async def test_recovery_rejoin_publishes_availability_event(
     db_session: AsyncSession,
     db_host: Host,

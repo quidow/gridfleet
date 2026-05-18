@@ -25,6 +25,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     RESERVATION,
     IntentRegistration,
+    NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_policy_actions import (
     complete_auto_stop,
@@ -528,6 +529,11 @@ async def attempt_auto_recovery(
                 ],
                 reason=reason,
             )
+            precondition: NodeRunningPrecondition = {
+                "kind": "node_running",
+                "device_id": str(device.id),
+                "expected": False,
+            }
             await register_intents_and_reconcile(
                 db,
                 device_id=device.id,
@@ -557,11 +563,13 @@ async def attempt_auto_recovery(
                             "action": "start",
                             "priority": PRIORITY_AUTO_RECOVERY,
                         },
+                        precondition=precondition,
                     ),
                     IntentRegistration(
                         source=f"auto_recovery:recovery:{device.id}",
                         axis=RECOVERY,
                         payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
+                        precondition=precondition,
                     ),
                 ],
                 reason=reason,
