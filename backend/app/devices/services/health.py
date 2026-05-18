@@ -20,7 +20,6 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import set_operational_state
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -103,11 +102,10 @@ async def _restore_available_for_healthy_signal(
     if not device_allows_allocation(locked):
         return
 
-    await set_operational_state(
+    await _MACHINE.transition(
         locked,
-        DeviceOperationalState.available,
+        TransitionEvent.CONNECTIVITY_RESTORED,
         reason="Health checks recovered",
-        severity="success",
     )
 
 

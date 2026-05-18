@@ -344,9 +344,9 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
         appium_node=SimpleNamespace(pid=1, active_connection_target="dev", health_running=True),
     )
     monkeypatch.setattr(svc, "is_ready_for_use_async", AsyncMock(return_value=False))
-    set_state = AsyncMock()
-    monkeypatch.setattr(svc, "set_operational_state", set_state)
+    transition = AsyncMock(return_value=False)
+    monkeypatch.setattr(svc._MACHINE, "transition", transition)
 
     await svc._restore_available_for_healthy_signal(db, locked)  # type: ignore[arg-type]
 
-    set_state.assert_not_awaited()
+    transition.assert_not_awaited()
