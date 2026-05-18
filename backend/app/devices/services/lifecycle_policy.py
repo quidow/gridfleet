@@ -529,11 +529,14 @@ async def attempt_auto_recovery(
                 ],
                 reason=reason,
             )
-            precondition: NodeRunningPrecondition = {
-                "kind": "node_running",
-                "device_id": str(device.id),
-                "expected": False,
-            }
+
+            def _node_not_running_precondition() -> NodeRunningPrecondition:
+                return {
+                    "kind": "node_running",
+                    "device_id": str(device.id),
+                    "expected": False,
+                }
+
             await register_intents_and_reconcile(
                 db,
                 device_id=device.id,
@@ -563,13 +566,13 @@ async def attempt_auto_recovery(
                             "action": "start",
                             "priority": PRIORITY_AUTO_RECOVERY,
                         },
-                        precondition=precondition,
+                        precondition=_node_not_running_precondition(),
                     ),
                     IntentRegistration(
                         source=f"auto_recovery:recovery:{device.id}",
                         axis=RECOVERY,
                         payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
-                        precondition=precondition,
+                        precondition=_node_not_running_precondition(),
                     ),
                 ],
                 reason=reason,

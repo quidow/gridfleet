@@ -82,6 +82,13 @@ def _operator_start_source(device_id: uuid.UUID) -> str:
 
 
 def _operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:
+    """Precondition retiring an operator:start intent once the node is observed running.
+
+    ``expected: False`` means "satisfied while the node is NOT running". The
+    intent represents an operator's desire to start the node, so once the node
+    reaches ``observed_running == True`` the precondition flips and the
+    reconciler sweep deletes the row.
+    """
     return {
         "kind": "node_running",
         "device_id": str(device_id),
