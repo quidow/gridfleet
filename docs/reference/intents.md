@@ -166,7 +166,7 @@ primary mechanism.
 | `forced_release:{run_id}` | Run reaches terminal state | `run_active` precondition auto-retires intent; also cleared by `_release_device_from_run` revoke list | Covered. |
 | `run:{run_id}` (grid_routing) | Reservation released | `reservation_active` precondition auto-retires intent; also cleared explicitly by `_release_device_from_run` | Covered. |
 | `device_delete:{axis}:{device_id}` | Node stopped / device deleted | Device row deletion cascades `device_intents` rows via FK; also overwritten by subsequent operator start | Covered via cascade. |
-| `operator:start:{device_id}` | Node confirmed running (reconciler) | No explicit revoke — intent is permanent until overwritten by `operator:stop` or next `operator:start`. Reconciler applies it on every cycle until the node state matches. | Acceptable: operator start is idempotent and the `node_running` signal determines when the intent is "done". A follow-up could add a `node_running` precondition here too. |
+| `operator:start:{device_id}` | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
 | `operator:stop:node:{device_id}` | Operator starts the node | `_bulk_start_one` via `revoke_intents_and_reconcile(_operator_stop_sources(...))` | Covered. |
 | `operator:stop:grid:{device_id}` | Operator starts the node | Same revoke call as `operator:stop:node` | Covered. |
 | `maintenance:{axis}:{device_id}` | Operator exits maintenance | `device_hold` precondition auto-retires all three axes when `Device.hold != maintenance` | Covered via precondition. |

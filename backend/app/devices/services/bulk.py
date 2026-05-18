@@ -25,6 +25,7 @@ from app.devices.services.intent_types import (
     PRIORITY_AUTO_RECOVERY,
     PRIORITY_OPERATOR_STOP,
     IntentRegistration,
+    NodeRunningPrecondition,
 )
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.devices.services.service import delete_device
@@ -80,11 +81,20 @@ def _operator_start_source(device_id: uuid.UUID) -> str:
     return f"operator:start:{device_id}"
 
 
+def _operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:
+    return {
+        "kind": "node_running",
+        "device_id": str(device_id),
+        "expected": False,
+    }
+
+
 def _operator_start_intent(device: Device, desired_port: int) -> IntentRegistration:
     return IntentRegistration(
         source=_operator_start_source(device.id),
         axis=NODE_PROCESS,
         payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": desired_port},
+        precondition=_operator_start_precondition(device.id),
     )
 
 
@@ -101,6 +111,7 @@ def _operator_restart_intent(device: Device, desired_port: int) -> IntentRegistr
             "transition_token": str(uuid.uuid4()),
             "transition_deadline": deadline.isoformat(),
         },
+        precondition=_operator_start_precondition(device.id),
     )
 
 
