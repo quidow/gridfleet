@@ -109,3 +109,13 @@ def test_allowlist_pins_every_protected_column(table: str, column: str) -> None:
         ("appium_nodes", "last_observed_at"),
     }
     assert (table, column) in expected_columns
+
+
+def test_register_is_called_during_app_lifespan() -> None:
+    """``register()`` is idempotent; verify the call site exists in lifespan source."""
+    import inspect as _inspect
+
+    from app import main as app_main
+
+    lifespan_src = _inspect.getsource(app_main.lifespan)
+    assert "state_write_guard.register()" in lifespan_src
