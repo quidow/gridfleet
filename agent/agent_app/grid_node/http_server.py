@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 
 from agent_app.grid_node.node_state import NodeState, NoFreeSlotError, NoMatchingSlotError, Reservation
-from agent_app.grid_node.protocol import EventType, event_envelope
+from agent_app.grid_node.protocol import EventType, Slot, Stereotype, event_envelope
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket
 
 if TYPE_CHECKING:
@@ -21,8 +21,6 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
     from starlette.websockets import WebSocket
-
-    from agent_app.grid_node.protocol import Slot
 
 
 class EventPublisher(Protocol):
@@ -271,12 +269,22 @@ def build_app(
             event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),
         )
 
-        stereotype = stereotypes_by_slot_id.get(reservation.slot_id) or dict(always_match)
+        stereotype_caps = stereotypes_by_slot_id.get(reservation.slot_id) or dict(always_match)
+        slot_for_merge = Slot(
+            id=reservation.slot_id,
+            stereotype=Stereotype(caps=stereotype_caps),
+        )
+        merged_response = build_session_response(
+            slot=slot_for_merge,
+            driver_caps=returned_caps,
+            session_id=session_id,
+        )
+        merged_caps = merged_response["value"]["capabilities"]
         session_payload: dict[str, object] = {
             "sessionId": session_id,
             "uri": node_uri or "",
-            "capabilities": returned_caps,
-            "stereotype": stereotype,
+            "capabilities": merged_caps,
+            "stereotype": stereotype_caps,
             "start": start_iso,
         }
         return JSONResponse(
@@ -316,6 +324,22 @@ def build_app(
             WebSocketRoute("/{path:path}", websocket_proxy),
         ]
     )
+
+
+def build_session_response(
+    *,
+    slot: Slot,
+    driver_caps: dict[str, Any],
+    session_id: str,
+) -> dict[str, Any]:
+    """Build the W3C session-creation response with stereotype caps merged in.
+
+    Stereotype caps overwrite driver-returned caps for any key present in
+    both. Driver-only keys survive. Mirrors Selenium 4.41 fix #17097.
+    """
+    merged: dict[str, Any] = dict(driver_caps)
+    merged.update(slot.stereotype.caps)
+    return {"value": {"capabilities": merged, "sessionId": session_id}}
 
 
 def _w3c_candidate_caps(body: object) -> list[dict[str, Any]]:

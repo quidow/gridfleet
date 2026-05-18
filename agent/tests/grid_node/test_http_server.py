@@ -538,7 +538,8 @@ def test_hub_create_session_happy_path(state: NodeState, http_client: httpx.Asyn
     assert response.status_code == 200
     data = response.json()
     assert data["value"]["sessionResponse"]["session"]["sessionId"] == "hub-sid"
-    assert data["value"]["sessionResponse"]["session"]["capabilities"] == {"x": 1}
+    # stereotype caps ("platformName") are merged over driver-returned caps ("x")
+    assert data["value"]["sessionResponse"]["session"]["capabilities"] == {"platformName": "Android", "x": 1}
     assert state.snapshot().slots[0].session_id == "hub-sid"
 
 
