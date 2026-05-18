@@ -55,8 +55,13 @@ async def event_bus_subscriber_loop() -> None:
                 _refresh_last_event_age(subscriber.metrics), name="grid_event_bus_age_refresher"
             )
             try:
-                async with observe_background_loop(LOOP_NAME, _HEARTBEAT_INTERVAL_SEC).cycle():
-                    await asyncio.Event().wait()
+                while True:
+                    async with observe_background_loop(LOOP_NAME, _HEARTBEAT_INTERVAL_SEC).cycle():
+                        # Subscriber receive task is the real worker; the
+                        # supervisor just ticks the heartbeat so the metric
+                        # stays warm and exposes "is the supervisor alive".
+                        pass
+                    await asyncio.sleep(_HEARTBEAT_INTERVAL_SEC)
             finally:
                 refresher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
