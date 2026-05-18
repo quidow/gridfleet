@@ -114,7 +114,7 @@ below.
 |--------|-------|--------|-------|
 | `auto_recovery:node:{device_id}` (node_health path) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration; coordinates the reconciler's desired-state write window. |
 | `auto_recovery:node:{device_id}` (node_health path) | `transition_deadline` | Intentional snapshot | Window computed fresh at registration from `appium_reconciler.restart_window_sec`; not read from a live row field. |
-| `auto_recovery:node:{device_id}` (lifecycle_policy path) | _(no extra fields)_ | — | Only structural fields; lifecycle_policy path omits `transition_token`/`transition_deadline` (no precondition guard either — see lifecycle ownership below). |
+| `auto_recovery:node:{device_id}` (lifecycle_policy path) | _(no extra fields)_ | — | Only structural fields; lifecycle_policy path omits `transition_token`/`transition_deadline`. Precondition guard is now identical to the node_health path (`node_running`, `expected: False`) — see lifecycle ownership below. |
 | `auto_recovery:recovery:{device_id}` | `reason` | Intentional snapshot | Captures the human-readable trigger at the moment recovery is initiated ("Node health restart" or the policy `reason`). |
 | `active_session:{sid}` | _(no extra fields)_ | — | Structural only (`action`, `priority`). |
 | `run:{run_id}` (grid_routing) | `accepting_new_sessions` | Refresh-on-event | Re-registered on each allocation / restore-to-run call; structural for the axis. |
