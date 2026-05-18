@@ -9,6 +9,7 @@ from app.devices.models.device import (
     HardwareTelemetrySupportStatus,
     device_search_vector_expression,
 )
+from app.devices.models.diagnostic_snapshot import DeviceDiagnosticSnapshot
 from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.models.group import DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.models.intent import DeviceIntent
@@ -19,6 +20,7 @@ from app.devices.models.test_data_audit import DeviceTestDataAuditLog
 __all__ = [
     "ConnectionType",
     "Device",
+    "DeviceDiagnosticSnapshot",
     "DeviceEvent",
     "DeviceEventType",
     "DeviceGroup",

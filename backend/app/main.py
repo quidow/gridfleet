@@ -310,6 +310,12 @@ app.include_router(
     device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
 app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(
+    device_routers.diagnostics.router,
+    prefix="/api/devices",
+    tags=["devices"],
+    dependencies=[Depends(auth_dependencies.require_any_auth)],
+)
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

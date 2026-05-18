@@ -13,16 +13,20 @@ of truth for the event payload.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.devices.models import DeviceEventType
+from app.devices.services import diagnostics_export
 from app.devices.services.event import record_event
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
+
+logger = logging.getLogger(__name__)
 
 
 async def mark_review_required(
@@ -72,6 +76,16 @@ async def mark_review_required(
             "review_set_at": device.review_set_at.isoformat(),
         },
     )
+    try:
+        await db.flush()
+        await db.refresh(device)
+        await diagnostics_export.capture_snapshot(db, device, trigger="review_required", reason=reason)
+    except Exception:  # noqa: BLE001 - snapshot capture must not block the review flag flip.
+        logger.warning(
+            "Failed to capture diagnostic snapshot for device %s; flag flip proceeds",
+            device.id,
+            exc_info=True,
+        )
     return True
 
 

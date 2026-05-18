@@ -9,6 +9,10 @@ export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
 export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 ```
 
+## Quick triage
+
+First capture a diagnostic bundle to attach to the investigation. See [Device diagnostic export](../reference/diagnostics.md).
+
 ## Cause
 
 `Device.lifecycle_policy_state.stop_pending` was set to `true` by `lifecycle_policy.handle_health_failure` when a health probe failed during a running client session. Historically only the Selenium Grid hub disappearance path cleared the flag. Other session-end paths (PATCH `/api/sessions/{id}/status`, register-with-terminal-status, run release) left the flag set, so the dashboard kept rendering the device as "affected".
