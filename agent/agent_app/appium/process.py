@@ -954,7 +954,11 @@ class AppiumProcessManager:
             # Cooldown / maintenance: block new sessions at the hub without
             # republishing the node. The full DRAIN → REMOVED → ADDED cycle in
             # ``reregister_with_caps_update`` would re-`NODE_ADDED` the relay
-            # and the hub would resume routing immediately.
+            # and the hub would resume routing immediately. ``grid_run_id`` is
+            # intentionally not applied here — run-id rotation only happens on
+            # the ``accepting_new_sessions=True`` path; a draining node is on
+            # its way to stop or recovery and re-registers fresh on the next
+            # start.
             await service.drain_to_block_new_sessions()
 
         spec = self._launch_specs.get(port)

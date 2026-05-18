@@ -279,4 +279,9 @@ async def cooldown_device(
         run_name=run_obj.name,
     )
     await db.commit()
+    # Maintenance escalation also flips ``accepting_new_sessions=False`` via
+    # the maintenance intents. Push the reconfigure inline for the same
+    # reason as the non-escalate branch above — without it the Grid hub keeps
+    # routing to the relay until the next reconciler tick.
+    await deliver_agent_reconfigures(db, device.id)
     return None, cooldown_count_after, True, threshold

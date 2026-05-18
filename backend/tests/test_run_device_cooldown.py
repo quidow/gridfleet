@@ -236,6 +236,51 @@ async def test_cooldown_preserves_desired_grid_run_id(
     assert node.stop_pending is True
 
 
+async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escalation to maintenance also flips ``accepting_new_sessions=False``
+    via the maintenance intents. The push must be inline for the same reason
+    as the cooldown-set branch — otherwise the Grid hub keeps routing to the
+    relay until the next reconciler tick.
+    """
+    monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
+    device = await _create_available_device(db_session, default_host_id, "cooldown-esc-inline")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        pid=4321,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        reconfigure,
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "maintenance_escalated"
+
+    reconfigure.assert_awaited()
+    kwargs = reconfigure.await_args.kwargs
+    assert kwargs["port"] == 4723
+    assert kwargs["accepting_new_sessions"] is False
+
+
 async def test_cooldown_delivers_agent_reconfigure_inline(
     client: AsyncClient,
     db_session: AsyncSession,
