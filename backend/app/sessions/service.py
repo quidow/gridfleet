@@ -541,11 +541,21 @@ async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | 
     session.ended_at = datetime.now(UTC)
     await db.flush()
 
-    # handle_session_finished re-locks the device row internally via
-    # _reload_device. Pass an unlocked Device fetched by id; do NOT
-    # acquire an outer FOR UPDATE here — that would just be a redundant
-    # round trip with the inner lock.
     if session.device_id is not None:
+        # Mirror the ``update_session_status`` revoke path. Without this,
+        # testkit clients that POST /finished without a follow-up PATCH /status
+        # leak one ``active_session:{sid}`` intent per session served.
+        await revoke_intents_and_reconcile(
+            db,
+            device_id=session.device_id,
+            sources=[f"active_session:{session_id}"],
+            reason=f"Session {session_id} ended",
+        )
+
+        # handle_session_finished re-locks the device row internally via
+        # _reload_device. Pass an unlocked Device fetched by id; do NOT
+        # acquire an outer FOR UPDATE here — that would just be a redundant
+        # round trip with the inner lock.
         device = await db.get(Device, session.device_id)
         if device is None:
             # Defensive: device row was deleted out from under the session.
