@@ -16,6 +16,9 @@ from app.devices.services.health_view import (
     node_running_signal,
     node_summary_label,
 )
+from app.devices.services.lifecycle_state_machine import DeviceStateMachine
+from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
+from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import set_operational_state
 from app.events import queue_event_for_session
@@ -35,6 +38,9 @@ __all__ = [
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
@@ -74,11 +80,10 @@ async def _mark_offline_for_failed_signal(
     if locked.operational_state != DeviceOperationalState.available:
         return
 
-    await set_operational_state(
+    await _MACHINE.transition(
         locked,
-        DeviceOperationalState.offline,
+        TransitionEvent.CONNECTIVITY_LOST,
         reason=reason,
-        severity="warning",
     )
 
 
