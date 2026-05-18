@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 import uuid
 from datetime import UTC, datetime
@@ -47,6 +48,19 @@ register_intents_and_reconcile = intent_service.register_intents_and_reconcile
 revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
+
+# Doorbell that lets the hub event-bus subscriber wake this loop the
+# moment Selenium publishes session-created / session-closed, instead
+# of waiting for the ``grid.session_poll_interval_sec`` tick. The loop
+# clears it on wake; clears are idempotent so a burst of events
+# coalesces into one ``_sync_sessions`` cycle. See
+# .superpowers/specs/2026-05-18-grid-stability-perf-design.md.
+_doorbell = asyncio.Event()
+
+
+def wake_session_sync() -> None:
+    """Public entry point used by the hub event-bus subscriber."""
+    _doorbell.set()
 
 
 def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -462,7 +476,19 @@ async def _sync_sessions(db: AsyncSession) -> None:
 
 
 async def session_sync_loop() -> None:
-    """Background loop that syncs Grid sessions."""
+    """Background loop that syncs Grid sessions.
+
+    Wakes on either the doorbell (set by the hub event-bus subscriber
+    on ``session-created`` / ``session-closed``) or the registry-
+    configured timeout, whichever comes first. The poll continues to
+    run as a drift reconciler against any bus event that was missed
+    (hub restart, network partition, slow joiner).
+    """
+    global _doorbell
+    # Rebind to a fresh Event on the current loop so the module-level
+    # placeholder (which may have been bound to a different loop in
+    # tests or a previous process) does not raise RuntimeError.
+    _doorbell = asyncio.Event()
     while True:
         interval = float(settings_service.get("grid.session_poll_interval_sec"))
         try:
@@ -477,4 +503,7 @@ async def session_sync_loop() -> None:
             os._exit(70)
         except Exception:
             logger.exception("Session sync failed")
-        await asyncio.sleep(interval)
+        # Tick fallback: no bus event in `interval` seconds, run anyway.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_doorbell.wait(), timeout=interval)
+        _doorbell.clear()
