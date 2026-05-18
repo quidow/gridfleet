@@ -867,7 +867,9 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         lambda key: 1 if "failure_threshold" in key else 5,
     )
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
-    monkeypatch.setattr(session_viability, "set_operational_state", AsyncMock())
+    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
+    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
+    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(
@@ -934,7 +936,11 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.settings_service, "get", lambda key: 5)
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
+    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
+    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
+    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
     set_state = AsyncMock()
+    # Exception-path restore (B2 scope) still calls set_operational_state directly.
     monkeypatch.setattr(session_viability, "set_operational_state", set_state)
     monkeypatch.setattr(
         session_viability.capability_service,
@@ -992,7 +998,11 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available)
     relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy)
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
+    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
+    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
+    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
     set_state = AsyncMock()
+    # Exception-path restore (B2 scope) still calls set_operational_state directly.
     monkeypatch.setattr(session_viability, "set_operational_state", set_state)
     monkeypatch.setattr(
         session_viability.capability_service,

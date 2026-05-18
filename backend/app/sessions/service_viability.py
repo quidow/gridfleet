@@ -395,12 +395,10 @@ async def run_session_viability_probe(
 
         locked = await device_locking.lock_device(db, device.id)
         previous_state = locked.operational_state
-        await set_operational_state(
+        await _MACHINE.transition(
             locked,
-            DeviceOperationalState.busy,
+            TransitionEvent.SESSION_STARTED,
             reason="Session viability probe running",
-            publish_event=True,
-            severity="info",
         )
         await db.commit()
 
