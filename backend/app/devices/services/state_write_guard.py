@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import event
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
 _guard_disabled: ContextVar[bool] = ContextVar("state_write_guard_disabled", default=False)
 
@@ -151,6 +151,23 @@ def bypass() -> Iterator[None]:
         _guard_disabled.reset(token)
 
 
+def _resolve_caller_name(name_iter: Iterable[str | None]) -> str:
+    """Pick the first real application/test module name from a frame-name sequence.
+
+    ``None`` represents an unresolvable frame (``<string>`` exec, etc.) and is
+    skipped. Names whose ``str.startswith("sqlalchemy")`` returns ``True`` are
+    SQLAlchemy internals and skipped. Returns the first remaining name or
+    ``"<unknown>"`` if the iterable is exhausted.
+    """
+    for name in name_iter:
+        if name is None:
+            continue
+        if name.startswith("sqlalchemy"):
+            continue
+        return name
+    return "<unknown>"
+
+
 def _calling_module() -> str:
     # Frame walk from _calling_module to the site that wrote the attribute:
     #   0: _calling_module (this function)
@@ -161,33 +178,25 @@ def _calling_module() -> str:
     #   5: sqlalchemy.orm.attributes.__set__  (the descriptor)
     #   6: actual caller (the module we want to report)
     #
-    # When the write originates from a constructor kwarg (e.g. ``Device(operational_state=...)``),
-    # SQLAlchemy's declarative metaclass generates ``_declarative_constructor`` via ``exec``
-    # into a ``<string>`` code object.  ``inspect.getmodule`` returns ``None`` for those frames
-    # because they have no real source file.  We skip those unnamed ``<string>`` frames so the
-    # walk continues to the real application or test frame that issued the constructor call.
+    # When the write originates from a constructor kwarg (e.g.
+    # ``Device(operational_state=...)``), SA's declarative metaclass generates
+    # ``_declarative_constructor`` via ``exec`` into a ``<string>`` code object.
+    # ``inspect.getmodule`` returns ``None`` for those frames; the resolver
+    # skips them so the walk continues to the real caller.
     frame = inspect.currentframe()
-    # skip frames 0 and 1 unconditionally
     for _ in range(2):
         if frame is None:
             return "<unknown>"
         frame = frame.f_back
-    # scan past SQLAlchemy internal frames AND unnamed exec-generated frames (SA declarative
-    # constructor, SA safe_reraise wrapper, etc.) — both are not real application calls.
-    while frame is not None:
-        module = inspect.getmodule(frame)
-        name = module.__name__ if module is not None else ""
-        if name.startswith("sqlalchemy"):
-            # definitely an SA internal — keep walking
-            frame = frame.f_back
-            continue
-        if not name:
-            # exec-generated frame (filename is "<string>") — skip it too
-            frame = frame.f_back
-            continue
-        # found a real named application or test frame
-        return name
-    return "<unknown>"
+
+    def _names() -> Iterator[str | None]:
+        f = frame
+        while f is not None:
+            module = inspect.getmodule(f)
+            yield module.__name__ if module is not None else None
+            f = f.f_back
+
+    return _resolve_caller_name(_names())
 
 
 def _make_listener(table: str, column: str, allowlist: frozenset[str]) -> Callable[..., Any]:
