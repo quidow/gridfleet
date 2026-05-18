@@ -12,7 +12,7 @@ def test_selenium_hub_image_is_pinned() -> None:
         compose = yaml.safe_load((repo_root / "docker" / compose_file).read_text())
         image = compose["services"]["selenium-hub"]["image"]
 
-        assert image == "selenium/hub:4.41.0"
+        assert image == "selenium/hub:4.43.0-20260404"
 
 
 def test_host_docker_internal_is_resolvable_by_manager_and_grid() -> None:
