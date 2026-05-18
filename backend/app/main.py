@@ -46,6 +46,7 @@ from app.events import event_bus
 from app.events import router as events
 from app.grid import router as grid
 from app.grid import service as grid_service
+from app.grid.event_bus_loop import event_bus_subscriber_loop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import router_terminal as host_terminal
@@ -226,6 +227,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 asyncio.create_task(control_plane_leader_keepalive_loop(), name="control_plane_leader_keepalive"),
                 asyncio.create_task(heartbeat_loop(), name="heartbeat_loop"),
                 asyncio.create_task(session_sync_loop(), name="session_sync_loop"),
+                asyncio.create_task(event_bus_subscriber_loop(), name="grid_event_bus_subscriber_loop"),
                 asyncio.create_task(node_health_loop(), name="node_health_loop"),
                 asyncio.create_task(device_connectivity_loop(), name="device_connectivity_loop"),
                 asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
