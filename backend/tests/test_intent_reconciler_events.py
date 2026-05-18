@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import GRID_ROUTING, RECOVERY
@@ -21,8 +22,10 @@ if TYPE_CHECKING:
 async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="events")
     node = await _seed_node(db_session, device.id)
-    node.desired_state = AppiumDesiredState.running
-    node.desired_port = 4723
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+    with state_write_guard.bypass():
+        node.desired_port = 4723
     await db_session.commit()
     service = IntentService(db_session)
     await service.register_intent(

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.runs.models import RunState, TestRun
 
@@ -129,18 +130,22 @@ async def create_device_record(
         device_config=device_config,
         test_data=resolved_test_data,
     )
-    device.operational_state = (
-        operational_state
-        if isinstance(operational_state, DeviceOperationalState)
-        else DeviceOperationalState(operational_state)
-    )
-    device.hold = hold if isinstance(hold, DeviceHold) or hold is None else DeviceHold(hold)
+    with state_write_guard.bypass():
+        # Seed protected state columns for test fixture — bypass is valid here.
+        device.operational_state = (
+            operational_state
+            if isinstance(operational_state, DeviceOperationalState)
+            else DeviceOperationalState(operational_state)
+        )
+        device.hold = hold if isinstance(hold, DeviceHold) or hold is None else DeviceHold(hold)
     if verified:
         device.verified_at = datetime.now(UTC)
 
     # Apply any remaining overrides directly on the Device instance.
-    for field, value in extra.items():
-        setattr(device, field, value)
+    # Bypass the guard because test overrides may include protected columns.
+    with state_write_guard.bypass():
+        for field, value in extra.items():
+            setattr(device, field, value)
 
     db_session.add(device)
     await db_session.commit()
@@ -178,7 +183,9 @@ async def create_reserved_run(
     released_at = datetime.now(UTC) if mark_released else None
     for device in devices:
         if released_at is None:
-            device.hold = DeviceHold.reserved
+            with state_write_guard.bypass():
+                # Seed hold for test fixture reservation — bypass is valid here.
+                device.hold = DeviceHold.reserved
         reservation = DeviceReservation(
             run=run,
             device_id=device.id,
@@ -260,15 +267,17 @@ async def seed_host_and_running_node(
 ) -> tuple[Host, Device, AppiumNode]:
     """Seed Host + Device + AppiumNode in running state. Used for crash/restart tests."""
     host, device = await seed_host_and_device(db_session, identity=identity)
-    node = AppiumNode(
-        device_id=device.id,
-        port=port,
-        grid_url="http://hub.invalid:4444",
-        pid=12345,
-        active_connection_target=device.connection_target,
-        desired_state=AppiumDesiredState.running,
-        desired_port=port,
-    )
+    with state_write_guard.bypass():
+        # Seed a running AppiumNode for test fixture — bypass is valid here.
+        node = AppiumNode(
+            device_id=device.id,
+            port=port,
+            grid_url="http://hub.invalid:4444",
+            pid=12345,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            desired_port=port,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(node)

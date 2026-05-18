@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices import locking as device_locking
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services import state_write_guard
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance
 from app.hosts.models import Host
 from tests.helpers import create_device
@@ -197,7 +198,8 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
     await exit_maintenance(db_session, device)
     schedule.assert_awaited_once_with(db_session, device.id)
 
-    device.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.maintenance
     await db_session.commit()
     schedule.side_effect = RuntimeError("queue down")
     await exit_maintenance(db_session, device)

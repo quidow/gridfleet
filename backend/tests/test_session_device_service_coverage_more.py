@@ -213,6 +213,7 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     monkeypatch.setattr(session_service, "get_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
 
     result = await session_service.mark_session_finished(db, "vanished-device")
 

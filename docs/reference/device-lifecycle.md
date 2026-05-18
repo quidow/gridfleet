@@ -19,6 +19,13 @@ on commit.
   `Device.operational_state` or `Device.hold` directly. The two `device_state`
   writers (`set_operational_state`, `set_hold`) and the machine are the only
   sanctioned mutators; everything else routes through `transition(...)`.
+- This rule is enforced at runtime by a SQLAlchemy attribute-event guardrail.
+  The authoritative allowlist of sanctioned writers lives in
+  `backend/app/devices/services/state_write_guard.py::ALLOWLIST`. Any new
+  writer must be added there; the guard raises
+  `StateWriteOutsideSanctionedWriterError` on any unlisted caller. Test
+  fixtures that need to seed state directly use the `state_write_guard.bypass()`
+  context manager — production code must never call `bypass()`.
 
 ### Events
 

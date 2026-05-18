@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -22,7 +23,8 @@ async def test_appium_node_desired_state_defaults_to_stopped(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="default-desired", verified=True)
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444")
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444")
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(node)

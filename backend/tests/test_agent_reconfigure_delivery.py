@@ -13,6 +13,7 @@ from app.agent_comm.reconfigure_delivery import (
     deliver_agent_reconfigures,
 )
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -28,14 +29,15 @@ async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="stale-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=3,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=3,
+        )
     row = AgentReconfigureOutbox(
         device_id=device.id,
         port=4723,
@@ -61,14 +63,15 @@ async def test_outbox_row_sends_when_generation_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="fresh-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=4,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=4,
+        )
     row = AgentReconfigureOutbox(
         device_id=device.id,
         port=4723,
@@ -103,14 +106,15 @@ async def test_outbox_delivery_failure_increments_attempts(
     from app.core.errors import AgentUnreachableError
 
     device = await create_device(db_session, host_id=db_host.id, name="failed-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=1,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=1,
+        )
     row = AgentReconfigureOutbox(
         device_id=device.id,
         port=4723,
@@ -139,14 +143,15 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="duplicate-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=7,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=7,
+        )
     older = AgentReconfigureOutbox(
         device_id=device.id,
         port=4723,
@@ -190,14 +195,15 @@ async def test_delivery_processes_at_most_one_batch_per_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="limited-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=1,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=1,
+        )
     now = datetime.now(UTC)
     rows = [
         AgentReconfigureOutbox(
@@ -244,14 +250,15 @@ async def test_delivery_abandons_row_after_max_attempts(
     from app.core.errors import AgentUnreachableError
 
     device = await create_device(db_session, host_id=db_host.id, name="abandoned-outbox")
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        generation=1,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=1,
+        )
     row = AgentReconfigureOutbox(
         device_id=device.id,
         port=4723,

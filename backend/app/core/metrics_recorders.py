@@ -148,6 +148,11 @@ INTENT_RECONCILER_CONFLICTS = Counter(
     "intent_reconciler_conflicts_total",
     "Total same-priority device intent conflicts.",
 )
+STALE_INTENT_SWEEP_REVOKED = Counter(
+    "gridfleet_stale_intent_sweep_revoked_total",
+    "Orphaned DeviceIntent rows revoked by the periodic stale-intent sweep.",
+    ["source"],
+)
 AGENT_RECONFIGURE_OUTBOX_PENDING = Gauge(
     "agent_reconfigure_outbox_pending_total",
     "Current number of undelivered agent reconfigure outbox rows.",

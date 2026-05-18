@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import connectivity as device_connectivity
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device
 
@@ -63,7 +64,8 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
-            locked.operational_state = DeviceOperationalState.busy
+            with state_write_guard.bypass():
+                locked.operational_state = DeviceOperationalState.busy
             await session.commit()
         racer_done.set()
 
@@ -130,7 +132,8 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await original_lock(session, device_id)
-            locked.operational_state = DeviceOperationalState.available
+            with state_write_guard.bypass():
+                locked.operational_state = DeviceOperationalState.available
             await session.commit()
         racer_done.set()
 

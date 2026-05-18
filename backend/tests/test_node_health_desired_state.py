@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -27,16 +28,17 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-health", verified=True, auto_manage=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        active_connection_target="",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=88,
-        consecutive_health_failures=999,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=88,
+            consecutive_health_failures=999,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])

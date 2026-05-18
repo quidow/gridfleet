@@ -8,6 +8,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler import _fetch_node_rows, reconcile_host_orphans
 from app.devices.models import DeviceOperationalState
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -23,16 +24,18 @@ async def test_reconciler_does_not_stop_node_during_verification(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="verify-reconciler", verified=False)
-    device.operational_state = DeviceOperationalState.verifying
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=12345,
-        active_connection_target=device.connection_target,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-    )
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.verifying
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
     db_session.add(node)
     await db_session.commit()
 

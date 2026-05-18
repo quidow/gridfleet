@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
@@ -105,21 +106,22 @@ async def test_sync_tracks_real_hub_payload_with_stripped_capabilities(db_sessio
     fails the moment a regression starts reading identity from
     ``capabilities`` again.
     """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="firetv_real",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="192.168.1.254:5555",
-        connection_target="192.168.1.254:5555",
-        name="Fire TV Stick 4K",
-        os_version="6",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="firetv_real",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="192.168.1.254:5555",
+            connection_target="192.168.1.254:5555",
+            name="Fire TV Stick 4K",
+            os_version="6",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.network,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -179,21 +181,22 @@ async def test_sync_hydrates_orphan_session_row_from_hub_stereotype(db_session: 
     ``slot.session.stereotype`` (which carries ``appium:gridfleet:deviceId``
     verbatim), bind the row to its device, and fire the busy transition.
     """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="hydrate-target",
-        connection_target="hydrate-target",
-        name="Hydrate Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="hydrate-target",
+            connection_target="hydrate-target",
+            name="Hydrate Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -229,21 +232,22 @@ async def test_sync_hydrate_orphan_does_not_attach_run_id_when_preparing(
 ) -> None:
     from tests.helpers import create_reserved_run
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="hydrate-prep",
-        connection_target="hydrate-prep",
-        name="Hydrate Prep Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="hydrate-prep",
+            connection_target="hydrate-prep",
+            name="Hydrate Prep Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = await create_reserved_run(db_session, name="Prep Hydration Run", devices=[device], state=RunState.preparing)
@@ -273,21 +277,22 @@ async def test_sync_hydrate_orphan_does_not_attach_run_id_when_preparing(
 async def test_sync_hydrate_orphan_attaches_run_id_when_active(db_session: AsyncSession, db_host: Host) -> None:
     from tests.helpers import create_reserved_run
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="hydrate-active",
-        connection_target="hydrate-active",
-        name="Hydrate Active Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="hydrate-active",
+            connection_target="hydrate-active",
+            name="Hydrate Active Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = await create_reserved_run(db_session, name="Active Hydration Run", devices=[device], state=RunState.active)
@@ -315,21 +320,22 @@ async def test_sync_creates_session_does_not_attach_run_id_when_preparing(
 ) -> None:
     from tests.helpers import create_reserved_run
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="sync-prep",
-        connection_target="sync-prep",
-        name="Sync Prep Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="sync-prep",
+            connection_target="sync-prep",
+            name="Sync Prep Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = await create_reserved_run(db_session, name="Sync Prep Run", devices=[device], state=RunState.preparing)
@@ -348,21 +354,22 @@ async def test_sync_creates_session_does_not_attach_run_id_when_preparing(
 
 
 async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-001",
-        connection_target="dev-001",
-        name="Test Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-001",
+            connection_target="dev-001",
+            name="Test Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -382,21 +389,22 @@ async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> 
 
 
 async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-002",
-        connection_target="dev-002",
-        name="Test Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-002",
+            connection_target="dev-002",
+            name="Test Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -434,32 +442,34 @@ async def test_sync_ends_session_marks_offline_when_node_stop_pending(db_session
     from app.devices.services.intent import IntentService
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-stop-pending",
-        connection_target="dev-stop-pending",
-        name="Stop Pending Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-stop-pending",
+            connection_target="dev-stop-pending",
+            name="Stop Pending Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=42,
-        active_connection_target=device.connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
     db_session.add(node)
     session = Session(session_id="sess-stop-pending", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)
@@ -500,21 +510,22 @@ async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db
     """
     from sqlalchemy import text
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-dup",
-        connection_target="dev-dup",
-        name="Duplicate Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-dup",
+            connection_target="dev-dup",
+            name="Duplicate Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -575,36 +586,38 @@ async def test_sync_ends_duplicate_running_sessions_across_devices(db_session: A
     """
     from sqlalchemy import text
 
-    device_a = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-dup-multi-a",
-        connection_target="dev-dup-multi-a",
-        name="Duplicate Phone A",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    device_b = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-dup-multi-b",
-        connection_target="dev-dup-multi-b",
-        name="Duplicate Phone B",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device_a = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-dup-multi-a",
+            connection_target="dev-dup-multi-a",
+            name="Duplicate Phone A",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    with state_write_guard.bypass():
+        device_b = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-dup-multi-b",
+            connection_target="dev-dup-multi-b",
+            name="Duplicate Phone B",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add_all([device_a, device_b])
     await db_session.flush()
 
@@ -646,21 +659,22 @@ async def test_sync_ends_duplicate_running_sessions_across_devices(db_session: A
 
 
 async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-002b",
-        connection_target="dev-002b",
-        name="Reset Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-002b",
+            connection_target="dev-002b",
+            name="Reset Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -740,21 +754,22 @@ async def test_sync_ignores_unknown_connection_target(db_session: AsyncSession) 
 
 
 async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="manager_generated",
-        identity_scope="host",
-        identity_value="avd:Pixel_6_API_35",
-        connection_target="Pixel_6_API_35",
-        name="Pixel 6",
-        os_version="15",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="manager_generated",
+            identity_scope="host",
+            identity_value="avd:Pixel_6_API_35",
+            connection_target="Pixel_6_API_35",
+            name="Pixel 6",
+            os_version="15",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -772,21 +787,22 @@ async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: As
 
 
 async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-004",
-        connection_target="dev-004",
-        name="Multi Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-004",
+            connection_target="dev-004",
+            name="Multi Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -806,21 +822,22 @@ async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, d
 
 
 async def test_sync_startup_recovery(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-005",
-        connection_target="dev-005",
-        name="Recovery Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-005",
+            connection_target="dev-005",
+            name="Recovery Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -843,21 +860,22 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-terminal-race",
-        connection_target="dev-terminal-race",
-        name="Terminal Race Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-terminal-race",
+            connection_target="dev-terminal-race",
+            name="Terminal Race Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -886,22 +904,23 @@ async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-007",
-        connection_target="dev-007",
-        name="Reserved Return",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-007",
+            connection_target="dev-007",
+            name="Reserved Return",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            hold=DeviceHold.reserved,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -941,21 +960,22 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-008",
-        connection_target="dev-008",
-        name="Deferred Stop",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-008",
+            connection_target="dev-008",
+            name="Deferred Stop",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -1007,33 +1027,35 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
     from app.devices.services import health as device_health
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-deferred-recovered",
-        connection_target="dev-deferred-recovered",
-        name="Deferred Recovered",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-deferred-recovered",
+            connection_target="dev-deferred-recovered",
+            name="Deferred Recovered",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
 
-    node = AppiumNode(
-        device_id=device.id,
-        port=4790,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4790,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4790,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4790,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(node)
     session = Session(session_id="sess-deferred-recovered", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)
@@ -1079,24 +1101,25 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     """
     from app.sessions import service_sync as session_sync
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-race-restore",
-        connection_target="dev-race-restore",
-        name="Race Restore",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        # No deferred-stop intent — ``handle_session_finished`` will hit the
-        # NO_PENDING fast-path without checking running sessions under lock.
-        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-race-restore",
+            connection_target="dev-race-restore",
+            name="Race Restore",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            # No deferred-stop intent — ``handle_session_finished`` will hit the
+            # NO_PENDING fast-path without checking running sessions under lock.
+            lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+        )
     db_session.add(device)
     await db_session.flush()
 
@@ -1140,21 +1163,22 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
 
 async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_host: Host) -> None:
     """Probe sessions are filtered out and never persisted as real Session rows."""
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-probe",
-        connection_target="dev-probe",
-        name="Probe Phone",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-probe",
+            connection_target="dev-probe",
+            name="Probe Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -1184,21 +1208,22 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
 
 
 async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="dev-reserved",
-        connection_target="emulator-5554",
-        name="Reserved Placeholder Phone",
-        os_version="14",
-        host_id=db_host.id,
-        hold=DeviceHold.reserved,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.emulator,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-reserved",
+            connection_target="emulator-5554",
+            name="Reserved Placeholder Phone",
+            os_version="14",
+            host_id=db_host.id,
+            hold=DeviceHold.reserved,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.emulator,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -1222,20 +1247,21 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     from app.grid import service as grid_service
     from app.sessions import service_sync as session_sync
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-stuck-stop-sweep",
-        connection_target="policy-stuck-stop-sweep",
-        name="Stuck Deferred Stop Sweep Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-stuck-stop-sweep",
+            connection_target="policy-stuck-stop-sweep",
+            name="Stuck Deferred Stop Sweep Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     session = Session(
@@ -1285,20 +1311,21 @@ async def test_sweep_runs_when_grid_is_unreachable(
     from app.grid import service as grid_service
     from app.sessions import service_sync as session_sync
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-sweep-grid-down",
-        connection_target="policy-sweep-grid-down",
-        name="Sweep Grid Down",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-sweep-grid-down",
+            connection_target="policy-sweep-grid-down",
+            name="Sweep Grid Down",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     session = Session(

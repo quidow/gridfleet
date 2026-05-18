@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import Device, DeviceEvent, DeviceEventType, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
@@ -12,21 +13,22 @@ pytestmark = [pytest.mark.db]
 
 
 async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> Device:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"hook-{suffix}",
-        connection_target=f"hook-{suffix}",
-        name=f"Hook Device {suffix}",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        hold=None,
-        device_type="real_device",
-        connection_type="usb",
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"hook-{suffix}",
+            connection_target=f"hook-{suffix}",
+            name=f"Hook Device {suffix}",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            hold=None,
+            device_type="real_device",
+            connection_type="usb",
+        )
     db_session.add(device)
     await db_session.flush()
     return device
@@ -60,7 +62,8 @@ class TestHookOrdering:
 
     async def test_hooks_skipped_on_noop(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed(db_session, db_host, "ord2")
-        device.operational_state = DeviceOperationalState.busy
+        with state_write_guard.bypass():
+            device.operational_state = DeviceOperationalState.busy
         await db_session.flush()
         log: list[str] = []
         machine = DeviceStateMachine(hooks=[_RecordingHook("A", log)])
@@ -83,7 +86,8 @@ class TestEventLogHook:
 
     async def test_idempotent_transition_writes_no_event(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed(db_session, db_host, "evt2")
-        device.operational_state = DeviceOperationalState.busy
+        with state_write_guard.bypass():
+            device.operational_state = DeviceOperationalState.busy
         await db_session.flush()
         machine = DeviceStateMachine(hooks=[EventLogHook()])
         changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)

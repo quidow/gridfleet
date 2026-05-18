@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.devices.schemas.device import AppiumNodeRead
+from app.devices.services import state_write_guard
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -137,21 +138,23 @@ async def test_effective_state_blocked_surfaces_through_router_serialization(
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="blocked-end-to-end", verified=True)
-    device.lifecycle_policy_state = {
-        "recovery_suppressed_reason": "Auto-manage is disabled",
-        "backoff_until": None,
-    }
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=None,
-            active_connection_target=None,
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "recovery_suppressed_reason": "Auto-manage is disabled",
+            "backoff_until": None,
+        }
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=None,
+                active_connection_target=None,
+            )
         )
-    )
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device.id}")

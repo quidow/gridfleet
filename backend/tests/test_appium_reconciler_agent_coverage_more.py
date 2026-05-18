@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
 from tests.helpers import create_device_record
@@ -63,22 +64,24 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
 async def test_mark_node_started_rejects_hostless_device_after_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    device = Device(
-        id=__import__("uuid").uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="mark-start-hostless",
-        connection_target="mark-start-hostless",
-        name="mark-start-hostless",
-        os_version="14",
-        host_id=None,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
+    with state_write_guard.bypass():
+        device = Device(
+            id=__import__("uuid").uuid4(),
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="mark-start-hostless",
+            connection_target="mark-start-hostless",
+            name="mark-start-hostless",
+            os_version="14",
+            host_id=None,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
     fake_db = MagicMock()
     fake_db.flush = AsyncMock()
     monkeypatch.setattr(
@@ -290,23 +293,25 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         os_type=OSType.linux,
         agent_port=5100,
     )
-    device = Device(
-        id=__import__("uuid").uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="restart-branches",
-        connection_target="restart-branches",
-        name="restart-branches",
-        os_version="14",
-        host_id=__import__("uuid").uuid4(),
-        host=host,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="old")
+    with state_write_guard.bypass():
+        device = Device(
+            id=__import__("uuid").uuid4(),
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="restart-branches",
+            connection_target="restart-branches",
+            name="restart-branches",
+            os_version="14",
+            host_id=__import__("uuid").uuid4(),
+            host=host,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="old")
     fake_db = AsyncMock()
 
     monkeypatch.setattr(
@@ -320,22 +325,23 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
     )
 
-    hostless = Device(
-        id=__import__("uuid").uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="restart-hostless",
-        connection_target="restart-hostless",
-        name="restart-hostless",
-        os_version="14",
-        host_id=None,
-        host=None,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        hostless = Device(
+            id=__import__("uuid").uuid4(),
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="restart-hostless",
+            connection_target="restart-hostless",
+            name="restart-hostless",
+            os_version="14",
+            host_id=None,
+            host=None,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     assert (
         await node_agent.restart_node_via_agent(fake_db, hostless, node, http_client_factory=httpx.AsyncClient) is False
     )
@@ -428,7 +434,10 @@ async def test_start_stop_restart_node_guard_paths(
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
     )
-    node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="active")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="active"
+        )
     db_session.add(node)
     await db_session.commit()
     device.appium_node = node
@@ -459,16 +468,21 @@ async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.M
     assert device.appium_node is node
     write.assert_awaited_once()
 
-    running = AppiumNode(device_id=device_id, port=4724, grid_url="http://grid", pid=1, active_connection_target="dev")
+    with state_write_guard.bypass():
+        running = AppiumNode(
+            device_id=device_id, port=4724, grid_url="http://grid", pid=1, active_connection_target="dev"
+        )
     stopped = await node_agent.stop_node(db, SimpleNamespace(id=device_id, appium_node=running))
     assert stopped is running
     assert write.await_args.kwargs["target"] == AppiumDesiredState.stopped
 
     node_id = uuid.uuid4()
-    not_running = AppiumNode(device_id=device_id, port=4725, grid_url="http://grid")
-    running_node = AppiumNode(
-        device_id=device_id, port=4725, grid_url="http://grid", pid=2, active_connection_target="dev"
-    )
+    with state_write_guard.bypass():
+        not_running = AppiumNode(device_id=device_id, port=4725, grid_url="http://grid")
+    with state_write_guard.bypass():
+        running_node = AppiumNode(
+            device_id=device_id, port=4725, grid_url="http://grid", pid=2, active_connection_target="dev"
+        )
     db.refresh.reset_mock()
     db.get = AsyncMock(side_effect=[not_running, running_node])
     monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
@@ -495,21 +509,22 @@ async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.M
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
-    device = Device(
-        id=uuid.uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="mark-start-caps",
-        connection_target="mark-start-caps",
-        name="mark-start-caps",
-        os_version="14",
-        host_id=uuid.uuid4(),
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            id=uuid.uuid4(),
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="mark-start-caps",
+            connection_target="mark-start-caps",
+            name="mark-start-caps",
+            os_version="14",
+            host_id=uuid.uuid4(),
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db = MagicMock()
     db.add = MagicMock()
     db.flush = AsyncMock()
@@ -544,10 +559,11 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _loaded_device(db_session, db_host, "mark-start-clear")
-    device.lifecycle_policy_state = {
-        "last_failure_source": "appium_reconciler",
-        "last_failure_reason": "http_error",
-    }
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            "last_failure_source": "appium_reconciler",
+            "last_failure_reason": "http_error",
+        }
     await db_session.commit()
 
     monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")

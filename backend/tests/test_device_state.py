@@ -8,6 +8,7 @@ import pytest
 
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state as device_state
+from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -83,15 +84,20 @@ async def test_set_hold_to_none_clears(db_session: AsyncSession, default_host_id
 
 def test_legacy_label_for_audit_returns_legacy_string() -> None:
     device = Device(name="x", identity_value="x", connection_target="x")
-    device.operational_state = DeviceOperationalState.available
-    device.hold = DeviceHold.reserved
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.reserved
     assert device_state.legacy_label_for_audit(device) == "reserved"
 
-    device.hold = None
+    with state_write_guard.bypass():
+        device.hold = None
     assert device_state.legacy_label_for_audit(device) == "available"
 
-    device.operational_state = DeviceOperationalState.busy
-    device.hold = None
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.busy
+    with state_write_guard.bypass():
+        device.hold = None
     assert device_state.legacy_label_for_audit(device) == "busy"
 
 
@@ -115,7 +121,8 @@ async def test_ready_operational_state_preserves_verifying(
     db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    device.operational_state = DeviceOperationalState.verifying
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.verifying
 
     async def fake_ready(_db: AsyncSession, _device: Device) -> bool:
         return True
@@ -213,17 +220,18 @@ async def test_ready_operational_state_returns_offline_when_node_stop_pending(
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await _persisted_device(db_session, default_host_id)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=42,
-        active_connection_target=device.connection_target,
-        stop_pending=True,
-        accepting_new_sessions=False,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=42,
+            active_connection_target=device.connection_target,
+            stop_pending=True,
+            accepting_new_sessions=False,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
@@ -243,14 +251,15 @@ async def test_ready_operational_state_returns_offline_when_desired_state_stoppe
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await _persisted_device(db_session, default_host_id)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.stopped,
-        pid=42,
-        active_connection_target=device.connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
@@ -276,13 +285,14 @@ async def test_appium_node_stop_in_flight_returns_false_when_unloaded(
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 
     device = await _persisted_device(db_session, default_host_id)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.stopped,
-        stop_pending=True,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+            stop_pending=True,
+        )
     db_session.add(node)
     await db_session.commit()
     db_session.expire(device, ["appium_node"])
@@ -310,31 +320,34 @@ def test_appium_node_stop_in_flight_predicate() -> None:
     device.appium_node = None
     assert device_state.appium_node_stop_in_flight(device) is False
 
-    device.appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        stop_pending=False,
-    )
+    with state_write_guard.bypass():
+        device.appium_node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            stop_pending=False,
+        )
     assert device_state.appium_node_stop_in_flight(device) is False
 
-    device.appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        stop_pending=True,
-    )
+    with state_write_guard.bypass():
+        device.appium_node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            stop_pending=True,
+        )
     assert device_state.appium_node_stop_in_flight(device) is True
 
-    device.appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.stopped,
-        stop_pending=False,
-    )
+    with state_write_guard.bypass():
+        device.appium_node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+            stop_pending=False,
+        )
     assert device_state.appium_node_stop_in_flight(device) is True
 
 

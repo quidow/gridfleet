@@ -9,6 +9,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.devices.services import state_write_guard
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,22 +35,24 @@ def _device(
         agent_port=5100,
         status=HostStatus.online,
     )
-    return Device(
-        id=uuid4(),
-        host_id=host.id,
-        pack_id=pack_id,
-        platform_id=platform_id,
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="demo",
-        connection_target="demo",
-        name="Demo",
-        os_version="14",
-        operational_state=DeviceOperationalState.available,
-        device_type=device_type,
-        connection_type=ConnectionType.usb,
-        host=host,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            id=uuid4(),
+            host_id=host.id,
+            pack_id=pack_id,
+            platform_id=platform_id,
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="demo",
+            connection_target="demo",
+            name="Demo",
+            os_version="14",
+            operational_state=DeviceOperationalState.available,
+            device_type=device_type,
+            connection_type=ConnectionType.usb,
+            host=host,
+        )
+    return device
 
 
 async def test_get_device_health_returns_none_for_missing_host_or_agent_errors() -> None:
@@ -163,8 +167,10 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         connection_target="manual-device",
         name="Manual Device",
     )
-    not_ready.operational_state = DeviceOperationalState.offline
-    auto_manage_off.operational_state = DeviceOperationalState.offline
+    with state_write_guard.bypass():
+        not_ready.operational_state = DeviceOperationalState.offline
+    with state_write_guard.bypass():
+        auto_manage_off.operational_state = DeviceOperationalState.offline
     auto_manage_off.auto_manage = False
     await db_session.commit()
 
@@ -204,7 +210,8 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
         device_type=DeviceType.emulator.value,
         connection_type=ConnectionType.virtual.value,
     )
-    emulator.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        emulator.operational_state = DeviceOperationalState.available
     manual = await create_device_record(
         db_session,
         host_id=host.id,

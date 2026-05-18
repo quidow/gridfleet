@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions
@@ -60,20 +61,21 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
     )
     db_session.add(host)
     await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="sync-fence-001",
-        connection_target="sync-fence-001",
-        name="Sync Fence Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="sync-fence-001",
+            connection_target="sync-fence-001",
+            name="Sync Fence Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     session = Session(

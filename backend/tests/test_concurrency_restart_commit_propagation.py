@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_service
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -29,15 +30,16 @@ async def test_restart_mutations_visible_after_caller_commit(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        health_running=False,
-        health_state="error",
-        pid=None,
-        active_connection_target=None,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            health_running=False,
+            health_state="error",
+            pid=None,
+            active_connection_target=None,
+        )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id

@@ -11,6 +11,7 @@ from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health as node_health
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.settings import settings_service
 from tests.helpers import create_device
@@ -34,15 +35,16 @@ async def _seed_running_node_at_failure_threshold(
         verified=True,
         auto_manage=False,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=pid,
-        active_connection_target=active_connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=pid,
+            active_connection_target=active_connection_target,
+        )
     db_session.add(node)
     await db_session.commit()
 

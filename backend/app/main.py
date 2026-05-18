@@ -42,6 +42,7 @@ from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
+from app.devices.services import state_write_guard
 from app.events import event_bus
 from app.events import router as events
 from app.grid import router as grid
@@ -177,6 +178,7 @@ async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    state_write_guard.register()
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
 

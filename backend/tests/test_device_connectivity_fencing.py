@@ -10,6 +10,7 @@ import pytest
 
 from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.connectivity import _check_connectivity
 from app.hosts.models import Host, HostStatus, OSType
 
@@ -62,20 +63,21 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
     )
     db_session.add(host)
     await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="conn-b-001",
-        connection_target="conn-b-001",
-        name="Conn B Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="conn-b-001",
+            connection_target="conn-b-001",
+            name="Conn B Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
     initial_state = device.operational_state
@@ -119,21 +121,22 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
     )
     db_session.add(host)
     await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="conn-stop-001",
-        connection_target="conn-stop-001",
-        name="Conn Stop Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        auto_manage=True,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="conn-stop-001",
+            connection_target="conn-stop-001",
+            name="Conn Stop Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            auto_manage=True,
+        )
     db_session.add(device)
     await db_session.commit()
     initial_state = device.operational_state
@@ -183,20 +186,21 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
     )
     db_session.add(host)
     await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="conn-c-001",
-        connection_target="conn-c-001",
-        name="Conn C Device",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="conn-c-001",
+            connection_target="conn-c-001",
+            name="Conn C Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
     initial_state = device.operational_state

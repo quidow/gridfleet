@@ -20,6 +20,7 @@ from app.devices.models import (
 )
 from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
+from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_policy import (
@@ -55,7 +56,8 @@ async def _mark_device_available(
     del intents, reason, kwargs
     device = await db.get(Device, device_id)
     assert device is not None
-    device.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
 
 
 async def _event_types_for_device(db_session: AsyncSession, device_id: object) -> list[DeviceEventType]:
@@ -66,20 +68,21 @@ async def _event_types_for_device(db_session: AsyncSession, device_id: object) -
 
 
 async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-idle-1",
-        connection_target="policy-idle-1",
-        name="Idle Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-idle-1",
+            connection_target="policy-idle-1",
+            name="Idle Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -94,20 +97,21 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
 
 
 async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-busy-1",
-        connection_target="policy-busy-1",
-        name="Busy Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-busy-1",
+            connection_target="policy-busy-1",
+            name="Busy Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     db_session.add(Session(session_id="sess-policy-1", device_id=device.id, status=SessionStatus.running))
@@ -125,20 +129,21 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
 
 
 async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-run-1",
-        connection_target="policy-run-1",
-        name="Reserved Device",
-        os_version="14",
-        host_id=db_host.id,
-        hold=DeviceHold.reserved,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-run-1",
+            connection_target="policy-run-1",
+            name="Reserved Device",
+            os_version="14",
+            host_id=db_host.id,
+            hold=DeviceHold.reserved,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -181,20 +186,21 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-run-2",
-        connection_target="policy-run-2",
-        name="Deferred Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-run-2",
+            connection_target="policy-run-2",
+            name="Deferred Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -244,21 +250,22 @@ async def test_recovery_is_suppressed_when_auto_manage_disabled(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-1",
-        connection_target="policy-recover-1",
-        name="Manual Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        auto_manage=False,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-1",
+            connection_target="policy-recover-1",
+            name="Manual Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            auto_manage=False,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -275,21 +282,22 @@ async def test_recovery_suppressed_event_is_deduplicated(
     db_host: Host,
 ) -> None:
     """Repeated suppression for the same reason must emit one event, not a stream."""
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-dedup-1",
-        connection_target="policy-recover-dedup-1",
-        name="Spammy Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        auto_manage=False,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-dedup-1",
+            connection_target="policy-recover-dedup-1",
+            name="Spammy Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            auto_manage=False,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -306,21 +314,22 @@ async def test_recovery_suppressed_event_re_emits_when_reason_changes(
     db_host: Host,
 ) -> None:
     """Suppression with a new reason must re-emit so operators see the change."""
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-dedup-2",
-        connection_target="policy-recover-dedup-2",
-        name="Reason Changes",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        auto_manage=False,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-dedup-2",
+            connection_target="policy-recover-dedup-2",
+            name="Reason Changes",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            auto_manage=False,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -339,26 +348,28 @@ async def test_recovery_suppressed_event_re_emits_when_reason_changes(
 
 
 async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-2",
-        connection_target="policy-recover-2",
-        name="Backoff Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-2",
+            connection_target="policy-recover-2",
+            name="Backoff Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
-    device.lifecycle_policy_state = {
-        **(device.lifecycle_policy_state or {}),
-        "backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
-    }
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            **(device.lifecycle_policy_state or {}),
+            "backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+        }
     await db_session.commit()
 
     recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
@@ -369,21 +380,22 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
 
 
 async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-3",
-        connection_target="policy-recover-3",
-        name="Recovering Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-3",
+            connection_target="policy-recover-3",
+            name="Recovering Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -446,24 +458,26 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-stale-intents",
-        connection_target="policy-recover-stale-intents",
-        name="Recovering Stale Intent Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-stale-intents",
+            connection_target="policy-recover-stale-intents",
+            name="Recovering Stale Intent Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
-    db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+    with state_write_guard.bypass():
+        db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
@@ -520,21 +534,22 @@ async def test_recovery_rejoin_publishes_availability_event(
 
     monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-event",
-        connection_target="policy-recover-event",
-        name="Recovering Device Event",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-event",
+            connection_target="policy-recover-event",
+            name="Recovering Device Event",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -591,39 +606,42 @@ async def test_recovery_reloads_device_before_starting_node(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-race-1",
-        connection_target="policy-race-1",
-        name="Race Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-race-1",
+            connection_target="policy-race-1",
+            name="Race Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
     async with db_session_maker() as other_session:
         current = await other_session.get(Device, device.id)
         assert current is not None
-        current.operational_state = DeviceOperationalState.available
-        other_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4724,
-                grid_url="http://grid:4444",
-                pid=1234,
-                active_connection_target=device.connection_target,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4724,
+        with state_write_guard.bypass():
+            current.operational_state = DeviceOperationalState.available
+        with state_write_guard.bypass():
+            other_session.add(
+                AppiumNode(
+                    device_id=device.id,
+                    port=4724,
+                    grid_url="http://grid:4444",
+                    pid=1234,
+                    active_connection_target=device.connection_target,
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4724,
+                )
             )
-        )
         await other_session.commit()
 
     register_recovery = AsyncMock()
@@ -638,21 +656,22 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-recover-4",
-        connection_target="policy-recover-4",
-        name="Flaky Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-recover-4",
+            connection_target="policy-recover-4",
+            name="Flaky Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -715,21 +734,22 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-retry-1",
-        connection_target="policy-retry-1",
-        name="Retry Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.emulator,
-        connection_type=ConnectionType.virtual,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-retry-1",
+            connection_target="policy-retry-1",
+            name="Retry Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.emulator,
+            connection_type=ConnectionType.virtual,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -769,20 +789,21 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
 
 
 async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession, db_host: Host) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-restart-1",
-        connection_target="policy-restart-1",
-        name="Restart Deferred Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-restart-1",
+            connection_target="policy-restart-1",
+            name="Restart Deferred Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     session = Session(session_id="sess-policy-restart", device_id=device.id, status=SessionStatus.running)
@@ -815,21 +836,22 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-restart-2",
-        connection_target="policy-restart-2",
-        name="Restart Backoff Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-restart-2",
+            connection_target="policy-restart-2",
+            name="Restart Backoff Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -880,24 +902,25 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="policy-summary-1",
-        connection_target="policy-summary-1",
-        name="Summary Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-        },
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="policy-summary-1",
+            connection_target="policy-summary-1",
+            name="Summary Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB not responsive",
+            },
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.flush()
     run = TestRun(
@@ -929,11 +952,12 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     assert summary["state"] == "deferred_stop"
     assert summary["label"] == "Deferred Stop"
 
-    device.lifecycle_policy_state = {
-        **(device.lifecycle_policy_state or {}),
-        "stop_pending": False,
-        "stop_pending_reason": None,
-    }
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {
+            **(device.lifecycle_policy_state or {}),
+            "stop_pending": False,
+            "stop_pending_reason": None,
+        }
     await db_session.commit()
 
     policy = await build_lifecycle_policy(db_session, device)
@@ -972,29 +996,30 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-clear-pending-1",
-        connection_target="lifecycle-clear-pending-1",
-        name="Clear Pending Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "Probe failed",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-clear-pending-1",
+            connection_target="lifecycle-clear-pending-1",
+            name="Clear Pending Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB not responsive",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "node_health",
+                "last_failure_reason": "Probe failed",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -1030,26 +1055,27 @@ async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-clear-pending-2",
-        connection_target="lifecycle-clear-pending-2",
-        name="No Pending Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": False,
-            "stop_pending_reason": None,
-            "stop_pending_since": None,
-            "last_action": "node_monitor_recovered",
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-clear-pending-2",
+            connection_target="lifecycle-clear-pending-2",
+            name="No Pending Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": False,
+                "stop_pending_reason": None,
+                "stop_pending_since": None,
+                "last_action": "node_monitor_recovered",
+            },
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -1070,40 +1096,42 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-finish-healthy",
-        connection_target="lifecycle-finish-healthy",
-        name="Finish Healthy",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "ADB not responsive",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-finish-healthy",
+            connection_target="lifecycle-finish-healthy",
+            name="Finish Healthy",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB not responsive",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "node_health",
+                "last_failure_reason": "ADB not responsive",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4781,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4781,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4781,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4781,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -1144,29 +1172,30 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-finish-unhealthy",
-        connection_target="lifecycle-finish-unhealthy",
-        name="Finish Unhealthy",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "ADB not responsive",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-finish-unhealthy",
+            connection_target="lifecycle-finish-unhealthy",
+            name="Finish Unhealthy",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB not responsive",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "node_health",
+                "last_failure_reason": "ADB not responsive",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.flush()
     await db_session.commit()
@@ -1197,41 +1226,43 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-finish-node-stopped",
-        connection_target="lifecycle-finish-node-stopped",
-        name="Finish Node Stopped",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "Disconnected",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "device_checks",
-            "last_failure_reason": "Disconnected",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-finish-node-stopped",
+            connection_target="lifecycle-finish-node-stopped",
+            name="Finish Node Stopped",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "Disconnected",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "device_checks",
+                "last_failure_reason": "Disconnected",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.flush()
     # Node already stopped - even if health checks read healthy, complete_auto_stop must still run.
-    node = AppiumNode(
-        device_id=device.id,
-        port=4783,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.stopped,
-        desired_port=None,
-        pid=None,
-        active_connection_target=None,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4783,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
+        )
     db_session.add(node)
     await db_session.commit()
     await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
@@ -1253,21 +1284,22 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-no-pending",
-        connection_target="lifecycle-no-pending",
-        name="No Pending",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-no-pending",
+            connection_target="lifecycle-no-pending",
+            name="No Pending",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+        )
     db_session.add(device)
     await db_session.commit()
 
@@ -1292,32 +1324,34 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     """
     from app.devices.services.intent_reconciler import reconcile_device
 
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-held-intent",
-        connection_target="lifecycle-held-intent",
-        name="Held Intent",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-held-intent",
+            connection_target="lifecycle-held-intent",
+            name="Held Intent",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={"stop_pending": False, "last_action": "idle"},
+        )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4796,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4796,
-        pid=42,
-        active_connection_target=device.connection_target,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4796,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4796,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
     db_session.add(node)
     session = Session(
         session_id="held-intent-session",
@@ -1370,29 +1404,30 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
     between that pre-check and the locked check must be respected: the helper
     must return RUNNING_SESSION_EXISTS instead of auto-stopping.
     """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-toctou",
-        connection_target="lifecycle-toctou",
-        name="TOCTOU Device",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB not responsive",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "device_checks",
-            "last_failure_reason": "ADB not responsive",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-toctou",
+            connection_target="lifecycle-toctou",
+            name="TOCTOU Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB not responsive",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "device_checks",
+                "last_failure_reason": "ADB not responsive",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.flush()
     new_session = Session(
@@ -1427,40 +1462,42 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
     If the projection is wrong, the next failed probe will re-enter
     ``handle_health_failure`` and re-arm the deferred stop.
     """
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lifecycle-stale-healthy",
-        connection_target="lifecycle-stale-healthy",
-        name="Stale Healthy",
-        os_version="14",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.busy,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        lifecycle_policy_state={
-            "stop_pending": True,
-            "stop_pending_reason": "ADB hung",
-            "stop_pending_since": "2026-05-04T10:00:00+00:00",
-            "last_action": "auto_stop_deferred",
-            "last_failure_source": "node_health",
-            "last_failure_reason": "ADB hung",
-            "recovery_suppressed_reason": None,
-        },
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-stale-healthy",
+            connection_target="lifecycle-stale-healthy",
+            name="Stale Healthy",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": True,
+                "stop_pending_reason": "ADB hung",
+                "stop_pending_since": "2026-05-04T10:00:00+00:00",
+                "last_action": "auto_stop_deferred",
+                "last_failure_source": "node_health",
+                "last_failure_reason": "ADB hung",
+                "recovery_suppressed_reason": None,
+            },
+        )
     db_session.add(device)
     await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4795,
-        grid_url="http://hub:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4795,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4795,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4795,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
 
@@ -1533,20 +1570,24 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
 
-    device.hold = None
+    with state_write_guard.bypass():
+        device.hold = None
     device.recovery_allowed = False
     assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     device.recovery_allowed = True
-    device.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.maintenance
     assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
-    device.hold = None
+    with state_write_guard.bypass():
+        device.hold = None
     lifecycle_policy_module.has_running_client_session.return_value = True
     assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     lifecycle_policy_module.has_running_client_session.return_value = False
-    device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
+    with state_write_guard.bypass():
+        device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
     assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
     db.commit.assert_awaited()
 
@@ -1804,7 +1845,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
     failing = SimpleNamespace(**device.__dict__)
     failing.id = uuid.uuid4()
-    failing.lifecycle_policy_state = {}
+    with state_write_guard.bypass():
+        failing.lifecycle_policy_state = {}
     failing.appium_node = SimpleNamespace(observed_running=True)
     db2 = FakeDb()
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=failing))

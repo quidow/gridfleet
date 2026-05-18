@@ -89,3 +89,101 @@ still decide which active intent wins per axis.
 
 Recovery suppression is handled by `Device.review_required`, not by intents. See
 [device-lifecycle.md](./device-lifecycle.md).
+
+## Payload Field Policy
+
+Each `IntentRegistration` payload field falls under one of three policies. The
+policy choice determines whether the field's value at registration is
+authoritative (snapshot) or must be re-evaluated on each cycle.
+
+| Policy | When to use | Implementation |
+|--------|-------------|----------------|
+| Drop | Field captures moving state with a live source on the row (port, pid, count) | Remove from payload. Reconciler reads live `node.<field>` via fallback. |
+| Refresh-on-event | Field needs to outlive the row (TTL, deadline, exclusion reason) | Keep; renewal trigger documented. Re-register on each trigger fire. |
+| Intentional snapshot | Field captures a historical fact (cooldown reason at registration, exclusion reason for audit) | Keep. Comment: `# intentionally captured at registration: <reason>`. |
+
+### Per-source payload table
+
+One row per (source, field) pair across all 28 `IntentRegistration` call sites.
+`priority` and axis-required fields (`action`, `accepting_new_sessions`,
+`excluded`, `allowed`) are omitted — they are structural and always intentional
+snapshots of the caller's intent. Only semantically interesting fields appear
+below.
+
+| Source | Field | Policy | Notes |
+|--------|-------|--------|-------|
+| `auto_recovery:node:{device_id}` (node_health path) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration; coordinates the reconciler's desired-state write window. |
+| `auto_recovery:node:{device_id}` (node_health path) | `transition_deadline` | Intentional snapshot | Window computed fresh at registration from `appium_reconciler.restart_window_sec`; not read from a live row field. |
+| `auto_recovery:node:{device_id}` (lifecycle_policy path) | _(no extra fields)_ | — | Only structural fields; lifecycle_policy path omits `transition_token`/`transition_deadline` (no precondition guard either — see lifecycle ownership below). |
+| `auto_recovery:recovery:{device_id}` | `reason` | Intentional snapshot | Captures the human-readable trigger at the moment recovery is initiated ("Node health restart" or the policy `reason`). |
+| `active_session:{sid}` | _(no extra fields)_ | — | Structural only (`action`, `priority`). |
+| `run:{run_id}` (grid_routing) | `accepting_new_sessions` | Refresh-on-event | Re-registered on each allocation / restore-to-run call; structural for the axis. |
+| `forced_release:{run_id}` | `stop_mode` | Intentional snapshot | "hard" stop is a policy decision made at the moment of force-release; not a moving row value. |
+| `cooldown:node:{run_id}` | `stop_mode` | Intentional snapshot | "defer" policy set at cooldown registration; fixed for the cooldown lifetime. |
+| `cooldown:grid:{run_id}` | _(no extra fields)_ | — | Structural only. |
+| `cooldown:reservation:{run_id}` | `cooldown_count` | Refresh-on-event | Re-registered on each cooldown increment; reconciler's `_update_reservation_exclusion` takes `max()` across concurrent registrations. |
+| `cooldown:reservation:{run_id}` | `exclusion_reason` | Intentional snapshot | Captures the failure description at the time of the increment. |
+| `cooldown:recovery:{run_id}` | `reason` | Intentional snapshot | Same failure description captured at increment time. |
+| `device_delete:node:{device_id}` | `stop_mode` | Intentional snapshot | "graceful" stop policy fixed at delete time. |
+| `device_delete:recovery:{device_id}` | `reason` | Intentional snapshot | "Device delete requested" — static string; not a moving row field. |
+| `connectivity:{device_id}` | `stop_mode` | Intentional snapshot | "defer" — connectivity-loss policy; fixed at registration. |
+| `health_failure:reservation:{device_id}` | `exclusion_reason` | Intentional snapshot | Captures the probe-failure description at the moment of exclusion for audit trail. |
+| `health_failure:node:{device_id}` | `stop_mode` | Intentional snapshot | "graceful" stop policy fixed at health-failure detection time. |
+| `maintenance:node:{device_id}` | `stop_mode` | Intentional snapshot | "graceful" stop policy; fixed at maintenance-entry time. |
+| `maintenance:recovery:{device_id}` | `reason` | Intentional snapshot | Must equal `MAINTENANCE_HOLD_SUPPRESSION_REASON` exactly — `clear_maintenance_recovery_suppression` compares by value. |
+| `operator:start:{device_id}` (start variant) | `desired_port` | Intentional snapshot | Operator-chosen port selected at start time; not read from a live node row field. |
+| `operator:start:{device_id}` (restart variant) | `desired_port` | Intentional snapshot | Same — operator-chosen (current node port at restart time). |
+| `operator:start:{device_id}` (restart variant) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration for restart coordination. |
+| `operator:start:{device_id}` (restart variant) | `transition_deadline` | Intentional snapshot | Window computed fresh from `appium_reconciler.restart_window_sec` at restart time. |
+| `operator:stop:node:{device_id}` | `stop_mode` | Intentional snapshot | "hard" stop policy fixed at operator-stop time. |
+| `operator:stop:grid:{device_id}` | _(no extra fields)_ | — | Structural only. |
+
+**Audit note — no Drop violations found.** The `desired_port` field on
+`auto_recovery:node:*` was a Drop violation (it captured `node.port`, a moving
+row field); it was removed in commit `864e6feb`. No other Drop-class violations
+were identified in the current 28 call sites.
+
+## Lifecycle Ownership
+
+Each intent source must document every revoke path and the trigger that fires
+it. Intent leaks happen when a source has multiple revoke paths and at least
+one branch skips its revoke obligation. The stale-intent sweep (see
+"Defense-in-depth" below) catches such leaks but the explicit paths are the
+primary mechanism.
+
+| Source | Trigger to revoke | Revoke owner(s) | Status |
+|--------|-------------------|-----------------|--------|
+| `active_session:{sid}` | Session ends (terminal status / finalize / Grid drop) | `update_session_status` (commit `ea9c8cbc`), `service_sync._sync_sessions`, `mark_session_finished` (commit C1) | Covered. |
+| `connectivity:{device_id}` | Connectivity restored | `attempt_auto_recovery` start-node branch, `attempt_auto_recovery` early-return (commit `23561c4a`), `_crash_intents` connectivity path in `lifecycle_policy_actions` | Covered. |
+| `health_failure:node:{device_id}` | Recovery succeeds (node restarted) | `attempt_auto_recovery` via `revoke_intents_and_reconcile` | Covered. |
+| `health_failure:recovery:{device_id}` | Recovery succeeds | `attempt_auto_recovery` via `revoke_intents_and_reconcile` | Covered. |
+| `health_failure:reservation:{device_id}` | Device restored to run or reservation released | `restore_run_if_needed` in `lifecycle_policy_actions`, `_release_device_from_run` in `service_lifecycle_release` | Covered. |
+| `auto_recovery:node:{device_id}` (node_health path) | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
+| `auto_recovery:recovery:{device_id}` (node_health path) | Node observed running | Same `node_running` precondition shared with sibling intent | Covered via precondition. |
+| `auto_recovery:node:{device_id}` (lifecycle_policy path) | (open) | None — no precondition, no explicit revoke | **Open:** this variant is registered by `attempt_auto_recovery` when it restarts a node but carries no `node_running` precondition and no explicit revoke. It persists until overwritten by the next recovery cycle. Recommend: add the same `node_running` precondition used by the node_health path. Track in follow-up. |
+| `auto_recovery:recovery:{device_id}` (lifecycle_policy path) | (open) | Same issue as sibling | **Open:** same recommendation as above. |
+| `cooldown:{axis}:{run_id}` | TTL expiry / reservation released / `restore_device_to_run` | `_reconcile_expired_intents` (TTL path), `restore_device_to_run`, `_check_expired_cooldowns` (commit `57eb770a` preserves counter), `run_active` precondition fires when run reaches terminal state | Covered. |
+| `forced_release:{run_id}` | Run reaches terminal state | `run_active` precondition auto-retires intent; also cleared by `_release_device_from_run` revoke list | Covered. |
+| `run:{run_id}` (grid_routing) | Reservation released | `reservation_active` precondition auto-retires intent; also cleared explicitly by `_release_device_from_run` | Covered. |
+| `device_delete:{axis}:{device_id}` | Node stopped / device deleted | Device row deletion cascades `device_intents` rows via FK; also overwritten by subsequent operator start | Covered via cascade. |
+| `operator:start:{device_id}` | Node confirmed running (reconciler) | No explicit revoke — intent is permanent until overwritten by `operator:stop` or next `operator:start`. Reconciler applies it on every cycle until the node state matches. | Acceptable: operator start is idempotent and the `node_running` signal determines when the intent is "done". A follow-up could add a `node_running` precondition here too. |
+| `operator:stop:node:{device_id}` | Operator starts the node | `_bulk_start_one` via `revoke_intents_and_reconcile(_operator_stop_sources(...))` | Covered. |
+| `operator:stop:grid:{device_id}` | Operator starts the node | Same revoke call as `operator:stop:node` | Covered. |
+| `maintenance:{axis}:{device_id}` | Operator exits maintenance | `device_hold` precondition auto-retires all three axes when `Device.hold != maintenance` | Covered via precondition. |
+
+## Defense-in-depth: the Stale-Intent Sweep
+
+Deliverable D of the state-write hardening adds `_sweep_orphaned_intents` to
+the reconciler cycle (`backend/app/devices/services/intent_reconciler.py`).
+The sweep revokes orphaned rows for:
+
+- `active_session:{sid}` where the underlying `Session.ended_at IS NOT NULL`.
+- `connectivity:{device_id}` where the device is not offline AND
+  `device_checks_healthy IS NOT FALSE`.
+- `cooldown:{axis}:{run_id}` where the underlying `DeviceReservation.released_at
+  IS NOT NULL`.
+
+The sweep exposes the Prometheus counter
+`gridfleet_stale_intent_sweep_revoked_total{source="..."}`. Steady-state
+expectation: the counter stays at zero. If it climbs, the explicit revoke
+path for that source has a leak — find and fix the producer.

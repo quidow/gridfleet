@@ -9,6 +9,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.routers import control as devices_control
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services import state_write_guard
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -29,17 +30,18 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         ip_address="10.0.0.50",
         verified=True,
     )
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=0,
+                active_connection_target="",
+            )
         )
-    )
     await db_session.commit()
     device_id = device.id
 

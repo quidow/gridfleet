@@ -14,6 +14,7 @@ from app.appium_nodes.services.reconciler import (
 )
 from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.services import state_write_guard
 
 
 def _running_node(*, target: str, port: int) -> RunningAppiumNode:
@@ -41,14 +42,15 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
-    device.appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://grid:4444",
-        accepting_new_sessions=False,
-        stop_pending=True,
-        desired_grid_run_id=run_id,
-    )
+    with state_write_guard.bypass():
+        device.appium_node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            accepting_new_sessions=False,
+            stop_pending=True,
+            desired_grid_run_id=run_id,
+        )
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.settings_service.get",
         Mock(

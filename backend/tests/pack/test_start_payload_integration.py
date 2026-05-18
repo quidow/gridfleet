@@ -14,6 +14,7 @@ from app.appium_nodes.services import (
 )
 from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
@@ -342,15 +343,16 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     await db_session.flush()
 
     # Persist a matching AppiumNode so lock_appium_node_for_device finds the row.
-    appium_node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://localhost:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        appium_node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://localhost:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(appium_node)
     await db_session.commit()
 
@@ -410,7 +412,8 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
     from app.appium_nodes.services.reconciler_agent import restart_node_via_agent
 
     node = MagicMock()
-    node.port = 4723
+    with state_write_guard.bypass():
+        node.port = 4723
 
     await restart_node_via_agent(
         db_session,

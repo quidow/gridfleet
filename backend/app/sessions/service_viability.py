@@ -395,12 +395,10 @@ async def run_session_viability_probe(
 
         locked = await device_locking.lock_device(db, device.id)
         previous_state = locked.operational_state
-        await set_operational_state(
+        await _MACHINE.transition(
             locked,
-            DeviceOperationalState.busy,
+            TransitionEvent.SESSION_STARTED,
             reason="Session viability probe running",
-            publish_event=True,
-            severity="info",
         )
         await db.commit()
 
@@ -483,14 +481,7 @@ async def run_session_viability_probe(
         if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
             relocked = await device_locking.lock_device(db, device.id)
             if relocked.operational_state == DeviceOperationalState.busy:
-                if previous_state == DeviceOperationalState.offline:
-                    await set_operational_state(relocked, DeviceOperationalState.offline, publish_event=False)
-                else:
-                    await set_operational_state(
-                        relocked,
-                        await ready_operational_state(db, relocked),
-                        publish_event=False,
-                    )
+                await set_operational_state(relocked, previous_state, publish_event=False)
                 await db.commit()
         raise
     finally:

@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_actions import exclude_run_if_needed, restore_run_if_needed
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
@@ -17,22 +18,24 @@ def _make_device(
     operational_state: DeviceOperationalState = DeviceOperationalState.available,
     hold: DeviceHold | None = None,
 ) -> Device:
-    return Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"TEST{uuid.uuid4().hex[:8].upper()}",
-        connection_target="usb-serial",
-        name="test-device",
-        os_version="14",
-        host_id=host.id,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        operational_state=operational_state,
-        hold=hold,
-        auto_manage=True,
-    )
+    with state_write_guard.bypass():
+        _bypass_tmp = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"TEST{uuid.uuid4().hex[:8].upper()}",
+            connection_target="usb-serial",
+            name="test-device",
+            os_version="14",
+            host_id=host.id,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            operational_state=operational_state,
+            hold=hold,
+            auto_manage=True,
+        )
+    return _bypass_tmp
 
 
 @pytest.fixture
@@ -52,17 +55,18 @@ async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tup
     db_session.add(run)
     await db_session.flush()
 
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://grid:4444",
-            pid=1234,
-            active_connection_target=device.connection_target,
-            desired_grid_run_id=run.id,
-            grid_run_id=run.id,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid:4444",
+                pid=1234,
+                active_connection_target=device.connection_target,
+                desired_grid_run_id=run.id,
+                grid_run_id=run.id,
+            )
         )
-    )
 
     reservation = DeviceReservation(
         run=run,

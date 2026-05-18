@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceIntent
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from tests.helpers import create_device
 
@@ -27,16 +28,18 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True, auto_manage=True)
-    device.hold = DeviceHold.maintenance
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        desired_port=None,
-        pid=None,
-        active_connection_target=None,
-        desired_state=AppiumDesiredState.stopped,
-    )
+    with state_write_guard.bypass():
+        device.hold = DeviceHold.maintenance
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.stopped,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
@@ -69,15 +72,16 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="m-enter", verified=True)
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        grid_url="http://hub:4444",
-        pid=1,
-        active_connection_target="",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=1,
+            active_connection_target="",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])

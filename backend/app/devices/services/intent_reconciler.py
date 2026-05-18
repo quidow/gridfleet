@@ -5,7 +5,8 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import cast, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deliver_pending_agent_reconfigures
@@ -16,7 +17,15 @@ from app.core.database import async_session
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
-from app.devices.models import DeviceEventType, DeviceHold, DeviceIntent, DeviceIntentDirty, DeviceReservation
+from app.devices.models import (
+    Device,
+    DeviceEventType,
+    DeviceHold,
+    DeviceIntent,
+    DeviceIntentDirty,
+    DeviceOperationalState,
+    DeviceReservation,
+)
 from app.devices.services.event import record_event
 from app.devices.services.intent_evaluator import (
     ReservationDecision,
@@ -66,6 +75,11 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
     full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
+    try:
+        await _sweep_orphaned_intents(db)
+    except Exception:
+        await db.rollback()
+        logger.exception("stale_intent_sweep_failed")
     await _reconcile_terminal_run_intents(db)
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
@@ -123,6 +137,77 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
         await reconcile_device(db, device_id)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id)
+
+
+async def _sweep_orphaned_intents(db: AsyncSession) -> None:
+    """Revoke orphaned ``DeviceIntent`` rows.
+
+    Defense in depth: producer modules own the primary revoke paths. This sweep
+    catches any branch that skips its revoke obligation. Counters increment per
+    revoked row, labeled by intent source family.
+    """
+    # 1. active_session:{sid} — Session.ended_at IS NOT NULL.
+    active_session_ids = (
+        (
+            await db.execute(
+                select(DeviceIntent.id)
+                .where(DeviceIntent.source.like("active_session:%"))
+                .join(
+                    Session,
+                    Session.session_id == func.substring(DeviceIntent.source, len("active_session:") + 1),
+                )
+                .where(Session.ended_at.is_not(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if active_session_ids:
+        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(active_session_ids)))
+        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="active_session").inc(len(active_session_ids))
+
+    # 2. connectivity:{device_id} — device not offline AND device_checks_healthy IS NOT FALSE.
+    connectivity_ids = (
+        (
+            await db.execute(
+                select(DeviceIntent.id)
+                .where(DeviceIntent.source.like("connectivity:%"))
+                .join(Device, Device.id == DeviceIntent.device_id)
+                .where(
+                    Device.operational_state != DeviceOperationalState.offline,
+                    or_(Device.device_checks_healthy.is_(None), Device.device_checks_healthy.is_(True)),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if connectivity_ids:
+        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(connectivity_ids)))
+        metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source="connectivity").inc(len(connectivity_ids))
+
+    # 3. cooldown:{axis}:{run_id} — DeviceReservation.released_at IS NOT NULL.
+    # Source format: "cooldown:<axis>:<run_uuid>". Split on ':' and cast last segment.
+    cooldown_rows = (
+        await db.execute(
+            select(DeviceIntent.id, DeviceIntent.source)
+            .where(DeviceIntent.source.like("cooldown:%"))
+            .join(
+                DeviceReservation,
+                # Postgres split_part is 1-indexed; segment 3 is the run_id.
+                DeviceReservation.run_id == cast(func.split_part(DeviceIntent.source, ":", 3), UUID(as_uuid=True)),
+            )
+            .where(DeviceReservation.released_at.is_not(None))
+        )
+    ).all()
+    if cooldown_rows:
+        ids = [row.id for row in cooldown_rows]
+        await db.execute(delete(DeviceIntent).where(DeviceIntent.id.in_(ids)))
+        for row in cooldown_rows:
+            axis = row.source.split(":")[1]
+            metrics_recorders.STALE_INTENT_SWEEP_REVOKED.labels(source=f"cooldown:{axis}").inc()
+
+    await db.flush()
 
 
 async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:

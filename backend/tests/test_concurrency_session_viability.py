@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.sessions import service_viability as session_viability
 from tests.helpers import create_device
 
@@ -47,15 +48,16 @@ async def test_session_viability_restore_handles_external_reservation(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    appium_node = AppiumNode(
-        device_id=device.id,
-        port=9999,
-        grid_url="http://node-grid:4444/wd/hub",
-        desired_state=AppiumDesiredState.running,
-        desired_port=9999,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        appium_node = AppiumNode(
+            device_id=device.id,
+            port=9999,
+            grid_url="http://node-grid:4444/wd/hub",
+            desired_state=AppiumDesiredState.running,
+            desired_port=9999,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(appium_node)
     await db_session.commit()
     device_id = device.id
@@ -100,7 +102,8 @@ async def test_session_viability_restore_handles_external_reservation(
         await probe_started.wait()
         async with db_session_maker() as session, session.begin():
             locked = await device_locking.lock_device(session, device_id)
-            locked.hold = DeviceHold.reserved
+            with state_write_guard.bypass():
+                locked.hold = DeviceHold.reserved
         external_done.set()
 
     await asyncio.gather(run_probe(), reserve_externally())

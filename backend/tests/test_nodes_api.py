@@ -13,6 +13,7 @@ from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device_record, create_host
@@ -177,17 +178,18 @@ async def test_stop_node(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            active_connection_target="emulator-5554",
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                active_connection_target="emulator-5554",
+            )
         )
-    )
     await db_session.commit()
 
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
@@ -219,17 +221,18 @@ async def test_restart_node(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
     resp = await client.post(f"/api/devices/{device_id}/node/restart")
     assert resp.status_code == 200
@@ -253,17 +256,18 @@ async def test_restart_node_converges_immediately(
     host = await db_session.get(Host, uuid.UUID(default_host_id))
     assert host is not None
     host.status = HostStatus.online
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            active_connection_target=connection_target,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target=connection_target,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
     remote_manager_client.get.return_value = _mock_agent_response(
         {
@@ -344,17 +348,18 @@ async def test_restart_node_clears_stale_recovery_suppression(
         _mock_agent_response({"pid": 12346, "port": 4723, "connection_target": "emulator-5554"}),
     ]
 
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
@@ -499,17 +504,18 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
         _mock_agent_response({"pid": 12346, "port": 4724, "connection_target": "emulator-5554"}),
     ]
 
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device["id"]),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device["id"]),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
 
     resp = await client.post(f"/api/devices/{device['id']}/node/restart")
@@ -555,17 +561,18 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
-    db_session.add(
-        AppiumNode(
-            device_id=uuid.UUID(device_id),
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=12345,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
 
     # Stop the node explicitly while it is observed running. Maintenance is not
@@ -579,9 +586,12 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     # Simulate the reconciler observing the stop before entering maintenance.
     node = await db_session.get(AppiumNode, uuid.UUID(stop_resp.json()["id"]))
     assert node is not None
-    node.pid = None
-    node.active_connection_target = None
-    node.pid = None
+    with state_write_guard.bypass():
+        node.pid = None
+    with state_write_guard.bypass():
+        node.active_connection_target = None
+    with state_write_guard.bypass():
+        node.pid = None
     await db_session.commit()
 
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
@@ -599,21 +609,22 @@ async def test_unverified_device_blocks_node_start(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"unverified-{uuid.uuid4()}",
-        connection_target=f"unverified-{uuid.uuid4()}",
-        name="Needs Verification",
-        os_version="14",
-        operational_state=DeviceOperationalState.offline,
-        host_id=uuid.UUID(default_host_id),
-        verified_at=None,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=f"unverified-{uuid.uuid4()}",
+            connection_target=f"unverified-{uuid.uuid4()}",
+            name="Needs Verification",
+            os_version="14",
+            operational_state=DeviceOperationalState.offline,
+            host_id=uuid.UUID(default_host_id),
+            verified_at=None,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
     db_session.add(device)
     await db_session.commit()
     await db_session.refresh(device)

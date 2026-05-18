@@ -5,6 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -104,17 +105,18 @@ async def test_grid_status_with_running_node(
         operational_state="available",
     )
 
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://hub:4444",
-            pid=9999,
-            active_connection_target="",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=9999,
+                active_connection_target="",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
         )
-    )
     await db_session.commit()
 
     with patch("app.grid.router.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):

@@ -11,6 +11,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import service as device_service
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -30,15 +31,16 @@ async def test_delete_device_locks_row_before_reading_node_state(
         name="del-toctou",
         operational_state=DeviceOperationalState.available,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4724,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.stopped,
-        desired_port=None,
-        pid=None,
-        active_connection_target=None,
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4724,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.stopped,
+            desired_port=None,
+            pid=None,
+            active_connection_target=None,
+        )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -71,8 +73,10 @@ async def test_delete_device_locks_row_before_reading_node_state(
     async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
-        dev.appium_node.pid = None
-        dev.appium_node.active_connection_target = None
+        with state_write_guard.bypass():
+            dev.appium_node.pid = None
+        with state_write_guard.bypass():
+            dev.appium_node.active_connection_target = None
         await db.flush()
         return dev.appium_node
 
@@ -103,8 +107,10 @@ async def test_delete_device_locks_row_before_reading_node_state(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.pid = 0
-            locked_device.appium_node.active_connection_target = ""
+            with state_write_guard.bypass():
+                locked_device.appium_node.pid = 0
+            with state_write_guard.bypass():
+                locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"
@@ -155,15 +161,16 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
         name="del-after-stop-race",
         operational_state=DeviceOperationalState.available,
     )
-    node = AppiumNode(
-        device_id=device.id,
-        port=4725,
-        grid_url="http://grid:4444",
-        desired_state=AppiumDesiredState.running,
-        desired_port=4725,
-        pid=0,
-        active_connection_target="",
-    )
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=0,
+            active_connection_target="",
+        )
     db_session.add(node)
     await db_session.commit()
     device_id = device.id
@@ -178,8 +185,10 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
 
         stop_calls += 1
         assert dev.appium_node is not None
-        dev.appium_node.pid = None
-        dev.appium_node.active_connection_target = None
+        with state_write_guard.bypass():
+            dev.appium_node.pid = None
+        with state_write_guard.bypass():
+            dev.appium_node.active_connection_target = None
         await db.commit()
         if stop_calls == 1:
             first_stop_committed.set()
@@ -202,8 +211,10 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
             except NoResultFound:
                 return "deleted_before_start"
             assert locked_device.appium_node is not None
-            locked_device.appium_node.pid = 0
-            locked_device.appium_node.active_connection_target = ""
+            with state_write_guard.bypass():
+                locked_device.appium_node.pid = 0
+            with state_write_guard.bypass():
+                locked_device.appium_node.active_connection_target = ""
             await db.commit()
             starter_committed.set()
             return "started"
