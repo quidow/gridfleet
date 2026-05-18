@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 import app.devices.services.health as device_health
 import app.devices.services.lifecycle_incidents as lifecycle_incident_service
 import app.devices.services.lifecycle_policy_actions as lifecycle_policy_actions
+from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -241,6 +242,13 @@ async def cooldown_device(
     await db.commit()
 
     if not escalate:
+        # Push the ``accepting_new_sessions=False`` reconfigure to the agent
+        # before the HTTP response returns. Without this the Selenium Grid
+        # hub keeps routing new sessions to the cooled-down relay until the
+        # next ``device_intent_reconciler_loop`` tick (default 5 s) drains
+        # the outbox, and testkit can re-pick the same device during that
+        # window.
+        await deliver_agent_reconfigures(db, device.id)
         return excluded_until, cooldown_count_after, False, threshold
 
     # Escalation path

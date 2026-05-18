@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient  # noqa: TC002
@@ -233,6 +234,52 @@ async def test_cooldown_preserves_desired_grid_run_id(
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
     assert node.stop_pending is True
+
+
+async def test_cooldown_delivers_agent_reconfigure_inline(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cooldown must push the ``accepting_new_sessions=False`` reconfigure to
+    the agent before the HTTP response returns. Otherwise the
+    Selenium Grid hub keeps routing new sessions to the cooled-down device
+    until the next ``device_intent_reconciler_loop`` tick (default 5 s).
+    During that window testkit's next ``webdriver.Remote(...)`` lands on the
+    same relay because hub-side caps still match.
+    """
+    device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
+    run = await _create_run(client)
+    run_id = uuid.UUID(run["id"])
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        grid_url="http://grid:4444",
+        pid=4321,
+        active_connection_target=device.connection_target,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        reconfigure,
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device.id}/cooldown",
+        json={"reason": "flaky", "ttl_seconds": 60},
+    )
+    assert resp.status_code == 200
+
+    reconfigure.assert_awaited_once()
+    kwargs = reconfigure.await_args.kwargs
+    assert kwargs["port"] == 4723
+    assert kwargs["accepting_new_sessions"] is False
+    assert kwargs["stop_pending"] is True
 
 
 async def test_cooldown_does_not_mutate_operational_state(

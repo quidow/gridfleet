@@ -947,8 +947,15 @@ class AppiumProcessManager:
             raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
         service = handle.service
-        run_id_value = str(grid_run_id) if grid_run_id is not None else "free"
-        await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
+        if accepting_new_sessions:
+            run_id_value = str(grid_run_id) if grid_run_id is not None else "free"
+            await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
+        else:
+            # Cooldown / maintenance: block new sessions at the hub without
+            # republishing the node. The full DRAIN → REMOVED → ADDED cycle in
+            # ``reregister_with_caps_update`` would re-`NODE_ADDED` the relay
+            # and the hub would resume routing immediately.
+            await service.drain_to_block_new_sessions()
 
         spec = self._launch_specs.get(port)
         if spec is not None:
