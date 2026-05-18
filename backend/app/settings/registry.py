@@ -375,10 +375,29 @@ _DEFINITIONS: list[SettingDefinition] = [
         key="grid.session_poll_interval_sec",
         category="grid",
         setting_type="int",
-        default=5,
-        description="How often the manager polls Grid for sessions",
+        default=30,
+        description=(
+            "Drift-reconciler interval. The leader-owned bus subscriber drives "
+            "real-time session sync; this poll only fixes any state the bus missed."
+        ),
         min_value=1,
-        max_value=60,
+        max_value=300,
+    ),
+    SettingDefinition(
+        key="grid.event_bus_subscribe_url",
+        category="grid",
+        setting_type="string",
+        default="tcp://selenium-hub:4442",
+        description="ZMQ URL the manager subscribes to for hub event-bus messages.",
+        env_var="GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL",
+    ),
+    SettingDefinition(
+        key="grid.event_bus_publish_url",
+        category="grid",
+        setting_type="string",
+        default="tcp://selenium-hub:4443",
+        description="ZMQ URL the manager publishes to (handshake only; no events emitted).",
+        env_var="GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL",
     ),
     SettingDefinition(
         key="appium.port_range_start",
