@@ -13,6 +13,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
+from app.devices.services.operator_node_lifecycle import request_restart
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -197,8 +198,6 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     transition_token/desired_port indefinitely. The unified path overwrites the
     full payload on every restart.
     """
-    from app.devices.services.operator_node_lifecycle import request_restart
-
     device = await create_device(db_session, host_id=db_host.id, name="rr-refresh", verified=True)
     with state_write_guard.bypass():
         node = AppiumNode(
