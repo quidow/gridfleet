@@ -126,6 +126,8 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     locked = _device(name="changed")
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
+    revoke_mock = AsyncMock()
+    monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke_mock)
     machine = MagicMock()
     machine.transition = AsyncMock()
     monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
@@ -140,6 +142,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
     machine.transition.assert_awaited_once()
+    revoke_mock.assert_awaited_once_with(db, locked)
 
 
 async def test_execute_verification_context_missing_id_and_crash_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -175,6 +178,70 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             probe_session_fn=AsyncMock(),
         )
     finalize.assert_awaited_once()
+
+
+async def test_finalize_success_revokes_verification_intent_after_verified_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: ``_revoke_verification_node_intent`` must run only after
+    ``locked.verified_at`` is set. Otherwise the reconcile triggered by the
+    revoke sees ``verified_at IS NULL``, skips the ``baseline:idle`` injection,
+    and computes ``desired_state=stopped`` once the precondition sweep has
+    already retired the ``operator:start`` intent — causing a spurious
+    ``available -> offline`` event right after registration.
+    """
+    from app.devices.models import DeviceOperationalState
+    from app.devices.services.verification_preparation import PreparedVerificationContext
+
+    db = AsyncMock()
+    device_id = uuid.uuid4()
+    locked = SimpleNamespace(
+        id=device_id,
+        operational_state=DeviceOperationalState.verifying,
+        verified_at=None,
+    )
+    context = PreparedVerificationContext(
+        mode="create",
+        transient_device=locked,
+        save_payload={"name": "created"},
+        save_device_id=device_id,
+        keep_running_after_verify=True,
+    )
+    monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
+    monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
+    monkeypatch.setattr(execution, "set_stage", AsyncMock())
+
+    def transition(device: SimpleNamespace, _event: object, *, reason: str) -> None:
+        del reason
+        device.operational_state = DeviceOperationalState.available
+
+    machine = SimpleNamespace(transition=AsyncMock(side_effect=transition))
+    monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
+    monkeypatch.setattr(
+        execution,
+        "ready_operational_state",
+        AsyncMock(return_value=DeviceOperationalState.available),
+    )
+    monkeypatch.setattr(execution, "set_operational_state", AsyncMock())
+    monkeypatch.setattr(execution.session_viability, "record_session_viability_result", AsyncMock())
+
+    verified_at_when_revoked: list[object] = []
+    op_state_when_revoked: list[object] = []
+
+    async def revoke(_db: object, device: SimpleNamespace) -> None:
+        verified_at_when_revoked.append(device.verified_at)
+        op_state_when_revoked.append(device.operational_state)
+
+    monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke)
+
+    outcome = await execution._finalize_success(
+        db, context, job={"stages": []}, node=SimpleNamespace(port=4723, pid=22)
+    )
+
+    assert outcome.status == "completed"
+    assert len(verified_at_when_revoked) == 1
+    assert verified_at_when_revoked[0] is not None, "verified_at must be set before revoke"
+    assert op_state_when_revoked[0] == DeviceOperationalState.available
 
 
 async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: pytest.MonkeyPatch) -> None:

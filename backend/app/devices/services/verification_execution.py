@@ -203,8 +203,10 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device) -
     leaving zero active node_process intents, so ``evaluate_node_process``
     derives ``desired_state=stopped`` and the appium reconciler kills the
     verification node mid session-probe. ``expires_at`` is a safety net for
-    crashed verifications; the normal path revokes the intent in ``run_probe``'s
-    finally block.
+    crashed verifications; the normal path revokes the intent inside
+    ``_finalize_success`` (after ``verified_at`` is set so the
+    revoke-triggered reconcile injects ``baseline:idle``) or
+    ``_finalize_failure``.
 
     Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
     does not commit; the caller owns transaction boundaries.
@@ -316,7 +318,6 @@ async def run_probe(
         await set_stage(job, "session_probe", "failed", detail=failure)
         return started_node, failure
     finally:
-        await _revoke_verification_node_intent(db, device)
         await db.commit()
 
 
@@ -463,6 +464,7 @@ async def _finalize_success(
                 await device_service.delete_device(db, context.save_device_id)
                 await db.commit()
                 return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
+            await _revoke_verification_node_intent(db, locked)
             await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
             await db.commit()
             return VerificationExecutionOutcome(
@@ -480,6 +482,13 @@ async def _finalize_success(
 
     await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_PASSED, reason="verification")
     locked.verified_at = datetime.now(UTC)
+    # Revoke the verification intent only after ``verified_at`` is set so the
+    # reconcile triggered by the revoke sees the device as verified and
+    # injects ``baseline:idle`` (when ``auto_manage`` is true) instead of
+    # computing ``desired_state=stopped`` on an empty node_process intent
+    # set. Revoking earlier (e.g. in ``run_probe``'s finally block) causes a
+    # spurious ``available -> offline`` transition right after registration.
+    await _revoke_verification_node_intent(db, locked)
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:
         await set_operational_state(locked, next_state, reason="verification", severity="info")
@@ -507,6 +516,9 @@ async def _finalize_failure(
     assert context.save_device_id is not None
     if context.mode == "create":
         cleanup_error = await _stop_verification_node_if_running(job, db, context.transient_device, node)
+        # Device deletion cascades to DeviceIntent rows, so no explicit
+        # verification intent revoke is needed on the create-mode failure
+        # path.
         await device_service.delete_device(db, context.save_device_id)
         await db.commit()
         if cleanup_error is not None:
@@ -517,6 +529,7 @@ async def _finalize_failure(
         locked = await device_locking.lock_device(db, context.save_device_id)
     _restore_update_original_fields(locked, original_fields)
     await _stop_verification_node_if_running(job, db, locked, node)
+    await _revoke_verification_node_intent(db, locked)
     await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
