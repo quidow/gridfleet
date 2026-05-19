@@ -10,6 +10,7 @@ from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS
+from app.devices.services.operator_node_lifecycle import operator_stop_sources
 
 
 def _db() -> MagicMock:
@@ -178,7 +179,7 @@ def test_bulk_small_helpers_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         "failed": 1,
         "errors": {"x": "bad"},
     }
-    assert bulk_service._operator_stop_sources(device_id) == [
+    assert operator_stop_sources(device_id) == [
         f"operator:stop:node:{device_id}",
         f"operator:stop:grid:{device_id}",
     ]
