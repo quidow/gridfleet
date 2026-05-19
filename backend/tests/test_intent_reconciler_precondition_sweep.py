@@ -11,6 +11,7 @@ from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 from app.runs.models import RunState
 from tests.helpers import create_device, create_reserved_run
@@ -446,4 +447,89 @@ async def test_sweep_deletes_operator_start_intent_when_node_observed_running(
     assert rows == [], (
         f"node_running(expected=False) precondition must be unsatisfied while observed_running=True; "
         f"sweep should delete the intent. Remaining: {[r.source for r in rows]}"
+    )
+
+
+@pytest.mark.db
+async def test_verification_node_not_stopped_when_operator_start_intent_swept(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """Regression: during initial-device verification the operator:start intent
+    is registered against an UNVERIFIED device (verified_at IS NULL). Once the
+    node reaches observed_running=True the precondition sweep deletes the
+    operator:start row; reconcile_device must NOT then derive
+    ``desired_state=stopped`` and kill the verification node mid session-probe.
+
+    The fix registers a standing ``verification:{device_id}`` node_process
+    intent in ``run_probe`` before ``start_node``. It has no auto-retire
+    precondition and outlives ``operator:start`` so that ``evaluate_node_process``
+    still finds an active "start" intent after the sweep — keeping
+    ``desired_state=running`` for the entire probe window.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="verify-probe-race",
+        verified=False,
+    )
+    assert device.verified_at is None, "fixture precondition: device must be unverified"
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=12345,
+            active_connection_target="dev-1",
+        )
+    db_session.add(node)
+    await db_session.commit()
+    assert node.observed_running, "fixture must seed an observed-running verification node"
+
+    # Reproduce the production intent layout that ``run_probe`` now creates:
+    # the existing auto-retiring operator:start row AND the standing
+    # verification:{device_id} guard.
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="verification start",
+        intents=[
+            IntentRegistration(
+                source=f"operator:start:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20, "desired_port": 4723},
+                precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+            ),
+            IntentRegistration(
+                source=f"verification:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    # Simulate one device_intent_reconciler tick mid-probe.
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+    await reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    intents_remaining = (
+        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    )
+    sources = {intent.source for intent in intents_remaining}
+    assert f"operator:start:{device.id}" not in sources, (
+        "operator:start precondition must still be swept on observed_running"
+    )
+    assert f"verification:{device.id}" in sources, "verification:{device_id} standing intent must survive the sweep"
+
+    refreshed_node = (
+        await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))
+    ).scalar_one()
+    assert refreshed_node.desired_state == AppiumDesiredState.running, (
+        "Verification node must stay desired=running while probe is in flight; "
+        f"got desired_state={refreshed_node.desired_state!r}. This is the race that "
+        "kills slow-probe verifications."
     )
