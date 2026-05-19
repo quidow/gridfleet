@@ -14,6 +14,13 @@ is populated before the probe issues its ``POST /session`` and cleared after
 the cleanup ``DELETE`` returns. Entries leak only if the leader process dies
 mid-probe; in that case the next session_sync cycle will pick up the orphan
 slot correctly because the probe is no longer happening.
+
+Thread-safety: callers run on the leader's asyncio loop in a single CPython
+process, so ``set.add`` / ``set.discard`` are atomic under the GIL and no
+explicit locking is required. If this registry is ever promoted to a
+cross-process or cross-host cache, it must be replaced with a locked or
+externally-coordinated store; the bare ``set`` will not be safe under
+multi-process writers.
 """
 
 from __future__ import annotations
