@@ -13,6 +13,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.devices.services.intent import (
+    register_intents_and_reconcile,
+    revoke_intents_and_reconcile,
+)
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -21,9 +28,13 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
+from app.devices.services.review import clear_review_required
 from app.settings import settings_service
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.devices.models import Device
 
 
@@ -90,3 +101,103 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
             payload={"accepting_new_sessions": False, "priority": PRIORITY_OPERATOR_STOP},
         ),
     ]
+
+
+async def request_start(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller,
+    reason: str,
+) -> AppiumNode:
+    """Register an operator:start intent and return the (existing or newly-created)
+    AppiumNode row. The intent reconciler runs synchronously inside
+    register_intents_and_reconcile, so the AppiumNode's desired_state/desired_port
+    are up to date on return.
+    """
+    if device.host_id is None:
+        raise NodeManagerError(f"Device {device.id} has no host assigned")
+
+    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+
+    node: AppiumNode | None = device.appium_node
+    if node is None:
+        node = AppiumNode(
+            device_id=device.id,
+            port=desired_port,
+            grid_url=settings_service.get("grid.hub_url"),
+        )
+        db.add(node)
+        await db.flush()
+        device.appium_node = node
+
+    await revoke_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        sources=operator_stop_sources(device.id),
+        reason=reason,
+    )
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=[operator_start_intent(device, desired_port)],
+        reason=reason,
+    )
+    if caller in {"operator_route", "operator_restart"}:
+        await clear_review_required(db, device, reason="Operator started Appium node", source="start_node")
+    await db.refresh(node)
+    return node
+
+
+async def request_stop(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller,
+    reason: str,
+) -> AppiumNode:
+    """Register operator:stop intents (node + grid). Returns the node row for the
+    convenience of route handlers; the caller column ``caller`` is accepted for
+    symmetry with request_start/request_restart and future audit-logging use.
+    """
+    del caller  # currently unused — kept for parity with request_start/request_restart
+    node: AppiumNode | None = device.appium_node
+    if node is None:
+        raise NodeManagerError(f"No node row for device {device.id}")
+
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=operator_stop_intents(device.id),
+        reason=reason,
+    )
+    await db.refresh(node)
+    return node
+
+
+async def request_restart(
+    db: AsyncSession,
+    device: Device,
+    *,
+    caller: DesiredStateCaller,
+    reason: str,
+) -> AppiumNode:
+    """Register an operator:start intent in restart form (with fresh
+    transition_token + expires_at). If the node isn't currently observed running,
+    fall back to request_start (no token, no deadline) — mirrors the existing
+    bulk._bulk_restart_one fallback.
+    """
+    node: AppiumNode | None = device.appium_node
+    if node is None or not node.observed_running:
+        return await request_start(db, device, caller=caller, reason=reason)
+
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=[operator_restart_intent(device, node.port)],
+        reason=reason,
+    )
+    if caller == "operator_restart":
+        await clear_review_required(db, device, reason="Operator restarted Appium node", source="restart_node")
+    await db.refresh(node)
+    return node

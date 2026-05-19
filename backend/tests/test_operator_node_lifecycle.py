@@ -185,3 +185,65 @@ async def test_reconcile_expired_intents_deletes_expired_restart_intent(
     assert remaining == [], (
         f"expected no intents after GC sweep, found {len(remaining)}: {[r.source for r in remaining]}"
     )
+
+
+async def test_two_consecutive_request_restarts_refresh_intent_payload(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Each operator restart must produce a fresh transition_token + expires_at.
+
+    Pre-PR-#301, a stale operator:start intent payload could re-assert old
+    transition_token/desired_port indefinitely. The unified path overwrites the
+    full payload on every restart.
+    """
+    from app.devices.services.operator_node_lifecycle import request_restart
+
+    device = await create_device(db_session, host_id=db_host.id, name="rr-refresh", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=27765,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+    # observed_running on AppiumNode is a hybrid/derived flag; verify the
+    # fixture is constructed so the model treats the node as running.
+    assert node.observed_running, "test fixture must seed an observed-running node"
+
+    await request_restart(db_session, device, caller="operator_restart", reason="first")
+    intent_first = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    first_token = intent_first.payload["transition_token"]
+    first_deadline = intent_first.expires_at
+
+    await request_restart(db_session, device, caller="operator_restart", reason="second")
+    # Use populate_existing so the query bypasses the SQLAlchemy identity-map
+    # cache and reloads the upserted payload from the DB.
+    intent_second = (
+        await db_session.execute(
+            select(DeviceIntent)
+            .where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+    assert intent_second.payload["transition_token"] != first_token, "transition_token must rotate on each restart"
+    assert intent_second.expires_at is not None
+    assert first_deadline is not None
+    assert intent_second.expires_at > first_deadline, "expires_at must move forward on each restart"
