@@ -5,6 +5,7 @@ import importlib
 import signal
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -408,10 +409,19 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert isinstance(metrics, Response)
     assert metrics.body == b"metrics"
 
-    ready_device = SimpleNamespace()
-    blocked_device = SimpleNamespace()
+    ready_device = SimpleNamespace(id=uuid.uuid4())
+    blocked_device = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(main.device_service, "list_devices", AsyncMock(return_value=[ready_device, blocked_device]))
-    monkeypatch.setattr(main, "is_ready_for_use_async", AsyncMock(side_effect=[True, True]))
+    monkeypatch.setattr(
+        main,
+        "assess_devices_async",
+        AsyncMock(
+            return_value={
+                ready_device.id: SimpleNamespace(readiness_state="verified"),
+                blocked_device.id: SimpleNamespace(readiness_state="verified"),
+            }
+        ),
+    )
     monkeypatch.setattr(
         main.device_health,
         "device_allows_allocation",
