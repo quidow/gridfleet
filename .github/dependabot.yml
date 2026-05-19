@@ -6,10 +6,7 @@
 version: 2
 updates:
   - package-ecosystem: uv
-    directories:
-      - "/backend"
-      - "/agent"
-      - "/testkit"
+    directory: "/backend"
     schedule:
       interval: daily
     commit-message:
@@ -19,7 +16,28 @@ updates:
       python-dependencies:
         patterns:
           - "*"
-        group-by: dependency-name
+  - package-ecosystem: uv
+    directory: "/agent"
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+  - package-ecosystem: uv
+    directory: "/testkit"
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
