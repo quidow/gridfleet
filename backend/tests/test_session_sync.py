@@ -1207,6 +1207,51 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
     assert device.operational_state == DeviceOperationalState.available
 
 
+async def test_sync_skips_probe_slot_when_device_marked_inflight(db_session: AsyncSession, db_host: Host) -> None:
+    """Probe Grid slots whose caps Appium stripped are filtered via the inflight registry.
+
+    The Appium driver does not echo client-supplied ``gridfleet:*`` markers
+    back in matched capabilities, so a viability probe's slot looks like an
+    ordinary session in the Grid /status payload. The probe runner registers
+    the device id in ``probe_inflight`` for the lifetime of the Grid session;
+    session_sync must skip those slots so no phantom Session row is created.
+    """
+    from app.sessions import probe_inflight
+
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-stripped-probe",
+            connection_target="dev-stripped-probe",
+            name="Stripped Probe Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.commit()
+
+    # No gridfleet:testName / gridfleet:probeSession in caps — mirrors what
+    # the Appium driver actually returns for a real viability probe.
+    grid_data = _grid_response([_grid_session("real-uuid-probe", "dev-stripped-probe", device_id=str(device.id))])
+
+    probe_inflight.mark_probe_started(str(device.id))
+    try:
+        with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=grid_data):
+            await _sync_sessions(db_session)
+    finally:
+        probe_inflight.mark_probe_finished(str(device.id))
+
+    result = await db_session.execute(select(Session))
+    assert result.scalars().all() == []
+
+
 async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSession, db_host: Host) -> None:
     with state_write_guard.bypass():
         device = Device(

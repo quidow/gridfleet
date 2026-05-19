@@ -240,6 +240,114 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     assert call_args.args[0] == existing.id or call_args.kwargs.get("device_id") == existing.id
 
 
+async def test_run_probe_marks_device_inflight_during_probe_session(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_probe must register the device in ``probe_inflight`` while the Grid
+    probe session is open, so session_sync ignores the slot. The Appium driver
+    strips ``gridfleet:*`` markers from matched caps, so the registry is the
+    only mechanism that can identify a verification probe's slot."""
+    from app.sessions import probe_inflight
+
+    monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
+    existing = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-inflight",
+        connection_target="verify-inflight",
+        name="Verify Inflight",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        running_node = AppiumNode(
+            id=__import__("uuid").uuid4(),
+            device_id=existing.id,
+            port=4723,
+            grid_url="http://grid",
+            pid=1,
+            active_connection_target="live",
+        )
+    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=running_node))
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.wait_for_node_running",
+        AsyncMock(return_value=running_node),
+    )
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.converge_device_now",
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.capability_service.get_device_capabilities",
+        AsyncMock(return_value={"platformName": "Android"}),
+    )
+
+    device_key = str(existing.id)
+    seen_inflight: list[bool] = []
+
+    async def fake_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, None]:
+        seen_inflight.append(probe_inflight.is_probe_inflight(device_key))
+        return True, None
+
+    assert probe_inflight.is_probe_inflight(device_key) is False
+    await execution.run_probe(_job(), db_session, existing, probe_session_fn=fake_probe_session)
+    assert seen_inflight == [True]
+    assert probe_inflight.is_probe_inflight(device_key) is False
+
+
+async def test_run_probe_clears_inflight_when_probe_session_raises(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exceptions inside the probe must not leak inflight entries."""
+    from app.sessions import probe_inflight
+
+    monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
+    existing = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-inflight-raises",
+        connection_target="verify-inflight-raises",
+        name="Verify Inflight Raises",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        running_node = AppiumNode(
+            id=__import__("uuid").uuid4(),
+            device_id=existing.id,
+            port=4723,
+            grid_url="http://grid",
+            pid=1,
+            active_connection_target="live",
+        )
+    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=running_node))
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.wait_for_node_running",
+        AsyncMock(return_value=running_node),
+    )
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.converge_device_now",
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.capability_service.get_device_capabilities",
+        AsyncMock(return_value={"platformName": "Android"}),
+    )
+
+    device_key = str(existing.id)
+
+    async def failing_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, str | None]:
+        raise RuntimeError("probe blew up")
+
+    with pytest.raises(RuntimeError, match="probe blew up"):
+        await execution.run_probe(_job(), db_session, existing, probe_session_fn=failing_probe_session)
+    assert probe_inflight.is_probe_inflight(device_key) is False
+
+
 async def test_save_verified_context_and_cleanup_error_paths(
     db_session: AsyncSession,
     db_host: Host,

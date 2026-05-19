@@ -29,6 +29,7 @@ from app.grid import service as grid_service
 from app.grid.slot_parser import list_slot_sessions
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
+from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.settings import settings_service
@@ -93,6 +94,12 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
     sessions: dict[str, dict[str, Any]] = {}
     for parsed in list_slot_sessions(grid_data):
         if parsed.is_probe:
+            continue
+        # Appium strips client-supplied ``gridfleet:*`` markers from matched
+        # caps, so a viability probe's slot looks like an ordinary session
+        # here. The probe runner registers the device id while its Grid
+        # slot is alive; skip those to avoid persisting a phantom row.
+        if parsed.device_id is not None and probe_inflight.is_probe_inflight(str(parsed.device_id)):
             continue
         sessions[parsed.session_id] = {
             "connection_target": parsed.connection_target,

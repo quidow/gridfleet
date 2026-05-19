@@ -26,6 +26,7 @@ from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
+from app.sessions import probe_inflight
 from app.sessions import service_viability as session_viability
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import grid_probe_response_to_result
@@ -228,7 +229,16 @@ async def run_probe(
         device,
         active_connection_target=started_node.active_connection_target,
     )
-    ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+    # Register the device as inflight for the same reason as the viability
+    # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
+    # creates is otherwise indistinguishable from a real session in the
+    # session_sync loop and would be persisted as a phantom row.
+    device_key = str(device.id)
+    probe_inflight.mark_probe_started(device_key)
+    try:
+        ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+    finally:
+        probe_inflight.mark_probe_finished(device_key)
     await record_probe_session(
         db,
         device=device,
