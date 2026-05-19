@@ -607,6 +607,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         AsyncMock(return_value="cleanup failed"),
     )
     monkeypatch.setattr("app.devices.services.verification_execution.device_service.delete_device", AsyncMock())
+    monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
 
     outcome = await execution._finalize_success(db, context, job=_job(), node=None)
     assert outcome.status == "failed"
