@@ -1,0 +1,62 @@
+name: PR Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: PR Agent Review
+    if: >-
+      github.event.pull_request.head.repo.fork == false
+      && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR Agent action
+        uses: the-pr-agent/pr-agent@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+
+          # Model routing
+          config.model: "ollama_chat/kimi-k2.6:cloud"
+          config.fallback_models: '["ollama_chat/kimi-k2.6:cloud"]'
+          config.custom_model_max_tokens: "128000"
+          config.duplicate_examples: "true"
+          config.ai_timeout: "600"
+          ollama.api_base: "https://ollama.com"
+          ollama.api_key: ${{ secrets.OLLAMA_API_KEY }}
+
+          # Tool toggles
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "true"
+          github_action_config.pr_actions: '["opened","reopened","ready_for_review"]'
+
+          # Repo-aware review focus
+          pr_reviewer.extra_instructions: >-
+            GridFleet is a multi-component monorepo (backend FastAPI/Python 3.12,
+            agent FastAPI/Python 3.12, frontend React 19/TS, testkit). Specifically flag:
+            (1) driver-specific branching in core code (e.g. `if pack_id == "..."`)
+            that should live in driver-pack manifests or adapters;
+            (2) direct writes to `Device.operational_state` / `Device.hold` /
+            `Device.lifecycle_policy_state` outside the
+            `app.devices.services.lifecycle_state_machine.DeviceStateMachine.transition`
+            path;
+            (3) missing `lock_device` / `lock_devices` row locks around device-state
+            mutations;
+            (4) direct writes to `AppiumNode.desired_state` outside
+            `app.appium_nodes.services.desired_state_writer.write_desired_state`;
+            (5) leader-loop pattern violations (bare `asyncio.create_task` background
+            loops instead of leader-leased loops);
+            (6) missing Alembic revisions for SQLAlchemy model changes.
+          pr_code_suggestions.num_code_suggestions: "4"
