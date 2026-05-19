@@ -3,7 +3,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from sqlalchemy import select
@@ -13,24 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent_comm.operations import pack_device_lifecycle_action
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.devices.services.operator_node_lifecycle import (
-    operator_restart_intent,
-    operator_start_intent,
-    operator_stop_intents,
-    operator_stop_sources,
+    request_restart,
+    request_start,
+    request_stop,
 )
 from app.devices.services.service import delete_device
 from app.events import event_bus, queue_event_for_session
 from app.events.catalog import EventSeverity
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -71,30 +70,8 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
 
 
 async def _bulk_start_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    if device.host_id is None:
-        raise NodeManagerError(f"Device {device.id} has no host assigned")
-    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
-    node: AppiumNode | None = device.appium_node
-    if node is None:
-        node = AppiumNode(
-            device_id=device.id,
-            port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
-        )
-        db.add(node)
-        await db.flush()
-        device.appium_node = node
-    await revoke_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        sources=operator_stop_sources(device.id),
-        reason=f"{caller} start requested",
-    )
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=[operator_start_intent(device, desired_port)],
-        reason=f"{caller} start requested",
+    node = await request_start(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested"
     )
     await db.commit()
     await db.refresh(node)
@@ -105,26 +82,15 @@ async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> Appiu
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=operator_stop_intents(device.id),
-        reason=f"{caller} stop requested",
-    )
+    node = await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
     await db.commit()
     await db.refresh(node)
     return node
 
 
 async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    node: AppiumNode | None = device.appium_node
-    if node is None or not node.observed_running:
-        return await _bulk_start_one(db, device, caller)
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=[operator_restart_intent(device, node.port)],
-        reason=f"{caller} restart requested",
+    node = await request_restart(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested"
     )
     await db.commit()
     await db.refresh(node)

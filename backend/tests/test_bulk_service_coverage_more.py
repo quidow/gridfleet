@@ -6,10 +6,8 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
-from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
 
 
@@ -41,43 +39,45 @@ def _device(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-async def test_node_action_helpers_create_stop_and_restart(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After Task 8, _bulk_*_one are thin wrappers over request_start/stop/restart."""
     db = _db()
-    monkeypatch.setattr(bulk_service, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(
-        bulk_service.settings_service, "get", lambda key: "http://grid" if key == "grid.hub_url" else 30
-    )
-    revoke = AsyncMock()
-    register = AsyncMock()
-    monkeypatch.setattr(bulk_service, "revoke_intents_and_reconcile", revoke)
-    monkeypatch.setattr(bulk_service, "register_intents_and_reconcile", register)
+    returned_node = SimpleNamespace(observed_running=True, port=4723)
 
-    with pytest.raises(NodeManagerError, match="no host assigned"):
-        await bulk_service._bulk_start_one(db, _device(host_id=None), "operator")
+    request_start_mock = AsyncMock(return_value=returned_node)
+    request_stop_mock = AsyncMock(return_value=returned_node)
+    request_restart_mock = AsyncMock(return_value=returned_node)
+    monkeypatch.setattr(bulk_service, "request_start", request_start_mock)
+    monkeypatch.setattr(bulk_service, "request_stop", request_stop_mock)
+    monkeypatch.setattr(bulk_service, "request_restart", request_restart_mock)
 
+    # _bulk_start_one delegates to request_start and commits
     device = _device()
     node = await bulk_service._bulk_start_one(db, device, "operator")
-    assert isinstance(node, AppiumNode)
-    assert device.appium_node is node
-    assert node.port == 4723
-    assert revoke.await_count == 1
-    assert register.await_count == 1
+    assert node is returned_node
+    request_start_mock.assert_awaited_once()
+    assert request_start_mock.call_args.kwargs["reason"] == "operator start requested"
+    db.commit.assert_awaited()
 
-    stopped_node = SimpleNamespace(observed_running=True, port=4723)
-    stopped = await bulk_service._bulk_stop_one(db, _device(appium_node=stopped_node), "operator")
-    assert stopped is stopped_node
-    stop_intents = register.await_args.kwargs["intents"]
-    assert {intent.axis for intent in stop_intents} == {NODE_PROCESS, GRID_ROUTING}
-
-    restarted_node = SimpleNamespace(observed_running=True, port=4800)
-    restarted = await bulk_service._bulk_restart_one(db, _device(appium_node=restarted_node), "operator")
-    assert restarted is restarted_node
-    restart_intent = register.await_args.kwargs["intents"][0]
-    assert restart_intent.payload["desired_port"] == 4800
-    assert restart_intent.payload["transition_token"]
-
+    # _bulk_stop_one raises NodeManagerError when node is None or not running
     with pytest.raises(NodeManagerError, match="No running node"):
         await bulk_service._bulk_stop_one(db, _device(appium_node=None), "operator")
+    not_running_node = SimpleNamespace(observed_running=False, port=4723)
+    with pytest.raises(NodeManagerError, match="No running node"):
+        await bulk_service._bulk_stop_one(db, _device(appium_node=not_running_node), "operator")
+
+    # _bulk_stop_one delegates to request_stop when node is running
+    running_node = SimpleNamespace(observed_running=True, port=4723)
+    stopped = await bulk_service._bulk_stop_one(db, _device(appium_node=running_node), "operator")
+    assert stopped is returned_node
+    request_stop_mock.assert_awaited_once()
+    assert request_stop_mock.call_args.kwargs["reason"] == "operator stop requested"
+
+    # _bulk_restart_one delegates to request_restart and commits
+    restarted = await bulk_service._bulk_restart_one(db, _device(appium_node=running_node), "operator")
+    assert restarted is returned_node
+    request_restart_mock.assert_awaited_once()
+    assert request_restart_mock.call_args.kwargs["reason"] == "operator restart requested"
 
 
 async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch: pytest.MonkeyPatch) -> None:
