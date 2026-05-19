@@ -741,16 +741,17 @@ async def stop_node(
     *,
     caller: DesiredStateCaller = "operator_route",
 ) -> AppiumNode:
+    """Operator-initiated single-device stop. Routes through
+    ``operator_node_lifecycle.request_stop`` so operator:stop intents are the
+    single source of truth.
+    """
+    from app.devices.services.operator_node_lifecycle import request_stop  # noqa: PLC0415
+
     node = cast("AppiumNode | None", device.appium_node)
     if not node or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
 
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.stopped,
-        caller=caller,
-    )
+    node = await request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
     await db.commit()
     await db.refresh(node)
     return node
