@@ -20,6 +20,7 @@ from app.devices.services import state as device_state
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -403,7 +404,16 @@ async def run_session_viability_probe(
         await db.commit()
 
         capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
-        ok, error = await probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+        # Register the device as having an in-flight probe so the session_sync
+        # loop ignores the Grid slot the probe is about to create. Without this
+        # the slot is persisted as a phantom Session row: Appium strips the
+        # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
+        # markers from matched caps, so slot_parser cannot recognise it.
+        probe_inflight.mark_probe_started(device_key)
+        try:
+            ok, error = await probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+        finally:
+            probe_inflight.mark_probe_finished(device_key)
         await record_probe_session(
             db,
             device=device,
