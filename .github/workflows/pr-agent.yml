@@ -22,7 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: PR Agent action
-        uses: the-pr-agent/pr-agent@main
+        # Pinned 2026-05-19 (release 0.35.0). Bump after observing upstream main for breaking changes.
+        uses: the-pr-agent/pr-agent@0bd56c0508504c718cc03d504cd4ceb6725ba3c7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
