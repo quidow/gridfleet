@@ -114,7 +114,7 @@ below.
 |--------|-------|--------|-------|
 | `auto_recovery:node:{device_id}` (node_health path) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration; coordinates the reconciler's desired-state write window. |
 | `auto_recovery:node:{device_id}` (node_health path) | `transition_deadline` | Intentional snapshot | Window computed fresh at registration from `appium_reconciler.restart_window_sec`; not read from a live row field. |
-| `auto_recovery:node:{device_id}` (lifecycle_policy path) | _(no extra fields)_ | — | Only structural fields; lifecycle_policy path omits `transition_token`/`transition_deadline` (no precondition guard either — see lifecycle ownership below). |
+| `auto_recovery:node:{device_id}` (lifecycle_policy path) | _(no extra fields)_ | — | Only structural fields; lifecycle_policy path omits `transition_token`/`transition_deadline`. Precondition guard is now identical to the node_health path (`node_running`, `expected: False`) — see lifecycle ownership below. |
 | `auto_recovery:recovery:{device_id}` | `reason` | Intentional snapshot | Captures the human-readable trigger at the moment recovery is initiated ("Node health restart" or the policy `reason`). |
 | `active_session:{sid}` | _(no extra fields)_ | — | Structural only (`action`, `priority`). |
 | `run:{run_id}` (grid_routing) | `accepting_new_sessions` | Refresh-on-event | Re-registered on each allocation / restore-to-run call; structural for the axis. |
@@ -160,13 +160,13 @@ primary mechanism.
 | `health_failure:reservation:{device_id}` | Device restored to run or reservation released | `restore_run_if_needed` in `lifecycle_policy_actions`, `_release_device_from_run` in `service_lifecycle_release` | Covered. |
 | `auto_recovery:node:{device_id}` (node_health path) | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
 | `auto_recovery:recovery:{device_id}` (node_health path) | Node observed running | Same `node_running` precondition shared with sibling intent | Covered via precondition. |
-| `auto_recovery:node:{device_id}` (lifecycle_policy path) | (open) | None — no precondition, no explicit revoke | **Open:** this variant is registered by `attempt_auto_recovery` when it restarts a node but carries no `node_running` precondition and no explicit revoke. It persists until overwritten by the next recovery cycle. Recommend: add the same `node_running` precondition used by the node_health path. Track in follow-up. |
-| `auto_recovery:recovery:{device_id}` (lifecycle_policy path) | (open) | Same issue as sibling | **Open:** same recommendation as above. |
+| `auto_recovery:node:{device_id}` (lifecycle_policy path) | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
+| `auto_recovery:recovery:{device_id}` (lifecycle_policy path) | Node observed running | Same `node_running` precondition shared with sibling intent | Covered via precondition. |
 | `cooldown:{axis}:{run_id}` | TTL expiry / reservation released / `restore_device_to_run` | `_reconcile_expired_intents` (TTL path), `restore_device_to_run`, `_check_expired_cooldowns` (commit `57eb770a` preserves counter), `run_active` precondition fires when run reaches terminal state | Covered. |
 | `forced_release:{run_id}` | Run reaches terminal state | `run_active` precondition auto-retires intent; also cleared by `_release_device_from_run` revoke list | Covered. |
 | `run:{run_id}` (grid_routing) | Reservation released | `reservation_active` precondition auto-retires intent; also cleared explicitly by `_release_device_from_run` | Covered. |
 | `device_delete:{axis}:{device_id}` | Node stopped / device deleted | Device row deletion cascades `device_intents` rows via FK; also overwritten by subsequent operator start | Covered via cascade. |
-| `operator:start:{device_id}` | Node confirmed running (reconciler) | No explicit revoke — intent is permanent until overwritten by `operator:stop` or next `operator:start`. Reconciler applies it on every cycle until the node state matches. | Acceptable: operator start is idempotent and the `node_running` signal determines when the intent is "done". A follow-up could add a `node_running` precondition here too. |
+| `operator:start:{device_id}` | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
 | `operator:stop:node:{device_id}` | Operator starts the node | `_bulk_start_one` via `revoke_intents_and_reconcile(_operator_stop_sources(...))` | Covered. |
 | `operator:stop:grid:{device_id}` | Operator starts the node | Same revoke call as `operator:stop:node` | Covered. |
 | `maintenance:{axis}:{device_id}` | Operator exits maintenance | `device_hold` precondition auto-retires all three axes when `Device.hold != maintenance` | Covered via precondition. |

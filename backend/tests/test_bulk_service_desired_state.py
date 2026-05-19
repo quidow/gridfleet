@@ -80,6 +80,86 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     assert node.desired_state == AppiumDesiredState.running
 
 
+async def test_operator_start_intent_carries_node_running_precondition(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """_bulk_start_one must register operator:start with the node_running precondition.
+
+    Without it the row persists until the next operator action overwrites it; with it
+    the precondition sweep retires it once the node is observed running.
+    """
+    from sqlalchemy import select
+
+    from app.devices.models import DeviceIntent
+    from app.devices.services import bulk as bulk_service
+
+    device = await create_device(db_session, host_id=db_host.id, name="op-start-prec", verified=True)
+    device.appium_node = None  # avoid lazy-load in the same async context
+    await bulk_service._bulk_start_one(db_session, device, caller="bulk")
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert row.precondition == {
+        "kind": "node_running",
+        "device_id": str(device.id),
+        "expected": False,
+    }
+
+
+async def test_operator_restart_intent_carries_node_running_precondition(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """_bulk_restart_one (restart variant with transition_token) must also set the precondition."""
+    from sqlalchemy import select
+
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.models import DeviceIntent
+    from app.devices.services import bulk as bulk_service
+
+    device = await create_device(db_session, host_id=db_host.id, name="op-restart-prec", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://hub:4444",
+            pid=12345,
+            active_connection_target="device-1",
+            desired_state=AppiumDesiredState.running,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+
+    await bulk_service._bulk_restart_one(db_session, device, caller="bulk")
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert row.precondition == {
+        "kind": "node_running",
+        "device_id": str(device.id),
+        "expected": False,
+    }
+    # Restart-specific payload fields remain intact.
+    assert row.payload.get("transition_token") is not None
+    assert row.payload.get("transition_deadline") is not None
+
+
 async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     db_session: AsyncSession,
     db_host: Host,
