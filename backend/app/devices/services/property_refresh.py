@@ -76,6 +76,7 @@ async def _refresh_all_properties() -> None:
                 await pack_discovery.apply_pack_device_properties(db, device, data)
             except Exception:
                 logger.exception("Failed to apply refreshed properties for device %s", device.identity_value)
+                await db.rollback()
 
 
 async def property_refresh_loop() -> None:
