@@ -51,13 +51,14 @@ async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: py
     monkeypatch.setattr(bulk_service, "request_stop", request_stop_mock)
     monkeypatch.setattr(bulk_service, "request_restart", request_restart_mock)
 
-    # _bulk_start_one delegates to request_start and commits
+    # _bulk_start_one delegates to request_start; commit is the orchestrator's
+    # responsibility (_run_per_device_node_action._one commits per-device session).
     device = _device()
     node = await bulk_service._bulk_start_one(db, device, "operator")
     assert node is returned_node
     request_start_mock.assert_awaited_once()
     assert request_start_mock.call_args.kwargs["reason"] == "operator start requested"
-    db.commit.assert_awaited()
+    db.commit.assert_not_awaited()
 
     # _bulk_stop_one raises NodeManagerError when node is None or not running
     with pytest.raises(NodeManagerError, match="No running node"):

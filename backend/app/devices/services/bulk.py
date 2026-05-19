@@ -70,31 +70,22 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
 
 
 async def _bulk_start_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    node = await request_start(
+    return await request_start(
         db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested"
     )
-    await db.commit()
-    await db.refresh(node)
-    return node
 
 
 async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    node = await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
-    await db.commit()
-    await db.refresh(node)
-    return node
+    return await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
 
 
 async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    node = await request_restart(
+    return await request_restart(
         db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested"
     )
-    await db.commit()
-    await db.refresh(node)
-    return node
 
 
 async def _run_per_device_node_action(
