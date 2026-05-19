@@ -400,3 +400,50 @@ async def test_node_health_registers_node_running_precondition(
     expected = {"kind": "node_running", "device_id": str(device.id), "expected": False}
     assert node_intent.precondition == expected
     assert recovery_intent.precondition == expected
+
+
+@pytest.mark.db
+async def test_sweep_deletes_operator_start_intent_when_node_observed_running(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """End-to-end: once a node reaches observed_running=True, the operator:start
+    intent's node_running(expected=False) precondition flips to unsatisfied, and
+    reconcile_unsatisfied_preconditions deletes the row. This is the PR #301
+    sweep mechanism that retires stale restart intents in production.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="op-start-prec-sweep")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            pid=12345,
+            active_connection_target="dev-1",
+        )
+    db_session.add(node)
+    await db_session.commit()
+    assert node.observed_running, "fixture must seed an observed-running node"
+
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="operator start",
+        intents=[
+            IntentRegistration(
+                source=f"operator:start:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20},
+                precondition={"kind": "node_running", "device_id": str(device.id), "expected": False},
+            )
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    rows = (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    assert rows == [], (
+        f"node_running(expected=False) precondition must be unsatisfied while observed_running=True; "
+        f"sweep should delete the intent. Remaining: {[r.source for r in rows]}"
+    )
