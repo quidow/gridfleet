@@ -159,6 +159,14 @@ async def request_stop(
     """Register operator:stop intents (node + grid). Returns the node row for the
     convenience of route handlers; the caller column ``caller`` is accepted for
     symmetry with request_start/request_restart and future audit-logging use.
+
+    Invariant — callers must gate ``observed_running``: this helper only checks
+    that an ``AppiumNode`` row exists. Wrappers in ``reconciler_agent.stop_node``
+    and ``bulk._bulk_stop_one`` enforce ``observed_running`` upfront and raise
+    ``NodeManagerError("No running node for device …")`` with the
+    operator-facing error message. Registering operator:stop intents against an
+    already-stopped node is otherwise idempotent (the intent reconciler maps to
+    ``desired_state="stopped"`` either way).
     """
     del caller  # currently unused — kept for parity with request_start/request_restart
     node: AppiumNode | None = device.appium_node
