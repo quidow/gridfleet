@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +21,8 @@ from app.devices.services import capability as capability_service
 from app.devices.services import service as device_service
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
+from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import ready_operational_state, set_operational_state
@@ -36,6 +38,8 @@ from app.settings import settings_service
 device_is_virtual = pack_platform_catalog.device_is_virtual
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
@@ -182,6 +186,60 @@ async def stop_existing_managed_node_for_update(
     return None
 
 
+def _verification_intent_source(device_id: uuid.UUID) -> str:
+    return f"verification:{device_id}"
+
+
+async def _register_verification_node_intent(db: AsyncSession, device: Device) -> None:
+    """Register a standing ``node_process`` start intent that survives the
+    operator:start auto-retire precondition.
+
+    Initial verification targets unverified devices (``verified_at IS NULL``),
+    which makes them ineligible for the ``baseline:idle`` standing intent
+    injected by ``reconcile_device``. Without this guard, the moment
+    ``observed_running`` flips to True the precondition sweep in
+    ``intent_preconditions.reconcile_unsatisfied_preconditions`` deletes the
+    ``operator:start:{device_id}`` intent registered by ``start_node`` —
+    leaving zero active node_process intents, so ``evaluate_node_process``
+    derives ``desired_state=stopped`` and the appium reconciler kills the
+    verification node mid session-probe. ``expires_at`` is a safety net for
+    crashed verifications; the normal path revokes the intent in ``run_probe``'s
+    finally block.
+
+    Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
+    does not commit; the caller owns transaction boundaries.
+    """
+    startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
+    viability_timeout = int(settings_service.get("general.session_viability_timeout_sec"))
+    deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
+    await register_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=_verification_intent_source(device.id),
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+                expires_at=deadline,
+            )
+        ],
+        reason="verification probe in progress",
+    )
+
+
+async def _revoke_verification_node_intent(db: AsyncSession, device: Device) -> None:
+    """Revoke the standing verification node_process intent. Safe to call even
+    if registration never succeeded — ``revoke_intent`` no-ops on missing rows.
+    Caller commits.
+    """
+    await revoke_intents_and_reconcile(
+        db,
+        device_id=device.id,
+        sources=[_verification_intent_source(device.id)],
+        reason="verification probe completed",
+    )
+
+
 async def run_probe(
     job: dict[str, Any],
     db: AsyncSession,
@@ -190,70 +248,76 @@ async def run_probe(
     probe_session_fn: ProbeSessionFn,
 ) -> tuple[AppiumNode | None, str | None]:
     await set_stage(job, "node_start", "running")
+    await _register_verification_node_intent(db, device)
+    await db.commit()
     try:
-        node = await start_node(db, device, caller="verification")
-    except NodeManagerError as exc:
-        detail = str(exc)
-        await set_stage(job, "node_start", "failed", detail=detail)
-        await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
-        return None, detail
+        try:
+            node = await start_node(db, device, caller="verification")
+        except NodeManagerError as exc:
+            detail = str(exc)
+            await set_stage(job, "node_start", "failed", detail=detail)
+            await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
+            return None, detail
 
-    # Drive an immediate convergence pass so verification does not have to wait up
-    # to appium_reconciler.interval_sec for the leader loop to start the node.
-    # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
-    try:
-        await converge_device_now(device.id, db=db)
-    except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
-        logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
+        # Drive an immediate convergence pass so verification does not have to wait up
+        # to appium_reconciler.interval_sec for the leader loop to start the node.
+        # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
+        try:
+            await converge_device_now(device.id, db=db)
+        except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
+            logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
-    timeout = int(settings_service.get("appium.startup_timeout_sec"))
-    started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
-    if started_node is None:
-        detail = "Verification node did not reach running state within timeout"
-        await set_stage(job, "node_start", "failed", detail=detail)
-        await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
-        return node, detail
+        timeout = int(settings_service.get("appium.startup_timeout_sec"))
+        started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
+        if started_node is None:
+            detail = "Verification node did not reach running state within timeout"
+            await set_stage(job, "node_start", "failed", detail=detail)
+            await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
+            return node, detail
 
-    await set_stage(
-        job,
-        "node_start",
-        "passed",
-        detail="Verification node started",
-        data={"port": started_node.port, "pid": started_node.pid},
-    )
+        await set_stage(
+            job,
+            "node_start",
+            "passed",
+            detail="Verification node started",
+            data={"port": started_node.port, "pid": started_node.pid},
+        )
 
-    await set_stage(job, "session_probe", "running")
-    timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
-    capabilities = await capability_service.get_device_capabilities(
-        db,
-        device,
-        active_connection_target=started_node.active_connection_target,
-    )
-    # Register the device as inflight for the same reason as the viability
-    # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
-    # creates is otherwise indistinguishable from a real session in the
-    # session_sync loop and would be persisted as a phantom row.
-    device_key = str(device.id)
-    probe_inflight.mark_probe_started(device_key)
-    try:
-        ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+        await set_stage(job, "session_probe", "running")
+        timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
+        capabilities = await capability_service.get_device_capabilities(
+            db,
+            device,
+            active_connection_target=started_node.active_connection_target,
+        )
+        # Register the device as inflight for the same reason as the viability
+        # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
+        # creates is otherwise indistinguishable from a real session in the
+        # session_sync loop and would be persisted as a phantom row.
+        device_key = str(device.id)
+        probe_inflight.mark_probe_started(device_key)
+        try:
+            ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+        finally:
+            probe_inflight.mark_probe_finished(device_key)
+        await record_probe_session(
+            db,
+            device=device,
+            attempted_at=datetime.now(UTC),
+            result=grid_probe_response_to_result((ok, error)),
+            source=ProbeSource.verification,
+            capabilities=capabilities,
+        )
+        if ok:
+            await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
+            return started_node, None
+
+        failure = error or "Session probe failed"
+        await set_stage(job, "session_probe", "failed", detail=failure)
+        return started_node, failure
     finally:
-        probe_inflight.mark_probe_finished(device_key)
-    await record_probe_session(
-        db,
-        device=device,
-        attempted_at=datetime.now(UTC),
-        result=grid_probe_response_to_result((ok, error)),
-        source=ProbeSource.verification,
-        capabilities=capabilities,
-    )
-    if ok:
-        await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
-        return started_node, None
-
-    failure = error or "Session probe failed"
-    await set_stage(job, "session_probe", "failed", detail=failure)
-    return started_node, failure
+        await _revoke_verification_node_intent(db, device)
+        await db.commit()
 
 
 async def save_verified_context(
