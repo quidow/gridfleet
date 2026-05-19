@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 import asyncio
+from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_device_properties
+
+if TYPE_CHECKING:
+    import uuid
 from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
@@ -37,21 +44,32 @@ async def _refresh_all_properties() -> None:
         if not devices:
             return
 
-        async def _fetch(device: Device) -> tuple[Device, dict[str, object] | None]:
-            host = device.host
-            if host is None:
-                return device, None
-            try:
-                data = await pack_discovery.fetch_pack_device_properties(
-                    host, device, agent_get_pack_device_properties=get_pack_device_properties
-                )
-            except Exception:
-                logger.exception("Failed to fetch properties for device %s", device.identity_value)
-                return device, None
-            return device, data
+        # Parallelize across hosts but keep requests to a single agent sequential —
+        # the original loop processed one device at a time per host.
+        devices_by_host: dict[uuid.UUID, list[Device]] = defaultdict(list)
+        for device in devices:
+            devices_by_host[device.host_id].append(device)
 
-        results = await asyncio.gather(*(_fetch(device) for device in devices))
-        for device, data in results:
+        async def _fetch_host(host_devices: list[Device]) -> list[tuple[Device, dict[str, object] | None]]:
+            host_results: list[tuple[Device, dict[str, object] | None]] = []
+            for device in host_devices:
+                host = device.host
+                if host is None:
+                    host_results.append((device, None))
+                    continue
+                try:
+                    data = await pack_discovery.fetch_pack_device_properties(
+                        host, device, agent_get_pack_device_properties=get_pack_device_properties
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch properties for device %s", device.identity_value)
+                    host_results.append((device, None))
+                    continue
+                host_results.append((device, data))
+            return host_results
+
+        host_results = await asyncio.gather(*(_fetch_host(host_devices) for host_devices in devices_by_host.values()))
+        for device, data in (entry for host_batch in host_results for entry in host_batch):
             if data is None:
                 continue
             try:
