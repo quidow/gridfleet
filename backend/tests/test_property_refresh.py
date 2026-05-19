@@ -113,9 +113,7 @@ async def test_property_refresh_continues_after_device_failure(
     ):
         await _refresh_all_properties()
 
-    refreshed_identity_values = sorted(
-        await_call.args[1].identity_value for await_call in fetch_props.await_args_list
-    )
+    refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
     assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
 
 
