@@ -23,6 +23,18 @@ from tests.pack.factories import seed_test_packs
 
 
 @pytest.fixture(autouse=True)
+def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without this stub, deliver_agent_reconfigures attempts a real TCP connect
+    # to the test host IP (10.0.0.x) and waits the full 5s inline timeout.
+    # Tests that need to assert on the call override this with their own
+    # monkeypatch; pytest applies test-level patches on top of autouse ones.
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(return_value={"port": 4723}),
+    )
+
+
+@pytest.fixture(autouse=True)
 async def _seed_packs(db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     await db_session.commit()

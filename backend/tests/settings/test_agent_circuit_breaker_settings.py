@@ -9,6 +9,14 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker, CircuitState
 from app.settings import settings_service
 
 
+@pytest.fixture(autouse=True)
+def _stub_host_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Breaker unit tests don't care about Host-row enrichment. Stubbing the
+    # lookup keeps record_failure from opening an asyncpg connection whose
+    # cleanup tasks would leak across the test's event loop.
+    monkeypatch.setattr(breaker_module, "_resolve_host_identity", AsyncMock(return_value={}))
+
+
 @pytest.mark.asyncio
 async def test_breaker_uses_runtime_settings_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     overrides = {

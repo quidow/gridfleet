@@ -35,6 +35,14 @@ class _Cycle:
         return None
 
 
+async def _cancel_after_closing(awaitable: object, *_args: object, **_kwargs: object) -> None:
+    # Drop the doorbell.wait() coroutine that callers construct before invoking
+    # asyncio.wait_for, otherwise the mocked CancelledError leaves it unawaited.
+    if hasattr(awaitable, "close"):
+        awaitable.close()
+    raise asyncio.CancelledError
+
+
 class _Session:
     async def __aenter__(self) -> "_Session":
         return self
@@ -97,7 +105,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
-    monkeypatch.setattr(session_sync.asyncio, "wait_for", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
 
     with pytest.raises(asyncio.CancelledError):
         await session_sync.session_sync_loop()
@@ -110,7 +118,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(session_sync.asyncio, "wait_for", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
 
     with pytest.raises(asyncio.CancelledError):
         await session_sync.session_sync_loop()

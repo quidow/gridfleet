@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -27,6 +29,17 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
+
+
+@pytest.fixture(autouse=True)
+def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # deliver_agent_reconfigures otherwise blocks 5s per call waiting for a TCP
+    # connect to the test host IP. Cooldown flows trigger this from inline
+    # delivery and from the expired-intent reconciler sweep.
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(return_value={"port": 4723}),
+    )
 
 
 async def _seed_node(db_session: AsyncSession, device_id: object) -> AppiumNode:
