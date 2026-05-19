@@ -7,6 +7,9 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Iterable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
@@ -98,8 +101,20 @@ class DeviceReadiness:
     can_verify_now: bool
 
 
-async def assess_device_async(session: AsyncSession, device: Device) -> DeviceReadiness:
-    """Assess device readiness by querying the driver-pack catalog in the DB."""
+async def _load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, DriverPack]:
+    ids = {pid for pid in pack_ids if pid}
+    if not ids:
+        return {}
+    stmt = (
+        sa_select(DriverPack)
+        .where(DriverPack.id.in_(ids))
+        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
+    )
+    result = await session.scalars(stmt)
+    return {pack.id: pack for pack in result.all()}
+
+
+def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceReadiness:
     pack_id: str | None = getattr(device, "pack_id", None)
     platform_id: str | None = getattr(device, "platform_id", None)
     if not pack_id or not platform_id:
@@ -108,12 +123,6 @@ async def assess_device_async(session: AsyncSession, device: Device) -> DeviceRe
             missing_setup_fields=["driver_pack"],
             can_verify_now=False,
         )
-
-    pack = await session.scalar(
-        sa_select(DriverPack)
-        .where(DriverPack.id == pack_id)
-        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
-    )
     release = selected_release(pack.releases, pack.current_release) if pack is not None else None
     platform = (
         next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
@@ -143,6 +152,28 @@ async def assess_device_async(session: AsyncSession, device: Device) -> DeviceRe
     if assessment.readiness_state == "verified":
         return DeviceReadiness(readiness_state="verified", missing_setup_fields=[], can_verify_now=True)
     raise ValueError(f"Unknown readiness state {assessment.readiness_state!r}")
+
+
+async def assess_device_async(session: AsyncSession, device: Device) -> DeviceReadiness:
+    """Assess device readiness by querying the driver-pack catalog in the DB."""
+    pack_id: str | None = getattr(device, "pack_id", None)
+    if not pack_id or not getattr(device, "platform_id", None):
+        return _assess_device_with_pack(device, None)
+    packs = await _load_packs_by_ids(session, [pack_id])
+    return _assess_device_with_pack(device, packs.get(pack_id))
+
+
+async def assess_devices_async(session: AsyncSession, devices: Iterable[Device]) -> dict[uuid.UUID, DeviceReadiness]:
+    """Batch-assess readiness for many devices with a single pack catalog query."""
+    device_list = list(devices)
+    pack_ids = {pid for pid in (getattr(d, "pack_id", None) for d in device_list) if pid}
+    packs = await _load_packs_by_ids(session, pack_ids)
+    result: dict[uuid.UUID, DeviceReadiness] = {}
+    for device in device_list:
+        pack_id: str | None = getattr(device, "pack_id", None)
+        pack = packs.get(pack_id) if pack_id else None
+        result[device.id] = _assess_device_with_pack(device, pack)
+    return result
 
 
 async def is_ready_for_use_async(session: AsyncSession, device: Device) -> bool:

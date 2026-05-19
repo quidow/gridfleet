@@ -129,8 +129,9 @@ def test_payload_requires_reverification_when_tags_change() -> None:
 async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
     release = SimpleNamespace(platforms=[platform])
-    pack = SimpleNamespace(releases=[release], current_release=None)
-    session = SimpleNamespace(scalar=AsyncMock(return_value=pack))
+    pack = SimpleNamespace(id="pack", releases=[release], current_release=None)
+    scalars_result = SimpleNamespace(all=lambda: [pack])
+    session = SimpleNamespace(scalars=AsyncMock(return_value=scalars_result))
     device = SimpleNamespace(pack_id="pack", platform_id="android_mobile", device_type=None)
     monkeypatch.setattr(device_readiness, "selected_release", lambda _releases, _current: release)
     monkeypatch.setattr(

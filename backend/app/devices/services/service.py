@@ -235,11 +235,12 @@ async def list_devices_by_filters(
         wanted = filters.needs_attention
         kept: list[Device] = []
         reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
+        readiness_map = await device_readiness.assess_devices_async(db, devices)
         for device in devices:
             reservation_context = run_service.get_reservation_context_for_device(
                 reservation_map.get(device.id), device.id
             )
-            readiness = await device_readiness.assess_device_async(db, device)
+            readiness = readiness_map[device.id]
             policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
             summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
             health_summary = device_health.build_public_summary(device)

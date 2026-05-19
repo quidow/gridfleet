@@ -82,6 +82,7 @@ device_health = device_services.health
 device_intent_reconciler_loop = device_services.intent_reconciler.device_intent_reconciler_loop
 device_service = device_services.service
 fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
+assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 property_refresh_loop = device_services.property_refresh.property_refresh_loop
 run_reaper_loop = run_service_reaper.run_reaper_loop
@@ -373,12 +374,12 @@ async def check_availability(
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     available_devices = await device_service.list_devices(db, platform_id=platform_id, status="available")
-    matched = 0
-    for device in available_devices:
-        ready = await is_ready_for_use_async(db, device)
-        health_allows_allocation = device_health.device_allows_allocation(device)
-        if ready and health_allows_allocation:
-            matched += 1
+    readiness_map = await assess_devices_async(db, available_devices)
+    matched = sum(
+        1
+        for device in available_devices
+        if readiness_map[device.id].readiness_state == "verified" and device_health.device_allows_allocation(device)
+    )
     return {
         "available": matched >= count,
         "requested": count,
