@@ -205,6 +205,9 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device) -
     verification node mid session-probe. ``expires_at`` is a safety net for
     crashed verifications; the normal path revokes the intent in ``run_probe``'s
     finally block.
+
+    Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
+    does not commit; the caller owns transaction boundaries.
     """
     startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
     viability_timeout = int(settings_service.get("general.session_viability_timeout_sec"))
@@ -222,17 +225,19 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device) -
         ],
         reason="verification probe in progress",
     )
-    await db.commit()
 
 
 async def _revoke_verification_node_intent(db: AsyncSession, device: Device) -> None:
+    """Revoke the standing verification node_process intent. Safe to call even
+    if registration never succeeded — ``revoke_intent`` no-ops on missing rows.
+    Caller commits.
+    """
     await revoke_intents_and_reconcile(
         db,
         device_id=device.id,
         sources=[_verification_intent_source(device.id)],
         reason="verification probe completed",
     )
-    await db.commit()
 
 
 async def run_probe(
@@ -242,9 +247,10 @@ async def run_probe(
     *,
     probe_session_fn: ProbeSessionFn,
 ) -> tuple[AppiumNode | None, str | None]:
+    await set_stage(job, "node_start", "running")
     await _register_verification_node_intent(db, device)
+    await db.commit()
     try:
-        await set_stage(job, "node_start", "running")
         try:
             node = await start_node(db, device, caller="verification")
         except NodeManagerError as exc:
@@ -311,6 +317,7 @@ async def run_probe(
         return started_node, failure
     finally:
         await _revoke_verification_node_intent(db, device)
+        await db.commit()
 
 
 async def save_verified_context(
