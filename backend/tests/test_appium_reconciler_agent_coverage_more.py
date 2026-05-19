@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -449,32 +449,11 @@ async def test_start_stop_restart_node_guard_paths(
     assert restarted.transition_deadline is not None
 
 
-async def test_start_stop_wait_and_manual_recovery_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.refresh = AsyncMock()
-    db.flush = AsyncMock()
     db.commit = AsyncMock()
-    db.add = MagicMock()
     device_id = uuid.uuid4()
-    device = SimpleNamespace(id=device_id, host_id=uuid.uuid4(), appium_node=None)
-    monkeypatch.setattr(node_agent, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(node_agent, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
-    write = AsyncMock()
-    monkeypatch.setattr(node_agent, "write_desired_state", write)
-
-    node = await node_agent.start_node(db, device)
-    assert node.port == 4723
-    assert device.appium_node is node
-    write.assert_awaited_once()
-
-    with state_write_guard.bypass():
-        running = AppiumNode(
-            device_id=device_id, port=4724, grid_url="http://grid", pid=1, active_connection_target="dev"
-        )
-    stopped = await node_agent.stop_node(db, SimpleNamespace(id=device_id, appium_node=running))
-    assert stopped is running
-    assert write.await_args.kwargs["target"] == AppiumDesiredState.stopped
 
     node_id = uuid.uuid4()
     with state_write_guard.bypass():

@@ -3,8 +3,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from sqlalchemy import select
@@ -14,26 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent_comm.operations import pack_device_lifecycle_action
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
-from app.devices.services.intent_types import (
-    GRID_ROUTING,
-    NODE_PROCESS,
-    PRIORITY_AUTO_RECOVERY,
-    PRIORITY_OPERATOR_STOP,
-    IntentRegistration,
-    NodeRunningPrecondition,
-)
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
+from app.devices.services.operator_node_lifecycle import (
+    request_restart,
+    request_start,
+    request_stop,
+)
 from app.devices.services.service import delete_device
 from app.events import event_bus, queue_event_for_session
 from app.events.catalog import EventSeverity
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -73,129 +69,23 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-def _operator_stop_sources(device_id: uuid.UUID) -> list[str]:
-    return [f"operator:stop:node:{device_id}", f"operator:stop:grid:{device_id}"]
-
-
-def _operator_start_source(device_id: uuid.UUID) -> str:
-    return f"operator:start:{device_id}"
-
-
-def _operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:
-    """Precondition retiring an operator:start intent once the node is observed running.
-
-    ``expected: False`` means "satisfied while the node is NOT running". The
-    intent represents an operator's desire to start the node, so once the node
-    reaches ``observed_running == True`` the precondition flips and the
-    reconciler sweep deletes the row.
-    """
-    return {
-        "kind": "node_running",
-        "device_id": str(device_id),
-        "expected": False,
-    }
-
-
-def _operator_start_intent(device: Device, desired_port: int) -> IntentRegistration:
-    return IntentRegistration(
-        source=_operator_start_source(device.id),
-        axis=NODE_PROCESS,
-        payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY, "desired_port": desired_port},
-        precondition=_operator_start_precondition(device.id),
-    )
-
-
-def _operator_restart_intent(device: Device, desired_port: int) -> IntentRegistration:
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-    deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
-    return IntentRegistration(
-        source=_operator_start_source(device.id),
-        axis=NODE_PROCESS,
-        payload={
-            "action": "start",
-            "priority": PRIORITY_AUTO_RECOVERY,
-            "desired_port": desired_port,
-            "transition_token": str(uuid.uuid4()),
-            "transition_deadline": deadline.isoformat(),
-        },
-        precondition=_operator_start_precondition(device.id),
-    )
-
-
-def _operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
-    return [
-        IntentRegistration(
-            source=f"operator:stop:node:{device_id}",
-            axis=NODE_PROCESS,
-            payload={"action": "stop", "priority": PRIORITY_OPERATOR_STOP, "stop_mode": "hard"},
-        ),
-        IntentRegistration(
-            source=f"operator:stop:grid:{device_id}",
-            axis=GRID_ROUTING,
-            payload={"accepting_new_sessions": False, "priority": PRIORITY_OPERATOR_STOP},
-        ),
-    ]
-
-
 async def _bulk_start_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    if device.host_id is None:
-        raise NodeManagerError(f"Device {device.id} has no host assigned")
-    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
-    node: AppiumNode | None = device.appium_node
-    if node is None:
-        node = AppiumNode(
-            device_id=device.id,
-            port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
-        )
-        db.add(node)
-        await db.flush()
-        device.appium_node = node
-    await revoke_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        sources=_operator_stop_sources(device.id),
-        reason=f"{caller} start requested",
+    return await request_start(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested"
     )
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=[_operator_start_intent(device, desired_port)],
-        reason=f"{caller} start requested",
-    )
-    await db.commit()
-    await db.refresh(node)
-    return node
 
 
 async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=_operator_stop_intents(device.id),
-        reason=f"{caller} stop requested",
-    )
-    await db.commit()
-    await db.refresh(node)
-    return node
+    return await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
 
 
 async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
-    node: AppiumNode | None = device.appium_node
-    if node is None or not node.observed_running:
-        return await _bulk_start_one(db, device, caller)
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=[_operator_restart_intent(device, node.port)],
-        reason=f"{caller} restart requested",
+    return await request_restart(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested"
     )
-    await db.commit()
-    await db.refresh(node)
-    return node
 
 
 async def _run_per_device_node_action(
