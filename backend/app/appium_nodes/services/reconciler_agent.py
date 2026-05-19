@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -18,7 +17,7 @@ from app.agent_comm import operations as agent_operations
 from app.agent_comm.error_codes import AgentErrorCode
 from app.agent_comm.operations import appium_start, appium_stop, parse_agent_error_detail, response_json_dict
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import (
     capability_keys as appium_capability_keys,
 )
@@ -34,7 +33,6 @@ from app.appium_nodes.services.common import (
     get_default_plugins,
     node_state_severity,
 )
-from app.appium_nodes.services.desired_state_writer import DesiredStateCaller, write_desired_state
 from app.appium_nodes.services.reconciler_allocation import (
     APPIUM_PORT_CAPABILITY,
     candidate_ports,
@@ -75,6 +73,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.devices.models import Device
     from app.hosts.models import Host
 
@@ -782,31 +781,17 @@ async def restart_node(
     *,
     caller: DesiredStateCaller = "operator_restart",
 ) -> AppiumNode:
+    """Operator-initiated single-device restart. Routes through
+    ``operator_node_lifecycle.request_restart`` so the operator:start intent
+    payload is the single source of truth (with fresh transition_token and
+    expires_at on every restart).
+    """
+    from app.devices.services.operator_node_lifecycle import request_restart  # noqa: PLC0415
+
     if not device.appium_node or not device.appium_node.observed_running:
         return await start_node(db, device, caller=caller)
 
-    node = cast("AppiumNode", device.appium_node)
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller=caller,
-        desired_port=node.port,
-        transition_token=uuid.uuid4(),
-        transition_deadline=datetime.now(UTC) + timedelta(seconds=window_sec),
-    )
-    # Operator-driven restart signals "give the device another chance" —
-    # clear the review-shelving flag so automated recovery picks it back up.
-    if caller == "operator_restart":
-        from app.devices.services.review import clear_review_required  # noqa: PLC0415
-
-        await clear_review_required(
-            db,
-            device,
-            reason="Operator restarted Appium node",
-            source="restart_node",
-        )
+    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
     await db.commit()
     await db.refresh(node)
     return node

@@ -103,20 +103,42 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     db_session.add(stale_intent)
     await db_session.commit()
 
+    # Run reconcile WITHOUT any operator action — the stale intent must continue
+    # to mis-assert desired_port=4724 because the precondition/expires_at sweeps
+    # both skip rows where those columns are NULL. This documents the bug class
+    # that pre-#301 stale rows fall into.
     await reconcile_device(db_session, device.id)
+    await db_session.refresh(node)
+    assert node.desired_port == 4724, (
+        "pre-fix sanity check: the stale pre-#301 row should still mis-assert "
+        "desired_port=4724 before any operator action refreshes the intent"
+    )
+
+    # Now simulate an operator pressing Restart through the unified path. This
+    # upserts the operator:start intent with a fresh transition_token,
+    # transition_deadline, expires_at, AND precondition — overwriting the stale
+    # payload. Reconcile inside register_intents_and_reconcile then writes the
+    # AppiumNode desired_port from the fresh payload (= node.port = 4725).
+    await request_restart(db_session, device, caller="operator_restart", reason="operator restart")
     await db_session.refresh(node)
 
     assert node.desired_port == 4725, (
-        f"intent_reconciler reasserted stale desired_port={node.desired_port}; "
-        "the unified intent path must refresh or expire stale operator:start payloads"
+        f"after a unified-path restart, desired_port should match the running port; got {node.desired_port}"
     )
 
-    remaining = (
-        (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.payload.get("transition_token") != str(stale_token), (
+        "stale transition_token must be replaced by the fresh restart"
     )
-    assert all(intent.payload.get("transition_token") != str(stale_token) for intent in remaining), (
-        "stale transition_token must not survive after reconcile"
-    )
+    assert intent.expires_at is not None, "fresh restart must set expires_at"
+    assert intent.expires_at > datetime.now(UTC), "fresh expires_at must be in the future"
 
 
 def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(

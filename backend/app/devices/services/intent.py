@@ -117,7 +117,17 @@ class IntentService:
         rows = (await self._db.execute(upsert)).all()
         await self.mark_dirty(device_id, reason=reason)
         ids_by_source = {source: intent_id for intent_id, source in rows}
-        result = await self._db.execute(select(DeviceIntent).where(DeviceIntent.id.in_(ids_by_source.values())))
+        # Use populate_existing=True so that the SQLAlchemy identity map is
+        # refreshed from the upserted DB row rather than the cached stale object.
+        # Without this, a second upsert on a pre-existing row (e.g. a restart
+        # overwriting a stale operator:start intent) would return the old payload
+        # from the identity map, and the reconciler that runs immediately after
+        # would re-assert the stale desired_port/transition_token.
+        result = await self._db.execute(
+            select(DeviceIntent)
+            .where(DeviceIntent.id.in_(ids_by_source.values()))
+            .execution_options(populate_existing=True)
+        )
         intents_by_id = {intent.id: intent for intent in result.scalars().all()}
         return [intents_by_id[ids_by_source[intent.source]] for intent in intents]
 
