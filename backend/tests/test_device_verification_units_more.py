@@ -21,6 +21,19 @@ from tests.helpers import create_device_record
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
+@pytest.fixture(autouse=True)
+def _stub_converge_device_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    # run_probe wraps converge_device_now in a best-effort try/except, but the
+    # real implementation still issues an httpx connect to the test host IP
+    # before the error is swallowed. Stubbing here keeps each run_probe call
+    # from paying the connect-timeout penalty.
+    monkeypatch.setattr(
+        "app.devices.services.verification_execution.converge_device_now",
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+
+
 def _job() -> dict[str, object]:
     return new_job("unit-job")
 
