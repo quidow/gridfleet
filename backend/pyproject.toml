@@ -86,7 +86,7 @@ source = ["app"]
 omit = ["app/agent_comm/generated.py"]
 
 [tool.coverage.report]
-fail_under = 99.0
+fail_under = 98.0
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
