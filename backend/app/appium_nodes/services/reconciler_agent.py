@@ -714,44 +714,22 @@ async def start_node(
     *,
     caller: DesiredStateCaller = "operator_route",
 ) -> AppiumNode:
+    """Operator-initiated single-device start.
+
+    Routes through ``operator_node_lifecycle.request_start`` so the operator:start
+    intent payload is the single source of truth. Direct ``write_desired_state``
+    calls are forbidden in operator code paths (see plan
+    ``2026-05-19-unified-operator-node-intent-path.md``).
+    """
+    from app.devices.services.operator_node_lifecycle import request_start  # noqa: PLC0415
+
     await db.refresh(device, attribute_names=["appium_node"])
     if device.appium_node and device.appium_node.observed_running:
         raise NodeManagerError(f"Node already running for device {device.id}")
     if caller != "verification" and not await is_ready_for_use_async(db, device):
         raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
-    if device.host_id is None:
-        raise NodeManagerError(f"Device {device.id} has no host assigned")
-    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
-    if device.appium_node is None:
-        node = AppiumNode(
-            device_id=device.id,
-            port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
-        )
-        db.add(node)
-        await db.flush()
-        device.appium_node = node
-
-    node = cast("AppiumNode", device.appium_node)
-    await write_desired_state(
-        db,
-        node=node,
-        target=AppiumDesiredState.running,
-        caller=caller,
-        desired_port=desired_port,
-    )
-    # Operator-driven start signals "give the device another chance" — clear
-    # the review-shelving flag so automated recovery picks it back up.
-    if caller in {"operator_route", "operator_restart"}:
-        from app.devices.services.review import clear_review_required  # noqa: PLC0415
-
-        await clear_review_required(
-            db,
-            device,
-            reason="Operator started Appium node",
-            source="start_node",
-        )
+    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested")
     await db.commit()
     await db.refresh(node)
     return node

@@ -104,6 +104,7 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             # through the reconciler.
             "app.devices.services.bulk",
             "app.devices.services.lifecycle_policy",
+            "app.devices.services.operator_node_lifecycle",
             "app.seeding.scenarios.full_demo",
         }
     ),
