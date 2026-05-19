@@ -50,6 +50,7 @@ from app.devices.services.lifecycle_policy_actions import (
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.devices.services.operator_node_lifecycle import request_restart, request_start, request_stop
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
@@ -717,11 +718,8 @@ async def start_node(
 
     Routes through ``operator_node_lifecycle.request_start`` so the operator:start
     intent payload is the single source of truth. Direct ``write_desired_state``
-    calls are forbidden in operator code paths (see plan
-    ``2026-05-19-unified-operator-node-intent-path.md``).
+    calls are forbidden in operator code paths.
     """
-    from app.devices.services.operator_node_lifecycle import request_start  # noqa: PLC0415
-
     await db.refresh(device, attribute_names=["appium_node"])
     if device.appium_node and device.appium_node.observed_running:
         raise NodeManagerError(f"Node already running for device {device.id}")
@@ -744,8 +742,6 @@ async def stop_node(
     ``operator_node_lifecycle.request_stop`` so operator:stop intents are the
     single source of truth.
     """
-    from app.devices.services.operator_node_lifecycle import request_stop  # noqa: PLC0415
-
     node = cast("AppiumNode | None", device.appium_node)
     if not node or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
@@ -786,8 +782,6 @@ async def restart_node(
     payload is the single source of truth (with fresh transition_token and
     expires_at on every restart).
     """
-    from app.devices.services.operator_node_lifecycle import request_restart  # noqa: PLC0415
-
     if not device.appium_node or not device.appium_node.observed_running:
         return await start_node(db, device, caller=caller)
 
