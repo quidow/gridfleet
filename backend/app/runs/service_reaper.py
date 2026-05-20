@@ -2,7 +2,7 @@ import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session
@@ -21,8 +21,11 @@ NON_TERMINAL_STATES = [s for s in RunState if s not in TERMINAL_STATES]
 async def _reap_stale_runs(db: AsyncSession) -> None:
     now = datetime.now(UTC)
 
-    heartbeat_deadline_expr = TestRun.last_heartbeat + TestRun.heartbeat_timeout_sec * text("interval '1 second'")
-    ttl_deadline_expr = TestRun.created_at + TestRun.ttl_minutes * text("interval '1 minute'")
+    # Postgres make_interval(years, months, weeks, days, hours, mins, secs).
+    heartbeat_deadline_expr = TestRun.last_heartbeat + func.make_interval(
+        0, 0, 0, 0, 0, 0, TestRun.heartbeat_timeout_sec
+    )
+    ttl_deadline_expr = TestRun.created_at + func.make_interval(0, 0, 0, 0, 0, TestRun.ttl_minutes)
     stmt = select(TestRun).where(
         TestRun.state.in_(NON_TERMINAL_STATES),
         or_(
