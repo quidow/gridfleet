@@ -709,11 +709,9 @@ async def test_status_reports_running_and_stopped() -> None:
     response.json.return_value = {"value": {"ready": True}}
 
     client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = False
     client.get = AsyncMock(return_value=response)
 
-    with patch("agent_app.appium.process.httpx.AsyncClient", return_value=client):
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
         running = await manager.status(4723)
 
     assert running["running"] is True
@@ -722,7 +720,7 @@ async def test_status_reports_running_and_stopped() -> None:
 
     proc.set_exit(1)
     client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with patch("agent_app.appium.process.httpx.AsyncClient", return_value=client):
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
         stopped = await manager.status(4723)
 
     assert stopped == {"running": False, "port": 4723}
@@ -1859,39 +1857,30 @@ async def test_stop_pending_task_cancelled_when_stop_is_current_task() -> None:
 
 async def test_fetch_appium_status_http_error_returns_none() -> None:
     manager = AppiumProcessManager()
-    with patch("agent_app.appium.process.httpx.AsyncClient") as client_cls:
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
-        client_cls.return_value = client
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
         assert await manager._fetch_appium_status(4723) is None
 
 
 async def test_fetch_appium_status_non_200_returns_none() -> None:
     manager = AppiumProcessManager()
-    with patch("agent_app.appium.process.httpx.AsyncClient") as client_cls:
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        response = MagicMock()
-        response.status_code = 503
-        client.get = AsyncMock(return_value=response)
-        client_cls.return_value = client
+    response = MagicMock()
+    response.status_code = 503
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
         assert await manager._fetch_appium_status(4723) is None
 
 
 async def test_fetch_appium_status_malformed_json_returns_none() -> None:
     manager = AppiumProcessManager()
-    with patch("agent_app.appium.process.httpx.AsyncClient") as client_cls:
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = ["not", "a", "dict"]
-        client.get = AsyncMock(return_value=response)
-        client_cls.return_value = client
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = ["not", "a", "dict"]
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
         assert await manager._fetch_appium_status(4723) is None
 
 

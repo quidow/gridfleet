@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from agent_app import http_client
 from agent_app.appium.exceptions import (
     AlreadyRunningError,
     DeviceNotFoundError,
@@ -1184,9 +1185,10 @@ class AppiumProcessManager:
             self._log_tasks.pop(port, None)
 
     async def _fetch_appium_status(self, port: int) -> dict[str, Any] | None:
+        client = http_client.get_client()
+        url = _loopback_appium_origin(port).join("/status")
         try:
-            async with httpx.AsyncClient(base_url=_loopback_appium_origin(port)) as client:
-                resp = await client.get("/status", timeout=2)
+            resp = await client.get(url, timeout=2)
         except httpx.HTTPError:
             return None
         if resp.status_code != 200:

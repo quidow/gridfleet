@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_app import observability as agent_observability
 from agent_app.logs.schemas import AgentLogBatch, ShippedLogLine
@@ -147,18 +147,19 @@ class LogShipperTask:
                 return out
 
     async def _ship_with_retry(self, batch: list[ShippedLogLine]) -> None:
+        payload = AgentLogBatch(boot_id=self._boot_id, lines=batch)
+        serialized = payload.model_dump(mode="json")
+        if self._base_url:
+            url = f"{self._base_url}/agent/{self._host_id}/log-batch"
+        else:
+            url = f"/agent/{self._host_id}/log-batch"
+        post_kwargs: dict[str, Any] = {"json": serialized}
+        if self._auth is not None:
+            post_kwargs["auth"] = self._auth
         delay = self._backoff_initial
         while not self._stop.is_set():
             try:
-                payload = AgentLogBatch(boot_id=self._boot_id, lines=batch)
-                if self._base_url:
-                    url = f"{self._base_url}/agent/{self._host_id}/log-batch"
-                else:
-                    url = f"/agent/{self._host_id}/log-batch"
-                if self._auth is None:
-                    response = await self._client.post(url, json=payload.model_dump(mode="json"))
-                else:
-                    response = await self._client.post(url, json=payload.model_dump(mode="json"), auth=self._auth)
+                response = await self._client.post(url, **post_kwargs)
             except Exception as exc:
                 logger.warning("log batch network error: %s", exc)
             else:
