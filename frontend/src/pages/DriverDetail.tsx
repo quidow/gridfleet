@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { exportPack } from '../api/driverPackAuthoring';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import Card from '../components/ui/Card';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import FetchError from '../components/ui/FetchError';
+import { Card } from '../components/ui/Card';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { FetchError } from '../components/ui/FetchError';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
 import {
   useDeleteDriverPack,
@@ -15,12 +15,12 @@ import {
 import { useSetDriverPackState } from '../hooks/useDriverPacks';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DriverPack } from '../types/driverPacks';
-import DriverDetailStatusPills from './driverDetail/DriverDetailStatusPills';
-import DriverHostsPanel from './driverDetail/DriverHostsPanel';
-import DriverOperationsPanel from './driverDetail/DriverOperationsPanel';
-import DriverOverviewPanel from './driverDetail/DriverOverviewPanel';
-import DriverPlatformCards from './driverDetail/DriverPlatformCards';
-import DriverRuntimePanel from './driverDetail/DriverRuntimePanel';
+import { DriverDetailStatusPills } from './driverDetail/DriverDetailStatusPills';
+import { DriverHostsPanel } from './driverDetail/DriverHostsPanel';
+import { DriverOperationsPanel } from './driverDetail/DriverOperationsPanel';
+import { DriverOverviewPanel } from './driverDetail/DriverOverviewPanel';
+import { DriverPlatformCards } from './driverDetail/DriverPlatformCards';
+import { DriverRuntimePanel } from './driverDetail/DriverRuntimePanel';
 import { hasPackOperations } from './driverDetail/driverDetailFormat';
 
 const BASE_TABS = [
@@ -108,7 +108,7 @@ function ReleasesPanel({ packId }: { packId: string }) {
   );
 }
 
-export default function DriverDetail() {
+export function DriverDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const packId = decodeURIComponent(id ?? '');

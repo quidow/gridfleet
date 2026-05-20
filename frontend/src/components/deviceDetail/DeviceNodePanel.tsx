@@ -16,9 +16,9 @@ import {
   getPendingDeviceActionLabel,
 } from '../../lib/devicePendingAction';
 import type { DeviceDetail } from '../../types';
-import Button from '../ui/Button';
-import DefinitionList from '../ui/DefinitionList';
-import ForceClearRestartButton from './ForceClearRestartButton';
+import { Button } from '../ui/Button';
+import { DefinitionList } from '../ui/DefinitionList';
+import { ForceClearRestartButton } from './ForceClearRestartButton';
 import { formatDate } from './utils';
 
 type Props = {
@@ -36,7 +36,7 @@ function lifecycleActionLabel(action: string): string {
   return LIFECYCLE_ACTION_LABELS[action] ?? action.replaceAll('_', ' ').replace(/^\w/, (char) => char.toUpperCase());
 }
 
-export default function DeviceNodePanel({ device }: Props) {
+export function DeviceNodePanel({ device }: Props) {
   const startNode = useStartNode();
   const stopNode = useStopNode();
   const restartNode = useRestartNode();

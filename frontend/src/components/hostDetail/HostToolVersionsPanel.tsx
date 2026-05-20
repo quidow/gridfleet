@@ -11,7 +11,7 @@ type Props = {
   host: HostRead;
 };
 
-export default function HostToolVersionsPanel({ host }: Props) {
+export function HostToolVersionsPanel({ host }: Props) {
   const hostId = host.id;
   const hostOnline = host.status === 'online';
   const missingPrerequisites = host.missing_prerequisites ?? [];

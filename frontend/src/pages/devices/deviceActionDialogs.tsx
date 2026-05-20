@@ -1,4 +1,4 @@
-import Modal from '../../components/ui/Modal';
+import { Modal } from '../../components/ui/Modal';
 import { Button, Checkbox, Field, Textarea } from '../../components/ui';
 
 type DeviceActionErrorLine = {

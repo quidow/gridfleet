@@ -86,7 +86,7 @@ type Props = {
   diagnosticsError: unknown;
 };
 
-export default function HostDiagnosticsPanel({ host, hostDiagnostics, diagnosticsLoading, diagnosticsError }: Props) {
+export function HostDiagnosticsPanel({ host, hostDiagnostics, diagnosticsLoading, diagnosticsError }: Props) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface-1">
       <div className="border-b border-border px-5 py-4">

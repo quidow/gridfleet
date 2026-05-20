@@ -75,7 +75,7 @@ function Gauge({ label, percent, detail }: { label: string; percent: number | nu
 // alongside live telemetry: CPU busy-cores is derived from cpu_percent * cores, and the
 // memory/disk totals act as fallbacks when telemetry samples omit memory_total_mb /
 // disk_total_gb (older agent versions that emit percent-only telemetry).
-export default function HostOverviewResourceStrip({
+export function HostOverviewResourceStrip({
   hostId,
   totalCpuCores,
   totalMemoryMb,

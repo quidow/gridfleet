@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
-import DeviceLogsEmptyPanel from './DeviceLogsEmptyPanel';
+import { DeviceLogsEmptyPanel } from './DeviceLogsEmptyPanel';
 
 type Props = {
   logsData?: { lines: string[]; count: number };
 };
 
-export default function DeviceLogsPanel({ logsData }: Props) {
+export function DeviceLogsPanel({ logsData }: Props) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const lines = Array.isArray(logsData?.lines) ? logsData.lines : [];
   const count = logsData?.count ?? lines.length;

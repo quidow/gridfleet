@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
-import HostOverviewResourceStrip from './HostOverviewResourceStrip';
+import { HostOverviewResourceStrip } from './HostOverviewResourceStrip';
 import { formatCpuUsage } from './hostResourceFormatters';
 
 const sampleWithTotals = {

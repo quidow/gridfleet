@@ -7,7 +7,7 @@ import { useAuth } from '../context/auth';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { normalizeNextTarget } from '../lib/authRouting';
 
-export default function Login() {
+export function Login() {
   usePageTitle('Login');
   const auth = useAuth();
   const navigate = useNavigate();

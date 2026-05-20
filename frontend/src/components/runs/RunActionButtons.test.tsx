@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import RunActionButtons from './RunActionButtons';
+import { RunActionButtons } from './RunActionButtons';
 
 describe('RunActionButtons', () => {
   it('renders Cancel and Force Release as buttons', () => {

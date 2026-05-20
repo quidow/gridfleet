@@ -14,7 +14,7 @@ type Props = {
   onToggleRedact: () => void;
 };
 
-export default function DiagnosticBundleModal({
+export function DiagnosticBundleModal({
   open,
   title,
   payload,

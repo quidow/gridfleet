@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import ReservationPill from './ReservationPill';
+import { ReservationPill } from './ReservationPill';
 
 describe('ReservationPill', () => {
   it('renders a link to the reserving run', () => {

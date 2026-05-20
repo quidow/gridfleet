@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import DeviceDetailStatusPills from './DeviceDetailStatusPills';
+import { DeviceDetailStatusPills } from './DeviceDetailStatusPills';
 import type { DeviceDetail } from '../../types';
 
 function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {

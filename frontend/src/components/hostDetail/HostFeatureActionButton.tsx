@@ -10,7 +10,7 @@ export interface HostFeatureActionButtonProps {
   action: PackFeatureAction;
 }
 
-export default function HostFeatureActionButton({
+export function HostFeatureActionButton({
   hostId,
   packId,
   featureId,

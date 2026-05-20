@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import ProportionalBar from './ProportionalBar';
+import { ProportionalBar } from './ProportionalBar';
 
 describe('ProportionalBar', () => {
   it('renders linked legend rows', () => {

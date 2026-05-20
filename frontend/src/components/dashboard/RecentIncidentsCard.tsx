@@ -2,10 +2,10 @@ import { Link } from 'react-router-dom';
 import { useDevices } from '../../hooks/useDevices';
 import { useRecentLifecycleIncidents } from '../../hooks/useLifecycle';
 import { LifecyclePolicyBadge } from '../LifecyclePolicyBadge';
-import Badge from '../ui/Badge';
-import Card from '../ui/Card';
-import FetchError from '../ui/FetchError';
-import SectionSkeleton from '../ui/SectionSkeleton';
+import { Badge } from '../ui/Badge';
+import { Card } from '../ui/Card';
+import { FetchError } from '../ui/FetchError';
+import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { deriveDashboardFleetSummary, groupLifecycleIncidents, incidentToneFromEventType } from './dashboardSummary';
 
 const MAX_INCIDENTS = 4;
@@ -22,7 +22,7 @@ function compactRelativeTime(isoString: string): string {
   return `${Math.round(absH / 24)}d`;
 }
 
-export default function RecentIncidentsCard() {
+export function RecentIncidentsCard() {
   const devicesQuery = useDevices();
   const incidentsQuery = useRecentLifecycleIncidents({ limit: 20 });
   const { data, isError, status, refetch } = incidentsQuery;

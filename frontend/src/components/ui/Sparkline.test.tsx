@@ -1,7 +1,7 @@
 // frontend/src/components/ui/Sparkline.test.tsx
 import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import Sparkline from './Sparkline';
+import { Sparkline } from './Sparkline';
 
 describe('Sparkline', () => {
   it('renders an svg with a polyline path derived from values', () => {

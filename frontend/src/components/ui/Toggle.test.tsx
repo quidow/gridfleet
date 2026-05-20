@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import Toggle from './Toggle';
+import { Toggle } from './Toggle';
 
 describe('Toggle', () => {
   it('exposes role=switch and aria-checked', () => {

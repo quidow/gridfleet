@@ -63,7 +63,7 @@ function renderDescription(subtitle: ReactNode, updatedLabel: string | null): Re
   return updatedLabel ? `Updated ${updatedLabel}` : null;
 }
 
-export default function PageHeader({ title, subtitle, updatedAt, summary, actions }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, updatedAt, summary, actions }: PageHeaderProps) {
   const now = useNow();
   const updatedLabel = formatUpdatedAt(updatedAt, now);
   const description = renderDescription(subtitle, updatedLabel);

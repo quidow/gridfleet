@@ -4,7 +4,7 @@ import { deviceChipStatus } from '../../lib/deviceState';
 import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import type { DeviceDetail } from '../../types';
 import { formatDate } from './utils';
-import DefinitionList from '../ui/DefinitionList';
+import { DefinitionList } from '../ui/DefinitionList';
 import { EMPTY_GLYPH } from '../../utils/emptyValue';
 
 type Props = {
@@ -64,7 +64,7 @@ function tagsList(tags: DeviceDetail['tags']) {
   );
 }
 
-export default function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
+export function DeviceInfoPanel({ device, hostLabel, onEdit }: Props) {
   const reservation = device.reservation;
   const reservationLabel = reservation
     ? `${reservation.run_name}${reservation.excluded ? ' (excluded)' : ''}`

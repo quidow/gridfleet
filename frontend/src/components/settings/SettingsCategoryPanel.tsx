@@ -1,8 +1,8 @@
 import { LoadingSpinner } from '../LoadingSpinner';
-import SettingsSection from '../SettingsSection';
+import { SettingsSection } from '../SettingsSection';
 import { useBulkUpdateSettings, useResetSetting, useSettings } from '../../hooks/useSettings';
 import { buildSettingsSections } from './settingsSections';
-import SettingsPanelLayout from './SettingsPanelLayout';
+import { SettingsPanelLayout } from './SettingsPanelLayout';
 
 const CATEGORY_LABELS: Record<string, { title: string; description?: string }> = {
   general: { title: 'General', description: 'Core health-check, session, and recovery timing.' },
@@ -18,7 +18,7 @@ type Props = {
   category: string;
 };
 
-export default function SettingsCategoryPanel({ category }: Props) {
+export function SettingsCategoryPanel({ category }: Props) {
   const { data: settingsData, isLoading } = useSettings();
   const bulkUpdateMut = useBulkUpdateSettings();
   const resetSettingMut = useResetSetting();

@@ -14,7 +14,7 @@ import {
 } from './devicePageHelpers';
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import Select from '../../components/ui/Select';
+import { Select } from '../../components/ui/Select';
 
 interface Props {
   filters: DeviceGroupFilterDraft;
@@ -33,7 +33,7 @@ function updateOptionalField<K extends keyof Omit<DeviceGroupFilterDraft, 'tags'
   onChange({ ...filters, [field]: value });
 }
 
-export default function FilterBuilder({
+export function FilterBuilder({
   filters,
   onChange,
   hostOptions,

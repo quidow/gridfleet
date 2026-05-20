@@ -1,4 +1,4 @@
-import Modal from '../ui/Modal';
+import { Modal } from '../ui/Modal';
 import { UploadDriverPackForm } from './UploadDriverPackForm';
 
 interface AddDriverDialogProps {

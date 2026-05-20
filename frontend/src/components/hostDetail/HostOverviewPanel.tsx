@@ -1,9 +1,9 @@
 import { formatHostTimestamp } from '../hosts/hostFormatting';
 import { HostActionButtons, HostAgentVersionNotice } from '../hosts/hostPresentation';
 import type { HostRead } from '../../types';
-import DefinitionList from '../ui/DefinitionList';
-import HostOverviewResourceStrip from './HostOverviewResourceStrip';
-import HostToolVersionsPanel from './HostToolVersionsPanel';
+import { DefinitionList } from '../ui/DefinitionList';
+import { HostOverviewResourceStrip } from './HostOverviewResourceStrip';
+import { HostToolVersionsPanel } from './HostToolVersionsPanel';
 import { EMPTY_GLYPH } from '../../utils/emptyValue';
 
 type Props = {
@@ -16,7 +16,7 @@ type Props = {
   onDiscover: () => void;
 };
 
-export default function HostOverviewPanel({
+export function HostOverviewPanel({
   host,
   approvePending,
   rejectPending,

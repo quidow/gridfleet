@@ -36,7 +36,7 @@ const SIZE_CLASSES: Record<BadgeSize, string> = {
   sm: 'px-1.5 py-0.5 text-xs',
 };
 
-export default function Badge({
+export function Badge({
   tone = 'neutral',
   size = 'md',
   icon,

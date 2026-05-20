@@ -9,7 +9,7 @@ interface Props {
   className?: string;
 }
 
-export default function EmptyState({ icon: Icon, title, description, action, className = '' }: Props) {
+export function EmptyState({ icon: Icon, title, description, action, className = '' }: Props) {
   return (
     <div className={['flex flex-col items-center justify-center py-12 text-center', className].filter(Boolean).join(' ')}>
       <Icon className="mb-4 text-text-3" size={48} />

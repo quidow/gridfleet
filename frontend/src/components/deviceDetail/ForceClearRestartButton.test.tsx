@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import ForceClearRestartButton from './ForceClearRestartButton';
+import { ForceClearRestartButton } from './ForceClearRestartButton';
 
 const mutation = { isPending: false, mutate: vi.fn() };
 

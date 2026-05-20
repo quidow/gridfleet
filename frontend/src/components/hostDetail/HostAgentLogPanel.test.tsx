@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import HostAgentLogPanel from './HostAgentLogPanel';
+import { HostAgentLogPanel } from './HostAgentLogPanel';
 import { useHostAgentLogs } from '../../hooks/useHosts';
 
 vi.mock('../../hooks/useHosts', () => ({

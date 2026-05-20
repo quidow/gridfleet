@@ -1,14 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import HostLogsPanel from './HostLogsPanel';
+import { HostLogsPanel } from './HostLogsPanel';
 
 vi.mock('./HostAgentLogPanel', () => ({
-  default: () => <div>AGENT_PANEL</div>,
+  HostAgentLogPanel: () => <div>AGENT_PANEL</div>,
 }));
 
 vi.mock('./HostEventsPanel', () => ({
-  default: () => <div>EVENTS_PANEL</div>,
+  HostEventsPanel: () => <div>EVENTS_PANEL</div>,
 }));
 
 function renderPanel(path = '/hosts/host-1?tab=logs') {

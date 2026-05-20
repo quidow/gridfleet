@@ -8,7 +8,7 @@ interface SectionHeaderProps {
   className?: string;
 }
 
-export default function SectionHeader({
+export function SectionHeader({
   title,
   description,
   actions,

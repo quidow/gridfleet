@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import RunProgressBar from './RunProgressBar';
+import { RunProgressBar } from './RunProgressBar';
 
 describe('RunProgressBar', () => {
   it('shows mono caption with non-zero segments only', () => {

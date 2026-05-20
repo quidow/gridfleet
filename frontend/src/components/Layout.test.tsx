@@ -1,10 +1,10 @@
 import { render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import Layout from './Layout';
+import { Layout } from './Layout';
 
 vi.mock('./Sidebar', () => ({
-  default: () => <aside data-testid="sidebar" />,
+  Sidebar: () => <aside data-testid="sidebar" />,
 }));
 
 vi.mock('../hooks/useEventStream', () => ({

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import FleetHealthHistory from './FleetHealthHistory';
+import { FleetHealthHistory } from './FleetHealthHistory';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
 import type { components } from '../../api/openapi';
 

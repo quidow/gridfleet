@@ -43,7 +43,7 @@ type Props = {
   hostId: string;
 };
 
-export default function HostPluginsPanel({ hostId }: Props) {
+export function HostPluginsPanel({ hostId }: Props) {
   const { data: hostPlugins, isLoading: pluginsLoading } = useHostPlugins(hostId);
   const syncPluginsMut = useSyncHostPlugins();
 

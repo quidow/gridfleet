@@ -12,7 +12,7 @@ interface FetchErrorProps {
  * Inline error banner shown in place of a content area when a fetch fails.
  * Always includes a Retry affordance so the user is never stuck on a blank page.
  */
-export default function FetchError({ message = 'Something went wrong while loading this data.', onRetry, className = '' }: FetchErrorProps) {
+export function FetchError({ message = 'Something went wrong while loading this data.', onRetry, className = '' }: FetchErrorProps) {
   return (
     <div
       role="alert"

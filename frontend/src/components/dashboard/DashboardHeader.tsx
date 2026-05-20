@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useDevices } from '../../hooks/useDevices';
 import { useGridStatus, useHealth } from '../../hooks/useGrid';
 import { useHosts } from '../../hooks/useHosts';
-import PageHeader from '../ui/PageHeader';
-import SystemHealthPills from './SystemHealthPills';
+import { PageHeader } from '../ui/PageHeader';
+import { SystemHealthPills } from './SystemHealthPills';
 
-export default function DashboardHeader() {
+export function DashboardHeader() {
   const { dataUpdatedAt: healthUpdatedAt } = useHealth();
   const { dataUpdatedAt: gridUpdatedAt } = useGridStatus();
   const { dataUpdatedAt: hostsUpdatedAt } = useHosts();
