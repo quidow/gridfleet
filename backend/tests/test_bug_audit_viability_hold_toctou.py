@@ -58,6 +58,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
             port=4723,
             grid_url="http://localhost:4444",
             pid=12345,
+            active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             health_state="up",
@@ -101,6 +102,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         patch.object(service_viability._MACHINE, "transition", side_effect=_spy_transition),
         patch.object(device_locking, "lock_device", side_effect=_flip_hold_then_lock),
         patch.object(service_viability, "probe_session_via_grid", probe_mock),
+        pytest.raises(ValueError, match="state changed concurrently"),
     ):
         await run_session_viability_probe(
             db_session,
@@ -108,9 +110,9 @@ async def test_viability_probe_runs_on_maintenance_held_device(
             checked_by=SessionViabilityCheckedBy.manual,
         )
 
-    # Fixed behavior: the probe re-checks hold under the lock and bails before
-    # transitioning to busy. Current behavior (bug): SESSION_STARTED fires
-    # despite the maintenance hold.
+    # Fixed behavior: the probe re-checks hold under the lock and raises
+    # ValueError before transitioning to busy. Buggy behavior was firing
+    # SESSION_STARTED despite the maintenance hold.
     assert TransitionEvent.SESSION_STARTED not in transitions_fired, (
         "Probe transitioned device to busy even though hold flipped to maintenance "
         "between the unlocked pre-flight check and the FOR UPDATE re-lock"

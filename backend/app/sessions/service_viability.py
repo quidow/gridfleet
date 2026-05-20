@@ -365,7 +365,9 @@ async def run_session_viability_probe(
         raise ValueError("Session viability check already in progress for this device")
     await db.commit()
     can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
-        checked_by == SessionViabilityCheckedBy.recovery and device.operational_state == DeviceOperationalState.offline
+        checked_by == SessionViabilityCheckedBy.recovery
+        and device.operational_state == DeviceOperationalState.offline
+        and device.hold is None
     )
     if not can_probe:
         await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -395,29 +397,23 @@ async def run_session_viability_probe(
             return state
 
         locked = await device_locking.lock_device(db, device.id)
-        # Re-validate the can_probe predicate under the row lock. The
-        # pre-lock check above ran on an unlocked snapshot, so a
-        # concurrent maintenance-enter (or any other writer of
-        # ``Device.hold``/``operational_state``) could have changed the
-        # state between line 367 and here. Without this re-check the
-        # probe would still transition the device to ``busy`` and run
-        # the slow Grid probe against a parked device.
+        # Re-validate can_probe under the row lock. The pre-lock check
+        # ran on an unlocked snapshot, so a concurrent maintenance-enter
+        # (or any other writer of ``Device.hold``/``operational_state``)
+        # may have changed the state between the gate and this lock.
+        # Raise to match the pre-lock branch's contract: manual callers
+        # surface as HTTP 409, recovery callers retry via the policy
+        # loop. Writing a ``failed`` viability record here would bump
+        # ``consecutive_failures`` on a race the device is not
+        # responsible for and could push a healthy device closer to the
+        # escalation threshold.
         locked_can_probe = (locked.operational_state == DeviceOperationalState.available and locked.hold is None) or (
             checked_by == SessionViabilityCheckedBy.recovery
             and locked.operational_state == DeviceOperationalState.offline
             and locked.hold is None
         )
         if not locked_can_probe:
-            if config_changed:
-                await db.commit()
-            return await _write_session_viability(
-                db,
-                device,
-                status="failed",
-                attempted_at=attempted_at,
-                error=("Session viability checks only run for available devices (state changed concurrently)"),
-                checked_by=checked_by,
-            )
+            raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
         previous_state = locked.operational_state
         await _MACHINE.transition(
             locked,
