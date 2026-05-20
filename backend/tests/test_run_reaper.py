@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.runs import service_lifecycle_release as run_lifecycle_release
@@ -58,6 +59,56 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
     assert expire_run.await_args is not None
     assert expire_run.await_args.args[1].id == stale_run.id
     assert expire_run.await_args.args[2] == "TTL exceeded (30 minutes)"
+
+
+async def test_reap_stale_runs_query_filters_at_sql_level(db_session: AsyncSession) -> None:
+    """Inserting many fresh runs alongside one stale run must yield exactly one fetched row.
+
+    Guards against regressing the WHERE-clause filter back to a Python-side scan.
+    """
+    now = datetime.now(UTC)
+    fresh_runs = [
+        TestRun(
+            name=f"Fresh-{i}",
+            created_by="qa",
+            state=RunState.active,
+            requirements=[],
+            last_heartbeat=now,
+            created_at=now,
+            ttl_minutes=60,
+            heartbeat_timeout_sec=60,
+        )
+        for i in range(5)
+    ]
+    stale_run = TestRun(
+        name="Stale",
+        created_by="qa",
+        state=RunState.active,
+        requirements=[],
+        last_heartbeat=now - timedelta(seconds=120),
+        created_at=now - timedelta(seconds=120),
+        heartbeat_timeout_sec=60,
+        ttl_minutes=60,
+    )
+    db_session.add_all([*fresh_runs, stale_run])
+    await db_session.commit()
+
+    heartbeat_deadline_expr = TestRun.last_heartbeat + func.make_interval(
+        0, 0, 0, 0, 0, 0, TestRun.heartbeat_timeout_sec
+    )
+    ttl_deadline_expr = TestRun.created_at + func.make_interval(0, 0, 0, 0, 0, TestRun.ttl_minutes)
+    stmt = select(TestRun).where(
+        or_(
+            and_(TestRun.last_heartbeat.is_not(None), heartbeat_deadline_expr < now),
+            ttl_deadline_expr < now,
+        )
+    )
+    result = await db_session.execute(stmt)
+    fetched_ids = {row.id for row in result.scalars().all()}
+
+    assert stale_run.id in fetched_ids
+    for fresh in fresh_runs:
+        assert fresh.id not in fetched_ids
 
 
 async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: AsyncSession) -> None:

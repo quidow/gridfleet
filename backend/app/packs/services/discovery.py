@@ -226,26 +226,28 @@ async def discover_devices(
     )
 
 
-async def refresh_device_properties(
-    session: AsyncSession,
+async def fetch_pack_device_properties(
+    host: Host,
     device: Device,
     *,
     agent_get_pack_device_properties: Callable[[str, int, str, str], Awaitable[dict[str, object] | None]],
-) -> None:
-    host: Host | None = await session.get(Host, device.host_id)
-    if host is None:
-        return
-
+) -> dict[str, object] | None:
+    """Fetch pack-device properties from the agent. No DB writes — safe to gather."""
     refresh_target = device.connection_target or device.identity_value
-    data = await agent_get_pack_device_properties(
+    return await agent_get_pack_device_properties(
         host.ip,
         host.agent_port,
         refresh_target,
         device.pack_id,
     )
-    if data is None:
-        return
 
+
+async def apply_pack_device_properties(
+    session: AsyncSession,
+    device: Device,
+    data: dict[str, object],
+) -> None:
+    """Apply a previously-fetched properties payload to the device row and commit if dirty."""
     props_raw = data.get("detected_properties")
     props = cast("dict[str, Any]", props_raw) if isinstance(props_raw, dict) else {}
     changed = False
@@ -268,6 +270,23 @@ async def refresh_device_properties(
 
     if changed:
         await session.commit()
+
+
+async def refresh_device_properties(
+    session: AsyncSession,
+    device: Device,
+    *,
+    agent_get_pack_device_properties: Callable[[str, int, str, str], Awaitable[dict[str, object] | None]],
+) -> None:
+    host: Host | None = await session.get(Host, device.host_id)
+    if host is None:
+        return
+    data = await fetch_pack_device_properties(
+        host, device, agent_get_pack_device_properties=agent_get_pack_device_properties
+    )
+    if data is None:
+        return
+    await apply_pack_device_properties(session, device, data)
 
 
 def _build_discovery_create_request(discovered: DiscoveredDevice, host: Host) -> DeviceVerificationCreate:
