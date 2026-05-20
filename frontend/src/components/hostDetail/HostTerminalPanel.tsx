@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useState } from 'react';
 
-import { buildTerminalWebSocketUrl } from '../../api/hostTerminal';
+const HostTerminalView = lazy(() => import('./HostTerminalView'));
 
 interface HostTerminalPanelProps {
   hostId: string;
@@ -8,27 +8,16 @@ interface HostTerminalPanelProps {
   terminalEnabled: boolean;
 }
 
-type Status = 'idle' | 'connecting' | 'connected' | 'error' | 'closed';
+type SessionStatus = 'connecting' | 'connected' | 'error' | 'closed';
 
 export default function HostTerminalPanel({ hostId, hostOnline, terminalEnabled }: HostTerminalPanelProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<import('@xterm/xterm').Terminal | null>(null);
-  const fitRef = useRef<import('@xterm/addon-fit').FitAddon | null>(null);
-  // Store the resize handler so the cleanup effect and startSession can remove it.
-  const resizeHandlerRef = useRef<(() => void) | null>(null);
-  const [status, setStatus] = useState<Status>('idle');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // `attempt` is bumped to remount HostTerminalView for reconnect.
+  const [attempt, setAttempt] = useState(0);
+  const [opened, setOpened] = useState(false);
+  const [status, setStatus] = useState<SessionStatus | 'idle'>('idle');
 
-  useEffect(() => {
-    return () => {
-      if (resizeHandlerRef.current) {
-        window.removeEventListener('resize', resizeHandlerRef.current);
-      }
-      wsRef.current?.close();
-      termRef.current?.dispose();
-      fitRef.current?.dispose();
-    };
+  const handleStatusChange = useCallback((next: SessionStatus) => {
+    setStatus(next);
   }, []);
 
   if (!terminalEnabled) {
@@ -49,140 +38,40 @@ export default function HostTerminalPanel({ hostId, hostOnline, terminalEnabled 
     );
   }
 
-  const startSession = async () => {
-    if (status === 'connecting' || status === 'connected') return;
-
-    // Clean up any previous session — prevents stale listener accumulation on reconnect.
-    if (resizeHandlerRef.current) {
-      window.removeEventListener('resize', resizeHandlerRef.current);
-      resizeHandlerRef.current = null;
-    }
-    // Null out wsRef before closing so stale onclose can detect the identity mismatch.
-    const prevWs = wsRef.current;
-    wsRef.current = null;
-    prevWs?.close();
-    termRef.current?.dispose();
-    fitRef.current?.dispose();
-    termRef.current = null;
-    fitRef.current = null;
-
-    setStatus('connecting');
-    setErrorMessage(null);
-
-    const { Terminal } = await import('@xterm/xterm');
-    const { FitAddon } = await import('@xterm/addon-fit');
-    await import('@xterm/xterm/css/xterm.css');
-
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    if (containerRef.current) {
-      term.open(containerRef.current);
-      fit.fit();
-    }
-    termRef.current = term;
-    fitRef.current = fit;
-
-    const ws = new WebSocket(buildTerminalWebSocketUrl(hostId));
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      // Guard against stale callback firing after reconnect replaces wsRef.
-      if (wsRef.current !== ws) return;
-      setStatus('connected');
-      ws.send(JSON.stringify({ type: 'open', cols: term.cols, rows: term.rows }));
-    };
-    ws.onmessage = (ev) => {
-      // Guard against stale callback firing after reconnect replaces wsRef.
-      if (wsRef.current !== ws) return;
-      try {
-        const frame = JSON.parse(ev.data as string) as {
-          type: string;
-          data?: string;
-          exit_code?: number;
-          message?: string;
-        };
-        if (frame.type === 'output') {
-          // Guard against writing to a disposed terminal.
-          if (termRef.current !== term) return;
-          term.write(frame.data ?? '');
-        } else if (frame.type === 'exit') {
-          if (termRef.current === term) {
-            term.write(`\r\n[process exited with code ${frame.exit_code ?? '?'}]\r\n`);
-          }
-          setStatus('closed');
-        } else if (frame.type === 'error') {
-          setErrorMessage(frame.message ?? 'Unknown terminal error.');
-          setStatus('error');
-        }
-      } catch {
-        // ignore non-JSON frames
-      }
-    };
-    ws.onerror = () => {
-      // Guard against stale callback firing after reconnect replaces wsRef.
-      if (wsRef.current !== ws) return;
-      setStatus('error');
-      setErrorMessage(
-        'Connection failed. The terminal feature may be misconfigured or the host may be unreachable.',
-      );
-    };
-    ws.onclose = () => {
-      // Guard against stale onclose stomping a reset status after reconnect.
-      if (wsRef.current !== ws) return;
-      setStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
-    };
-
-    term.onData((data) => {
-      if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
-    term.onResize(({ cols, rows }) => {
-      if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
-
-    // Store and register the resize handler so the cleanup effect and next startSession can remove it.
-    const handleResize = () => fit.fit();
-    resizeHandlerRef.current = handleResize;
-    window.addEventListener('resize', handleResize);
+  const start = () => {
+    setOpened(true);
+    setAttempt((n) => n + 1);
   };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-sm text-text-2">
         <span>Status: {status}</span>
-        {status === 'idle' && (
+        {status === 'idle' && !opened && (
           <button
             type="button"
             className="rounded-md border border-border px-2 py-1 text-sm hover:bg-surface-2"
-            onClick={() => void startSession()}
+            onClick={start}
           >
             Open terminal
           </button>
         )}
-        {status === 'connecting' && (
-          <span className="text-text-3">Connecting…</span>
-        )}
+        {status === 'connecting' && <span className="text-text-3">Connecting…</span>}
         {(status === 'closed' || status === 'error') && (
           <button
             type="button"
             className="rounded-md border border-border px-2 py-1 text-sm hover:bg-surface-2"
-            onClick={() => void startSession()}
+            onClick={start}
           >
             Reconnect
           </button>
         )}
       </div>
-      {errorMessage ? (
-        <div className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger-foreground">{errorMessage}</div>
+      {opened ? (
+        <Suspense fallback={<div className="h-96 rounded-md border border-border bg-black/40" />}>
+          <HostTerminalView key={attempt} hostId={hostId} onStatusChange={handleStatusChange} />
+        </Suspense>
       ) : null}
-      <div ref={containerRef} className="h-96 rounded-md border border-border bg-black" />
     </div>
   );
 }
