@@ -84,14 +84,24 @@ def _manager_auth() -> httpx.BasicAuth | None:
 
 
 class HttpPackStateClient(PackStateClient):
-    def __init__(self, base_url: str, host_id: str) -> None:
+    def __init__(self, base_url: str, host_identity: HostIdentity) -> None:
         self._base = base_url.rstrip("/")
-        self._host_id = host_id
+        # Hold the identity reference (not just the current value) so that a
+        # manager-issued host_id rotation during a long-lived pack loop is
+        # picked up on the next request instead of leaving us pinned to the
+        # stale id captured at construction.
+        self._host_identity = host_identity
+
+    def _current_host_id(self) -> str:
+        host_id = self._host_identity.get()
+        if host_id is None:
+            raise RuntimeError("HttpPackStateClient used before host identity was assigned")
+        return host_id
 
     async def fetch_desired(self) -> dict[str, Any]:
         client = get_shared_http_client()
         kwargs: dict[str, Any] = {
-            "params": {"host_id": self._host_id},
+            "params": {"host_id": self._current_host_id()},
             "timeout": 15.0,
         }
         if (auth := _manager_auth()) is not None:
@@ -154,7 +164,7 @@ async def _start_pack_loop_when_ready(
 ) -> None:
     host_id = await host_identity.wait()
     app.state.pack_state_loop_enabled = True
-    client = HttpPackStateClient(backend_url, host_id)
+    client = HttpPackStateClient(backend_url, host_identity)
     runtime_mgr = AppiumRuntimeManager()
     adapter_loader = _build_adapter_loader(backend_url, adapter_registry)
     loop = PackStateLoop(

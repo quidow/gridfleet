@@ -17,5 +17,13 @@ class HostIdentity:
 
     async def wait(self) -> str:
         await self._event.wait()
+        # Yield once so any further `set()` calls scheduled in the same
+        # event-loop tick (e.g. rapid rotation during a registration
+        # refresh) land before the waiter snapshots ``_value``. Without
+        # this, an early waiter resuming mid-rotation would return a
+        # stale host_id that a later waiter never sees, and long-lived
+        # consumers like ``HttpPackStateClient`` would diverge from the
+        # manager's view of the host.
+        await asyncio.sleep(0)
         assert self._value is not None
         return self._value
