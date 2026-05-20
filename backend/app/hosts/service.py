@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -127,6 +128,24 @@ async def delete_host(db: AsyncSession, host_id: uuid.UUID) -> bool:
     return True
 
 
+async def _apply_reregister(db: AsyncSession, host: Host, data: HostRegister) -> Host:
+    host.ip = data.ip
+    host.os_type = data.os_type
+    if data.agent_port is not None:
+        host.agent_port = data.agent_port
+    host.agent_version = data.agent_version
+    host.capabilities = normalize_capabilities(data.capabilities)
+    if data.host_info is not None:
+        for field, value in data.host_info.model_dump(exclude_none=True).items():
+            assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
+            setattr(host, field, value)
+    if host.status == HostStatus.offline:
+        host.status = HostStatus.online
+    await db.commit()
+    await db.refresh(host)
+    return host
+
+
 async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
     validate_orchestration_contract(data.capabilities, host_label=data.hostname)
@@ -135,22 +154,7 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
     host = result.scalar_one_or_none()
 
     if host is not None:
-        # Re-registration: update mutable fields
-        host.ip = data.ip
-        host.os_type = data.os_type
-        if data.agent_port is not None:
-            host.agent_port = data.agent_port
-        host.agent_version = data.agent_version
-        host.capabilities = normalize_capabilities(data.capabilities)
-        if data.host_info is not None:
-            for field, value in data.host_info.model_dump(exclude_none=True).items():
-                assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
-                setattr(host, field, value)
-        if host.status == HostStatus.offline:
-            host.status = HostStatus.online
-        await db.commit()
-        await db.refresh(host)
-        return host, False
+        return await _apply_reregister(db, host, data), False
 
     # New registration
     status = HostStatus.online if settings_service.get("agent.auto_accept_hosts") else HostStatus.pending
@@ -169,7 +173,20 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
             assert hasattr(Host, field), f"HostHardwareInfo field {field!r} not on Host model"
             setattr(host, field, value)
     db.add(host)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # A concurrent peer (e.g. a heartbeat-driven re-register racing the
+        # operator-initiated registration) committed the same hostname
+        # between our unlocked SELECT and our INSERT. Drop the
+        # half-written transient row, refetch the existing host, and
+        # degrade to the re-register branch.
+        await db.rollback()
+        result = await db.execute(select(Host).where(Host.hostname == data.hostname))
+        existing = result.scalar_one_or_none()
+        if existing is None:
+            raise
+        return await _apply_reregister(db, existing, data), False
     queue_event_for_session(
         db,
         "host.registered",
@@ -186,7 +203,12 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
 
 async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
     """Approve a pending host. Returns None if not found or not pending."""
-    stmt = select(Host).where(Host.id == host_id)
+    # Acquire SELECT ... FOR UPDATE so a concurrent reject_host (which
+    # deletes the row) cannot land between the predicate check and the
+    # commit. Without the lock, the UPDATE on a deleted row affects zero
+    # rows but ``return host`` would still hand the caller a phantom
+    # success.
+    stmt = select(Host).where(Host.id == host_id).with_for_update()
     result = await db.execute(stmt)
     host = result.scalar_one_or_none()
     if host is None or host.status != HostStatus.pending:
@@ -211,7 +233,7 @@ async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
 
 async def reject_host(db: AsyncSession, host_id: uuid.UUID) -> bool:
     """Reject a pending host (deletes it). Returns False if not found or not pending."""
-    stmt = select(Host).where(Host.id == host_id)
+    stmt = select(Host).where(Host.id == host_id).with_for_update()
     result = await db.execute(stmt)
     host = result.scalar_one_or_none()
     if host is None or host.status != HostStatus.pending:
