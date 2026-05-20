@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -107,17 +108,21 @@ async def delete_group(db: AsyncSession, group_id: uuid.UUID) -> bool:
 
 
 async def add_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
-    added = 0
-    for device_id in device_ids:
-        exists = await db.execute(
-            select(DeviceGroupMembership).where(
-                DeviceGroupMembership.group_id == group_id,
-                DeviceGroupMembership.device_id == device_id,
-            )
-        )
-        if exists.scalar_one_or_none() is None:
-            db.add(DeviceGroupMembership(group_id=group_id, device_id=device_id))
-            added += 1
+    if not device_ids:
+        return 0
+    # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
+    # adding the same (group_id, device_id) degrades to a benign no-op
+    # instead of surfacing as IntegrityError on the unique constraint. The
+    # previous SELECT-then-add pattern was a TOCTOU between the unlocked
+    # exists check and the subsequent insert.
+    stmt = (
+        pg_insert(DeviceGroupMembership)
+        .values([{"group_id": group_id, "device_id": device_id} for device_id in device_ids])
+        .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
+        .returning(DeviceGroupMembership.device_id)
+    )
+    result = await db.execute(stmt)
+    added = len(result.scalars().all())
     if added:
         queue_event_for_session(db, "device_group.members_changed", {"group_id": str(group_id), "added": added})
     await db.commit()
