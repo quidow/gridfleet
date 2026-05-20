@@ -1,5 +1,7 @@
+/* eslint-disable react-refresh/only-export-components -- routes manifest mixes lazy components and the route-tree config */
 import { lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
+import type { RouteObject } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { Layout } from './components/Layout';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -21,31 +23,33 @@ const Runs = lazy(() => import('./pages/Runs').then((m) => ({ default: m.Runs })
 const Sessions = lazy(() => import('./pages/Sessions').then((m) => ({ default: m.Sessions })));
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 
-export function App() {
-  return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="devices" element={<Devices />} />
-          <Route path="devices/import" element={<Navigate to="/settings?tab=backup" replace />} />
-          <Route path="devices/:id" element={<DeviceDetail />} />
-          <Route path="hosts" element={<Hosts />} />
-          <Route path="hosts/:id" element={<HostDetail />} />
-          <Route path="sessions" element={<Sessions />} />
-          <Route path="runs" element={<Runs />} />
-          <Route path="runs/:id" element={<RunDetail />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="notifications" element={<Notifications />} />
-          <Route path="groups" element={<DeviceGroups />} />
-          <Route path="groups/:id" element={<DeviceGroupDetail />} />
-          <Route path="drivers" element={<Drivers />} />
-          <Route path="drivers/:id" element={<DriverDetail />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="*" element={<NotFound />} />
-        </Route>
-      </Route>
-    </Routes>
-  );
-}
+export const routes: RouteObject[] = [
+  { path: '/login', element: <Login /> },
+  {
+    element: <ProtectedRoute />,
+    children: [
+      {
+        element: <Layout />,
+        children: [
+          { index: true, element: <Dashboard /> },
+          { path: 'devices', element: <Devices /> },
+          { path: 'devices/import', element: <Navigate to="/settings?tab=backup" replace /> },
+          { path: 'devices/:id', element: <DeviceDetail /> },
+          { path: 'hosts', element: <Hosts /> },
+          { path: 'hosts/:id', element: <HostDetail /> },
+          { path: 'sessions', element: <Sessions /> },
+          { path: 'runs', element: <Runs /> },
+          { path: 'runs/:id', element: <RunDetail /> },
+          { path: 'analytics', element: <Analytics /> },
+          { path: 'notifications', element: <Notifications /> },
+          { path: 'groups', element: <DeviceGroups /> },
+          { path: 'groups/:id', element: <DeviceGroupDetail /> },
+          { path: 'drivers', element: <Drivers /> },
+          { path: 'drivers/:id', element: <DriverDetail /> },
+          { path: 'settings', element: <Settings /> },
+          { path: '*', element: <NotFound /> },
+        ],
+      },
+    ],
+  },
+];
