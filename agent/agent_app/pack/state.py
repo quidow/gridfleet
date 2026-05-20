@@ -211,6 +211,12 @@ class PackStateLoop:
                 }
             )
 
+        if self.runtime_registry is not None:
+            # Shed runtimes for packs the backend has retired from the
+            # desired list so `resolve_appium_invocation_for_pack` cannot
+            # hand out a binary for a pack we no longer manage.
+            self.runtime_registry.purge_except(set(env_by_pack))
+
         desired_sidecars = {
             (pack.id, pack.release, feature_id)
             for pack in parsed.packs
