@@ -4,7 +4,7 @@ loop calls ``start()`` after a crash, any stop_pending intent set by the
 operator during the restart window is silently lost — start() also never
 schedules an idle-stop task for ``stop_pending=True``.
 
-See ``docs/superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 10).
+See ``.superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 10).
 """
 
 from __future__ import annotations
