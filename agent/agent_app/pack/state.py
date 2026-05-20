@@ -243,18 +243,37 @@ class PackStateLoop:
             stale_sidecars = sorted(self.sidecar_supervisor.tracked_keys() - desired_sidecars)
             for pack_id, release, feature_id in stale_sidecars:
                 adapter = self.adapter_registry.get(pack_id, release)
-                if adapter is not None:
-                    await self.sidecar_supervisor.stop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
-                        adapter=adapter,
+                try:
+                    if adapter is not None:
+                        await self.sidecar_supervisor.stop(
+                            pack_id=pack_id,
+                            release=release,
+                            feature_id=feature_id,
+                            adapter=adapter,
+                        )
+                    else:
+                        await self.sidecar_supervisor.drop(
+                            pack_id=pack_id,
+                            release=release,
+                            feature_id=feature_id,
+                        )
+                except Exception as exc:
+                    # Same invariant as sidecar start: post_status must still
+                    # run so the backend reconciler can see the failed
+                    # teardown.
+                    logger.exception(
+                        "sidecar stop failed for pack %s@%s feature %s",
+                        pack_id,
+                        release,
+                        feature_id,
                     )
-                else:
-                    await self.sidecar_supervisor.drop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
+                    doctor_entries.append(
+                        {
+                            "pack_id": pack_id,
+                            "check_id": f"sidecar_stop:{feature_id}",
+                            "ok": False,
+                            "message": f"sidecar stop failed: {exc}",
+                        }
                     )
 
         sidecars: list[dict[str, Any]] = (

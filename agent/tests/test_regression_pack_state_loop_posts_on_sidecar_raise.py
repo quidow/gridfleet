@@ -7,7 +7,6 @@ See ``docs/superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 9).
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Any
 
 from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
@@ -59,13 +58,41 @@ class _FakeAdapterRegistry:
         return _FakeAdapter()
 
 
-class _RaisingSidecarSupervisor:
+class _RaisingStartSidecarSupervisor:
     async def start(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
         del pack_id, release, feature_id, adapter
         raise RuntimeError("sidecar boot failed")
 
+    async def stop(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
+        del pack_id, release, feature_id, adapter
+
+    async def drop(self, *, pack_id: str, release: str, feature_id: str) -> None:
+        del pack_id, release, feature_id
+
     def tracked_keys(self) -> set[tuple[str, str, str]]:
         return set()
+
+    def status_snapshot(self) -> list[dict[str, Any]]:
+        return []
+
+
+class _RaisingStopSidecarSupervisor:
+    # Tracks a sidecar key that is NOT in the desired set so the stale-cleanup
+    # branch runs and stop() raises.
+    _STALE_KEY = ("appium-uiautomator2", "2026.04.0", "stale-feature")
+
+    async def start(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
+        del pack_id, release, feature_id, adapter
+
+    async def stop(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
+        del pack_id, release, feature_id, adapter
+        raise RuntimeError("sidecar teardown failed")
+
+    async def drop(self, *, pack_id: str, release: str, feature_id: str) -> None:
+        del pack_id, release, feature_id
+
+    def tracked_keys(self) -> set[tuple[str, str, str]]:
+        return {self._STALE_KEY}
 
     def status_snapshot(self) -> list[dict[str, Any]]:
         return []
@@ -126,10 +153,33 @@ async def test_run_once_posts_status_when_sidecar_start_raises(monkeypatch: pyte
         runtime_mgr=_FakeRuntimeMgr(),
         host_id="00000000-0000-0000-0000-000000000001",
         adapter_registry=_FakeAdapterRegistry(),  # type: ignore[arg-type]
-        sidecar_supervisor=_RaisingSidecarSupervisor(),  # type: ignore[arg-type]
+        sidecar_supervisor=_RaisingStartSidecarSupervisor(),  # type: ignore[arg-type]
     )
 
-    with contextlib.suppress(RuntimeError):
-        await loop.run_once()
+    await loop.run_once()
 
     assert client.posted, "post_status must run even when sidecar.start raises"
+    doctor = client.posted[0]["doctor"]
+    assert any(entry["check_id"] == "sidecar_start:feat-1" and not entry["ok"] for entry in doctor)
+
+
+async def test_run_once_posts_status_when_sidecar_stop_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_doctor(*_args: object, **_kwargs: object) -> list[Any]:
+        return []
+
+    monkeypatch.setattr("agent_app.pack.state.dispatch_doctor", _no_doctor)
+
+    client = _FakeClient(_desired_payload())
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
+        host_id="00000000-0000-0000-0000-000000000001",
+        adapter_registry=_FakeAdapterRegistry(),  # type: ignore[arg-type]
+        sidecar_supervisor=_RaisingStopSidecarSupervisor(),  # type: ignore[arg-type]
+    )
+
+    await loop.run_once()
+
+    assert client.posted, "post_status must run even when sidecar.stop raises"
+    doctor = client.posted[0]["doctor"]
+    assert any(entry["check_id"] == "sidecar_stop:stale-feature" and not entry["ok"] for entry in doctor)
