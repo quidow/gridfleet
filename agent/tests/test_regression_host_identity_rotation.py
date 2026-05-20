@@ -1,8 +1,7 @@
-"""Reproducer for bug 8: ``HostIdentity.set`` rotation produces divergent
-host_ids across awaiters. A caller that began ``wait()`` before the first
-``set("A")`` reads "A"; a caller that begins ``wait()`` after a subsequent
-``set("B")`` reads "B". Long-lived clients that captured "A" then keep using
-the stale id forever.
+"""Reproducer for bug 8: ``HostIdentity.set`` rotation must propagate to
+long-lived consumers. Captured-at-construction patterns leave them pinned
+to the stale id; the fix is to hold a ``HostIdentity`` reference and
+re-read on every iteration.
 
 See ``docs/superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 8).
 """
@@ -10,8 +9,17 @@ See ``docs/superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 8).
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING, Any
 
+import pytest
+
+from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
+from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
+from agent_app.pack.state import PackStateLoop
+
+if TYPE_CHECKING:
+    from agent_app.pack.adapter_types import DoctorCheckResult, DoctorContext
 
 
 async def test_host_identity_rotation_returns_consistent_value_to_all_waiters() -> None:
@@ -35,3 +43,137 @@ async def test_host_identity_rotation_returns_consistent_value_to_all_waiters() 
     late_value = await hi.wait()
 
     assert early_value == late_value
+
+
+class _RotationFakeClient:
+    def __init__(self, desired_payload: dict[str, Any]) -> None:
+        self._desired = desired_payload
+        self.posted: list[dict[str, Any]] = []
+
+    async def fetch_desired(self) -> dict[str, Any]:
+        return self._desired
+
+    async def post_status(self, payload: dict[str, Any]) -> None:
+        self.posted.append(payload)
+
+
+class _NoopRuntimeMgr:
+    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
+        return {}, {}
+
+
+class _SucceedingRuntimeMgr:
+    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
+        envs: dict[str, RuntimeEnv] = {}
+        for pack_id, spec in desired_by_pack.items():
+            rid = AppiumRuntimeManager.runtime_id_for(spec)
+            envs[pack_id] = RuntimeEnv(
+                runtime_id=rid,
+                appium_home=f"/fake/{rid}",
+                appium_bin=f"/fake/{rid}/node_modules/.bin/appium",
+                server_package=spec.server_package,
+                server_version=spec.server_version,
+            )
+        return envs, {}
+
+
+@pytest.mark.asyncio
+async def test_pack_state_loop_payload_picks_up_rotated_host_id() -> None:
+    """PackStateLoop must read the live host_id each iteration so that a
+    manager-issued rotation is reflected in subsequent status POSTs."""
+
+    identity = HostIdentity()
+    identity.set("host-a")
+    # ``host_id`` in the *desired* payload is unrelated to identity rotation —
+    # it's required by ``parse_desired_payload`` but doesn't drive the agent's
+    # outgoing host_id, so we pin it to a placeholder value.
+    client = _RotationFakeClient({"host_id": "desired-placeholder", "packs": []})
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_NoopRuntimeMgr(),
+        host_identity=identity,
+    )
+
+    await loop.run_once()
+    assert client.posted[-1]["host_id"] == "host-a"
+
+    identity.set("host-b")
+
+    await loop.run_once()
+    assert client.posted[-1]["host_id"] == "host-b"
+
+
+class _DoctorRecordingAdapter:
+    pack_id = "vendor-doctor"
+    pack_release = "0.1.0"
+    discovery_scope = ""
+
+    def __init__(self) -> None:
+        self.host_ids_seen: list[str] = []
+
+    async def doctor(self, ctx: DoctorContext) -> list[DoctorCheckResult]:
+        self.host_ids_seen.append(ctx.host_id)
+        return []
+
+
+def _doctor_pack_payload() -> dict[str, Any]:
+    return {
+        "id": "vendor-doctor",
+        "release": "0.1.0",
+        "appium_server": {
+            "source": "npm",
+            "package": "appium",
+            "version": ">=2.5,<3",
+            "recommended": "2.11.5",
+            "known_bad": [],
+        },
+        "appium_driver": {
+            "source": "npm",
+            "package": "vendor-driver",
+            "version": ">=1,<2",
+            "recommended": "1.0.0",
+            "known_bad": [],
+        },
+        "platforms": [
+            {
+                "id": "vendor_real",
+                "automation_name": "Vendor",
+                "device_types": ["real_device"],
+                "connection_types": ["usb"],
+                "grid_slots": ["native"],
+                "identity": {"scheme": "vendor_serial", "scope": "host"},
+                "display_name": "Vendor",
+                "appium_platform_name": "Vendor",
+                "capabilities": {
+                    "stereotype": {"appium:platformName": "Vendor"},
+                    "session_required": [],
+                },
+            }
+        ],
+        "requires": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_pack_state_loop_doctor_ctx_picks_up_rotated_host_id() -> None:
+    """The DoctorCtx passed into dispatched adapter.doctor() must carry the
+    live host_id, not the value captured at PackStateLoop construction."""
+
+    identity = HostIdentity()
+    identity.set("host-a")
+    registry = AdapterRegistry()
+    adapter = _DoctorRecordingAdapter()
+    registry.set("vendor-doctor", "0.1.0", adapter)  # type: ignore[arg-type]
+
+    loop = PackStateLoop(
+        client=_RotationFakeClient({"host_id": "desired-placeholder", "packs": [_doctor_pack_payload()]}),
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=identity,
+        adapter_registry=registry,
+    )
+
+    await loop.run_once()
+    identity.set("host-b")
+    await loop.run_once()
+
+    assert adapter.host_ids_seen == ["host-a", "host-b"]

@@ -25,7 +25,7 @@ async def test_start_log_shipper_waits_for_host_identity(monkeypatch: pytest.Mon
             self,
             *,
             client: object,
-            host_id: object,
+            host_identity: object,
             boot_id: object,
             queue: object,
             base_url: str,
@@ -34,7 +34,7 @@ async def test_start_log_shipper_waits_for_host_identity(monkeypatch: pytest.Mon
             observed.update(
                 {
                     "client": client,
-                    "host_id": host_id,
+                    "host_identity": host_identity,
                     "boot_id": boot_id,
                     "queue": queue,
                     "base_url": base_url,
@@ -57,7 +57,7 @@ async def test_start_log_shipper_waits_for_host_identity(monkeypatch: pytest.Mon
     await _start_log_shipper_when_ready(identity, "http://manager:8000", boot_id=boot_id)
 
     assert observed["client"] == "client"
-    assert observed["host_id"] == host_id
+    assert observed["host_identity"] is identity
     assert observed["boot_id"] == boot_id
     assert observed["queue"] is queue
     assert observed["base_url"] == "http://manager:8000"

@@ -162,7 +162,7 @@ async def _start_pack_loop_when_ready(
     adapter_registry: AdapterRegistry,
     sidecar_supervisor: SidecarSupervisor,
 ) -> None:
-    host_id = await host_identity.wait()
+    await host_identity.wait()
     app.state.pack_state_loop_enabled = True
     client = HttpPackStateClient(backend_url, host_identity)
     runtime_mgr = AppiumRuntimeManager()
@@ -170,7 +170,7 @@ async def _start_pack_loop_when_ready(
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
-        host_id=host_id,
+        host_identity=host_identity,
         runtime_registry=runtime_registry,
         adapter_registry=adapter_registry,
         adapter_loader=adapter_loader,
@@ -191,13 +191,13 @@ async def _start_log_shipper_when_ready(
         return
     host_id_raw = await host_identity.wait()
     try:
-        host_id = UUID(host_id_raw)
+        UUID(host_id_raw)
     except ValueError:
         logger.warning("log shipper disabled because host_id is not a UUID: %s", host_id_raw)
         return
     shipper = LogShipperTask(
         client=get_shared_http_client(),
-        host_id=host_id,
+        host_identity=host_identity,
         boot_id=boot_id,
         queue=agent_observability.shipper_queue,
         base_url=backend_url,

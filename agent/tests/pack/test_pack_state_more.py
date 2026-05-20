@@ -6,7 +6,14 @@ from typing import Any, ClassVar
 
 import pytest
 
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.state import PackStateLoop
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 def _make_desired(packs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -74,7 +81,7 @@ async def test_runtime_reconcile_exception_returns_empty_envs() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FailingRuntimeMgr(),
-        host_id="h",
+        host_identity=_host_identity("h"),
     )
     await loop.run_once()
     payload = client.posted[-1]
@@ -103,7 +110,7 @@ async def test_latest_patch_uses_version_catalog_when_available_versions_missing
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_Mgr(),
-        host_id="h",
+        host_identity=_host_identity("h"),
         version_catalog=_CatalogVersion(),
     )
     await loop.run_once()
@@ -161,7 +168,7 @@ async def test_stale_sidecar_dropped_when_adapter_missing() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_Mgr(),
-        host_id="h",
+        host_identity=_host_identity("h"),
         sidecar_supervisor=supervisor,
         adapter_registry=registry,
     )
@@ -218,7 +225,7 @@ async def test_stale_sidecar_stopped_when_adapter_present() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_Mgr(),
-        host_id="h",
+        host_identity=_host_identity("h"),
         sidecar_supervisor=supervisor,
         adapter_registry=registry,
     )
@@ -240,7 +247,7 @@ async def test_run_forever_catches_exception_and_sleeps() -> None:
     loop = PackStateLoop(
         client=_BadClient(),
         runtime_mgr=_FailingRuntimeMgr(),
-        host_id="h",
+        host_identity=_host_identity("h"),
         poll_interval=0.01,
     )
     task = asyncio.create_task(loop.run_forever())

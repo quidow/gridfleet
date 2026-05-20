@@ -7,10 +7,17 @@ import pytest
 
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import SidecarStatus
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateLoop
 
 pytestmark = pytest.mark.asyncio
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 class _Client:
@@ -91,7 +98,7 @@ async def test_pack_state_loop_starts_desired_sidecars() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_RuntimeMgr(),
-        host_id="host-1",
+        host_identity=_host_identity("host-1"),
         adapter_registry=registry,
         sidecar_supervisor=supervisor,
     )
@@ -115,7 +122,7 @@ async def test_pack_state_loop_stops_removed_sidecars() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_RuntimeMgr(),
-        host_id="host-1",
+        host_identity=_host_identity("host-1"),
         adapter_registry=registry,
         sidecar_supervisor=supervisor,
     )
@@ -140,7 +147,7 @@ async def test_pack_state_loop_drops_stale_sidecar_when_adapter_missing() -> Non
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_RuntimeMgr(),
-        host_id="host-1",
+        host_identity=_host_identity("host-1"),
         adapter_registry=registry,
         sidecar_supervisor=supervisor,
     )
