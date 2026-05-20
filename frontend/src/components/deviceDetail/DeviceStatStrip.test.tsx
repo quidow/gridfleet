@@ -84,6 +84,7 @@ describe('DeviceStatStrip', () => {
         now={now}
       />,
     );
-    expect(screen.getAllByTestId('device-stat-skeleton').length).toBe(4);
+    // Prefer role+label over data-testid per FRONTEND_BEST_PRACTICES.md.
+    expect(screen.getAllByRole('status', { name: 'Loading device stat' }).length).toBe(4);
   });
 });

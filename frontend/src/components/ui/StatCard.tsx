@@ -45,7 +45,12 @@ export default function StatCard({
   sparkline?: number[];
 }) {
   return (
-    <div data-testid="stat-card" className={`card card-padding hover-lift border-l-4 ${TONE_BORDER[tone]}`}>
+    <div
+      role="status"
+      aria-label={`${label} ${value}`}
+      data-testid="stat-card"
+      className={`card card-padding hover-lift border-l-4 ${TONE_BORDER[tone]}`}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="heading-label">{label}</p>

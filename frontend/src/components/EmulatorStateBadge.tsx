@@ -22,6 +22,8 @@ export function EmulatorStateBadge({ state, className }: Props) {
 
   return (
     <Badge
+      role="status"
+      aria-label={`Emulator ${config.label}`}
       data-testid="emulator-state-badge"
       tone={config.tone}
       icon={config.spinning ? <Loader2 size={10} className="animate-spin" /> : undefined}

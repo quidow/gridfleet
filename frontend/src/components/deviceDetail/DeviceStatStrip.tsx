@@ -27,6 +27,9 @@ function buildCards(summary: DeviceStatSummary, now: Date): Card[] {
 function StatSkeleton() {
   return (
     <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading device stat"
       data-testid="device-stat-skeleton"
       className="h-16 animate-pulse rounded-lg border border-border bg-surface-1"
     />

@@ -25,6 +25,8 @@ export default function DeviceVerificationProgress({ activeJob, showStartError =
 
   return (
     <div
+      role="region"
+      aria-label="Verification progress"
       className="space-y-3 rounded-lg border border-border bg-surface-2 p-4"
       data-testid="device-verification-progress"
     >
