@@ -129,8 +129,9 @@ def test_payload_requires_reverification_when_tags_change() -> None:
 async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
     release = SimpleNamespace(platforms=[platform])
-    pack = SimpleNamespace(releases=[release], current_release=None)
-    session = SimpleNamespace(scalar=AsyncMock(return_value=pack))
+    pack = SimpleNamespace(id="pack", releases=[release], current_release=None)
+    scalars_result = SimpleNamespace(all=lambda: [pack])
+    session = SimpleNamespace(scalars=AsyncMock(return_value=scalars_result))
     device = SimpleNamespace(pack_id="pack", platform_id="android_mobile", device_type=None)
     monkeypatch.setattr(device_readiness, "selected_release", lambda _releases, _current: release)
     monkeypatch.setattr(
@@ -157,6 +158,64 @@ async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypa
     )
     with pytest.raises(ValueError, match="Unknown readiness state"):
         await device_readiness.assess_device_async(session, device)  # type: ignore[arg-type]
+
+
+async def test_assess_devices_async_batches_pack_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify the batch helper loads all needed packs in one query and maps each device correctly."""
+    platform_alpha = SimpleNamespace(manifest_platform_id="android_mobile", data={})
+    release_alpha = SimpleNamespace(platforms=[platform_alpha])
+    pack_alpha = SimpleNamespace(id="alpha", releases=[release_alpha], current_release=None)
+
+    platform_beta = SimpleNamespace(manifest_platform_id="ios", data={})
+    release_beta = SimpleNamespace(platforms=[platform_beta])
+    pack_beta = SimpleNamespace(id="beta", releases=[release_beta], current_release=None)
+
+    scalars_result = SimpleNamespace(all=lambda: [pack_alpha, pack_beta])
+    scalars_mock = AsyncMock(return_value=scalars_result)
+    session = SimpleNamespace(scalars=scalars_mock)
+
+    import uuid as _uuid
+
+    dev_alpha_id = _uuid.uuid4()
+    dev_beta_id = _uuid.uuid4()
+    dev_no_pack_id = _uuid.uuid4()
+
+    devices = [
+        SimpleNamespace(id=dev_alpha_id, pack_id="alpha", platform_id="android_mobile", device_type=None),
+        SimpleNamespace(id=dev_beta_id, pack_id="beta", platform_id="ios", device_type=None),
+        SimpleNamespace(id=dev_no_pack_id, pack_id=None, platform_id=None, device_type=None),
+    ]
+
+    monkeypatch.setattr(
+        device_readiness, "selected_release", lambda releases, _current: releases[0] if releases else None
+    )
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_from_required_fields",
+        lambda _device, _fields: device_readiness.DeviceAssessment(
+            readiness_state="verified",
+            missing_setup_fields=[],
+        ),
+    )
+
+    result = await device_readiness.assess_devices_async(session, devices)  # type: ignore[arg-type]
+
+    # Exactly one batch scalars() call regardless of device count.
+    assert scalars_mock.await_count == 1
+    assert result[dev_alpha_id].readiness_state == "verified"
+    assert result[dev_beta_id].readiness_state == "verified"
+    assert result[dev_no_pack_id].readiness_state == "setup_required"
+    assert result[dev_no_pack_id].missing_setup_fields == ["driver_pack"]
+
+
+async def test_assess_devices_async_empty_input_skips_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    scalars_mock = AsyncMock()
+    session = SimpleNamespace(scalars=scalars_mock)
+
+    result = await device_readiness.assess_devices_async(session, [])  # type: ignore[arg-type]
+
+    assert result == {}
+    scalars_mock.assert_not_awaited()
 
 
 async def test_readiness_error_detail_setup_and_verification_messages(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,3 +19,17 @@ class RuntimeRegistry:
     def get_for_pack(self, pack_id: str) -> RuntimeEnv | None:
         with self._lock:
             return self._by_pack.get(pack_id)
+
+    def purge_except(self, pack_ids: set[str]) -> None:
+        """Drop every pack not in *pack_ids*.
+
+        Called from ``PackStateLoop.run_once`` after a reconcile so a pack
+        the backend has retired from the desired list cannot continue to
+        satisfy ``resolve_appium_invocation_for_pack`` against a stale
+        runtime env.
+        """
+
+        with self._lock:
+            stale = [pack_id for pack_id in self._by_pack if pack_id not in pack_ids]
+            for pack_id in stale:
+                self._by_pack.pop(pack_id, None)

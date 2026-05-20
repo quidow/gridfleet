@@ -194,12 +194,34 @@ class PackStateLoop:
                 adapter = self.adapter_registry.get(pack.id, pack.release)
                 if adapter is not None:
                     for feature_id in pack.sidecar_feature_ids:
-                        await self.sidecar_supervisor.start(
-                            pack_id=pack.id,
-                            release=pack.release,
-                            feature_id=feature_id,
-                            adapter=adapter,
-                        )
+                        try:
+                            await self.sidecar_supervisor.start(
+                                pack_id=pack.id,
+                                release=pack.release,
+                                feature_id=feature_id,
+                                adapter=adapter,
+                            )
+                        except Exception as exc:
+                            # A sidecar start failure must not bring down the
+                            # whole reconcile iteration: post_status still has
+                            # to run so the backend reconciler can see the
+                            # bad state and decide what to do (restart,
+                            # disable, alert). Surface as a doctor entry
+                            # alongside adapter_load failures.
+                            logger.exception(
+                                "sidecar start failed for pack %s@%s feature %s",
+                                pack.id,
+                                pack.release,
+                                feature_id,
+                            )
+                            doctor_entries.append(
+                                {
+                                    "pack_id": pack.id,
+                                    "check_id": f"sidecar_start:{feature_id}",
+                                    "ok": False,
+                                    "message": f"sidecar start failed: {exc}",
+                                }
+                            )
 
             doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
 
@@ -219,6 +241,15 @@ class PackStateLoop:
                 }
             )
 
+        if self.runtime_registry is not None:
+            # Shed runtimes for packs the backend has retired from the
+            # desired list so `resolve_appium_invocation_for_pack` cannot
+            # hand out a binary for a pack we no longer manage. Keyed on
+            # the desired-pack set (not env_by_pack) so a transient
+            # runtime_mgr.reconcile failure does not evict cached envs
+            # for packs the backend still wants.
+            self.runtime_registry.purge_except({pack.id for pack in parsed.packs})
+
         desired_sidecars = {
             (pack.id, pack.release, feature_id)
             for pack in parsed.packs
@@ -229,18 +260,37 @@ class PackStateLoop:
             stale_sidecars = sorted(self.sidecar_supervisor.tracked_keys() - desired_sidecars)
             for pack_id, release, feature_id in stale_sidecars:
                 adapter = self.adapter_registry.get(pack_id, release)
-                if adapter is not None:
-                    await self.sidecar_supervisor.stop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
-                        adapter=adapter,
+                try:
+                    if adapter is not None:
+                        await self.sidecar_supervisor.stop(
+                            pack_id=pack_id,
+                            release=release,
+                            feature_id=feature_id,
+                            adapter=adapter,
+                        )
+                    else:
+                        await self.sidecar_supervisor.drop(
+                            pack_id=pack_id,
+                            release=release,
+                            feature_id=feature_id,
+                        )
+                except Exception as exc:
+                    # Same invariant as sidecar start: post_status must still
+                    # run so the backend reconciler can see the failed
+                    # teardown.
+                    logger.exception(
+                        "sidecar stop failed for pack %s@%s feature %s",
+                        pack_id,
+                        release,
+                        feature_id,
                     )
-                else:
-                    await self.sidecar_supervisor.drop(
-                        pack_id=pack_id,
-                        release=release,
-                        feature_id=feature_id,
+                    doctor_entries.append(
+                        {
+                            "pack_id": pack_id,
+                            "check_id": f"sidecar_stop:{feature_id}",
+                            "ok": False,
+                            "message": f"sidecar stop failed: {exc}",
+                        }
                     )
 
         sidecars: list[dict[str, Any]] = (

@@ -62,12 +62,13 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
     with (
         patch("app.devices.services.property_refresh.async_session", session_factory),
         patch(
-            "app.devices.services.property_refresh.pack_refresh_device_properties", new_callable=AsyncMock
-        ) as refresh_device,
+            "app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties",
+            new_callable=AsyncMock,
+        ) as fetch_props,
     ):
         await _refresh_all_properties()
 
-    refreshed_identity_values = [await_call.args[1].identity_value for await_call in refresh_device.await_args_list]
+    refreshed_identity_values = [await_call.args[1].identity_value for await_call in fetch_props.await_args_list]
     assert online_device.identity_value in refreshed_identity_values
     assert offline_device.identity_value not in refreshed_identity_values
     assert offline_host_device.identity_value not in refreshed_identity_values
@@ -105,15 +106,15 @@ async def test_property_refresh_continues_after_device_failure(
     )
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    refresh_device = AsyncMock(side_effect=[RuntimeError("boom"), None])
+    fetch_props = AsyncMock(side_effect=[RuntimeError("boom"), None])
     with (
         patch("app.devices.services.property_refresh.async_session", session_factory),
-        patch("app.devices.services.property_refresh.pack_refresh_device_properties", refresh_device),
+        patch("app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties", fetch_props),
     ):
         await _refresh_all_properties()
 
-    refreshed_identity_values = [await_call.args[1].identity_value for await_call in refresh_device.await_args_list]
-    assert refreshed_identity_values == [first.identity_value, second.identity_value]
+    refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
+    assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
 
 
 async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:

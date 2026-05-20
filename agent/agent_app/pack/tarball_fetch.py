@@ -61,11 +61,29 @@ def _tarball_target(dest_dir: Path, pack_id: str, release: str) -> Path:
     return dest_dir / f"{_safe_filename_segment(pack_id)}-{_safe_filename_segment(release)}-{identity_hash}.tar.gz"
 
 
-def _existing_target_matches(target: Path, expected_sha256: str) -> bool:
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+async def _existing_target_matches(target: Path, expected_sha256: str) -> bool:
     if not target.exists():
         return False
-    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    actual = await asyncio.to_thread(_sha256_file, target)
     return actual == expected_sha256
+
+
+def _verify_and_write(body: bytes, expected_sha256: str, tmp: Path, target: Path) -> str:
+    actual = hashlib.sha256(body).hexdigest()
+    if actual != expected_sha256:
+        return actual
+    try:
+        tmp.write_bytes(body)
+        os.replace(tmp, target)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return actual
 
 
 async def download_and_verify(
@@ -88,7 +106,7 @@ async def download_and_verify(
         async with fetch_entry.lock:
             # Re-check after acquiring the lock: a prior holder may have already
             # fetched and verified this target while this caller waited.
-            if _existing_target_matches(target, expected_sha256):
+            if await _existing_target_matches(target, expected_sha256):
                 return target
 
             path = f"/api/driver-packs/{pack_id}/releases/{release}/tarball"
@@ -102,18 +120,12 @@ async def download_and_verify(
             response = await client.get(url, **request_kwargs)
             response.raise_for_status()
             body = response.content
-            actual = hashlib.sha256(body).hexdigest()
+            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+            actual = await asyncio.to_thread(_verify_and_write, body, expected_sha256, tmp, target)
             if actual != expected_sha256:
                 raise TarballSha256MismatchError(
                     f"tarball for {pack_id}@{release} sha mismatch: got {actual} expected {expected_sha256}"
                 )
-            tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
-            try:
-                tmp.write_bytes(body)
-                os.replace(tmp, target)
-            finally:
-                if tmp.exists():
-                    tmp.unlink()
             return target
     finally:
         await _release_fetch_lock(key, fetch_entry)
