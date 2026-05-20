@@ -29,6 +29,7 @@ export function useDeviceGroups() {
     queryKey: ['device-groups'],
     queryFn: fetchDeviceGroups,
     refetchInterval: 30_000,
+    meta: { handleErrorLocally: true },
   });
 }
 

@@ -209,6 +209,7 @@ export function useDevices(params?: {
     queryKey: ['devices', params],
     queryFn: () => fetchDevices(params),
     refetchInterval: connected ? 60_000 : 10_000,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -235,6 +236,7 @@ export function useDevicesPaginated(params: {
     queryFn: () => fetchDevicesPaginated(params),
     refetchInterval: connected ? 60_000 : 10_000,
     placeholderData: keepPreviousData,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -245,6 +247,7 @@ export function useDevice(id: string) {
     queryFn: () => fetchDevice(id),
     refetchInterval: connected ? 60_000 : 5_000,
     placeholderData: keepPreviousData,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -458,6 +461,7 @@ export function useDeviceHealth(id: string) {
     queryKey: ['device-health', id],
     queryFn: () => fetchDeviceHealth(id),
     refetchInterval: connected ? 60_000 : 15_000,
+    meta: { handleErrorLocally: true },
   });
 }
 

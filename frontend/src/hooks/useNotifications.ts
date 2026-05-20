@@ -7,5 +7,6 @@ export function useNotifications(params?: NotificationListParams) {
     queryKey: ['notifications', params],
     queryFn: () => fetchNotifications(params),
     refetchInterval: 30_000,
+    meta: { handleErrorLocally: true },
   });
 }

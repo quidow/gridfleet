@@ -14,6 +14,7 @@ export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
     queryFn: () => fetchLifecycleIncidents(params),
     refetchInterval: isHistorical ? false : connected ? 60_000 : 10_000,
     placeholderData: keepPreviousData,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -22,5 +23,6 @@ export function useRecentLifecycleIncidents(params?: { limit?: number; device_id
     queryKey: ['lifecycle', 'incidents', 'recent', params],
     queryFn: () => fetchRecentLifecycleIncidents(params),
     staleTime: 30_000,
+    meta: { handleErrorLocally: true },
   });
 }

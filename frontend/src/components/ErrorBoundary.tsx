@@ -5,6 +5,9 @@ type ErrorBoundaryProps = {
   level?: 'page' | 'section';
   scope?: string;
   resetKey?: string;
+  // Called after the local error state clears so callers can reset external
+  // state (e.g. QueryErrorResetBoundary so failed queries refetch).
+  onReset?: () => void;
 };
 
 type ErrorBoundaryState = {
@@ -37,6 +40,7 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       return;
     }
     this.setState({ error: null });
+    this.props.onReset?.();
   };
 
   override render() {

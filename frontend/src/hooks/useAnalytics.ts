@@ -18,6 +18,7 @@ export function useSessionSummary(params?: SessionSummaryParams, options?: Analy
     queryFn: () => fetchSessionSummary(params),
     staleTime: 5 * 60_000,
     enabled: options?.enabled,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -27,6 +28,7 @@ export function useDeviceUtilization(params?: AnalyticsParams, options?: Analyti
     queryFn: () => fetchDeviceUtilization(params),
     staleTime: 5 * 60_000,
     enabled: options?.enabled,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -36,6 +38,7 @@ export function useDeviceReliability(params?: AnalyticsParams, options?: Analyti
     queryFn: () => fetchDeviceReliability(params),
     staleTime: 5 * 60_000,
     enabled: options?.enabled,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -45,6 +48,7 @@ export function useFleetOverview(params?: AnalyticsParams, options?: AnalyticsQu
     queryFn: () => fetchFleetOverview(params),
     staleTime: 5 * 60_000,
     enabled: options?.enabled,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -57,5 +61,6 @@ export function useFleetCapacityTimeline(
     queryFn: () => fetchFleetCapacityTimeline(params),
     staleTime: 60_000,
     enabled: options?.enabled,
+    meta: { handleErrorLocally: true },
   });
 }

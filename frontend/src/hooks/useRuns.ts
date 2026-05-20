@@ -11,6 +11,7 @@ export function useRuns(params?: RunListParams) {
     queryFn: () => fetchRuns(params),
     refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
     refetchOnWindowFocus: false,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -21,6 +22,7 @@ export function useRun(id: string) {
     queryFn: () => fetchRun(id),
     refetchInterval: connected ? 60_000 : 5_000,
     refetchOnWindowFocus: false,
+    meta: { handleErrorLocally: true },
   });
 }
 

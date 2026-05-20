@@ -10,6 +10,12 @@ import './index.css';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      // Throw fetch errors into the nearest ErrorBoundary by default so the
+      // boundary owns fetch-error UI (per FRONTEND_BEST_PRACTICES.md). Hooks
+      // that want to display errors inline opt out with
+      // `meta: { handleErrorLocally: true }`.
+      throwOnError: (_error, query) =>
+        !(query.meta && (query.meta as { handleErrorLocally?: boolean }).handleErrorLocally),
       staleTime: 5_000,
       retry: 1,
       refetchOnWindowFocus: true,

@@ -11,5 +11,6 @@ export function useSessions(params?: SessionListParams) {
     queryFn: () => fetchSessions(params),
     refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
     refetchOnWindowFocus: false,
+    meta: { handleErrorLocally: true },
   });
 }

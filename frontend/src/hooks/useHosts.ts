@@ -26,6 +26,7 @@ export function useHosts() {
     queryKey: ['hosts'],
     queryFn: fetchHosts,
     refetchInterval: connected ? 60_000 : 15_000,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -35,6 +36,7 @@ export function useHost(id: string) {
     queryKey: ['host', id],
     queryFn: () => fetchHost(id),
     refetchInterval: connected ? 60_000 : 10_000,
+    meta: { handleErrorLocally: true },
   });
 }
 
