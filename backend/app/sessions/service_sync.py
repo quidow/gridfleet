@@ -182,11 +182,22 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
     locked before the state machine fires so concurrent state writers
     cannot lose the busy transition.
     """
-    session_stmt = select(Session).where(
-        Session.session_id == sid,
-        Session.status == SessionStatus.running,
-        Session.ended_at.is_(None),
-        Session.device_id.is_(None),
+    # Take ``SELECT … FOR UPDATE`` on the Session row so a concurrent
+    # ``POST /api/sessions/{id}/end`` (or any other session-end path)
+    # cannot land ``ended_at = NOW`` between this read and the
+    # ``session.device_id = locked_device.id`` write below. Without the
+    # lock the hydrator would happily bind a device to a row that has
+    # already ended, and would fire ``SESSION_STARTED`` on the device for
+    # a session that no longer exists.
+    session_stmt = (
+        select(Session)
+        .where(
+            Session.session_id == sid,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+            Session.device_id.is_(None),
+        )
+        .with_for_update()
     )
     session = (await db.execute(session_stmt)).scalar_one_or_none()
     if session is None:
@@ -200,6 +211,19 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
         return
 
     locked_device = await device_locking.lock_device(db, device.id)
+    # Re-check the locked Session row under the same transaction — the
+    # initial SELECT FOR UPDATE acquired the lock, but ``await
+    # _resolve_device_from_hub_info`` and ``device_locking.lock_device``
+    # both run async-yields, and the locked row may have been changed by
+    # the session-end path if its commit landed before our SELECT.
+    if session.status is not SessionStatus.running or session.ended_at is not None:
+        logger.info(
+            "Skipping orphan hydration for %s: session is no longer running (status=%s, ended_at=%s)",
+            sid,
+            session.status,
+            session.ended_at,
+        )
+        return
     session.device_id = locked_device.id
 
     reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, locked_device.id)
