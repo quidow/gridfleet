@@ -63,14 +63,31 @@ async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dic
 
 
 async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
-    pack = await session.get(DriverPack, pack_id)
+    # Take ``SELECT … FOR UPDATE`` on the DriverPack row so the count and the
+    # disable write run under a single row lock. Without this, a concurrent
+    # ``count_active_work_for_pack`` reader could observe zero work, then a
+    # second concurrent path could commit a fresh ``DeviceReservation`` for
+    # the pack between the count and our state flip — leaving the pack
+    # ``disabled`` while an active reservation references it.
+    locked_stmt = (
+        select(DriverPack).where(DriverPack.id == pack_id).with_for_update().execution_options(populate_existing=True)
+    )
+    pack = (await session.execute(locked_stmt)).scalar_one_or_none()
     if pack is None:
         raise LookupError(f"pack {pack_id!r} not found")
     if pack.state != PackState.draining:
         return pack
     counts = await count_active_work_for_pack(session, pack_id)
     if counts["active_runs"] == 0 and counts["live_sessions"] == 0:
-        pack.state = PackState.disabled
+        # Recount immediately before the state write: the count query
+        # reads ``DeviceReservation`` etc. without locking those rows, so
+        # a concurrent allocator could commit between the first count and
+        # this second one. The pack row is held FOR UPDATE so the two
+        # reads are still inside one consistent transaction, but the
+        # explicit recount surfaces any post-snapshot writes.
+        recheck = await count_active_work_for_pack(session, pack_id)
+        if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
+            pack.state = PackState.disabled
     return pack
 
 
