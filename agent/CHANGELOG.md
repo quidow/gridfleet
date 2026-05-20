@@ -2,6 +2,28 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.17.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.16.0...gridfleet-agent-v0.17.0) (2026-05-20)
+
+
+### Features
+
+* **agent:** track per-session WebDriver activity for idle expiry ([#319](https://github.com/quidow/gridfleet/issues/319)) ([7988a4b](https://github.com/quidow/gridfleet/commit/7988a4bb35ca9fdf2252097f148fa926ebebc429))
+
+
+### Bug Fixes
+
+* **agent:** preserve stop_pending intent across appium restart ([#315](https://github.com/quidow/gridfleet/issues/315)) ([7e48e5f](https://github.com/quidow/gridfleet/commit/7e48e5f51887496c643abf371656ede5c103fed7))
+* **agent:** purge retired packs from RuntimeRegistry ([#317](https://github.com/quidow/gridfleet/issues/317)) ([579d6d8](https://github.com/quidow/gridfleet/commit/579d6d81c9e9779119562dae08a5540f91ef9da5))
+* **agent:** read grid_node settings from per-domain config attribute ([#313](https://github.com/quidow/gridfleet/issues/313)) ([d45027b](https://github.com/quidow/gridfleet/commit/d45027ba89e75b1a198d233ce5ead5b9dea32138))
+* **agent:** reap stuck reservations in grid relay heartbeat ([#314](https://github.com/quidow/gridfleet/issues/314)) ([4842465](https://github.com/quidow/gridfleet/commit/48424655932134eda375c53ed8dd9643f8a2492b))
+* **agent:** rotate host_id consistently across awaiters and pack client ([#318](https://github.com/quidow/gridfleet/issues/318)) ([f7c4937](https://github.com/quidow/gridfleet/commit/f7c493798d1890ac09e64f83f7b514dcb654fdb8))
+* **agent:** surface sidecar start failures in pack status ([#316](https://github.com/quidow/gridfleet/issues/316)) ([3848a1d](https://github.com/quidow/gridfleet/commit/3848a1d196e9209293438d1e656cb75f2f617da9))
+
+
+### Performance Improvements
+
+* **agent:** reuse shared HTTP client and offload tarball hashing ([#311](https://github.com/quidow/gridfleet/issues/311)) ([b01313f](https://github.com/quidow/gridfleet/commit/b01313f337612ea6f26a3fed78e3f8e89f68d5ce))
+
 ## [0.16.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.15.2...gridfleet-agent-v0.16.0) (2026-05-18)
 
 
