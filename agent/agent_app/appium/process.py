@@ -356,7 +356,7 @@ class AppiumProcessManager:
         # default `0.0.0.0`) — NOT the advertised hostname, which can be a
         # docker-only DNS name like `host.docker.internal` that does not
         # resolve on the agent host and would fail probe + bind alike.
-        probe_host = getattr(agent_settings, "grid_node_bind_host", "0.0.0.0")
+        probe_host = agent_settings.grid_node.grid_node_bind_host
         while True:
             port = self._next_node_port
             self._next_node_port += 1
@@ -903,10 +903,10 @@ class AppiumProcessManager:
             slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
             hub_publish_url=agent_settings.grid_node.grid_publish_url,
             hub_subscribe_url=agent_settings.grid_node.grid_subscribe_url,
-            heartbeat_sec=getattr(agent_settings, "grid_node_heartbeat_sec", 5.0),
-            session_timeout_sec=getattr(agent_settings, "grid_node_session_timeout_sec", 1800.0),
-            proxy_timeout_sec=getattr(agent_settings, "grid_node_proxy_timeout_sec", 60.0),
-            bind_host=getattr(agent_settings, "grid_node_bind_host", "0.0.0.0"),
+            heartbeat_sec=agent_settings.grid_node.grid_node_heartbeat_sec,
+            session_timeout_sec=agent_settings.grid_node.grid_node_session_timeout_sec,
+            proxy_timeout_sec=agent_settings.grid_node.grid_node_proxy_timeout_sec,
+            bind_host=agent_settings.grid_node.grid_node_bind_host,
         )
 
         def factory() -> GridNodeService:
