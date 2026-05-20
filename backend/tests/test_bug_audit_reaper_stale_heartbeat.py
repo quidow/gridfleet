@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.runs import service_reaper as _service_reaper
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
 
@@ -43,8 +44,6 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
     db_session.add(stale_run)
     await db_session.commit()
     run_id = stale_run.id
-
-    from app.runs import service_reaper as _service_reaper
 
     original_lock = _service_reaper.get_run_for_update  # type: ignore[attr-defined]
 

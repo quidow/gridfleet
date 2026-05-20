@@ -39,55 +39,53 @@ async def _reap_stale_runs(db: AsyncSession) -> None:
     runs = result.scalars().all()
 
     for run in runs:
-        if _heartbeat_stale(run, now):
-            logger.warning(
-                "Expiring run %s (%s): heartbeat timeout (last: %s, timeout: %ds)",
-                run.id,
-                run.name,
-                run.last_heartbeat,
-                run.heartbeat_timeout_sec,
-            )
-            await assert_current_leader(db)
-            # Re-check staleness under the row lock. The outer SELECT above
-            # has no FOR UPDATE, so a concurrent ``heartbeat()`` could
-            # refresh ``last_heartbeat`` between that snapshot and the lock
-            # ``expire_run`` takes internally. Without this re-check the
-            # reaper kills runs that just received a fresh heartbeat.
-            locked = await get_run_for_update(db, run.id)
-            if locked is None:
-                continue
-            if locked.state in TERMINAL_STATES:
-                await db.commit()
-                continue
-            current_now = datetime.now(UTC)
-            if not (_heartbeat_stale(locked, current_now) or _ttl_stale(locked, current_now)):
-                await db.commit()
-                continue
-            await run_service.expire_run(db, locked, "Heartbeat timeout")
+        if not (_heartbeat_stale(run, now) or _ttl_stale(run, now)):
             continue
 
-        if _ttl_stale(run, now):
+        await assert_current_leader(db)
+        # Re-check staleness under the row lock. The outer SELECT above
+        # has no FOR UPDATE, so a concurrent ``heartbeat()`` could
+        # refresh ``last_heartbeat`` between that snapshot and the lock
+        # ``expire_run`` takes internally. Without this re-check the
+        # reaper kills runs that just received a fresh heartbeat. The
+        # WARN log is deferred until after the lock confirms the run is
+        # still stale, so a near-miss does not produce a misleading
+        # "Expiring run …" line for a run we ultimately leave alone.
+        # The reason string is also picked from the condition still
+        # stale under the lock — picking it from the pre-lock snapshot
+        # could mislabel a TTL expiry as a heartbeat timeout (or vice
+        # versa) when one predicate flipped between the SELECT and the
+        # locked re-fetch.
+        locked = await get_run_for_update(db, run.id)
+        if locked is None:
+            continue
+        if locked.state in TERMINAL_STATES:
+            await db.commit()
+            continue
+        current_now = datetime.now(UTC)
+        heartbeat_stale = _heartbeat_stale(locked, current_now)
+        ttl_stale = _ttl_stale(locked, current_now)
+        if not (heartbeat_stale or ttl_stale):
+            await db.commit()
+            continue
+
+        if heartbeat_stale:
+            logger.warning(
+                "Expiring run %s (%s): heartbeat timeout (last: %s, timeout: %ds)",
+                locked.id,
+                locked.name,
+                locked.last_heartbeat,
+                locked.heartbeat_timeout_sec,
+            )
+            await run_service.expire_run(db, locked, "Heartbeat timeout")
+        else:
             logger.warning(
                 "Expiring run %s (%s): TTL exceeded (%d minutes)",
-                run.id,
-                run.name,
-                run.ttl_minutes,
+                locked.id,
+                locked.name,
+                locked.ttl_minutes,
             )
-            await assert_current_leader(db)
-            # See heartbeat-branch comment above for the rationale behind
-            # the locked re-check.
-            locked = await get_run_for_update(db, run.id)
-            if locked is None:
-                continue
-            if locked.state in TERMINAL_STATES:
-                await db.commit()
-                continue
-            current_now = datetime.now(UTC)
-            if not (_heartbeat_stale(locked, current_now) or _ttl_stale(locked, current_now)):
-                await db.commit()
-                continue
-            await run_service.expire_run(db, locked, f"TTL exceeded ({run.ttl_minutes} minutes)")
-            continue
+            await run_service.expire_run(db, locked, f"TTL exceeded ({locked.ttl_minutes} minutes)")
 
 
 async def run_reaper_loop() -> None:

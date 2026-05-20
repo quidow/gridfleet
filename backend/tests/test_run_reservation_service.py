@@ -54,6 +54,11 @@ async def test_exclude_device_from_run_updates_entry_without_commit(monkeypatch)
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, entry)),
     )
+    monkeypatch.setattr(
+        run_reservation_service,
+        "_lock_active_reservation_entry",
+        AsyncMock(return_value=entry),
+    )
 
     result = await run_reservation_service.exclude_device_from_run(FakeSession(), device_id, reason="bad", commit=False)
 
@@ -94,6 +99,11 @@ async def test_restore_device_to_run_updates_excluded_entry(monkeypatch) -> None
         run_reservation_service,
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, entry)),
+    )
+    monkeypatch.setattr(
+        run_reservation_service,
+        "_lock_active_reservation_entry",
+        AsyncMock(return_value=entry),
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
@@ -157,6 +167,11 @@ async def test_exclude_and_restore_commit_refresh_paths(monkeypatch) -> None:  #
         run_reservation_service,
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, entry)),
+    )
+    monkeypatch.setattr(
+        run_reservation_service,
+        "_lock_active_reservation_entry",
+        AsyncMock(return_value=entry),
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 

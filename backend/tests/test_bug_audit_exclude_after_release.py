@@ -18,11 +18,14 @@ release path is supposed to make impossible.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
 
+import app.runs.service_reservation_lookup as _lookup
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation_lookup import exclude_device_from_run
@@ -72,8 +75,6 @@ async def test_exclude_marks_released_reservation_as_excluded(
     device_id = device.id
     reservation_id = reservation.id
 
-    import app.runs.service_reservation_lookup as _lookup
-
     original_get = _lookup._get_device_reservation_with_entry  # type: ignore[attr-defined]
 
     async def _get_then_release(
@@ -89,13 +90,9 @@ async def test_exclude_marks_released_reservation_as_excluded(
         async with db_session_maker() as side:
             row = await side.get(DeviceReservation, reservation_id)
             if row is not None and row.released_at is None:
-                from datetime import UTC, datetime
-
                 row.released_at = datetime.now(UTC)
                 await side.commit()
         return snapshot
-
-    from unittest.mock import patch
 
     with patch.object(_lookup, "_get_device_reservation_with_entry", side_effect=_get_then_release):
         await exclude_device_from_run(db_session, device_id, reason="test race", commit=True)
