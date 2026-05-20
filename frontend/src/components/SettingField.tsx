@@ -1,4 +1,5 @@
 import { RotateCcw } from 'lucide-react';
+import Select from './ui/Select';
 import type { SettingRead } from '../types';
 
 interface Props {
@@ -80,18 +81,14 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
     case 'string':
       if (setting.validation?.allowed_values) {
         return (
-          <select
+          <Select
             name={setting.key}
             value={value as string}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-48 border border-border-strong rounded-md px-3 py-1.5 text-sm"
-          >
-            {setting.validation.allowed_values.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+            onChange={(next) => onChange(next)}
+            size="sm"
+            className="w-48"
+            options={setting.validation.allowed_values.map((v) => ({ value: v, label: v }))}
+          />
         );
       }
       return (
