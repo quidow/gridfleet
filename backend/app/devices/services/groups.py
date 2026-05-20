@@ -109,7 +109,6 @@ async def delete_group(db: AsyncSession, group_id: uuid.UUID) -> bool:
 
 async def add_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
     if not device_ids:
-        await db.commit()
         return 0
     # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
     # adding the same (group_id, device_id) degrades to a benign no-op

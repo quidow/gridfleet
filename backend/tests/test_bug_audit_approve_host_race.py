@@ -6,10 +6,29 @@ See ``docs/superpowers/specs/2026-05-20-backend-bug-audit.md#bug-7``.
 an unlocked SELECT for the host row, then an in-memory mutation
 (``host.status = HostStatus.online``) plus commit. A concurrent
 ``reject_host`` (which deletes the row) interleaved between the
-SELECT and the UPDATE leaves the function returning a "successful"
-``Host`` object with ``status=online`` even though the row no longer
-exists — the UPDATE silently affects zero rows and ``return host``
-hands the caller a phantom object.
+SELECT and the UPDATE leaves ``approve_host`` issuing an UPDATE that
+matches zero rows and then a ``db.refresh(host)`` that raises
+``ObjectDeletedError`` / ``NoResultFound`` — surfaces as a 500 to
+the operator instead of a clean "no longer pending" response.
+
+This test reproduces the race by reordering operations:
+  1. Main session runs its SELECT (with the fix, this acquires
+     ``FOR UPDATE`` on the row).
+  2. The hook fires a side-channel that opens its own session,
+     sets a short ``lock_timeout``, and attempts to delete the row.
+     - On the fixed branch the side-channel blocks on the
+       row lock, hits ``lock_timeout``, and rolls back. Main session
+       proceeds to update + commit + refresh the still-existing row
+       and ``approve_host`` returns the approved ``Host``.
+     - On the bug branch the side-channel deletes the row
+       successfully before main session commits. Main's UPDATE
+       affects zero rows, ``refresh`` then raises
+       ``ObjectDeletedError`` / ``NoResultFound`` and ``approve_host``
+       leaks the exception.
+
+Invariant: ``approve_host`` must not raise an unhandled exception
+under a concurrent reject. If the row is gone it should return
+``None``; if the row survives it should return the approved host.
 """
 
 from __future__ import annotations
@@ -18,7 +37,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import approve_host
@@ -48,39 +68,58 @@ async def test_approve_host_races_concurrent_reject(
     original_execute = db_session.execute
     triggered = False
 
-    async def _delete_after_select(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    async def _delete_between_select_and_commit(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        """Fire side-channel AFTER main session's SELECT returns.
+
+        The previous version of this test fired the side-channel BEFORE
+        ``original_execute`` ran, which collapsed to "row already gone
+        when SELECT happens" — a degenerate case that the buggy code
+        path already handled (SELECT returns no row → return None).
+        The real bug is "row vanishes between SELECT and UPDATE/refresh",
+        which only this ordering exercises.
+        """
         nonlocal triggered
+        result = await original_execute(stmt, *args, **kwargs)
         stmt_text = str(stmt).lower()
-        # First SELECT against hosts table inside approve_host: simulate a
-        # concurrent reject_host that deletes the pending row immediately
-        # BEFORE we observe the row. The side-channel commits before the
-        # main session's SELECT runs so the main session sees no row.
         if not triggered and "from hosts" in stmt_text and "select" in stmt_text:
             triggered = True
             async with db_session_maker() as side:
-                victim = await side.get(Host, host_id)
-                if victim is not None:
-                    await side.delete(victim)
+                try:
+                    # Short lock_timeout: on the fixed branch main holds
+                    # SELECT ... FOR UPDATE so this DELETE will block,
+                    # time out, and roll back cleanly (race prevented).
+                    # On the bug branch no lock is held so the DELETE
+                    # commits immediately.
+                    await side.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                    await side.execute(delete(Host).where(Host.id == host_id))
                     await side.commit()
-        return await original_execute(stmt, *args, **kwargs)
+                except DBAPIError:
+                    await side.rollback()
+        return result
 
-    db_session.execute = _delete_after_select  # type: ignore[assignment, method-assign]
+    db_session.execute = _delete_between_select_and_commit  # type: ignore[assignment, method-assign]
     try:
-        approved = await approve_host(db_session, host_id)
+        try:
+            approved = await approve_host(db_session, host_id)
+        except Exception as exc:  # noqa: BLE001
+            pytest.fail(
+                f"approve_host leaked exception under concurrent reject race: {exc!r} — "
+                "row was deleted between the SELECT and the UPDATE/refresh"
+            )
     finally:
         db_session.execute = original_execute  # type: ignore[method-assign]
 
-    # Fixed behavior: approve_host should detect the row no longer exists
-    # (UPDATE affected zero rows, or re-SELECT after locking returns None)
-    # and return None — i.e. "the host is no longer pending; nothing to
-    # approve." Current behavior (bug): the function returns a Host
-    # object with status=online even though no DB row backs it.
     async with db_session_maker() as side:
         persisted = (await side.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
 
-    if approved is not None and persisted is None:
-        pytest.fail(
-            "approve_host returned a 'successful' approved host but the underlying "
-            "row was deleted by a concurrent reject — caller sees status=online for "
-            "a host that no longer exists"
+    # Outcome must be coherent: approved <=> persisted exists with status=online.
+    if approved is not None:
+        assert persisted is not None, (
+            "approve_host returned an approved Host but the underlying row is gone — phantom success"
         )
+        assert persisted.status == HostStatus.online
+    else:
+        # Approval was abandoned cleanly (race lost). DB state may or may not
+        # have the row, but if it does it must not be silently flipped online.
+        if persisted is not None:
+            assert persisted.status == HostStatus.pending
