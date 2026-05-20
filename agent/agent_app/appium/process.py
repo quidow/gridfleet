@@ -563,6 +563,13 @@ class AppiumProcessManager:
             await asyncio.sleep(delay_sec)
             if port in self._intentional_stop_ports:
                 return
+            if port in self._stop_pending_ports:
+                # Operator queued a stop_pending lifecycle during the
+                # backoff window; honor it instead of resurrecting the
+                # process. The pending stop is already tracked via
+                # `_stop_pending_tasks` (or will be re-armed on the next
+                # explicit start).
+                return
             if port not in self._launch_specs:
                 return
 
@@ -854,7 +861,17 @@ class AppiumProcessManager:
 
             self._launch_specs[port] = spec
             self._intentional_stop_ports.discard(port)
-            self._stop_pending_ports.discard(port)
+            # Honor the operator's stop_pending intent across restarts: when
+            # the caller asks for a stop-pending lifecycle (e.g. auto-restart
+            # carrying spec.stop_pending forward, or a fresh start that should
+            # drain after the next session), keep the port in
+            # `_stop_pending_ports` and arm the idle-stop task once the grid
+            # node is up. Otherwise clear any stale intent left by a prior
+            # lifecycle.
+            if spec.stop_pending:
+                self._stop_pending_ports.add(port)
+            else:
+                self._stop_pending_ports.discard(port)
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
 
             if manage_grid_node:
@@ -877,6 +894,10 @@ class AppiumProcessManager:
                 info.pid = appium_proc.pid
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
+            if spec.stop_pending:
+                # Schedule the idle-stop watcher now that the grid node is up
+                # so the carried-forward stop intent actually fires.
+                self._ensure_stop_when_grid_idle_task(port)
             return info
 
     async def _start_grid_node_service(self, spec: AppiumLaunchSpec) -> GridNodeSupervisorHandle:
