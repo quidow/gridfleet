@@ -11,6 +11,13 @@ import pytest
 
 from agent_app.logs.schemas import ShippedLogLine
 from agent_app.logs.shipper import LogShipperTask
+from agent_app.pack.host_identity import HostIdentity
+
+
+def _host_identity_uuid() -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(str(uuid4()))
+    return hi
 
 
 class _FakeBackend:
@@ -46,7 +53,7 @@ async def test_flushes_full_batch_immediately() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         task = LogShipperTask(
             client=client,
-            host_id=uuid4(),
+            host_identity=_host_identity_uuid(),
             boot_id=uuid4(),
             queue=queue,
             batch_size=3,
@@ -70,7 +77,7 @@ async def test_flushes_partial_on_interval() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         task = LogShipperTask(
             client=client,
-            host_id=uuid4(),
+            host_identity=_host_identity_uuid(),
             boot_id=uuid4(),
             queue=queue,
             batch_size=200,
@@ -93,7 +100,7 @@ async def test_retries_on_5xx_then_succeeds() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         task = LogShipperTask(
             client=client,
-            host_id=uuid4(),
+            host_identity=_host_identity_uuid(),
             boot_id=uuid4(),
             queue=queue,
             batch_size=1,
@@ -119,7 +126,7 @@ async def test_drops_on_4xx() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         task = LogShipperTask(
             client=client,
-            host_id=uuid4(),
+            host_identity=_host_identity_uuid(),
             boot_id=uuid4(),
             queue=queue,
             batch_size=1,
@@ -142,7 +149,7 @@ async def test_final_flush_on_stop() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://manager") as client:
         task = LogShipperTask(
             client=client,
-            host_id=uuid4(),
+            host_identity=_host_identity_uuid(),
             boot_id=uuid4(),
             queue=queue,
             batch_size=100,

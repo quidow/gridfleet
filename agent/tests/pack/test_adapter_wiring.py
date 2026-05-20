@@ -39,7 +39,14 @@ from agent_app.pack.dispatch import (
     adapter_post_session,
     adapter_pre_session,
 )
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.manifest import AppiumInstallable, DesiredPack, DesiredPlatform
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 class _RecordingAdapter:
@@ -578,7 +585,7 @@ async def test_state_loop_invokes_adapter_loader_for_adapter_packs() -> None:
     loop = PackStateLoop(
         client=_FakeClient(),
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         runtime_registry=RuntimeRegistry(),
         adapter_registry=registry,
         adapter_loader=_loader,
@@ -665,7 +672,7 @@ async def test_state_loop_does_not_block_adapter_packs_on_host_probe_support() -
     loop = PackStateLoop(
         client=fake_client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
     pack_entry = fake_client.posted[-1]["packs"][0]

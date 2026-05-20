@@ -13,6 +13,7 @@ from agent_app.pack.runtime_policy import resolve_runtime_spec
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
     from agent_app.pack.adapter_types import DoctorCheckResult
+    from agent_app.pack.host_identity import HostIdentity
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
     from agent_app.pack.runtime_registry import RuntimeRegistry
     from agent_app.pack.sidecar_supervisor import SidecarSupervisor
@@ -52,7 +53,7 @@ class _DoctorCtx:
 class PackStateLoop:
     client: PackStateClient
     runtime_mgr: RuntimeMgr
-    host_id: str
+    host_identity: HostIdentity
     poll_interval: float = 10.0
     runtime_registry: RuntimeRegistry | None = None
     adapter_registry: AdapterRegistry | None = None
@@ -65,7 +66,14 @@ class PackStateLoop:
     def latest_desired_packs(self) -> list[DesiredPack] | None:
         return self._latest_desired
 
+    def _resolve_host_id(self) -> str:
+        host_id = self.host_identity.get()
+        if host_id is None:
+            raise RuntimeError("PackStateLoop iteration ran before host identity was assigned")
+        return host_id
+
     async def run_once(self) -> None:
+        host_id = self._resolve_host_id()
         desired_raw = await self.client.fetch_desired()
         parsed = parse_desired_payload(desired_raw)
         self._latest_desired = parsed.packs
@@ -215,7 +223,7 @@ class PackStateLoop:
                                 }
                             )
 
-            doctor_entries.extend(await self._doctor_entries_for_pack(pack))
+            doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
 
             pack_entries.append(
                 {
@@ -289,7 +297,7 @@ class PackStateLoop:
             self.sidecar_supervisor.status_snapshot() if self.sidecar_supervisor is not None else []
         )
         payload = {
-            "host_id": self.host_id,
+            "host_id": host_id,
             "runtimes": runtime_entries,
             "packs": pack_entries,
             "doctor": doctor_entries,
@@ -300,13 +308,15 @@ class PackStateLoop:
     async def _doctor_entries_for_pack(
         self,
         pack: DesiredPack,
+        *,
+        host_id: str,
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         if self.adapter_registry is not None:
             adapter = self.adapter_registry.get(pack.id, pack.release)
             if adapter is not None:
                 try:
-                    for result in await dispatch_doctor(adapter, _DoctorCtx(host_id=self.host_id)):
+                    for result in await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id)):
                         entries.append(_adapter_doctor_entry(pack.id, result))
                 except Exception as exc:
                     logger.exception("adapter doctor failed for pack %s@%s", pack.id, pack.release)

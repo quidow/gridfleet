@@ -23,10 +23,18 @@ from agent_app.pack.adapter_types import (
     NormalizedDevice,
     SidecarStatus,
 )
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 
 if TYPE_CHECKING:
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
+
 
 # ---------------------------------------------------------------------------
 # Fake adapter
@@ -245,7 +253,7 @@ async def test_status_payload_includes_sidecars_key() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         sidecar_supervisor=supervisor,
     )
     await loop.run_once()
@@ -323,7 +331,7 @@ async def test_status_payload_sidecars_reflects_supervisor_snapshot() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         sidecar_supervisor=supervisor,
     )
     await loop.run_once()
@@ -367,7 +375,7 @@ async def test_status_payload_sidecars_empty_when_no_supervisor() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
 

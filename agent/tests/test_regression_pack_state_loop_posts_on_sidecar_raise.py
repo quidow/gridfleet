@@ -9,11 +9,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateLoop
 
 if TYPE_CHECKING:
     import pytest
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 class _FakeClient:
@@ -151,7 +158,7 @@ async def test_run_once_posts_status_when_sidecar_start_raises(monkeypatch: pyte
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         adapter_registry=_FakeAdapterRegistry(),  # type: ignore[arg-type]
         sidecar_supervisor=_RaisingStartSidecarSupervisor(),  # type: ignore[arg-type]
     )
@@ -173,7 +180,7 @@ async def test_run_once_posts_status_when_sidecar_stop_raises(monkeypatch: pytes
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         adapter_registry=_FakeAdapterRegistry(),  # type: ignore[arg-type]
         sidecar_supervisor=_RaisingStopSidecarSupervisor(),  # type: ignore[arg-type]
     )

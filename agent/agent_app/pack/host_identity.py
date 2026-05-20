@@ -17,5 +17,11 @@ class HostIdentity:
 
     async def wait(self) -> str:
         await self._event.wait()
+        # Defensive yield: if multiple ``set()`` calls land in the same
+        # event-loop tick (synthetic rotation), let later ones finish
+        # before snapshotting ``_value`` so all waiters agree on the
+        # latest id. Long-lived consumers must still re-read via
+        # ``get()`` per request — see callers in ``lifespan.py``.
+        await asyncio.sleep(0)
         assert self._value is not None
         return self._value

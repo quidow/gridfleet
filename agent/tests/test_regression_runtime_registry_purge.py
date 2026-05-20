@@ -11,9 +11,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
 from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateLoop
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 class _StaticClient:
@@ -93,7 +100,7 @@ async def test_runtime_registry_purges_packs_no_longer_desired() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FakeRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         runtime_registry=registry,
     )
 
@@ -141,7 +148,7 @@ async def test_runtime_registry_keeps_desired_packs_when_reconcile_fails() -> No
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FlakyRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         runtime_registry=registry,
     )
 

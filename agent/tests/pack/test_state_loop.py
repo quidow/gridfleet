@@ -2,8 +2,15 @@ from typing import Any
 
 import pytest
 
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateClient, PackStateLoop
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 class _FakeClient(PackStateClient):
@@ -97,7 +104,7 @@ async def test_loop_posts_installed_status_after_reconcile() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
     assert len(client.posted) == 1
@@ -117,7 +124,7 @@ async def test_loop_two_iterations_reuse_runtime() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
     await loop.run_once()
     await loop.run_once()
@@ -133,7 +140,7 @@ async def test_state_loop_resolves_latest_patch_with_version_catalog() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
         version_catalog=catalog,
     )
 
@@ -218,7 +225,7 @@ async def test_state_loop_installs_pack_without_probe_family_filtering() -> None
     loop = PackStateLoop(
         client=client,
         runtime_mgr=runtime_mgr,
-        host_id="00000000-0000-0000-0000-000000000001",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000001"),
     )
 
     await loop.run_once()

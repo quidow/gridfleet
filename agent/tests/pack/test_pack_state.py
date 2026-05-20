@@ -12,12 +12,19 @@ import pytest
 
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import DoctorCheckResult
+from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
 from agent_app.pack.state import PackStateLoop
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _host_identity(value: str) -> HostIdentity:
+    hi = HostIdentity()
+    hi.set(value)
+    return hi
 
 
 def _make_desired(packs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -196,7 +203,7 @@ async def test_blocked_pack_has_blocked_reason_attached() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FailingRuntimeMgr({"appium-uiautomator2"}),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -219,7 +226,7 @@ async def test_blocked_runtime_does_not_contaminate_installed_pack() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_FailingRuntimeMgr({"appium-xcuitest"}),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -244,7 +251,7 @@ async def test_installed_packs_are_not_blocked_by_host_probe_support() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -273,7 +280,7 @@ async def test_runtime_entry_includes_appium_plugins_key() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -291,7 +298,7 @@ async def test_runtime_entry_includes_blocked_reason_key() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -311,7 +318,7 @@ async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
         adapter_registry=registry,
     )
 
@@ -335,7 +342,7 @@ async def test_xcuitest_pack_with_no_adapter_posts_empty_doctor_list() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -356,7 +363,7 @@ async def test_adapter_load_failure_surfaces_as_doctor_entry() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
         adapter_registry=registry,
         adapter_loader=failing_loader,
     )
@@ -392,7 +399,7 @@ async def test_manual_pack_is_not_blocked_as_unsupported() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -418,7 +425,7 @@ async def test_network_endpoint_pack_is_not_blocked_as_unsupported() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()
@@ -444,7 +451,7 @@ async def test_apple_devicectl_pack_is_not_blocked_as_unsupported() -> None:
     loop = PackStateLoop(
         client=client,
         runtime_mgr=_SucceedingRuntimeMgr(),
-        host_id="00000000-0000-0000-0000-000000000099",
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
     )
 
     await loop.run_once()

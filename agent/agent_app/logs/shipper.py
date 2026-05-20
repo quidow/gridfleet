@@ -6,14 +6,15 @@ import asyncio
 import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from agent_app import observability as agent_observability
 from agent_app.logs.schemas import AgentLogBatch, ShippedLogLine
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     import httpx
+
+    from agent_app.pack.host_identity import HostIdentity
 
 logger = logging.getLogger("agent.logs.shipper")
 DROP_REPORT_INTERVAL_SEC = 60.0
@@ -24,7 +25,7 @@ class LogShipperTask:
         self,
         *,
         client: httpx.AsyncClient,
-        host_id: UUID,
+        host_identity: HostIdentity,
         boot_id: UUID,
         queue: asyncio.Queue[ShippedLogLine],
         base_url: str = "",
@@ -36,7 +37,7 @@ class LogShipperTask:
         drop_report_interval_sec: float = DROP_REPORT_INTERVAL_SEC,
     ) -> None:
         self._client = client
-        self._host_id = host_id
+        self._host_identity = host_identity
         self._boot_id = boot_id
         self._queue = queue
         self._base_url = base_url.rstrip("/")
@@ -146,18 +147,29 @@ class LogShipperTask:
             except asyncio.QueueEmpty:
                 return out
 
+    def _current_host_uuid(self) -> UUID | None:
+        raw = self._host_identity.get()
+        if raw is None:
+            return None
+        try:
+            return UUID(raw)
+        except ValueError:
+            return None
+
     async def _ship_with_retry(self, batch: list[ShippedLogLine]) -> None:
         payload = AgentLogBatch(boot_id=self._boot_id, lines=batch)
         serialized = payload.model_dump(mode="json")
-        if self._base_url:
-            url = f"{self._base_url}/agent/{self._host_id}/log-batch"
-        else:
-            url = f"/agent/{self._host_id}/log-batch"
         post_kwargs: dict[str, Any] = {"json": serialized}
         if self._auth is not None:
             post_kwargs["auth"] = self._auth
         delay = self._backoff_initial
         while not self._stop.is_set():
+            host_uuid = self._current_host_uuid()
+            if host_uuid is None:
+                logger.warning("log batch deferred: host identity not assigned or not a UUID")
+                self.dropped_rejected += len(batch)
+                return
+            url = f"{self._base_url}/agent/{host_uuid}/log-batch" if self._base_url else f"/agent/{host_uuid}/log-batch"
             try:
                 response = await self._client.post(url, **post_kwargs)
             except Exception as exc:
