@@ -856,8 +856,8 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     db_session.add_all([device, node])
     await db_session.commit()
 
-    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available)
-    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline)
+    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
+    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline, hold=None)
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
@@ -929,8 +929,8 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     db_session.add_all([device, node])
     await db_session.commit()
 
-    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline)
-    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.busy)
+    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline, hold=None)
+    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.busy, hold=None)
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
@@ -995,8 +995,8 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     device_id = uuid.uuid4()
     available = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
     available.appium_node = MagicMock(observed_running=True)
-    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available)
-    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy)
+    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
+    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy, hold=None)
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
     # machine so MagicMock-locked objects don't fail DeviceStateModel validation.

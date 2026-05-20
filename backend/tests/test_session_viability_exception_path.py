@@ -63,8 +63,8 @@ async def test_exception_path_restores_previous_available_without_projection(
     )
     available_device.appium_node = MagicMock(observed_running=True)
 
-    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available)
-    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy)
+    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
+    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy, hold=None)
 
     monkeypatch.setattr(service_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.control_plane_state_store, "delete_value", AsyncMock())
@@ -141,8 +141,8 @@ async def test_exception_path_from_offline_restores_offline(
     )
     offline_device.appium_node = MagicMock(observed_running=True)
 
-    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.offline)
-    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy)
+    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.offline, hold=None)
+    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy, hold=None)
 
     monkeypatch.setattr(service_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.control_plane_state_store, "delete_value", AsyncMock())

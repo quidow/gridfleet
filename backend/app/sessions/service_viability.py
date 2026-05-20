@@ -395,6 +395,29 @@ async def run_session_viability_probe(
             return state
 
         locked = await device_locking.lock_device(db, device.id)
+        # Re-validate the can_probe predicate under the row lock. The
+        # pre-lock check above ran on an unlocked snapshot, so a
+        # concurrent maintenance-enter (or any other writer of
+        # ``Device.hold``/``operational_state``) could have changed the
+        # state between line 367 and here. Without this re-check the
+        # probe would still transition the device to ``busy`` and run
+        # the slow Grid probe against a parked device.
+        locked_can_probe = (locked.operational_state == DeviceOperationalState.available and locked.hold is None) or (
+            checked_by == SessionViabilityCheckedBy.recovery
+            and locked.operational_state == DeviceOperationalState.offline
+            and locked.hold is None
+        )
+        if not locked_can_probe:
+            if config_changed:
+                await db.commit()
+            return await _write_session_viability(
+                db,
+                device,
+                status="failed",
+                attempted_at=attempted_at,
+                error=("Session viability checks only run for available devices (state changed concurrently)"),
+                checked_by=checked_by,
+            )
         previous_state = locked.operational_state
         await _MACHINE.transition(
             locked,
