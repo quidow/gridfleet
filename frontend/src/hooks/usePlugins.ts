@@ -10,10 +10,14 @@ import {
 } from '../api/plugins';
 import type { AppiumPluginCreate, AppiumPluginUpdate } from '../types';
 
+const PLUGINS_POLL_MS = 30_000;
+
 export function usePlugins() {
   return useQuery({
     queryKey: ['plugins'],
     queryFn: fetchPlugins,
+    refetchInterval: PLUGINS_POLL_MS,
+    staleTime: PLUGINS_POLL_MS / 2,
   });
 }
 
@@ -46,6 +50,8 @@ export function useHostPlugins(hostId: string) {
     queryKey: ['host-plugins', hostId],
     queryFn: () => fetchHostPlugins(hostId),
     enabled: !!hostId,
+    refetchInterval: PLUGINS_POLL_MS,
+    staleTime: PLUGINS_POLL_MS / 2,
   });
 }
 
