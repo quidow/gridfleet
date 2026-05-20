@@ -99,10 +99,35 @@ async def exclude_device_from_run(
     if _reserved_entry_is_excluded(entry) and entry.exclusion_reason == reason:
         return run
 
-    entry.excluded = True
-    entry.exclusion_reason = reason
-    entry.excluded_at = datetime.now(UTC)
-    entry.excluded_until = None
+    # Re-fetch the reservation under ``SELECT ... FOR UPDATE`` with a
+    # ``released_at IS NULL`` predicate. The unlocked
+    # ``get_device_reservation_with_entry`` above can return a row that a
+    # concurrent ``_release_devices`` is about to release; without the
+    # locked re-check the ORM-buffered ``excluded = True`` would flush onto
+    # a now-released reservation, leaving it with the contradictory state
+    # ``released_at != NULL AND excluded = True``.
+    locked_entry_stmt = (
+        select(DeviceReservation)
+        .where(
+            DeviceReservation.id == entry.id,
+            DeviceReservation.released_at.is_(None),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    locked_entry = (await db.execute(locked_entry_stmt)).scalar_one_or_none()
+    if locked_entry is None:
+        # The reservation was released by a concurrent writer (or another
+        # exclude already marked it excluded with a different reason and
+        # committed). Treat as a benign no-op.
+        if commit:
+            await db.commit()
+        return run
+
+    locked_entry.excluded = True
+    locked_entry.exclusion_reason = reason
+    locked_entry.excluded_at = datetime.now(UTC)
+    locked_entry.excluded_until = None
     try:
         device = await device_locking.lock_device(db, device_id, load_sessions=False)
     except NoResultFound:
