@@ -49,7 +49,7 @@ from app.devices.services.lifecycle_policy_actions import (
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.devices.services.operator_node_lifecycle import request_restart, request_start, request_stop
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.events import queue_event_for_session
@@ -231,7 +231,13 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     # previous direct ``set_operational_state(offline)`` write bypassed the
     # machine, fired an event on every node-stop regardless of prior state,
     # and skipped audit-log rows.
-    await _MACHINE.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, reason="Node stopped")
+    # Skip the operational-axis transition when the current state does not
+    # accept AUTO_STOP_EXECUTED (e.g. ``verifying`` — verification flow owns
+    # its own terminal transition via VERIFICATION_PASSED/FAILED). The
+    # observation columns above still get cleared so the convergence loop
+    # can drop a stale ``running`` flag without leaving the row wedged.
+    if _MACHINE.is_valid(DeviceStateModel.from_device(device), TransitionEvent.AUTO_STOP_EXECUTED):
+        await _MACHINE.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, reason="Node stopped")
     await device_health.apply_node_state_transition(
         db,
         device,
