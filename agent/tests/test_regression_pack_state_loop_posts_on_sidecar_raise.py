@@ -1,0 +1,135 @@
+"""Reproducer for bug 9: ``PackStateLoop.run_once`` skips ``post_status``
+entirely when ``SidecarSupervisor.start`` raises. The backend reconciler
+therefore never sees the failed sidecar and cannot react.
+
+See ``docs/superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 9).
+"""
+
+from __future__ import annotations
+
+import contextlib
+from typing import TYPE_CHECKING, Any
+
+from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
+from agent_app.pack.state import PackStateLoop
+
+if TYPE_CHECKING:
+    import pytest
+
+
+class _FakeClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+        self.posted: list[dict[str, Any]] = []
+
+    async def fetch_desired(self) -> dict[str, Any]:
+        return self._payload
+
+    async def post_status(self, payload: dict[str, Any]) -> None:
+        self.posted.append(payload)
+
+
+class _FakeRuntimeMgr:
+    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
+        envs = {
+            pack_id: RuntimeEnv(
+                runtime_id="rid",
+                appium_home="/tmp/appium-home",
+                appium_bin="/tmp/appium-home/bin/appium",
+                server_package="appium",
+                server_version="2.11.5",
+            )
+            for pack_id in desired_by_pack
+        }
+        return envs, {}
+
+
+class _FakeAdapter:
+    pack_release = "2026.04.0"
+
+
+class _FakeAdapterRegistry:
+    def has(self, pack_id: str, release: str) -> bool:
+        return True
+
+    def get(self, pack_id: str, release: str) -> _FakeAdapter:
+        return _FakeAdapter()
+
+    def get_current(self, pack_id: str) -> _FakeAdapter:
+        return _FakeAdapter()
+
+
+class _RaisingSidecarSupervisor:
+    async def start(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
+        del pack_id, release, feature_id, adapter
+        raise RuntimeError("sidecar boot failed")
+
+    def tracked_keys(self) -> set[tuple[str, str, str]]:
+        return set()
+
+    def status_snapshot(self) -> list[dict[str, Any]]:
+        return []
+
+
+def _desired_payload() -> dict[str, Any]:
+    return {
+        "host_id": "00000000-0000-0000-0000-000000000001",
+        "packs": [
+            {
+                "id": "appium-uiautomator2",
+                "release": "2026.04.0",
+                "appium_server": {
+                    "source": "npm",
+                    "package": "appium",
+                    "version": ">=2.5,<3",
+                    "recommended": "2.11.5",
+                    "known_bad": [],
+                },
+                "appium_driver": {
+                    "source": "npm",
+                    "package": "appium-uiautomator2-driver",
+                    "version": ">=3,<5",
+                    "recommended": "3.6.0",
+                    "known_bad": [],
+                },
+                "platforms": [
+                    {
+                        "id": "android_mobile",
+                        "automation_name": "UiAutomator2",
+                        "device_types": ["real_device"],
+                        "connection_types": ["usb"],
+                        "grid_slots": ["native"],
+                        "identity": {"scheme": "android_serial", "scope": "host"},
+                        "appium_platform_name": "Android",
+                        "capabilities": {
+                            "stereotype": {"appium:platformName": "Android"},
+                            "session_required": [],
+                        },
+                    }
+                ],
+                "features": {"feat-1": {"sidecar": {"command": "noop"}, "actions": []}},
+                "runtime_policy": {"strategy": "recommended"},
+            }
+        ],
+    }
+
+
+async def test_run_once_posts_status_when_sidecar_start_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _no_doctor(*_args: object, **_kwargs: object) -> list[Any]:
+        return []
+
+    monkeypatch.setattr("agent_app.pack.state.dispatch_doctor", _no_doctor)
+
+    client = _FakeClient(_desired_payload())
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_FakeRuntimeMgr(),
+        host_id="00000000-0000-0000-0000-000000000001",
+        adapter_registry=_FakeAdapterRegistry(),  # type: ignore[arg-type]
+        sidecar_supervisor=_RaisingSidecarSupervisor(),  # type: ignore[arg-type]
+    )
+
+    with contextlib.suppress(RuntimeError):
+        await loop.run_once()
+
+    assert client.posted, "post_status must run even when sidecar.start raises"
