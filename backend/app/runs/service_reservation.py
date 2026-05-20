@@ -95,6 +95,36 @@ def get_reservation_entry_for_device(run: TestRun, device_id: uuid.UUID | str) -
     return _reservation_entry_for_device(run, device_id, active_only=True)
 
 
+async def _lock_active_reservation_entry(
+    db: AsyncSession,
+    entry: DeviceReservation,
+) -> DeviceReservation | None:
+    """Re-fetch ``entry`` under ``SELECT ... FOR UPDATE WHERE released_at IS NULL``.
+
+    The unlocked ``get_device_reservation_with_entry`` snapshot can be
+    invalidated by a concurrent ``_release_devices`` commit that lands
+    ``released_at = NOW``. Calling sites that mutate ``excluded`` /
+    cooldown fields MUST proceed only against the locked, still-active
+    row — otherwise the ORM-buffered write flushes onto a released
+    reservation, leaving the row in a contradictory state.
+
+    Returns ``None`` when the reservation was released between the
+    unlocked read and the locked re-fetch.
+    """
+
+    stmt = (
+        select(DeviceReservation)
+        .where(
+            DeviceReservation.id == entry.id,
+            DeviceReservation.released_at.is_(None),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def exclude_device_from_run(
     db: AsyncSession,
     device_id: uuid.UUID,
@@ -108,10 +138,16 @@ async def exclude_device_from_run(
     if _reservation_entry_is_excluded(entry) and entry.exclusion_reason == reason:
         return run
 
-    entry.excluded = True
-    entry.exclusion_reason = reason
-    entry.excluded_at = _now_utc()
-    entry.excluded_until = None
+    locked_entry = await _lock_active_reservation_entry(db, entry)
+    if locked_entry is None:
+        if commit:
+            await db.commit()
+        return run
+
+    locked_entry.excluded = True
+    locked_entry.exclusion_reason = reason
+    locked_entry.excluded_at = _now_utc()
+    locked_entry.excluded_until = None
     if commit:
         await db.commit()
         run = await get_run(db, run.id)
@@ -132,13 +168,19 @@ async def restore_device_to_run(
     if not _reservation_entry_is_excluded(entry):
         return run
 
-    entry.excluded = False
-    entry.exclusion_reason = None
-    entry.excluded_at = None
-    entry.excluded_until = None
+    locked_entry = await _lock_active_reservation_entry(db, entry)
+    if locked_entry is None:
+        if commit:
+            await db.commit()
+        return run
+
+    locked_entry.excluded = False
+    locked_entry.exclusion_reason = None
+    locked_entry.excluded_at = None
+    locked_entry.excluded_until = None
     # Explicit restore is the sanctioned reset point for the cooldown
     # counter — the intent-TTL clear path deliberately leaves it sticky.
-    entry.cooldown_count = 0
+    locked_entry.cooldown_count = 0
     # Same signal applies to the review-shelving flag: restoring a device
     # is an operator promise that it is ready for another attempt.
     try:
