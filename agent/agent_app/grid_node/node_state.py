@@ -39,6 +39,12 @@ class _SlotRuntime:
     session_id: str | None = None
     reserved_at: float | None = None
     started_at: float | None = None
+    # Monotonic timestamp of the most recent WebDriver call against this
+    # session. Updated on every proxied request via `NodeState.mark_active`
+    # and used by `expire_idle` so that an actively-used session is not
+    # killed at `session_timeout_sec` purely because it has been alive that
+    # long.
+    last_activity_at: float | None = None
     # Capabilities returned by Appium and the wall-clock start time are tracked
     # so the hub-facing NodeStatus payload can include real session info on
     # busy slots (the hub UI desyncs without it).
@@ -120,6 +126,7 @@ class NodeState:
                     runtime.reserved_at = None
                     runtime.session_id = session_id
                     runtime.started_at = started_at
+                    runtime.last_activity_at = started_at
                     runtime.session_capabilities = dict(capabilities) if capabilities else None
                     runtime.session_start_iso = session_start_iso
                     return
@@ -141,8 +148,24 @@ class NodeState:
                     runtime.state = "FREE"
                     runtime.session_id = None
                     runtime.started_at = None
+                    runtime.last_activity_at = None
                     runtime.session_capabilities = None
                     runtime.session_start_iso = None
+                    return
+
+    def mark_active(self, session_id: str, *, now: float) -> None:
+        """Record an in-flight WebDriver call against ``session_id``.
+
+        Called from ``http_server.proxy_request`` paths so that
+        ``expire_idle`` can compare *time since last call*, not *total
+        session duration*. A no-op when the session is not currently held
+        on this node (race against `release()` or rotation).
+        """
+
+        with self._lock:
+            for runtime in self._slots:
+                if runtime.session_id == session_id and runtime.state == "BUSY":
+                    runtime.last_activity_at = now
                     return
 
     def expire_reservations(self, *, now: float, ttl_sec: float = 30.0) -> list[str]:
@@ -166,12 +189,16 @@ class NodeState:
         with self._lock:
             expired: list[str] = []
             for runtime in self._slots:
-                if (
-                    runtime.state == "BUSY"
-                    and runtime.session_id is not None
-                    and runtime.started_at is not None
-                    and now - runtime.started_at >= timeout_sec
-                ):
+                if runtime.state != "BUSY" or runtime.session_id is None:
+                    continue
+                # Compare against the most recent WebDriver call. `commit()`
+                # seeds `last_activity_at` to `started_at`, so a session with
+                # zero proxied requests since creation degrades to the prior
+                # duration-based semantics.
+                last_seen = runtime.last_activity_at if runtime.last_activity_at is not None else runtime.started_at
+                if last_seen is None:
+                    continue
+                if now - last_seen >= timeout_sec:
                     expired.append(runtime.session_id)
             return expired
 

@@ -294,9 +294,20 @@ def build_app(
         )
 
     async def command_proxy(request: Request) -> Response:
+        # Mark the targeted session active so `NodeState.expire_idle` measures
+        # time-since-last-WebDriver-call rather than total session duration.
+        # `_session_id_from_path` returns None for paths that do not carry a
+        # session id (e.g. /status hits a different route, but a catch-all
+        # match like `/se/grid/something` would land here too).
+        session_id = _session_id_from_path(request.url.path)
+        if session_id is not None:
+            state.mark_active(session_id, now=time.monotonic())
         return await _proxy_http(request)
 
     async def websocket_proxy(websocket: WebSocket) -> None:
+        session_id = _session_id_from_path(websocket.url.path)
+        if session_id is not None:
+            state.mark_active(session_id, now=time.monotonic())
         await proxy_websocket_func(websocket, upstream=appium_upstream)
 
     async def _proxy_http(request: Request) -> Response:
@@ -386,6 +397,24 @@ def _reserve_first_matching(
             no_match_error = exc
             continue
     return None, no_free_slot_error or no_match_error
+
+
+def _session_id_from_path(path: str) -> str | None:
+    """Extract the WebDriver session id from a request path.
+
+    WebDriver command endpoints look like ``/session/<id>/<rest>`` (or
+    ``/session/<id>`` for the bare DELETE). Anything that does not start
+    with ``/session/<id>`` — ``/status``, hub-side grid endpoints, an
+    empty path — returns None and disables activity tracking for that
+    request.
+    """
+
+    if not path:
+        return None
+    parts = path.lstrip("/").split("/", 2)
+    if len(parts) < 2 or parts[0] != "session" or not parts[1]:
+        return None
+    return parts[1]
 
 
 def _session_info_from_response(response: Response) -> tuple[str | None, dict[str, Any] | None]:
