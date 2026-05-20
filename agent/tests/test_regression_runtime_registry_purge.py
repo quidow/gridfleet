@@ -105,3 +105,50 @@ async def test_runtime_registry_purges_packs_no_longer_desired() -> None:
     await loop.run_once()
 
     assert registry.get_for_pack("pack-1") is None
+
+
+class _FlakyRuntimeMgr:
+    """Succeeds first, then raises on subsequent reconciles."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def reconcile(self, desired_by_pack: dict[str, RuntimeSpec]) -> tuple[dict[str, RuntimeEnv], dict[str, str]]:
+        self.calls += 1
+        if self.calls == 1:
+            envs = {
+                pack_id: RuntimeEnv(
+                    runtime_id=f"rid-{pack_id}",
+                    appium_home=f"/tmp/{pack_id}",
+                    appium_bin=f"/tmp/{pack_id}/bin/appium",
+                    server_package="appium",
+                    server_version="2.11.5",
+                )
+                for pack_id in desired_by_pack
+            }
+            return envs, {}
+        raise RuntimeError("transient install failure")
+
+
+async def test_runtime_registry_keeps_desired_packs_when_reconcile_fails() -> None:
+    """Regression: a transient runtime_mgr failure must not evict cached envs
+    for packs the backend still desires. Purge keyed on desired set, not on
+    successful-install set.
+    """
+
+    registry = RuntimeRegistry()
+    client = _StaticClient(_payload_with([_pack_entry("pack-1")]))
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_FlakyRuntimeMgr(),
+        host_id="00000000-0000-0000-0000-000000000001",
+        runtime_registry=registry,
+    )
+
+    await loop.run_once()
+    assert registry.get_for_pack("pack-1") is not None
+
+    # Backend still desires pack-1, but reconcile throws this iteration.
+    await loop.run_once()
+
+    assert registry.get_for_pack("pack-1") is not None
