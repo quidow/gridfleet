@@ -219,6 +219,11 @@ class GridNodeService:
                 self._started = False
 
     async def run_heartbeat_once(self) -> None:
+        # Reap stuck reservations first: a reservation that never reached
+        # `commit()` (e.g. upstream Appium crashed mid-create) would otherwise
+        # pin the slot forever — `state.reserve()` blocks new requests as soon
+        # as any slot is non-FREE.
+        self.state.expire_reservations(now=time.monotonic())
         for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
             self.state.release(session_id)
             now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
