@@ -146,7 +146,6 @@ def _apple_platform(
     health_checks = [
         ("devicectl_visible", "devicectl Visible"),
         ("devicectl_paired", "Device Paired"),
-        ("ios_booted", "OS Booted"),
         ("developer_mode", "Developer Mode"),
         ("simulator_booted", "Simulator Booted"),
         ("simulator_responsive", "Simulator Responsive"),
@@ -154,6 +153,7 @@ def _apple_platform(
     ]
     if requires_coredevice_tunnel:
         health_checks.insert(2, ("devicectl_tunnel", "CoreDevice Tunnel"))
+        health_checks.insert(3, ("ios_booted", "OS Booted"))
         health_checks.insert(5, ("ddi_services", "Developer Services"))
     return {
         "id": platform_id,

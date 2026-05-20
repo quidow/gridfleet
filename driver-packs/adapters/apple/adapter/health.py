@@ -55,12 +55,9 @@ def _real_device_health_results(details: dict[str, object], *, platform_id: str 
 
     pairing_state = str(connection.get("pairingState") or "")
     tunnel_state = str(connection.get("tunnelState") or "")
-    boot_state = str(properties.get("bootState") or "")
-    booted_from_snapshot = properties.get("bootedFromSnapshot")
     developer_mode = str(properties.get("developerModeStatus") or "")
     ddi_available = properties.get("ddiServicesAvailable")
     is_tvos = platform_id == "tvos"
-    booted = boot_state.lower() == "booted" or (is_tvos and booted_from_snapshot is True)
 
     checks = [
         HealthCheckResult(
@@ -74,23 +71,27 @@ def _real_device_health_results(details: dict[str, object], *, platform_id: str 
             detail=pairing_state or "unknown pairing state",
         ),
         HealthCheckResult(
-            check_id="ios_booted",
-            ok=booted,
-            detail=boot_state or ("booted from snapshot" if booted_from_snapshot is True else "unknown boot state"),
-        ),
-        HealthCheckResult(
             check_id="developer_mode",
             ok=developer_mode.lower() == "enabled",
             detail=developer_mode or "unknown developer mode state",
         ),
     ]
     if not is_tvos:
+        boot_state = str(properties.get("bootState") or "")
         checks.insert(
             2,
             HealthCheckResult(
                 check_id="devicectl_tunnel",
                 ok=tunnel_state.lower() == "connected",
                 detail=tunnel_state or "unknown tunnel state",
+            ),
+        )
+        checks.insert(
+            3,
+            HealthCheckResult(
+                check_id="ios_booted",
+                ok=boot_state.lower() == "booted",
+                detail=boot_state or "unknown boot state",
             ),
         )
         checks.append(

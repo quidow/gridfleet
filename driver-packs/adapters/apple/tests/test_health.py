@@ -131,6 +131,7 @@ async def test_health_tvos_real_device_does_not_require_devicectl_tunnel(
     checks = {item.check_id: item for item in result}
     assert "devicectl_tunnel" not in checks
     assert "ddi_services" not in checks
+    assert "ios_booted" not in checks
     assert all(item.ok for item in result)
 
 
@@ -149,7 +150,6 @@ async def test_health_tvos_real_device_does_not_require_devicectl_tunnel(
                 "tunnelState": "disconnected",
             },
             "deviceProperties": {
-                "bootedFromSnapshot": True,
                 "ddiServicesAvailable": False,
                 "developerModeStatus": "enabled",
                 "name": "Living Room",
@@ -164,7 +164,7 @@ async def test_health_tvos_real_device_does_not_require_devicectl_tunnel(
         },
     },
 )
-async def test_health_tvos_real_device_accepts_wireless_preinstalled_wda_shape(
+async def test_health_tvos_real_device_network_check_set(
     _mock_details: AsyncMock,
     _mock_state: AsyncMock,
 ) -> None:
@@ -178,10 +178,10 @@ async def test_health_tvos_real_device_accepts_wireless_preinstalled_wda_shape(
     checks = {item.check_id: item for item in result}
     assert checks["devicectl_visible"].ok is True
     assert checks["devicectl_paired"].ok is True
-    assert checks["ios_booted"].ok is True
     assert checks["developer_mode"].ok is True
     assert "devicectl_tunnel" not in checks
     assert "ddi_services" not in checks
+    assert "ios_booted" not in checks
 
 
 @pytest.mark.asyncio

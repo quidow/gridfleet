@@ -113,7 +113,6 @@ const DEFAULT_DRIVER_PACK_CATALOG = {
           health_checks: [
             { id: 'devicectl_visible', label: 'devicectl Visible' },
             { id: 'devicectl_paired', label: 'Device Paired' },
-            { id: 'ios_booted', label: 'OS Booted' },
             { id: 'developer_mode', label: 'Developer Mode' },
             { id: 'simulator_booted', label: 'Simulator Booted' },
             { id: 'simulator_responsive', label: 'Simulator Responsive' },
