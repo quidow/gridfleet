@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
-from app.agent_comm import agent_settings
-from app.auth import auth_settings
 from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names, queue_event_for_session
 from app.settings.models import Setting
 
@@ -52,24 +50,6 @@ def _migrate_legacy_event_names(values: list[str]) -> list[str]:
             out.append(replacement)
             seen.add(replacement)
     return out
-
-
-def _cross_field_validate(key: str, value: SettingValue) -> str | None:
-    """Enforce invariants that span multiple settings or env state.
-
-    Returns an error message, or None if the change is allowed.
-    """
-    if (
-        key == "agent.enable_web_terminal"
-        and value is True
-        and auth_settings.auth_enabled
-        and not agent_settings.agent_terminal_token
-    ):
-        return (
-            "GRIDFLEET_AGENT_TERMINAL_TOKEN must be set in the environment before "
-            "enabling the host web terminal while GRIDFLEET_AUTH_ENABLED is true"
-        )
-    return None
 
 
 def validate_leader_keepalive_settings(*, keepalive_interval_sec: int, stale_threshold_sec: int) -> str | None:
@@ -252,9 +232,6 @@ class SettingsService:
         error = self._validate_value(key, value)
         if error:
             raise ValueError(error)
-        cross_error = _cross_field_validate(key, value)
-        if cross_error:
-            raise ValueError(cross_error)
         candidate = dict(self._cache)
         candidate[key] = value
         leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)
@@ -292,9 +269,6 @@ class SettingsService:
             error = self._validate_value(key, value)
             if error:
                 raise ValueError(error)
-            cross_error = _cross_field_validate(key, value)
-            if cross_error:
-                raise ValueError(cross_error)
         candidate = dict(self._cache)
         candidate.update(updates)
         leader_keepalive_error = self._validate_leader_keepalive_candidate(candidate)

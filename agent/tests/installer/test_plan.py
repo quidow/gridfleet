@@ -23,18 +23,11 @@ def test_config_rejects_partial_manager_auth() -> None:
         InstallConfig(manager_auth_username="machine")
 
 
-def test_config_rejects_terminal_without_token() -> None:
-    with pytest.raises(ValueError, match="AGENT_TERMINAL_TOKEN"):
-        InstallConfig(enable_web_terminal=True)
-
-
 def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     config = InstallConfig(
         manager_url="https://manager.example.com",
         manager_auth_username="machine",
         manager_auth_password="secret",
-        enable_web_terminal=True,
-        terminal_token="terminal-token",
     )
     discovery = ToolDiscovery(
         node_bin_dir="/opt/node/bin",
@@ -50,8 +43,6 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     assert "ANDROID_SDK_ROOT=/opt/android-sdk" in rendered
     assert "AGENT_MANAGER_AUTH_USERNAME=machine" in rendered
     assert "AGENT_MANAGER_AUTH_PASSWORD=secret" in rendered
-    assert "AGENT_ENABLE_WEB_TERMINAL=true" in rendered
-    assert "AGENT_TERMINAL_TOKEN=terminal-token" in rendered
     assert "PATH=/opt/node/bin:/opt/android-sdk/platform-tools:" in rendered
 
 
@@ -70,8 +61,6 @@ def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None
                 "AGENT_GRID_NODE_PORT_START=6100",
                 "AGENT_MANAGER_AUTH_USERNAME=machine",
                 "AGENT_MANAGER_AUTH_PASSWORD=secret",
-                "AGENT_ENABLE_WEB_TERMINAL=true",
-                "AGENT_TERMINAL_TOKEN=terminal-token",
                 "",
             ]
         )
@@ -87,8 +76,6 @@ def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None
     assert config.grid_node_port_start == 6100
     assert config.manager_auth_username == "machine"
     assert config.manager_auth_password == "secret"
-    assert config.enable_web_terminal is True
-    assert config.terminal_token == "terminal-token"
 
 
 def test_render_systemd_unit_uses_console_entry_point() -> None:
@@ -104,8 +91,6 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
             port=5200,
             manager_auth_username="machine",
             manager_auth_password="secret",
-            enable_web_terminal=True,
-            terminal_token="terminal-token",
         ),
         ToolDiscovery(node_bin_dir="/opt/node/bin", android_home="/opt/android-sdk"),
     )
@@ -120,8 +105,6 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
     assert "<key>ANDROID_HOME</key>" in rendered
     assert "<key>AGENT_MANAGER_AUTH_USERNAME</key>" in rendered
     assert "<key>AGENT_MANAGER_AUTH_PASSWORD</key>" in rendered
-    assert "<key>AGENT_ENABLE_WEB_TERMINAL</key>" in rendered
-    assert "<key>AGENT_TERMINAL_TOKEN</key>" in rendered
     assert "/opt/node/bin" in rendered
 
 
@@ -129,30 +112,23 @@ def test_dry_run_output_redacts_secrets() -> None:
     config = InstallConfig(
         manager_auth_username="machine",
         manager_auth_password="secret",
-        enable_web_terminal=True,
-        terminal_token="terminal-token",
     )
 
     output = format_dry_run(config, ToolDiscovery(), os_name="Linux")
 
     assert "secret" not in output
-    assert "terminal-token" not in output
     assert "AGENT_MANAGER_AUTH_PASSWORD=<redacted>" in output
-    assert "AGENT_TERMINAL_TOKEN=<redacted>" in output
 
 
 def test_dry_run_output_redacts_launchd_service_secrets() -> None:
     config = InstallConfig(
         manager_auth_username="machine",
         manager_auth_password="secret",
-        enable_web_terminal=True,
-        terminal_token="terminal-token",
     )
 
     output = format_dry_run(config, ToolDiscovery(), os_name="Darwin")
 
     assert "secret" not in output
-    assert "terminal-token" not in output
     assert "<key>AGENT_MANAGER_AUTH_PASSWORD</key>" in output
     assert "<string>&lt;redacted&gt;</string>" in output
 

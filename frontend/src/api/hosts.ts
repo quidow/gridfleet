@@ -117,8 +117,3 @@ export async function approveHost(id: string): Promise<HostRead> {
 export async function rejectHost(id: string): Promise<void> {
   await api.post(`/hosts/${id}/reject`);
 }
-
-export async function getHostCapabilities(): Promise<{ web_terminal_enabled: boolean }> {
-  const { data } = await api.get('/hosts/capabilities');
-  return data;
-}

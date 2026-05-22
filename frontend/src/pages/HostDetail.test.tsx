@@ -59,9 +59,6 @@ vi.mock('../hooks/useHosts', () => ({
     isLoading: false,
     error: null,
   }),
-  useHostCapabilities: () => ({
-    data: { web_terminal_enabled: true },
-  }),
   useHostResourceTelemetry: () => ({ data: { samples: [] } }),
   useApproveHost: () => ({ isPending: false, mutate: vi.fn() }),
   useRejectHost: () => ({ isPending: false, mutate: vi.fn() }),

@@ -102,23 +102,6 @@ class RuntimeSettings(BaseSettings):
     adb_reconnect_port: int = 5555
 
 
-class TerminalSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
-
-    enable_web_terminal: bool = False
-    terminal_token: SecretStr | None = None
-    terminal_shell: str | None = None
-
-    @model_validator(mode="after")
-    def validate_token_and_enabled(self) -> "TerminalSettings":
-        token_value = self.terminal_token.get_secret_value() if self.terminal_token is not None else None
-        if token_value is not None and not token_value.strip():
-            raise ValueError("AGENT_TERMINAL_TOKEN must not be blank when set")
-        if self.enable_web_terminal and not token_value:
-            raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true")
-        return self
-
-
 class AgentSettings:
     """Top-level settings facade composed of per-domain BaseSettings groups."""
 
@@ -128,7 +111,6 @@ class AgentSettings:
         self.api_auth = ApiAuthSettings()
         self.grid_node = GridNodeSettings()
         self.runtime = RuntimeSettings()
-        self.terminal = TerminalSettings()
 
 
 agent_settings = AgentSettings()

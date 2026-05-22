@@ -13,7 +13,6 @@ import {
   fetchHostDiagnostics,
   fetchHostToolStatus,
   fetchHosts,
-  getHostCapabilities,
   rejectHost,
 } from '../api/hosts';
 import type { AgentLogQuery, HostEventsQuery } from '../api/hosts';
@@ -156,6 +155,3 @@ export function useRejectHost() {
   });
 }
 
-export function useHostCapabilities() {
-  return useQuery({ queryKey: ['host-capabilities'], queryFn: getHostCapabilities, staleTime: 60_000 });
-}

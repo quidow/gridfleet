@@ -162,7 +162,6 @@ def test_format_status_redacts_secrets() -> None:
         env={
             "AGENT_MANAGER_URL": "https://manager.example.com",
             "AGENT_MANAGER_AUTH_PASSWORD": "secret",
-            "AGENT_TERMINAL_TOKEN": "terminal-token",
             "AGENT_AGENT_PORT": "5200",
         },
         run_command=lambda _command: "active\n",
@@ -185,9 +184,7 @@ def test_format_status_redacts_secrets() -> None:
     assert "GridFleet Agent status" in output
     assert "  AGENT_MANAGER_URL=https://manager.example.com" in output.splitlines()
     assert "secret" not in output
-    assert "terminal-token" not in output
     assert "AGENT_MANAGER_AUTH_PASSWORD=<redacted>" in output
-    assert "AGENT_TERMINAL_TOKEN=<redacted>" in output
     assert "Local health: ok - healthy" in output
     assert "Agent version guidance: installed version is outdated" in output
     assert "Recommended agent version: 0.3.0" in output

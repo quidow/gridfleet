@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { useApproveHost, useHost, useHostCapabilities, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
+import { useApproveHost, useHost, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import SetupVerificationModal from './devices/SetupVerificationModal';
 import HostDiscoveryModal from '../components/hosts/HostDiscoveryModal';
@@ -15,7 +15,6 @@ import HostResourceTelemetryPanel from '../components/hostDetail/HostResourceTel
 import HostDevicesPanel from '../components/hostDetail/HostDevicesPanel';
 import HostDriversPanel from '../components/hostDetail/HostDriversPanel';
 import HostPluginsPanel from '../components/hostDetail/HostPluginsPanel';
-import HostTerminalPanel from '../components/hostDetail/HostTerminalPanel';
 import HostLogsPanel from '../components/hostDetail/HostLogsPanel';
 import type { HostDetail as HostDetailType } from '../types';
 // HostDetail type alias avoids shadowing the default-exported component name
@@ -27,7 +26,6 @@ const TABS = [
   { id: 'devices', label: 'Devices' },
   { id: 'drivers', label: 'Drivers' },
   { id: 'plugins', label: 'Plugins' },
-  { id: 'terminal', label: 'Terminal' },
 ] as const;
 
 const TAB_IDS = TABS.map((t) => t.id);
@@ -41,7 +39,6 @@ export default function HostDetail() {
   const rejectMut = useRejectHost();
   const discoveryFlow = useHostDiscoveryFlow(id ?? null);
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'overview');
-  const { data: capabilities } = useHostCapabilities();
 
   if (isLoading) {
     return <LoadingSpinner />;
@@ -104,14 +101,6 @@ export default function HostDetail() {
       {tab === 'drivers' && <HostDriversPanel hostId={id!} hostOnline={hostOnline} />}
 
       {tab === 'plugins' && <HostPluginsPanel hostId={id!} />}
-
-      {tab === 'terminal' && (
-        <HostTerminalPanel
-          hostId={id!}
-          hostOnline={hostOnline}
-          terminalEnabled={capabilities?.web_terminal_enabled ?? false}
-        />
-      )}
       </div>
 
       <HostDiscoveryModal

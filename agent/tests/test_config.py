@@ -3,28 +3,6 @@ import pytest
 from agent_app.config import AgentSettings
 
 
-def test_agent_settings_default_disables_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("AGENT_ENABLE_WEB_TERMINAL", "AGENT_TERMINAL_TOKEN", "AGENT_TERMINAL_SHELL"):
-        monkeypatch.delenv(key, raising=False)
-    settings = AgentSettings()
-    assert settings.terminal.enable_web_terminal is False
-    assert settings.terminal.terminal_token is None
-    assert settings.terminal.terminal_shell is None
-
-
-def test_agent_settings_rejects_terminal_enabled_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_ENABLE_WEB_TERMINAL", "true")
-    monkeypatch.delenv("AGENT_TERMINAL_TOKEN", raising=False)
-    with pytest.raises(ValueError, match="AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true"):
-        AgentSettings()
-
-
-def test_agent_settings_rejects_whitespace_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_TERMINAL_TOKEN", "   ")
-    with pytest.raises(ValueError, match="AGENT_TERMINAL_TOKEN"):
-        AgentSettings()
-
-
 def test_agent_settings_rejects_api_auth_username_without_password(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,11 +95,9 @@ def test_settings_repr_does_not_leak_password(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AGENT_API_AUTH_PASSWORD", "super-secret-pw")
     monkeypatch.setenv("AGENT_MANAGER_AUTH_USERNAME", "u2")
     monkeypatch.setenv("AGENT_MANAGER_AUTH_PASSWORD", "another-secret")
-    monkeypatch.setenv("AGENT_TERMINAL_TOKEN", "tok-very-private")
 
     settings = AgentSettings()
-    blob = repr(settings.api_auth) + repr(settings.manager) + repr(settings.terminal)
+    blob = repr(settings.api_auth) + repr(settings.manager)
 
     assert "super-secret-pw" not in blob
     assert "another-secret" not in blob
-    assert "tok-very-private" not in blob

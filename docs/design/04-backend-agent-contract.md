@@ -39,7 +39,6 @@ The two directions are asymmetric today.
 
 - **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `_agent_basic_auth` in `backend/app/agent_client.py`. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
 - **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
-- **Agent terminal WebSocket.** The agent Basic-auth middleware only covers HTTP scopes. `/agent/terminal` is guarded separately by `AGENT_TERMINAL_TOKEN` through `agent/agent_app/terminal/ws.py`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
 There is no HMAC or message signing. When the optional backend→agent Basic-auth credentials are unset, transport security relies entirely on the network boundary documented in `docs/guides/security.md`.
@@ -66,7 +65,6 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
 | POST | `/agent/plugins/sync` | plugin sync flow | install/remove plugin set | 2xx required |
 | GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
-| WS | `/agent/terminal` | host terminal feature | interactive shell over WebSocket | out of scope here |
 
 Each row has a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). Routers and services should never call `httpx` directly — go through these wrappers so the circuit breaker and metrics fire.
 

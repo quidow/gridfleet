@@ -149,27 +149,6 @@ def test_appium_reconciler_start_failure_threshold_setting_is_registered() -> No
     assert setting.max_value == 100
 
 
-def test_terminal_settings_are_registered_under_agent_category() -> None:
-    toggle = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
-    origins = settings_registry.SETTINGS_REGISTRY["agent.web_terminal_allowed_origins"]
-
-    assert toggle.category == "agent"
-    assert toggle.setting_type == "bool"
-    assert toggle.default is False
-    assert toggle.env_var == "GRIDFLEET_ENABLE_WEB_TERMINAL"
-
-    assert origins.category == "agent"
-    assert origins.setting_type == "string"
-    assert origins.default == ""
-    assert origins.env_var == "GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS"
-
-
-def test_terminal_toggle_env_fallback_resolves_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIDFLEET_ENABLE_WEB_TERMINAL", "true")
-    defn = settings_registry.SETTINGS_REGISTRY["agent.enable_web_terminal"]
-    assert settings_registry.resolve_default(defn) is True
-
-
 @pytest.mark.parametrize(
     "key,expected_default,expected_min,expected_max,expected_type",
     [
