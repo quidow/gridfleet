@@ -566,25 +566,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=65535,
     ),
     SettingDefinition(
-        key="agent.enable_web_terminal",
-        category="agent",
-        setting_type="bool",
-        default=False,
-        description="Enable the host web terminal (backend WebSocket proxy to agent PTY)",
-        env_var="GRIDFLEET_ENABLE_WEB_TERMINAL",
-    ),
-    SettingDefinition(
-        key="agent.web_terminal_allowed_origins",
-        category="agent",
-        setting_type="string",
-        default="",
-        description=(
-            "Comma-separated allowed browser origins for the terminal WebSocket "
-            "(empty = block all when auth is enabled)"
-        ),
-        env_var="GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS",
-    ),
-    SettingDefinition(
         key="agent.http_pool_enabled",
         category="agent",
         setting_type="bool",

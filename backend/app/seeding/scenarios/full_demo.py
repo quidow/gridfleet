@@ -17,7 +17,7 @@ from app.devices.models import (
     GroupType,
     HardwareHealthStatus,
 )
-from app.hosts.models import HostPluginRuntimeStatus, HostStatus, HostTerminalSession, OSType
+from app.hosts.models import HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.plugins.models import AppiumPlugin
 from app.runs.models import RunState
@@ -1324,41 +1324,6 @@ def _build_operator_history(ctx: SeedContext, devices: list[Device], hosts: list
                 changed_at=ctx.now - timedelta(days=7 - index, minutes=5),
             )
         )
-
-    online_hosts = [host for host in hosts if host.status is HostStatus.online]
-    terminal_rows = [
-        HostTerminalSession(
-            host_id=online_hosts[0].id,
-            opened_by="demo-admin",
-            opened_at=ctx.now - timedelta(days=2, minutes=12),
-            closed_at=ctx.now - timedelta(days=2, minutes=4),
-            close_reason="client_closed",
-            client_ip="10.0.0.42",
-            shell="/bin/zsh",
-            agent_pid=43122,
-        ),
-        HostTerminalSession(
-            host_id=online_hosts[1].id,
-            opened_by="demo-operator",
-            opened_at=ctx.now - timedelta(hours=9, minutes=30),
-            closed_at=ctx.now - timedelta(hours=9, minutes=11),
-            close_reason="agent_closed",
-            client_ip="10.0.0.43",
-            shell="/bin/bash",
-            agent_pid=28645,
-        ),
-        HostTerminalSession(
-            host_id=online_hosts[2].id,
-            opened_by="demo-admin",
-            opened_at=ctx.now - timedelta(hours=1, minutes=20),
-            closed_at=ctx.now - timedelta(hours=1, minutes=17),
-            close_reason="proxy_error",
-            client_ip="10.0.0.42",
-            shell="/bin/zsh",
-            agent_pid=39211,
-        ),
-    ]
-    session.add_all(terminal_rows)
 
 
 # ---------------------------------------------------------------------------

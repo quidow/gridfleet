@@ -23,7 +23,7 @@ from app.devices.models import (  # noqa: F401
     DeviceTestDataAuditLog,
 )
 from app.events.models import SystemEvent  # noqa: F401
-from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample, HostTerminalSession  # noqa: F401
+from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample  # noqa: F401
 from app.jobs.models import Job  # noqa: F401
 from app.packs.models import (  # noqa: F401
     DriverPack,
