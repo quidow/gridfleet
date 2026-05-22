@@ -137,8 +137,6 @@ All flags below belong to `install`. `status`, `update`, and `uninstall` accept 
 | `--grid-publish-url` | `tcp://localhost:4442` | `AGENT_GRID_PUBLISH_URL` | Grid event bus publish. |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | `AGENT_GRID_SUBSCRIBE_URL` | Grid event bus subscribe. |
 | `--grid-node-port-start` | `5555` | `AGENT_GRID_NODE_PORT_START` | First port allocated to relay nodes. |
-| `--enable-web-terminal` | off | `AGENT_ENABLE_WEB_TERMINAL=true` | Requires `--terminal-token`. |
-| `--terminal-token` | none | `AGENT_TERMINAL_TOKEN` | Required when web terminal enabled. |
 
 Install paths (defaults; override with `--agent-dir`, `--config-dir`):
 
