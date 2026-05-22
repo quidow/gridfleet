@@ -95,16 +95,32 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
     from tests.helpers import seed_host_and_device
 
     host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
+    device.tags = {"team": "qa"}
+    device.test_data = {"creds": {"u": "a"}}
+    device.device_config = {"foo": "bar"}
+    await db_session.commit()
+
     bundle = await build_export_bundle(db_session, source_instance="alpha")
+
     assert bundle.schema_version == 1
     assert bundle.source_instance == "alpha"
     assert len(bundle.devices) == 1
     exported = bundle.devices[0]
-    assert exported.original_host.hostname == host.hostname
-    assert exported.original_host.host_id == host.id
+    assert exported.pack_id == device.pack_id
+    assert exported.platform_id == device.platform_id
+    assert exported.identity_scheme == device.identity_scheme
+    assert exported.identity_scope == device.identity_scope
     assert exported.identity_value == device.identity_value
     assert exported.name == device.name
-    assert exported.pack_id == device.pack_id
+    assert exported.device_type == device.device_type
+    assert exported.connection_type == device.connection_type
+    assert exported.connection_target == device.connection_target
+    assert exported.auto_manage == device.auto_manage
+    assert exported.tags == {"team": "qa"}
+    assert exported.device_config == {"foo": "bar"}
+    assert exported.test_data == {"creds": {"u": "a"}}
+    assert exported.original_host.hostname == host.hostname
+    assert exported.original_host.host_id == host.id
 
 
 @pytest.mark.asyncio
@@ -129,22 +145,3 @@ async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSe
         "id",
     }
     assert not (forbidden & dumped.keys())
-
-
-@pytest.mark.asyncio
-@pytest.mark.db
-async def test_export_bundle_preserves_tags_and_test_data(db_session: AsyncSession) -> None:
-    from app.devices.services.portability_export import build_export_bundle
-    from tests.helpers import seed_host_and_device
-
-    _host, device = await seed_host_and_device(db_session, identity="EXPORT-3")
-    device.tags = {"team": "qa"}
-    device.test_data = {"creds": {"u": "a"}}
-    device.device_config = {"foo": "bar"}
-    await db_session.commit()
-
-    bundle = await build_export_bundle(db_session)
-    exported = bundle.devices[0]
-    assert exported.tags == {"team": "qa"}
-    assert exported.test_data == {"creds": {"u": "a"}}
-    assert exported.device_config == {"foo": "bar"}

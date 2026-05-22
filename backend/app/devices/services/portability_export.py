@@ -1,3 +1,11 @@
+"""Build a portable JSON bundle of registered devices for round-trip export/import.
+
+The bundle carries only operator-configured fields and identity, not runtime
+state. Hardware-detected fields (``os_version``, ``manufacturer``, ``model``,
+``software_versions``) are deliberately excluded — they are re-discovered by
+the verification pipeline after a device is re-imported.
+"""
+
 from datetime import UTC, datetime
 
 from sqlalchemy import select
