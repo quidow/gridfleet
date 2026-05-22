@@ -9,7 +9,9 @@ __all__ = [
     "diagnostics",
     "groups",
     "helpers",
+    "inventory",
     "lifecycle_incidents",
+    "portability",
     "test_data",
     "verification",
 ]

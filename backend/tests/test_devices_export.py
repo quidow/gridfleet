@@ -1,4 +1,5 @@
 import pytest
+from httpx import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,3 +146,20 @@ async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSe
         "id",
     }
     assert not (forbidden & dumped.keys())
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: AsyncSession) -> None:
+    from tests.helpers import seed_host_and_device
+
+    await seed_host_and_device(db_session, identity="ENDPOINT-1")
+
+    response = await client.get("/api/devices/export")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == 1
+    assert len(body["devices"]) == 1
+    cd = response.headers["content-disposition"]
+    assert cd.startswith("attachment; filename=")
+    assert cd.endswith('.json"')
