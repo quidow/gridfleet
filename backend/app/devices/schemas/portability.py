@@ -1,3 +1,4 @@
+import enum
 import uuid
 from datetime import datetime
 from typing import Any, Literal
@@ -44,7 +45,7 @@ class ExportBundle(BaseModel):
     devices: list[ExportedDevice]
 
 
-class ImportRowStatus:
+class ImportRowStatus(enum.StrEnum):
     VALID_NEW = "valid_new"
     CONFLICT_SKIP = "conflict_skip"
     DUPLICATE_IN_BUNDLE = "duplicate_in_bundle"
@@ -63,7 +64,7 @@ class ImportPreviewRow(BaseModel):
 
     index: int
     device: ExportedDevice
-    status: Literal["valid_new", "conflict_skip", "duplicate_in_bundle", "invalid"]
+    status: ImportRowStatus
     host_suggestion: HostSuggestion | None = None
     issues: list[str] = Field(default_factory=list)
 
