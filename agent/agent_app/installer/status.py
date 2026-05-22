@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from agent_app.installer.uv_runtime import UvRuntime
 
 
-SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_TERMINAL_TOKEN", "AGENT_API_AUTH_PASSWORD"}
+SECRET_KEYS = {"AGENT_MANAGER_AUTH_PASSWORD", "AGENT_API_AUTH_PASSWORD"}
 
 
 @dataclass(frozen=True)

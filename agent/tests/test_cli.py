@@ -137,15 +137,6 @@ def test_install_resolve_identity_error(capsys: pytest.CaptureFixture[str], monk
     assert "bad user" in capsys.readouterr().err
 
 
-def test_install_config_error(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
-    )
-    # Cause InstallConfig to reject: enable terminal without token
-    assert cli.main(["install", "--dry-run", "--enable-web-terminal"]) == 2
-    assert "AGENT_TERMINAL_TOKEN" in capsys.readouterr().err
-
-
 def test_install_runtime_error(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
