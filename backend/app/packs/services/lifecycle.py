@@ -64,7 +64,7 @@ async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dic
 
 async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
     # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
-    # taken by ``assert_runnable(..., lock=True)`` in the allocator: it
+    # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
     # blocks here until any in-flight ``create_run`` transaction that
     # observed ``state=enabled`` either commits its reservation or aborts.
     # Once we acquire the lock, the recount below sees any reservation

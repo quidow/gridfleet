@@ -67,6 +67,12 @@ async def test_drain_disables_pack_with_fresh_concurrent_reservation(
         nonlocal triggered
         # 1) Read counts as they stand right now (zero active work).
         counts = await original_count(session, target_pack_id)
+        # ``try_complete_drain`` calls ``count_active_work_for_pack`` twice:
+        # the first read decides whether to attempt the disable; the second
+        # is the defensive recount immediately before the state write. On
+        # the recount (``triggered`` already set), pass through without
+        # injecting another reservation so the recount sees the one this
+        # patch just committed below.
         if triggered:
             return counts
         triggered = True
@@ -118,13 +124,13 @@ async def test_drain_disables_pack_with_fresh_concurrent_reservation(
             )
         ).scalar_one_or_none()
 
-    # Fixed behavior: ``try_complete_drain`` would either re-check work
-    # under a pack-level lock before flipping to disabled, or the
-    # disable write would race-check the reservation table. Current
-    # behavior (bug): the pack ends up ``disabled`` despite a live
-    # reservation that just committed.
+    # Fixed behavior: the defensive recount in ``try_complete_drain`` sees
+    # the reservation committed mid-flight and bails on the state flip, so
+    # the pack stays in ``draining`` (the stable state for an interrupted
+    # drain completion). Pre-fix behavior: pack ends up ``disabled``
+    # despite a live reservation referencing it.
     assert active_reservation is not None
-    assert refreshed_pack.state != PackState.disabled, (
-        f"Pack was disabled despite a live reservation committed between the "
-        f"work-count read and the state write: state={refreshed_pack.state}"
+    assert refreshed_pack.state == PackState.draining, (
+        f"Pack should remain ``draining`` after a reservation committed between "
+        f"the initial count and the recount; got state={refreshed_pack.state}"
     )

@@ -121,9 +121,9 @@ async def assert_runnable(
     *,
     pack_id: str,
     platform_id: str,
-    lock: bool = False,
+    pack_lock: bool = False,
 ) -> ResolvedPackPlatform:
-    # ``lock=True`` callers (e.g. ``create_run`` before inserting a
+    # ``pack_lock=True`` callers (e.g. ``create_run`` before inserting a
     # ``DeviceReservation``) take ``SELECT … FOR SHARE`` on the pack row so
     # they conflict with ``try_complete_drain``'s ``SELECT … FOR UPDATE``.
     # Without this, an in-flight allocator that observed ``state=enabled``
@@ -131,7 +131,7 @@ async def assert_runnable(
     # to ``draining`` and the drain-completion path would not see the new
     # reservation.
     stmt = select(DriverPack).where(DriverPack.id == pack_id)
-    if lock:
+    if pack_lock:
         stmt = stmt.with_for_update(read=True)
     pack = (await session.execute(stmt)).scalar_one_or_none()
     if pack is None:
