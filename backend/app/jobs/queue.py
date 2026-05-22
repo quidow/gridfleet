@@ -50,6 +50,7 @@ async def create_job(
     max_attempts: int = 1,
     scheduled_at: datetime | None = None,
     job_id: uuid.UUID | None = None,
+    commit: bool = True,
 ) -> Job:
     job = Job(
         id=job_id or uuid.uuid4(),
@@ -61,8 +62,12 @@ async def create_job(
         scheduled_at=scheduled_at or utcnow(),
     )
     db.add(job)
-    await db.commit()
-    await db.refresh(job)
+    if commit:
+        await db.commit()
+        await db.refresh(job)
+    else:
+        await db.flush()
+        await db.refresh(job)
     return job
 
 
