@@ -1,10 +1,15 @@
+import json
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.schemas.inventory import (
     DEFAULT_INVENTORY_COLUMNS,
     InventoryColumn,
     parse_columns_param,
 )
+from app.devices.services.inventory_export import iter_inventory_csv, iter_inventory_json
+from tests.helpers import seed_host_and_device
 
 
 def test_inventory_column_enum_has_expected_dot_paths() -> None:
@@ -68,3 +73,58 @@ def test_parse_columns_param_rejects_unknown() -> None:
 
 def test_default_inventory_columns_is_subset_of_enum() -> None:
     assert set(DEFAULT_INVENTORY_COLUMNS) <= set(InventoryColumn)
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_iter_inventory_json_emits_selected_columns(db_session: AsyncSession) -> None:
+    host, device = await seed_host_and_device(db_session, identity="INV-1")
+    chunks: list[str] = []
+    async for chunk in iter_inventory_json(
+        db_session,
+        columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME, InventoryColumn.IDENTITY_VALUE],
+        filters=None,
+    ):
+        chunks.append(chunk)
+    body = "".join(chunks)
+    payload = json.loads(body)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    assert set(payload[0].keys()) == {"name", "host", "identity"}
+    assert payload[0]["host"] == {"hostname": host.hostname}
+    assert payload[0]["identity"] == {"value": device.identity_value}
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_iter_inventory_csv_emits_header_and_rows(db_session: AsyncSession) -> None:
+    host, _ = await seed_host_and_device(db_session, identity="INV-2")
+    chunks: list[str] = []
+    async for chunk in iter_inventory_csv(
+        db_session,
+        columns=[InventoryColumn.NAME, InventoryColumn.HOST_HOSTNAME],
+        filters=None,
+    ):
+        chunks.append(chunk)
+    body = "".join(chunks)
+    lines = body.strip().splitlines()
+    assert lines[0] == "name,host.hostname"
+    assert lines[1].endswith(host.hostname)
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: AsyncSession) -> None:
+    _, device = await seed_host_and_device(db_session, identity="INV-3")
+    device.tags = {"team": "qa"}
+    await db_session.commit()
+    chunks: list[str] = []
+    async for chunk in iter_inventory_csv(
+        db_session,
+        columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+        filters=None,
+    ):
+        chunks.append(chunk)
+    body = "".join(chunks)
+    assert "{" in body
+    assert "team" in body
