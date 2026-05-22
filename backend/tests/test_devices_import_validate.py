@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.schemas.portability import ExportBundle, ExportedDevice, OriginalHost
@@ -90,3 +91,62 @@ async def test_validate_returns_bundle_hash_and_available_hosts(db_session: Asyn
     preview = await validate_bundle(db_session, _bundle([_device(hostname="lab-04", host_id=host.id)]))
     assert preview.bundle_hash.startswith("sha256:")
     assert any(h.id == host.id for h in preview.available_hosts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_validate_endpoint_returns_preview(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    body = {
+        "schema_version": 1,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "source_instance": "alpha",
+        "devices": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "identity_scheme": "android_serial",
+                "identity_scope": "host",
+                "identity_value": "R58",
+                "name": "Pixel",
+                "device_type": "real_device",
+                "connection_type": "usb",
+                "auto_manage": True,
+                "tags": {},
+                "device_config": {},
+                "test_data": {},
+                "original_host": {"hostname": "lab-04"},
+            }
+        ],
+    }
+    response = await client.post("/api/devices/import/validate", json=body)
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["bundle_hash"].startswith("sha256:")
+    assert preview["rows"][0]["status"] == "valid_new"
+    assert preview["rows"][0]["host_suggestion"]["id"] == str(host.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_validate_endpoint_rejects_unknown_fields(client: AsyncClient) -> None:
+    body = {
+        "schema_version": 1,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "devices": [],
+        "unexpected": True,
+    }
+    response = await client.post("/api/devices/import/validate", json=body)
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_validate_endpoint_rejects_unsupported_schema_version(client: AsyncClient) -> None:
+    body = {
+        "schema_version": 99,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "devices": [],
+    }
+    response = await client.post("/api/devices/import/validate", json=body)
+    assert response.status_code == 422
