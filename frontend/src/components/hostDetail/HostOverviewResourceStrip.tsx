@@ -49,11 +49,9 @@ function Gauge({ label, percent, detail }: { label: string; percent: number | nu
     <div className="flex-1 min-w-0">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs text-text-3">{label}</span>
-        <span className="text-sm font-semibold tabular-nums text-text-1">
-          {detail ? <span className="mr-2 text-xs font-normal text-text-3">{detail}</span> : null}
-          {formatPercent(percent)}
-        </span>
+        <span className="text-sm font-semibold tabular-nums text-text-1">{formatPercent(percent)}</span>
       </div>
+      {detail ? <div className="mt-0.5 truncate text-xs text-text-3">{detail}</div> : null}
       <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
         <div
           className={`h-full ${toneFor(percent)}`}
