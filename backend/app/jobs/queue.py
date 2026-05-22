@@ -64,10 +64,9 @@ async def create_job(
     db.add(job)
     if commit:
         await db.commit()
-        await db.refresh(job)
     else:
         await db.flush()
-        await db.refresh(job)
+    await db.refresh(job)
     return job
 
 
