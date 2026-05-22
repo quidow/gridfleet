@@ -484,7 +484,6 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
     { name = "uvicorn", extra = ["standard"] },
-    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -530,7 +529,6 @@ requires-dist = [
     { name = "structlog", specifier = "==25.5.0" },
     { name = "tenacity", specifier = ">=9.0,<10" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.47.0" },
-    { name = "websockets", specifier = "==16.0" },
 ]
 provides-extras = ["dev"]
 
