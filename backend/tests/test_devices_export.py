@@ -1,5 +1,6 @@
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.schemas.portability import (
     ExportBundle,
@@ -85,3 +86,65 @@ def test_import_row_status_enum_values() -> None:
         "duplicate_in_bundle",
         "invalid",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession) -> None:
+    from app.devices.services.portability_export import build_export_bundle
+    from tests.helpers import seed_host_and_device
+
+    host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
+    bundle = await build_export_bundle(db_session, source_instance="alpha")
+    assert bundle.schema_version == 1
+    assert bundle.source_instance == "alpha"
+    assert len(bundle.devices) == 1
+    exported = bundle.devices[0]
+    assert exported.original_host.hostname == host.hostname
+    assert exported.original_host.host_id == host.id
+    assert exported.identity_value == device.identity_value
+    assert exported.name == device.name
+    assert exported.pack_id == device.pack_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSession) -> None:
+    from app.devices.services.portability_export import build_export_bundle
+    from tests.helpers import seed_host_and_device
+
+    await seed_host_and_device(db_session, identity="EXPORT-2")
+    bundle = await build_export_bundle(db_session)
+    exported = bundle.devices[0]
+    dumped = exported.model_dump()
+    forbidden = {
+        "operational_state",
+        "hold",
+        "lifecycle_policy_state",
+        "verified_at",
+        "battery_level_percent",
+        "review_required",
+        "session_viability_status",
+        "host_id",
+        "id",
+    }
+    assert not (forbidden & dumped.keys())
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_export_bundle_preserves_tags_and_test_data(db_session: AsyncSession) -> None:
+    from app.devices.services.portability_export import build_export_bundle
+    from tests.helpers import seed_host_and_device
+
+    _host, device = await seed_host_and_device(db_session, identity="EXPORT-3")
+    device.tags = {"team": "qa"}
+    device.test_data = {"creds": {"u": "a"}}
+    device.device_config = {"foo": "bar"}
+    await db_session.commit()
+
+    bundle = await build_export_bundle(db_session)
+    exported = bundle.devices[0]
+    assert exported.tags == {"team": "qa"}
+    assert exported.test_data == {"creds": {"u": "a"}}
+    assert exported.device_config == {"foo": "bar"}
