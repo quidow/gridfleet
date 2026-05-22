@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import Counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.schemas.portability import (
     SCHEMA_VERSION,
     ExportBundle,
@@ -145,7 +146,7 @@ async def validate_bundle(session: AsyncSession, bundle: ExportBundle) -> Import
     )
 
 
-def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> dict[str, object]:
+def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> dict[str, Any]:
     return {
         "pack_id": device.pack_id,
         "platform_id": device.platform_id,
@@ -169,23 +170,21 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
 async def _enqueue_verification(session: AsyncSession, device: Device) -> None:
     job_id = uuid.uuid4()
     snapshot = verification_job_state.new_job(str(job_id))
-    payload: dict[str, object] = {
-        "mode": "create",
-        "data": {
-            "pack_id": device.pack_id,
-            "platform_id": device.platform_id,
-            "identity_scheme": device.identity_scheme,
-            "identity_scope": device.identity_scope,
-            "identity_value": device.identity_value,
-            "connection_target": device.connection_target,
-            "name": device.name,
-            "host_id": str(device.host_id),
-            "device_type": device.device_type.value if device.device_type else None,
-            "connection_type": device.connection_type.value if device.connection_type else None,
-            "auto_manage": device.auto_manage,
-            "tags": dict(device.tags or {}),
-        },
-    }
+    data = DeviceVerificationCreate(
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        identity_scheme=device.identity_scheme,
+        identity_scope=device.identity_scope,
+        identity_value=device.identity_value,
+        connection_target=device.connection_target,
+        name=device.name,
+        host_id=device.host_id,
+        device_type=device.device_type,
+        connection_type=device.connection_type,
+        auto_manage=device.auto_manage,
+        tags=device.tags or None,
+    )
+    payload: dict[str, Any] = {"mode": "create", "data": data.model_dump(mode="json")}
     await job_queue.create_job(
         session,
         kind=JOB_KIND_DEVICE_VERIFICATION,
@@ -254,7 +253,7 @@ async def commit_import(session: AsyncSession, request: ImportCommitRequest) -> 
             lower = reason.lower()
             if "duplicate key" in lower or "unique" in lower:
                 failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {reason}"))
-            elif "verification" in lower or "create_job" in lower or "boom" in lower:
+            elif "verification" in lower or "create_job" in lower:
                 failed.append(ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}"))
             else:
                 failed.append(ImportCommitFailedRow(index=idx, reason=reason))
