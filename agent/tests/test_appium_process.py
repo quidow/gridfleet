@@ -115,6 +115,12 @@ class RecordingGridNodeHandle:
         self.stop_called = False
         self.wait_until_running_called = False
         self.snapshot_payload = {"status": "up"}
+        # ``_start_grid_node_service`` accesses ``handle.service`` after the
+        # supervisor reports running so it can drain a relay launched with
+        # ``accepting_new_sessions=False``. The bare recording handle does
+        # not run a real service, so leave it as None and let the drain
+        # path no-op.
+        self.service: object | None = None
 
     async def start(self) -> None:
         self.start_called = True
@@ -513,6 +519,68 @@ async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() 
     await manager.shutdown()
 
 
+async def test_start_with_accepting_false_drains_fresh_relay() -> None:
+    """Regression: a freshly constructed ``NodeState`` always starts with
+    ``_drain=False``. When the backend restarts an Appium relay that should
+    still be cooled down (``accepting_new_sessions=False`` carried forward
+    on the launch spec), the agent must drain the relay before any
+    hub-routed reservation can sneak in. Without this, a cooldowned device
+    that the backend reconciles back to ``desired_state=running`` would
+    silently accept new sessions until the next reconfigure tick lands.
+    """
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5678)
+    service = ReconfigurableGridNodeService()
+    handle = ReconfigurableGridNodeHandle(service)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
+    ):
+        await manager.start(
+            connection_target="device-cooldowned",
+            port=4729,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+            accepting_new_sessions=False,
+        )
+
+    assert service.drain_only_calls == 1, "fresh relay launched with accepting=False must be drained immediately"
+    assert service.calls == [], "drain branch must not republish the relay"
+    await manager.shutdown()
+
+
+async def test_start_with_accepting_true_does_not_drain() -> None:
+    """The drain-on-start branch is gated on ``accepting_new_sessions=False``
+    — a normal start path must leave the relay accepting sessions.
+    """
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5679)
+    service = ReconfigurableGridNodeService()
+    handle = ReconfigurableGridNodeHandle(service)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
+    ):
+        await manager.start(
+            connection_target="device-ready",
+            port=4730,
+            grid_url="http://grid:4444",
+            **PACK_START_KWARGS,
+            accepting_new_sessions=True,
+        )
+
+    assert service.drain_only_calls == 0
+    await manager.shutdown()
+
+
 async def test_reconfigure_accepting_true_updates_grid_stereotype() -> None:
     """Run-id rotation path keeps the relay registered with the hub — DRAIN +
     REMOVED + ADDED republishes the node with new run-id caps."""
@@ -603,7 +671,18 @@ async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
         )
 
 
-async def test_stop_pending_stops_when_no_grid_session_and_blocks_auto_restart() -> None:
+async def test_stop_pending_drains_relay_and_blocks_auto_restart() -> None:
+    """Cooldown / maintenance reconfigure with ``stop_pending=True`` must NOT
+    tear the relay down on the agent side. The backend's appium reconciler
+    owns stop decisions via ``AppiumNode.desired_state``; if the agent stops
+    here while no session is active, the backend then observes ``pid=None``,
+    restarts Appium on a fresh port, and the new ``NodeState`` comes up with
+    ``_drain=False`` — silently undoing the cooldown. The agent's
+    responsibilities for a ``stop_pending`` reconfigure are limited to:
+    draining the relay so the hub stops routing, and tracking the port in
+    ``_stop_pending_ports`` so the auto-restart loop refuses to resurrect a
+    crashed Appium under a pending stop.
+    """
     manager = AppiumProcessManager()
     service = ReconfigurableGridNodeService(busy=False)
     handle = ReconfigurableGridNodeHandle(service)
@@ -620,10 +699,17 @@ async def test_stop_pending_stops_when_no_grid_session_and_blocks_auto_restart()
     manager._log_tasks[4723] = []
 
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
-    await manager._auto_restart_appium(4723, exit_code=9)
 
-    assert handle.stop_called is True
-    assert 4723 not in manager._grid_supervisors
+    # Relay drained but NOT stopped — it must stay registered so the hub
+    # keeps seeing it DRAINING (and the local ``_drain`` guard keeps
+    # rejecting reservations) instead of disappearing and reappearing fresh.
+    assert service.drain_only_calls == 1
+    assert handle.stop_called is False
+    assert 4723 in manager._grid_supervisors
+    assert 4723 in manager._stop_pending_ports
+
+    # Auto-restart must refuse to resurrect because a stop is pending.
+    await manager._auto_restart_appium(4723, exit_code=9)
     assert manager.process_snapshot()["recent_restart_events"] == []
 
 
@@ -1650,7 +1736,20 @@ async def test_reconfigure_unknown_grid_supervisor_raises() -> None:
         await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
 
 
-async def test_reconfigure_stop_pending_with_active_session_spawns_stop_task() -> None:
+async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -> None:
+    """Regression: the agent must NOT spawn an idle-stop watcher when a
+    ``stop_pending=True`` reconfigure arrives while a session is active.
+
+    The previous design (agent-side idle-stop watcher) tore the relay down
+    the moment the session ended. The backend then observed ``pid=None``,
+    restarted Appium on a fresh port, and the new ``NodeState`` came up
+    with ``_drain=False`` — silently undoing the cooldown. Stop decisions
+    are now owned exclusively by the backend's appium reconciler via
+    ``AppiumNode.desired_state``; the agent's only responsibilities are to
+    drain the relay (so the hub stops routing) and remember the port in
+    ``_stop_pending_ports`` (so ``_auto_restart_appium`` refuses to
+    resurrect a crashed Appium).
+    """
     manager = AppiumProcessManager()
     service = ReconfigurableGridNodeService(busy=True)
     handle = ReconfigurableGridNodeHandle(service)
@@ -1671,10 +1770,9 @@ async def test_reconfigure_stop_pending_with_active_session_spawns_stop_task() -
     )
 
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
+    assert service.drain_only_calls == 1
     assert 4723 in manager._stop_pending_ports
-    assert 4723 in manager._stop_pending_tasks
-    # clean up
-    manager._stop_pending_tasks[4723].cancel()
+    assert 4723 not in manager._stop_pending_tasks
 
 
 async def test_ensure_stop_when_grid_idle_task_skips_if_already_running() -> None:

@@ -185,6 +185,19 @@ class NodeState:
         with self._lock:
             self._drain = True
 
+    def clear_drain(self) -> None:
+        """Clear a previously set drain flag.
+
+        Used by ``reregister_with_caps_update`` after the relay finishes the
+        drain → REMOVED → ADDED cycle so the local ``reserve()`` guard stops
+        rejecting hub-routed sessions. Without this, a relay that was once
+        drained (cooldown / maintenance) would silently reject every hub
+        reservation after the cooldown intent expired, because ``_drain``
+        latched ``True`` for the lifetime of the ``NodeState``.
+        """
+        with self._lock:
+            self._drain = False
+
     def expire_idle(self, *, now: float, timeout_sec: float) -> list[str]:
         with self._lock:
             expired: list[str] = []

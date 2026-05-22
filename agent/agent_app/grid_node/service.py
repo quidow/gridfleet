@@ -295,6 +295,12 @@ class GridNodeService:
         await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
 
         self.state.update_all_slot_caps(updates)
+        # Re-publishing as a fresh node implies sessions are welcome again.
+        # The local ``_drain`` flag latches ``True`` once ``mark_drain`` runs,
+        # so a relay coming out of cooldown via the accepting=True path would
+        # keep rejecting hub reservations at ``NodeState.reserve`` without
+        # this clear.
+        self.state.clear_drain()
 
         await asyncio.sleep(0.25)
         await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
