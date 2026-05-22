@@ -12,7 +12,8 @@ interface AnalyticsQueryOptions {
   enabled?: boolean;
 }
 
-const ANALYTICS_POLL_MS = 60_000;
+// Aggregates change on minute-scale buckets; matches prior staleTime budget.
+const ANALYTICS_POLL_MS = 5 * 60_000;
 
 export function useSessionSummary(params?: SessionSummaryParams, options?: AnalyticsQueryOptions) {
   return useQuery({

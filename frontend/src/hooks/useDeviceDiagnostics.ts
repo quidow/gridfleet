@@ -14,6 +14,7 @@ export function useDeviceDiagnosticSnapshots(deviceId: string, limit = 5) {
     queryFn: () => listDeviceDiagnosticSnapshots(deviceId, { limit }),
     enabled: Boolean(deviceId),
     refetchInterval: DIAGNOSTIC_SNAPSHOTS_POLL_MS,
+    refetchIntervalInBackground: false,
     staleTime: DIAGNOSTIC_SNAPSHOTS_POLL_MS / 2,
   });
 }
