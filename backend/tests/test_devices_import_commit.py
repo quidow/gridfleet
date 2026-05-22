@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+from httpx import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,3 +176,75 @@ async def test_import_mapping_forbids_device_field(db_session: AsyncSession) -> 
     host = await seed_host_named(db_session, "lab-04")
     with pytest.raises(ValidationError):
         ImportMapping.model_validate({"index": 0, "target_host_id": str(host.id), "device": {"name": "x"}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_import_endpoint_returns_409_on_hash_mismatch(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    body = {
+        "bundle": {
+            "schema_version": 1,
+            "exported_at": "2026-05-23T00:00:00+00:00",
+            "devices": [
+                {
+                    "pack_id": "appium-uiautomator2",
+                    "platform_id": "android_mobile",
+                    "identity_scheme": "android_serial",
+                    "identity_scope": "host",
+                    "identity_value": "R58",
+                    "name": "Pixel",
+                    "device_type": "real_device",
+                    "connection_type": "usb",
+                    "auto_manage": True,
+                    "tags": {},
+                    "device_config": {},
+                    "test_data": {},
+                    "original_host": {"hostname": "lab-04"},
+                }
+            ],
+        },
+        "bundle_hash": "sha256:" + "0" * 64,
+        "mappings": [{"index": 0, "target_host_id": str(host.id)}],
+    }
+    response = await client.post("/api/devices/import", json=body)
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_import_endpoint_commits_valid_row(client: AsyncClient, db_session: AsyncSession) -> None:
+    host = await seed_host_named(db_session, "lab-04")
+    bundle_body = {
+        "schema_version": 1,
+        "exported_at": "2026-05-23T00:00:00+00:00",
+        "devices": [
+            {
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "identity_scheme": "android_serial",
+                "identity_scope": "host",
+                "identity_value": "R58",
+                "name": "Pixel",
+                "device_type": "real_device",
+                "connection_type": "usb",
+                "auto_manage": True,
+                "tags": {},
+                "device_config": {},
+                "test_data": {},
+                "original_host": {"hostname": "lab-04"},
+            }
+        ],
+    }
+    bundle = ExportBundle.model_validate(bundle_body)
+    body = {
+        "bundle": bundle_body,
+        "bundle_hash": compute_bundle_hash(bundle),
+        "mappings": [{"index": 0, "target_host_id": str(host.id)}],
+    }
+    response = await client.post("/api/devices/import", json=body)
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["created"]) == 1
+    assert result["skipped"] == []
+    assert result["failed"] == []

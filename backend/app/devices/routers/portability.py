@@ -1,12 +1,12 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Response
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
-from app.devices.schemas.portability import ExportBundle, ImportPreview
+from app.devices.schemas.portability import ExportBundle, ImportCommitRequest, ImportCommitResult, ImportPreview
 from app.devices.services.portability_export import build_export_bundle
-from app.devices.services.portability_import import validate_bundle
+from app.devices.services.portability_import import BundleHashMismatchError, commit_import, validate_bundle
 
 router = APIRouter(
     prefix="/api/devices",
@@ -34,3 +34,15 @@ async def export_devices(db: DbDep, response: Response) -> ExportBundle:
 )
 async def import_validate(bundle: ExportBundle, db: DbDep) -> ImportPreview:
     return await validate_bundle(db, bundle)
+
+
+@router.post(
+    "/import",
+    response_model=ImportCommitResult,
+    summary="Commit a previously-validated device import bundle",
+)
+async def import_commit(request: ImportCommitRequest, db: DbDep) -> ImportCommitResult:
+    try:
+        return await commit_import(db, request)
+    except BundleHashMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
