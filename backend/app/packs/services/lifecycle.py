@@ -63,12 +63,12 @@ async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dic
 
 
 async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
-    # Take ``SELECT … FOR UPDATE`` on the DriverPack row so the count and the
-    # disable write run under a single row lock. Without this, a concurrent
-    # ``count_active_work_for_pack`` reader could observe zero work, then a
-    # second concurrent path could commit a fresh ``DeviceReservation`` for
-    # the pack between the count and our state flip — leaving the pack
-    # ``disabled`` while an active reservation references it.
+    # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
+    # taken by ``assert_runnable(..., lock=True)`` in the allocator: it
+    # blocks here until any in-flight ``create_run`` transaction that
+    # observed ``state=enabled`` either commits its reservation or aborts.
+    # Once we acquire the lock, the recount below sees any reservation
+    # those transactions just committed.
     locked_stmt = (
         select(DriverPack).where(DriverPack.id == pack_id).with_for_update().execution_options(populate_existing=True)
     )
@@ -79,12 +79,12 @@ async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
         return pack
     counts = await count_active_work_for_pack(session, pack_id)
     if counts["active_runs"] == 0 and counts["live_sessions"] == 0:
-        # Recount immediately before the state write: the count query
-        # reads ``DeviceReservation`` etc. without locking those rows, so
-        # a concurrent allocator could commit between the first count and
-        # this second one. The pack row is held FOR UPDATE so the two
-        # reads are still inside one consistent transaction, but the
-        # explicit recount surfaces any post-snapshot writes.
+        # Recount immediately before the state write. ``count_active_work_for_pack``
+        # reads ``DeviceReservation``/``Session`` without locking those rows,
+        # so under READ COMMITTED each statement in this transaction sees a
+        # fresh snapshot — the recount surfaces any reservations committed
+        # after the first count (defensive backstop for paths that did not
+        # take the ``FOR SHARE`` lock).
         recheck = await count_active_work_for_pack(session, pack_id)
         if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
             pack.state = PackState.disabled
