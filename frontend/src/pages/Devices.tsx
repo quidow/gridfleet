@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
-import { FileDown, Plus, SearchX, Smartphone } from 'lucide-react';
+import { FileDown, Plus, SearchX, Smartphone, Upload } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   useDeleteDevice,
   useEnterDeviceMaintenance,
@@ -79,6 +80,7 @@ function DevicesEmptyPanel({
 export default function Devices() {
   useDevRenderCrashTrigger('devices-page');
   usePageTitle('Devices');
+  const navigate = useNavigate();
   const controller = useDevicesPageController();
   const toggleAutoManage = useToggleDeviceAutoManage();
   const deleteDevice = useDeleteDevice();
@@ -226,6 +228,13 @@ export default function Devices() {
                 leadingIcon={<FileDown size={16} />}
               >
                 Export Inventory
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => navigate('/devices/import')}
+                leadingIcon={<Upload size={16} />}
+              >
+                Import Devices
               </Button>
               <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
                 Add Device

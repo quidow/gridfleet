@@ -20,6 +20,7 @@ const RunDetail = lazy(() => import('./pages/RunDetail'));
 const Runs = lazy(() => import('./pages/Runs'));
 const Sessions = lazy(() => import('./pages/Sessions'));
 const Settings = lazy(() => import('./pages/Settings'));
+const DeviceImportWizard = lazy(() => import('./pages/DeviceImportWizard'));
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="devices" element={<Devices />} />
+          <Route path="devices/import" element={<DeviceImportWizard />} />
           <Route path="devices/:id" element={<DeviceDetail />} />
           <Route path="hosts" element={<Hosts />} />
           <Route path="hosts/:id" element={<HostDetail />} />
