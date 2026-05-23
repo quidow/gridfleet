@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.reconfigure_delivery import (
     MAX_DELIVERY_ATTEMPTS,
+    InlineReconfigureDeliveryFailedError,
     _record_delivery_failure,
     deliver_agent_reconfigures,
 )
@@ -135,6 +136,96 @@ async def test_outbox_delivery_failure_increments_attempts(
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is None
     assert stored.delivery_attempts == 1
+
+
+async def test_outbox_delivery_failure_raises_when_raise_on_failure_true(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inline callers (cooldown HTTP handler) must learn about delivery
+    failures so the response can be a non-2xx. Without this signal the
+    testkit treats the cooldown as effective and the next session lands on
+    the device that was supposed to be drained.
+    """
+    import pytest as _pytest
+
+    from app.core.errors import AgentUnreachableError
+
+    device = await create_device(db_session, host_id=db_host.id, name="inline-failed-outbox")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=1,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=False,
+        stop_pending=True,
+        reconciled_generation=1,
+        created_at=datetime.now(UTC),
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline")),
+    )
+
+    with _pytest.raises(InlineReconfigureDeliveryFailedError):
+        await deliver_agent_reconfigures(db_session, device.id, raise_on_failure=True)
+
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    # Failure is still recorded on the row so the background retry loop
+    # can pick up where the inline call left off — surfacing the exception
+    # must not skip the bookkeeping.
+    assert stored.delivered_at is None
+    assert stored.delivery_attempts == 1
+
+
+async def test_outbox_delivery_failure_swallowed_by_default(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Background callers (delivery loop, intent reconciler, etc.) keep the
+    legacy behavior: failures are recorded and retried, never raised. Only
+    the explicit ``raise_on_failure=True`` path propagates the exception.
+    """
+    from app.core.errors import AgentUnreachableError
+
+    device = await create_device(db_session, host_id=db_host.id, name="bg-failed-outbox")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=1,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=False,
+        stop_pending=True,
+        reconciled_generation=1,
+        created_at=datetime.now(UTC),
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline")),
+    )
+
+    # Must not raise — default behavior swallows for the loop callers.
+    await deliver_agent_reconfigures(db_session, device.id)
 
 
 async def test_delivery_marks_older_duplicate_generation_rows_delivered(
