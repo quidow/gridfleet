@@ -66,18 +66,20 @@ test.describe('Device import wizard', () => {
   });
 
   test('upload → review → commit', async ({ page }) => {
-    await page.goto('/devices/import');
-    await expect(page.getByRole('heading', { name: 'Import devices' })).toBeVisible({ timeout: 10_000 });
+    await page.goto('/settings?tab=backup');
+    await expect(page.getByRole('heading', { name: /backup & restore/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /step 1.*upload bundle/i })).toBeVisible();
 
-    await page.setInputFiles('input[type="file"]', {
+    await page.setInputFiles('input#import-bundle', {
       name: 'bundle.json',
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(BUNDLE_BODY)),
     });
 
-    // After upload the review step shows "New: 1" for valid_new rows
-    await expect(page.getByText(/New:\s*1/)).toBeVisible({ timeout: 10_000 });
-    await page.getByRole('button', { name: /Commit import/i }).click();
+    await expect(page.getByText(/1 new/i)).toBeVisible({ timeout: 10_000 });
+    // Pick the suggested host for row 0
+    await page.getByLabel('host-0').selectOption('host-1');
+    await page.getByRole('button', { name: /commit import/i }).click();
     await expect(page.getByText(/1 created/i)).toBeVisible({ timeout: 10_000 });
   });
 });

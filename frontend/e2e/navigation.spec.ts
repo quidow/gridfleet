@@ -50,4 +50,10 @@ test.describe('Navigation', () => {
     await page.goto('/some-nonexistent-page');
     await expect(page.getByText(/not found/i)).toBeVisible({ timeout: 10_000 });
   });
+
+  test('redirects /devices/import to the Settings Backup tab', async ({ page }) => {
+    await page.goto('/devices/import');
+    await expect(page).toHaveURL(/\/settings\?tab=backup$/, { timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /backup & restore/i })).toBeVisible();
+  });
 });
