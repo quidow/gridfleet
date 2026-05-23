@@ -36,9 +36,9 @@ from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_
 from agent_app.grid_url import get_local_ip
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.adapter_types import SubprocessEnvContribution
 from agent_app.pack.dispatch import adapter_lifecycle_action, adapter_pre_session
 from agent_app.pack.runtime_registry import RuntimeRegistry
-from agent_app.tools.utils import _find_adb, find_android_home
 
 logger = logging.getLogger(__name__)
 
@@ -185,14 +185,13 @@ def _find_java() -> str:
 
 
 def _build_env(
-    platform_name: str | None = None,
-    device_type: str | None = None,
     *,
     appium_bin: str | None = None,
     appium_home: str | None = None,
     workaround_env: dict[str, str] | None = None,
+    adapter_env: SubprocessEnvContribution | None = None,
 ) -> dict[str, str]:
-    """Build a subprocess env with appium, adb, and java on PATH."""
+    """Build a subprocess env with appium and java on PATH."""
     env = os.environ.copy()
     extra_paths: list[str] = []
 
@@ -201,15 +200,12 @@ def _build_env(
         if bin_dir and bin_dir not in env.get("PATH", ""):
             extra_paths.append(bin_dir)
 
-    adb_dir = os.path.dirname(_find_adb())
-    if adb_dir and adb_dir not in env.get("PATH", ""):
-        extra_paths.append(adb_dir)
-
-    # Set ANDROID_HOME / ANDROID_SDK_ROOT so Appium drivers can find the SDK
-    android_home = find_android_home()
-    if android_home:
-        env.setdefault("ANDROID_HOME", android_home)
-        env.setdefault("ANDROID_SDK_ROOT", android_home)
+    if adapter_env is not None:
+        for d in adapter_env.extra_path_dirs:
+            if d and d not in env.get("PATH", ""):
+                extra_paths.append(d)
+        for k, v in adapter_env.env_vars.items():
+            env.setdefault(k, v)
 
     java_bin = _find_java()
     java_dir = os.path.dirname(java_bin)
@@ -676,12 +672,13 @@ class AppiumProcessManager:
         caps = sanitize_appium_driver_capabilities(caps)
 
         invocation = resolve_appium_invocation_for_pack(pack_id=spec.pack_id, registry=self._runtime_registry)
+        adapter = self._adapter_registry.get_current(spec.pack_id) if self._adapter_registry is not None else None
+        adapter_env = adapter.subprocess_env() if adapter is not None and hasattr(adapter, "subprocess_env") else None
         env = _build_env(
-            platform_name=spec.platform_id,
-            device_type=spec.device_type,
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
             workaround_env=spec.workaround_env,
+            adapter_env=adapter_env,
         )
         appium_bin = invocation.binary
 
