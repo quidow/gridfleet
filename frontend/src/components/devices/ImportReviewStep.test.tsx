@@ -1,76 +1,89 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { ImportReviewStep } from './ImportReviewStep';
+import type { ImportPreview } from '../../api/devicesPortability';
 
-import { ImportReviewStep } from "./ImportReviewStep";
-import type { ImportPreview } from "../../api/devicesPortability";
-
-const preview: ImportPreview = {
+const PREVIEW: ImportPreview = {
   schema_version: 1,
-  exported_at: "2026-05-23T00:00:00Z",
-  source_instance: "alpha",
-  bundle_hash: "sha256:x",
-  available_hosts: [{ id: "host-1", hostname: "lab-04" }],
+  exported_at: '2026-05-23T00:00:00Z',
+  bundle_hash: 'sha256:abcd',
+  available_hosts: [{ id: 'host-1', hostname: 'lab-04' }],
   rows: [
     {
       index: 0,
-      device: { name: "Pixel" } as never,
-      status: "valid_new",
-      host_suggestion: { id: "host-1", hostname: "lab-04" },
+      device: { name: 'Pixel 7', original_host: { hostname: 'lab-04' } } as never,
+      status: 'valid_new',
+      host_suggestion: { id: 'host-1', hostname: 'lab-04' },
       issues: [],
     },
     {
       index: 1,
-      device: { name: "Dup" } as never,
-      status: "conflict_skip",
+      device: { name: 'Pixel 8', original_host: null } as never,
+      status: 'invalid',
       host_suggestion: null,
-      issues: [],
+      issues: ['missing field'],
     },
   ],
 };
 
-describe("ImportReviewStep", () => {
-  it("renders rows with status badges", () => {
+describe('ImportReviewStep', () => {
+  it('shows the step heading and status badges', () => {
     render(
       <ImportReviewStep
-        preview={preview}
-        mappings={{ 0: { target_host_id: "host-1", included: true } }}
-        onSetMapping={() => {}}
-        onToggleIncluded={() => {}}
-        onCommit={() => {}}
+        preview={PREVIEW}
+        mappings={{ 0: { target_host_id: '', included: true } }}
+        onSetMapping={vi.fn()}
+        onToggleIncluded={vi.fn()}
+        onCommit={vi.fn()}
       />,
     );
-    expect(screen.getByText("Pixel")).toBeInTheDocument();
-    expect(screen.getByText(/valid/i)).toBeInTheDocument();
-    expect(screen.getByText(/conflict/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /step 2.*review/i })).toBeInTheDocument();
+    expect(screen.getByText('valid')).toBeInTheDocument();
+    expect(screen.getByText('invalid')).toBeInTheDocument();
   });
 
-  it("enables commit when every included row has a host", () => {
+  it('disables commit when included rows are missing a target host', () => {
+    render(
+      <ImportReviewStep
+        preview={PREVIEW}
+        mappings={{ 0: { target_host_id: '', included: true } }}
+        onSetMapping={vi.fn()}
+        onToggleIncluded={vi.fn()}
+        onCommit={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /commit import/i })).toBeDisabled();
+  });
+
+  it('enables commit and emits when all included rows have a host', () => {
     const onCommit = vi.fn();
     render(
       <ImportReviewStep
-        preview={preview}
-        mappings={{ 0: { target_host_id: "host-1", included: true } }}
-        onSetMapping={() => {}}
-        onToggleIncluded={() => {}}
+        preview={PREVIEW}
+        mappings={{ 0: { target_host_id: 'host-1', included: true } }}
+        onSetMapping={vi.fn()}
+        onToggleIncluded={vi.fn()}
         onCommit={onCommit}
       />,
     );
-    const commit = screen.getByRole("button", { name: /commit/i });
+    const commit = screen.getByRole('button', { name: /commit import/i });
     expect(commit).not.toBeDisabled();
     fireEvent.click(commit);
-    expect(onCommit).toHaveBeenCalled();
+    expect(onCommit).toHaveBeenCalledTimes(1);
   });
 
-  it("disables commit when an included row lacks a host", () => {
+  it('renders one row per preview entry', () => {
     render(
       <ImportReviewStep
-        preview={preview}
-        mappings={{ 0: { target_host_id: "", included: true } }}
-        onSetMapping={() => {}}
-        onToggleIncluded={() => {}}
-        onCommit={() => {}}
+        preview={PREVIEW}
+        mappings={{ 0: { target_host_id: 'host-1', included: true } }}
+        onSetMapping={vi.fn()}
+        onToggleIncluded={vi.fn()}
+        onCommit={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: /commit/i })).toBeDisabled();
+    const table = screen.getByRole('table');
+    const bodyRows = within(table).getAllByRole('row').slice(1); // drop header
+    expect(bodyRows).toHaveLength(2);
   });
 });
