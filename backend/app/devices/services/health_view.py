@@ -49,17 +49,24 @@ def build_public_summary(device: Device) -> dict[str, Any]:
     healthy: bool | None = True
     has_signal = False
 
+    connectivity_status: str | None = None
+    node_status_val: str | None = None
+    session_status: str | None = None
+
     if isinstance(device.device_checks_healthy, bool):
         healthy = healthy and device.device_checks_healthy
         has_signal = True
+        connectivity_status = "ok" if device.device_checks_healthy else "failed"
 
     if node is not None:
         healthy = healthy and node_running_signal(node)
         has_signal = True
+        node_status_val = node_summary_label(node)
 
     if device.session_viability_status in {"passed", "failed"}:
         healthy = healthy and device.session_viability_status == "passed"
         has_signal = True
+        session_status = device.session_viability_status
 
     parts = _summary_parts(device)
     summary_text = " | ".join(parts) if parts else ("Healthy" if healthy and has_signal else "Unknown")
@@ -76,6 +83,9 @@ def build_public_summary(device: Device) -> dict[str, Any]:
     return {
         "healthy": healthy if has_signal else None,
         "summary": summary_text,
+        "connectivity_status": connectivity_status,
+        "node_status": node_status_val,
+        "session_status": session_status,
         "last_checked_at": last_checked.isoformat() if last_checked is not None else None,
     }
 

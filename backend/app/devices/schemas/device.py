@@ -278,6 +278,9 @@ class DeviceLifecyclePolicySummaryRead(BaseModel):
 class DeviceHealthSummaryRead(BaseModel):
     healthy: bool | None
     summary: str
+    connectivity_status: Literal["ok", "failed"] | None = None
+    node_status: str | None = None
+    session_status: Literal["passed", "failed"] | None = None
     last_checked_at: str | None = None
 
 
