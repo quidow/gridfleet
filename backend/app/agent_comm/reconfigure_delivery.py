@@ -37,12 +37,10 @@ class InlineReconfigureDeliveryFailedError(Exception):
     Inline callers (e.g. the testkit ``cooldown_device`` HTTP handler) need
     a signal because the client treats a 200 response as "the agent applied
     the reconfigure" — proceeding to next steps under that assumption is
-    unsafe if the drain never landed.
+    unsafe if the drain never landed. Call sites attach the originating
+    ``AgentUnreachableError`` / ``AgentResponseError`` via ``raise ... from
+    exc`` so ``__cause__`` is set by the language; no custom field needed.
     """
-
-    def __init__(self, message: str, *, cause: BaseException | None = None) -> None:
-        super().__init__(message)
-        self.__cause__ = cause
 
 
 async def deliver_agent_reconfigures(
@@ -127,7 +125,6 @@ async def deliver_agent_reconfigures(
             if raise_on_failure:
                 raise InlineReconfigureDeliveryFailedError(
                     f"agent reconfigure delivery failed for device {row.device_id} on port {row.port}",
-                    cause=exc,
                 ) from exc
             continue
         row.delivered_at = datetime.now(UTC)
