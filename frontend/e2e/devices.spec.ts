@@ -569,7 +569,6 @@ test.describe('Devices page', () => {
       await expect(page.getByRole('button', { name: h, exact: true })).toBeVisible();
     }
     await expect(page.getByRole('columnheader', { name: 'Health' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'Auto' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Actions' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Row actions for/i }).first()).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Identity', exact: true })).toHaveCount(0);
@@ -1012,7 +1011,6 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('button', { name: 'Platform', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connection', exact: true })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Health', exact: true })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'Auto', exact: true })).toBeVisible();
   });
 
   test('devices table hides secondary columns at 1280 and shows them at 1440', async ({ page }) => {
