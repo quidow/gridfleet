@@ -311,6 +311,14 @@ app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_
 app.include_router(
     device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
+app.include_router(
+    device_routers.portability.router,
+    dependencies=[Depends(auth_dependencies.require_any_auth)],
+)  # Must be before catalog for /api/devices/export route precedence over /{device_id}
+app.include_router(
+    device_routers.inventory.router,
+    dependencies=[Depends(auth_dependencies.require_any_auth)],
+)  # Must be before catalog for /api/devices/inventory route precedence over /{device_id}
 app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
     device_routers.diagnostics.router,

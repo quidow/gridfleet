@@ -312,3 +312,40 @@ async def seed_host_with_devices(
         )
         devices.append(device)
     return host, devices
+
+
+async def seed_host_named(db_session: AsyncSession, hostname: str) -> Host:
+    """Create a single Host with the given hostname; no devices."""
+    host = Host(
+        hostname=hostname,
+        ip="10.0.0.99",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+    return host
+
+
+async def seed_existing_device(
+    db_session: AsyncSession,
+    *,
+    host_id: uuid.UUID | None = None,
+    identity_scheme: str,
+    identity_value: str,
+    identity_scope: str = "host",
+) -> Device:
+    """Create one Device with the given identity. Reuses create_device_record for sane defaults."""
+    if host_id is None:
+        host = await seed_host_named(db_session, f"seed-{uuid.uuid4().hex[:6]}")
+        host_id = host.id
+    return await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value=identity_value,
+        name=f"Existing {identity_value}",
+        identity_scheme=identity_scheme,
+        identity_scope=identity_scope,
+    )
