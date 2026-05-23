@@ -7,6 +7,7 @@ import { useUpdateDevice } from '../../hooks/useDevices';
 import { DeviceManifestFields } from './DeviceManifestFields';
 import type { DevicePatch, DeviceRead, DeviceVerificationUpdate } from '../../types';
 import { deviceChipStatus } from '../../lib/deviceState';
+import { getErrorMessage } from '../../lib/errors';
 import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import {
   buildUpdatePayload,
@@ -88,7 +89,7 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
             parsedTags = parseDeviceTagsInput(editTagsText);
             setEditTagsError(null);
           } catch (error) {
-            setEditTagsError(error instanceof Error ? error.message : 'Invalid JSON');
+            setEditTagsError(getErrorMessage(error, 'Invalid JSON'));
             return;
           }
 

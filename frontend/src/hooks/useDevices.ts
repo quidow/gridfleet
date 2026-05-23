@@ -1,4 +1,4 @@
-import { keepPreviousData, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   clearAppiumNodeTransition,
@@ -34,137 +34,22 @@ import type {
   DevicePatch,
   HardwareHealthStatus,
   HardwareTelemetryState,
-  DeviceRead,
   DeviceChipStatus,
-  DeviceDetail,
   DeviceType,
   DeviceVerificationCreate,
   DeviceVerificationUpdate,
-  DesiredNodeState,
   DeviceTestData,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
-
-import type { PaginatedResponse } from '../types/shared';
-
-type DeviceListData = DeviceRead[] | PaginatedResponse<DeviceRead>;
-type DeviceQuerySnapshot = Array<[readonly unknown[], DeviceListData | undefined]>;
-
-type OptimisticDeviceContext = {
-  deviceId: string;
-  devicesSnapshots: DeviceQuerySnapshot;
-  deviceSnapshot: DeviceDetail | undefined;
-};
-
-type DeviceCacheUpdater = <T extends DeviceRead>(device: T) => T;
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return fallback;
-}
-
-function rollbackOptimisticDeviceQueries(
-  qc: QueryClient,
-  context: OptimisticDeviceContext | undefined,
-) {
-  if (!context) {
-    return;
-  }
-
-  for (const [queryKey, snapshot] of context.devicesSnapshots) {
-    qc.setQueryData<DeviceListData>(queryKey, snapshot);
-  }
-
-  qc.setQueryData(['device', context.deviceId], context.deviceSnapshot);
-}
-
-async function patchDeviceQueries(
-  qc: QueryClient,
-  deviceId: string,
-  updater: DeviceCacheUpdater,
-): Promise<OptimisticDeviceContext> {
-  await Promise.all([
-    qc.cancelQueries({ queryKey: ['devices'] }),
-    qc.cancelQueries({ queryKey: ['device', deviceId] }),
-  ]);
-
-  const devicesSnapshots = qc.getQueriesData<DeviceListData>({ queryKey: ['devices'] });
-  for (const [queryKey, snapshot] of devicesSnapshots) {
-    if (!snapshot) {
-      continue;
-    }
-    if (Array.isArray(snapshot)) {
-      qc.setQueryData<DeviceRead[]>(
-        queryKey,
-        snapshot.map((device) => (device.id === deviceId ? updater(device) : device)),
-      );
-    } else {
-      qc.setQueryData<PaginatedResponse<DeviceRead>>(queryKey, {
-        ...snapshot,
-        items: snapshot.items.map((device) => (device.id === deviceId ? updater(device) : device)),
-      });
-    }
-  }
-
-  const deviceKey = ['device', deviceId] as const;
-  const deviceSnapshot = qc.getQueryData<DeviceDetail>(deviceKey);
-  if (deviceSnapshot) {
-    qc.setQueryData<DeviceDetail>(deviceKey, updater(deviceSnapshot));
-  }
-
-  return {
-    deviceId,
-    devicesSnapshots,
-    deviceSnapshot,
-  };
-}
-
-function invalidatePatchedDeviceQueries(
-  qc: QueryClient,
-  deviceId: string,
-) {
-  qc.invalidateQueries({ queryKey: ['devices'] });
-  qc.invalidateQueries({ queryKey: ['device', deviceId] });
-}
-
-function updateHold(hold: DeviceRead['hold']): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => ({
-    ...device,
-    hold,
-  });
-}
-
-function updateEmulatorState(state: string): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => ({
-    ...device,
-    emulator_state: state,
-  });
-}
-
-function updateNodeOperationalState(
-  operationalState: DeviceRead['operational_state'],
-  nodeState: DesiredNodeState,
-): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => {
-    const nextDevice = {
-      ...device,
-      operational_state: operationalState,
-    } as T & Partial<DeviceDetail>;
-
-    if (nextDevice.appium_node) {
-      nextDevice.appium_node = {
-        ...nextDevice.appium_node,
-        desired_state: nodeState,
-        effective_state: nodeState === 'running' ? 'starting' : 'stopped',
-        pid: nodeState === 'running' ? nextDevice.appium_node.pid : null,
-      };
-    }
-
-    return nextDevice as T;
-  };
-}
+import { getErrorMessage } from '../lib/errors';
+import {
+  invalidatePatchedDeviceQueries,
+  patchDeviceQueries,
+  rollbackOptimisticDeviceQueries,
+  updateEmulatorState,
+  updateHold,
+  updateNodeOperationalState,
+} from '../lib/deviceQueryCache';
 
 export function useDevices(params?: {
   pack_id?: string;

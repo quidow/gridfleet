@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Play, Square, RefreshCw, Trash2, Wrench, X, Power, Wifi, Tags } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '../../lib/errors';
 import {
   useBulkStartNodes,
   useBulkStopNodes,
@@ -244,7 +245,7 @@ export function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelecti
             );
             setShowTagsModal(false);
           } catch (error) {
-            setTagsError(error instanceof Error ? error.message : 'Invalid JSON');
+            setTagsError(getErrorMessage(error, 'Invalid JSON'));
           }
         }}
       />

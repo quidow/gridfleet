@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Play, Square, RefreshCw, Trash2, Wrench, Power, Wifi, Tags } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '../lib/errors';
 import {
   useGroupDeleteDevices,
   useGroupEnterMaintenance,
@@ -166,7 +167,7 @@ export function GroupActionBar({ groupId, devices }: Props) {
             );
             setShowTagsModal(false);
           } catch (error) {
-            setTagsError(error instanceof Error ? error.message : 'Invalid JSON');
+            setTagsError(getErrorMessage(error, 'Invalid JSON'));
           }
         }}
       />
