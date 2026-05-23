@@ -84,8 +84,7 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
           <Select
             name={setting.key}
             value={value as string}
-            onChange={(next) => onChange(next)}
-            size="sm"
+            onChange={onChange}
             className="w-48"
             options={setting.validation.allowed_values.map((v) => ({ value: v, label: v }))}
           />
