@@ -112,7 +112,7 @@ class Adapter:
             if match:
                 versions["xcodebuild"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
+            pass  # version stays None from default
 
         try:
             result = subprocess.run(
@@ -122,6 +122,6 @@ class Adapter:
             if match:
                 versions["go_ios"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
+            pass  # version stays None from default
 
         return versions
