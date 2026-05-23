@@ -991,6 +991,23 @@ class AppiumProcessManager:
         handle = self._grid_supervisors.get(port)
         if handle is None or handle.service is None:
             raise DeviceNotFoundError(f"No running grid node for Appium port {port}")
+        if handle.errored:
+            # Supervisor has exhausted its restart budget — the service the
+            # handle still references has been stopped and any call into it
+            # would raise ``GridNodeService.<method> called before start()``.
+            # Surface as ``DeviceNotFoundError`` (HTTP 404) so the backend
+            # treats this as a missing relay and schedules a fresh start
+            # instead of a port-bumping forced restart triggered by an
+            # unhandled 500.
+            raise DeviceNotFoundError(f"Grid node supervisor for Appium port {port} is errored")
+        if not handle.is_running():
+            # Mid-restart window between supervisor heartbeat failure and the
+            # next ``service.start()`` completing. Calling into the service
+            # right now would raise the same ``called before start()`` error
+            # and trip the backend's inline-delivery-failure path. The relay
+            # will re-register shortly; let the backend retry without forcing
+            # a relay restart.
+            raise DeviceNotFoundError(f"Grid node for Appium port {port} is restarting")
         if port not in self._info:
             raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
