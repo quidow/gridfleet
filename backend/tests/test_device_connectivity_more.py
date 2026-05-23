@@ -145,7 +145,7 @@ def test_summarize_unhealthy_result_covers_detail_and_failed_checks() -> None:
     assert device_connectivity._summarize_unhealthy_result({"healthy": False}) == "Device health checks failed"
 
 
-async def test_connected_offline_device_clears_control_plane_state_when_not_ready_or_not_auto_managed(
+async def test_connected_offline_device_clears_control_plane_state_when_not_ready(
     db_session: AsyncSession,
 ) -> None:
     host = Host(hostname="loop-host", ip="10.0.0.11", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
@@ -160,24 +160,14 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         name="Not Ready",
         verified=False,
     )
-    auto_manage_off = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="manual-device",
-        connection_target="manual-device",
-        name="Manual Device",
-    )
     with state_write_guard.bypass():
         not_ready.operational_state = DeviceOperationalState.offline
-    with state_write_guard.bypass():
-        auto_manage_off.operational_state = DeviceOperationalState.offline
-    auto_manage_off.auto_manage = False
     await db_session.commit()
 
     with (
         patch(
             "app.devices.services.connectivity._get_agent_devices",
-            new=AsyncMock(return_value={"not-ready", "manual-device"}),
+            new=AsyncMock(return_value={"not-ready"}),
         ),
         patch(
             "app.devices.services.connectivity._get_device_health",
@@ -191,10 +181,10 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
     ):
         await device_connectivity._check_connectivity(db_session)
 
-    assert delete_value.await_count == 2
+    assert delete_value.await_count == 1
 
 
-async def test_virtual_device_connectivity_updates_emulator_state_and_non_managed_disconnect_is_skipped(
+async def test_virtual_device_connectivity_updates_emulator_state(
     db_session: AsyncSession,
 ) -> None:
     host = Host(hostname="emu-host", ip="10.0.0.12", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
@@ -212,14 +202,6 @@ async def test_virtual_device_connectivity_updates_emulator_state_and_non_manage
     )
     with state_write_guard.bypass():
         emulator.operational_state = DeviceOperationalState.available
-    manual = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="manual-offline",
-        connection_target="manual-offline",
-        name="Manual",
-    )
-    manual.auto_manage = False
     await db_session.commit()
 
     with (

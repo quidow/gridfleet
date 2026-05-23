@@ -61,7 +61,6 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
         host_id=db_host.id,
         name="recovery-job-device",
         operational_state=DeviceOperationalState.offline,
-        auto_manage=True,
     )
 
     await job_queue.create_job(
@@ -112,7 +111,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
             operational_state=DeviceOperationalState.available,
             hold=DeviceHold.reserved,
             verified_at=datetime.now(UTC),
-            auto_manage=True,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )

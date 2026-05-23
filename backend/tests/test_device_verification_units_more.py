@@ -1078,7 +1078,6 @@ async def test_preparation_validation_conflict_and_update_branches(
         model_number=None,
         software_versions=None,
         tags={},
-        auto_manage=True,
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
         ip_address=None,

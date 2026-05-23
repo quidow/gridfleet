@@ -24,7 +24,6 @@ def test_exported_device_strict_extra_forbid() -> None:
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "auto_manage": True,
                 "tags": {},
                 "device_config": {},
                 "test_data": {},
@@ -66,7 +65,6 @@ def test_exported_device_identity_scope_rejects_unknown_value() -> None:
         "name": "Pixel",
         "device_type": "real_device",
         "connection_type": "usb",
-        "auto_manage": True,
         "tags": {},
         "device_config": {},
         "test_data": {},
@@ -116,7 +114,6 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
     assert exported.device_type == device.device_type
     assert exported.connection_type == device.connection_type
     assert exported.connection_target == device.connection_target
-    assert exported.auto_manage == device.auto_manage
     assert exported.tags == {"team": "qa"}
     assert exported.device_config == {"foo": "bar"}
     assert exported.test_data == {"creds": {"u": "a"}}

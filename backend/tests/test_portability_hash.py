@@ -19,7 +19,6 @@ def _bundle_dict() -> dict[str, Any]:
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "auto_manage": True,
                 "tags": {},
                 "device_config": {},
                 "test_data": {},

@@ -77,7 +77,6 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         name="health-recovery-race",
         operational_state=DeviceOperationalState.offline,
         verified=True,
-        auto_manage=True,
     )
     with state_write_guard.bypass():
         db_session.add(

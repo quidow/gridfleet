@@ -27,7 +27,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="dw-health", verified=True, auto_manage=True)
+    device = await create_device(db_session, host_id=db_host.id, name="dw-health", verified=True)
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,

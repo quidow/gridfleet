@@ -117,7 +117,6 @@ async def test_validate_endpoint_returns_preview(
                 "name": "Pixel",
                 "device_type": "real_device",
                 "connection_type": "usb",
-                "auto_manage": True,
                 "tags": {},
                 "device_config": {},
                 "test_data": {},

@@ -283,7 +283,6 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.network,
             ip_address="192.168.1.54",
-            auto_manage=False,
         )
     with state_write_guard.bypass():
         failed_recovery = Device(
@@ -577,31 +576,6 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)  # still tracked for next attempt
 
 
-async def test_connected_offline_manual_device_skips_non_endpoint_auto_recovery(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _host, device, _ = await _setup_host_and_device(
-        db_session,
-        device_operational_state=DeviceOperationalState.offline,
-    )
-    device.auto_manage = False
-    await db_session.commit()
-    monkeypatch.setattr("app.devices.services.connectivity.is_ready_for_use_async", AsyncMock(return_value=True))
-
-    with (
-        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
-        patch(
-            "app.devices.services.connectivity._get_device_health",
-            new_callable=AsyncMock,
-            return_value={"healthy": True},
-        ),
-    ):
-        await _check_connectivity(db_session)
-
-    assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
-
-
 async def test_offline_disconnected_device_tracks_stopped_leftover_node(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -642,7 +616,6 @@ async def test_connectivity_marks_busy_device_offline(
         host_id=db_host.id,
         name="busy-on-blip",
         operational_state=DeviceOperationalState.busy,
-        auto_manage=True,
         verified=True,
     )
     await db_session.commit()
@@ -671,7 +644,6 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
         host_id=db_host.id,
         name="reserved-on-blip",
         hold=DeviceHold.reserved,
-        auto_manage=True,
         verified=True,
     )
     await db_session.commit()
@@ -729,7 +701,6 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
         host_id=db_host.id,
         name="maintenance-blip",
         hold=DeviceHold.maintenance,
-        auto_manage=True,
         verified=True,
     )
     await db_session.commit()
@@ -858,7 +829,6 @@ async def make_device(db_session: AsyncSession, db_host: Host) -> Callable[..., 
             identity_value=identity,
             name=f"Test Device {identity}",
             operational_state="available",
-            auto_manage=kwargs.pop("auto_manage", True),  # type: ignore[arg-type]
             **kwargs,  # type: ignore[arg-type]
         )
 
@@ -1072,26 +1042,6 @@ async def test_ip_ping_skipped_for_held_device(
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7", hold=DeviceHold.maintenance)
-    _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
-    _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
-    _stub_agent_devices(monkeypatch, {device.identity_value})
-
-    await _check_connectivity(db_session)
-
-    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
-    assert counter is None
-
-
-@pytest.mark.asyncio
-async def test_ip_ping_skipped_for_auto_manage_off(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-    make_device: Callable[..., Coroutine[Any, Any, Device]],
-) -> None:
-    from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE
-
-    device = await make_device(connection_type="usb", ip_address="10.0.0.7", auto_manage=False)
     _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})

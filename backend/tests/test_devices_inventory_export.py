@@ -17,7 +17,6 @@ def test_inventory_column_enum_has_expected_dot_paths() -> None:
     expected = {
         "id",
         "name",
-        "auto_manage",
         "review_required",
         "created_at",
         "updated_at",

@@ -230,7 +230,7 @@ def _mock_node_manager_http_client(
     return mock_client
 
 
-async def test_verification_job_success_keeps_verified_node_when_auto_manage_enabled(
+async def test_verification_job_success_keeps_verified_node(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
@@ -692,7 +692,7 @@ async def test_verification_job_cleanup_failure_blocks_save(
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",
-            json=device_payload(default_host_id, identity_value="verify-cleanup-fail", auto_manage=False),
+            json=device_payload(default_host_id, identity_value="verify-cleanup-fail"),
         )
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
@@ -979,7 +979,7 @@ async def test_update_verification_cleanup_failure_does_not_delete_existing_devi
     ):
         resp = await client.post(
             f"/api/devices/{device.id}/verification-jobs",
-            json={"host_id": default_host_id, "auto_manage": False},
+            json={"host_id": default_host_id},
         )
         assert resp.status_code == 202
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)

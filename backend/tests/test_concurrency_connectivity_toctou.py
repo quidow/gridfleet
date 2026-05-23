@@ -33,7 +33,6 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         connection_target="missing-target",
         operational_state=DeviceOperationalState.available,
         verified=True,
-        auto_manage=True,
     )
     device_id = device.id
 
@@ -96,7 +95,6 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         connection_target="missing-active-target",
         operational_state=DeviceOperationalState.busy,
         verified=True,
-        auto_manage=True,
     )
     device_id = device.id
 

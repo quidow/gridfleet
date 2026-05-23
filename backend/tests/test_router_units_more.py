@@ -736,7 +736,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
     device_ids = [uuid.uuid4()]
     body = SimpleNamespace(device_ids=device_ids)
     tags_body = SimpleNamespace(device_ids=device_ids, tags={"lab": "east"}, merge=True)
-    auto_body = SimpleNamespace(device_ids=device_ids, auto_manage=True)
 
     for call, service_name, payload in (
         (bulk.bulk_start_nodes, "bulk_start_nodes", body),
@@ -747,7 +746,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_exit_maintenance, "bulk_exit_maintenance", body),
         (bulk.bulk_reconnect, "bulk_reconnect", body),
         (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
-        (bulk.bulk_set_auto_manage, "bulk_set_auto_manage", auto_body),
     ):
         with patch(
             f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
@@ -1148,7 +1146,6 @@ def _control_device(**overrides: object) -> SimpleNamespace:
         "host": SimpleNamespace(ip="10.0.0.1", agent_port=5100),
         "host_id": uuid.uuid4(),
         "connection_target": "serial",
-        "auto_manage": False,
         "appium_node": None,
     }
     values.update(overrides)
@@ -1287,7 +1284,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     assert "not supported" in str(exc.value.detail)
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
-    auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
+    auto_device = _control_device(appium_node=SimpleNamespace(observed_running=False))
     auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
@@ -1410,7 +1407,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     node = SimpleNamespace(observed_running=False)
     device = _control_device(
         id=device_id,
-        auto_manage=True,
         appium_node=node,
         session_viability_status="failed",
         session_viability_error="Appium node is not running",
@@ -1451,47 +1447,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     assert device.recovery_blocked_reason == "Node health failure"
     db.commit.assert_awaited_once()
     start_node.assert_awaited_once()
-
-
-async def test_devices_control_reconnect_skips_recovery_cleanup_when_auto_manage_disabled() -> None:
-    device_id = uuid.uuid4()
-    resolved = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
-    device = _control_device(
-        id=device_id,
-        auto_manage=False,
-        appium_node=SimpleNamespace(observed_running=True),
-        session_viability_status="failed",
-        session_viability_error="Appium node is not running",
-        recovery_allowed=False,
-        recovery_blocked_reason="Node health failure",
-    )
-    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
-    revoke = AsyncMock()
-    start_node = AsyncMock()
-    restart_node = AsyncMock()
-
-    with (
-        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch(
-            "app.devices.routers.control.pack_device_lifecycle_action",
-            new=AsyncMock(return_value={"success": True}),
-        ),
-        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
-        patch("app.devices.routers.control.node_manager.start_node", new=start_node),
-        patch("app.devices.routers.control.node_manager.restart_node", new=restart_node),
-    ):
-        reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
-
-    assert reconnect["message"] == "Reconnected"
-    assert device.session_viability_status == "failed"
-    assert device.session_viability_error == "Appium node is not running"
-    revoke.assert_not_awaited()
-    db.flush.assert_not_awaited()
-    db.commit.assert_not_awaited()
-    start_node.assert_not_awaited()
-    restart_node.assert_not_awaited()
 
 
 async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
@@ -2603,7 +2558,6 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         host_id=None,
         connection_target="10.0.0.20:5555",
         identity_value="stable",
-        auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
     reconnect_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())

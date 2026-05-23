@@ -33,7 +33,6 @@ async def _seed_running_node_at_failure_threshold(
         name=name,
         operational_state=DeviceOperationalState.available,
         verified=True,
-        auto_manage=False,
     )
     with state_write_guard.bypass():
         node = AppiumNode(
