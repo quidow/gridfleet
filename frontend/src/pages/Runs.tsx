@@ -4,23 +4,23 @@ import { Play } from 'lucide-react';
 import { useRuns, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
 import { StatusBadge } from '../components/StatusBadge';
-import EmptyState from '../components/ui/EmptyState';
-import DataTable from '../components/ui/DataTable';
-import FilterBar from '../components/ui/FilterBar';
-import CursorPagination from '../components/ui/CursorPagination';
+import { EmptyState } from '../components/ui/EmptyState';
+import { DataTable } from '../components/ui/DataTable';
+import { FilterBar } from '../components/ui/FilterBar';
+import { CursorPagination } from '../components/ui/CursorPagination';
 import type { DataTableColumn } from '../components/ui/DataTable';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { RunRead, RunSortKey, RunState } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
-import FetchError from '../components/ui/FetchError';
-import RunProgressBar from '../components/runs/RunProgressBar';
-import RunsSummaryRow from '../components/runs/RunsSummaryRow';
-import RunActionButtons from '../components/runs/RunActionButtons';
-import Button from '../components/ui/Button';
-import PageHeader from '../components/ui/PageHeader';
-import Select from '../components/ui/Select';
-import DateInput from '../components/ui/DateInput';
+import { RunProgressBar } from '../components/runs/RunProgressBar';
+import { RunsSummaryRow } from '../components/runs/RunsSummaryRow';
+import { RunActionButtons } from '../components/runs/RunActionButtons';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
+import { Select } from '../components/ui/Select';
+import { DateInput } from '../components/ui/DateInput';
 import { resolvePlatformLabel } from '../lib/labels';
 
 const RUN_STATES: RunState[] = [
@@ -46,8 +46,7 @@ function platformSummary(
   }).join(', ');
 }
 
-export default function Runs() {
-  usePageTitle('Test Runs');
+function RunsTableSection() {
   const {
     searchParams,
     pageSize,
@@ -64,7 +63,7 @@ export default function Runs() {
   const stateFilter = readEnumSearchParam(searchParams, 'state', RUN_STATES);
   const createdFrom = searchParams.get('created_from') ?? '';
   const createdTo = searchParams.get('created_to') ?? '';
-  const { data: runs, isLoading, isError, refetch, dataUpdatedAt } = useRuns({
+  const { data: runs, isLoading, dataUpdatedAt } = useRuns({
     state: stateFilter || undefined,
     created_from: createdFrom || undefined,
     created_to: createdTo || undefined,
@@ -156,7 +155,7 @@ export default function Runs() {
   ];
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Test Runs"
         subtitle="Device reservations for CI test runs"
@@ -170,70 +169,63 @@ export default function Runs() {
       />
 
       <div className="fade-in-stagger flex flex-col gap-4">
-      <FilterBar
-        onClear={
-          hasFilters
-            ? () => updateParams(
-              {
-                state: null,
-                created_from: null,
-                created_to: null,
-              },
-              { resetCursor: true },
-            )
-            : undefined
-        }
-      >
-        <Select
-          value={stateFilter}
-          onChange={(value) => updateParams({ state: value || null }, { resetCursor: true })}
-          placeholder="All States"
-          ariaLabel="Run state"
-          options={RUN_STATES.map((s) => ({ value: s, label: s }))}
-        />
-        <DateInput
-          value={createdFrom}
-          onChange={(value) => updateParams({ created_from: value || null }, { resetCursor: true })}
-          ariaLabel="Created from"
-        />
-        <DateInput
-          value={createdTo}
-          onChange={(value) => updateParams({ created_to: value || null }, { resetCursor: true })}
-          ariaLabel="Created to"
-        />
-      </FilterBar>
-
-      {isError && (
-        <FetchError
-          message="Could not load test runs. Check your connection and try again."
-          onRetry={() => void refetch()}
-        />
-      )}
-
-      <DataTable<RunRead, RunSortKey>
-        columns={columns}
-        rows={runRows}
-        rowKey={(run) => run.id}
-        loading={isLoading}
-        emptyState={
-          <EmptyState
-            icon={Play}
-            title="No test runs found"
-            description={hasFilters ? 'Try adjusting your filters.' : 'Test runs will appear here when CI reserves devices.'}
+        <FilterBar
+          onClear={
+            hasFilters
+              ? () => updateParams(
+                {
+                  state: null,
+                  created_from: null,
+                  created_to: null,
+                },
+                { resetCursor: true },
+              )
+              : undefined
+          }
+        >
+          <Select
+            value={stateFilter}
+            onChange={(value) => updateParams({ state: value || null }, { resetCursor: true })}
+            placeholder="All States"
+            ariaLabel="Run state"
+            options={RUN_STATES.map((s) => ({ value: s, label: s }))}
           />
-        }
-      />
+          <DateInput
+            value={createdFrom}
+            onChange={(value) => updateParams({ created_from: value || null }, { resetCursor: true })}
+            ariaLabel="Created from"
+          />
+          <DateInput
+            value={createdTo}
+            onChange={(value) => updateParams({ created_to: value || null }, { resetCursor: true })}
+            ariaLabel="Created to"
+          />
+        </FilterBar>
 
-      <CursorPagination
-        pageSize={pageSize}
-        nextCursor={runs?.next_cursor ?? null}
-        prevCursor={runs?.prev_cursor ?? null}
-        isNewestPage={!cursor}
-        onOlder={goOlder}
-        onNewer={goNewer}
-        onBackToNewest={resetToNewest}
-        onPageSizeChange={setPageSize}
-      />
+        <DataTable<RunRead, RunSortKey>
+          columns={columns}
+          rows={runRows}
+          rowKey={(run) => run.id}
+          loading={isLoading}
+          emptyState={
+            <EmptyState
+              icon={Play}
+              title="No test runs found"
+              description={hasFilters ? 'Try adjusting your filters.' : 'Test runs will appear here when CI reserves devices.'}
+            />
+          }
+        />
+
+        <CursorPagination
+          pageSize={pageSize}
+          nextCursor={runs?.next_cursor ?? null}
+          prevCursor={runs?.prev_cursor ?? null}
+          isNewestPage={!cursor}
+          onOlder={goOlder}
+          onNewer={goNewer}
+          onBackToNewest={resetToNewest}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <ConfirmDialog
@@ -255,6 +247,18 @@ export default function Runs() {
         confirmLabel="Force Release"
         variant="danger"
       />
+    </>
+  );
+}
+
+export function Runs() {
+  usePageTitle('Test Runs');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="runs-table">
+        <RunsTableSection />
+      </SectionErrorBoundary>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import Card from '../../components/ui/Card';
+import { Card } from '../../components/ui/Card';
 import { Badge, DefinitionList } from '../../components/ui';
 import type { DriverPack } from '../../types/driverPacks';
 
@@ -16,7 +16,7 @@ function versionList(versions: string[] | undefined): string {
   return `${versions.slice(0, 2).join(', ')} +${versions.length - 2}`;
 }
 
-export default function DriverOverviewPanel({ pack }: { pack: DriverPack }) {
+export function DriverOverviewPanel({ pack }: { pack: DriverPack }) {
   const summary = pack.runtime_summary;
   return (
     <div className="grid gap-4 lg:grid-cols-2">

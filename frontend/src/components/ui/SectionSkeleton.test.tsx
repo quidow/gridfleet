@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import SectionSkeleton from './SectionSkeleton';
+import { SectionSkeleton } from './SectionSkeleton';
 
 describe('SectionSkeleton', () => {
   it('renders strip skeleton cells', () => {

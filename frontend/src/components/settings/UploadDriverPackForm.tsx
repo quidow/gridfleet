@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { uploadDriverPack } from '../../api/driverPackAuthoring';
-import Card from '../ui/Card';
+import { Card } from '../ui/Card';
 
 const DRIVER_PACK_ACCEPT = '.tar.gz,.tgz,.tar,.gz,application/gzip,application/x-gzip,application/x-tar';
 

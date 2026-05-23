@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import DefinitionList from './DefinitionList';
+import { DefinitionList } from './DefinitionList';
 
 describe('DefinitionList', () => {
   it('renders terms and definitions', () => {

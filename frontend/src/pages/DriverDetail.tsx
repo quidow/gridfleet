@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { exportPack } from '../api/driverPackAuthoring';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import Card from '../components/ui/Card';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import FetchError from '../components/ui/FetchError';
+import { Card } from '../components/ui/Card';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import {
   useDeleteDriverPack,
   useDriverDetail,
@@ -15,12 +15,12 @@ import {
 import { useSetDriverPackState } from '../hooks/useDriverPacks';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DriverPack } from '../types/driverPacks';
-import DriverDetailStatusPills from './driverDetail/DriverDetailStatusPills';
-import DriverHostsPanel from './driverDetail/DriverHostsPanel';
-import DriverOperationsPanel from './driverDetail/DriverOperationsPanel';
-import DriverOverviewPanel from './driverDetail/DriverOverviewPanel';
-import DriverPlatformCards from './driverDetail/DriverPlatformCards';
-import DriverRuntimePanel from './driverDetail/DriverRuntimePanel';
+import { DriverDetailStatusPills } from './driverDetail/DriverDetailStatusPills';
+import { DriverHostsPanel } from './driverDetail/DriverHostsPanel';
+import { DriverOperationsPanel } from './driverDetail/DriverOperationsPanel';
+import { DriverOverviewPanel } from './driverDetail/DriverOverviewPanel';
+import { DriverPlatformCards } from './driverDetail/DriverPlatformCards';
+import { DriverRuntimePanel } from './driverDetail/DriverRuntimePanel';
 import { hasPackOperations } from './driverDetail/driverDetailFormat';
 
 const BASE_TABS = [
@@ -71,11 +71,10 @@ function ManifestPanel({ pack }: { pack: DriverPack }) {
 }
 
 function ReleasesPanel({ packId }: { packId: string }) {
-  const { data, isLoading, error, refetch } = useDriverReleases(packId);
+  const { data, isLoading } = useDriverReleases(packId);
   const setCurrentRelease = useSetDriverPackCurrentRelease();
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <FetchError message="Failed to load driver pack releases." onRetry={() => void refetch()} />;
 
   return (
     <Card padding="md">
@@ -108,11 +107,11 @@ function ReleasesPanel({ packId }: { packId: string }) {
   );
 }
 
-export default function DriverDetail() {
+export function DriverDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const packId = decodeURIComponent(id ?? '');
-  const { data: pack, isLoading, error, refetch } = useDriverDetail(packId);
+  const { data: pack, isLoading } = useDriverDetail(packId);
   const toggleMutation = useSetDriverPackState();
   const deleteMutation = useDeleteDriverPack();
   const [exporting, setExporting] = useState(false);
@@ -123,16 +122,7 @@ export default function DriverDetail() {
   usePageTitle(pack?.display_name ?? 'Driver Pack');
 
   if (isLoading) return <LoadingSpinner />;
-  if (error || !pack) {
-    return (
-      <div className="py-6">
-        <FetchError
-          message="Driver pack not found or could not be loaded."
-          onRetry={() => void refetch()}
-        />
-      </div>
-    );
-  }
+  if (!pack) return <p className="text-text-3 text-center mt-12">Driver pack not found</p>;
   async function handleExport() {
     if (!pack?.current_release) return;
     setExporting(true);
@@ -193,8 +183,8 @@ export default function DriverDetail() {
         {tab === 'overview' && <DriverOverviewPanel pack={pack} />}
         {tab === 'platforms' && <DriverPlatformCards platforms={pack.platforms ?? []} />}
         {tab === 'runtime' && <DriverRuntimePanel pack={pack} />}
-        {tab === 'releases' && <ReleasesPanel packId={pack.id} />}
-        {tab === 'hosts' && <DriverHostsPanel packId={pack.id} />}
+        {tab === 'releases' && <SectionErrorBoundary scope="driver-releases"><ReleasesPanel packId={pack.id} /></SectionErrorBoundary>}
+        {tab === 'hosts' && <SectionErrorBoundary scope="driver-hosts"><DriverHostsPanel packId={pack.id} /></SectionErrorBoundary>}
         {tab === 'manifest' && <ManifestPanel pack={pack} />}
         {tab === 'operations' && <DriverOperationsPanel pack={pack} />}
       </div>

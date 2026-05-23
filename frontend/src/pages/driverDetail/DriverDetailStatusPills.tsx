@@ -1,4 +1,4 @@
-import Badge, { type BadgeTone } from '../../components/ui/Badge';
+import { Badge, type BadgeTone } from '../../components/ui/Badge';
 import type { DriverPack } from '../../types/driverPacks';
 
 const STATE_TONES: Record<string, BadgeTone> = {
@@ -8,7 +8,7 @@ const STATE_TONES: Record<string, BadgeTone> = {
   draft: 'neutral',
 };
 
-export default function DriverDetailStatusPills({ pack }: { pack: DriverPack }) {
+export function DriverDetailStatusPills({ pack }: { pack: DriverPack }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Badge tone={STATE_TONES[pack.state] ?? 'neutral'}>{pack.state}</Badge>

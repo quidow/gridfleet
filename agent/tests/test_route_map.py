@@ -1,9 +1,9 @@
 """Route-map regression guard.
 
-Pins the GridFleet HTTP routes and the WebSocket route exposed by
-``agent_app.main.app``. Built-in FastAPI routes (``/openapi.json``,
-``/docs``, ``/docs/oauth2-redirect``, ``/redoc``) are filtered out
-because they vary by FastAPI version and environment.
+Pins the GridFleet HTTP routes exposed by ``agent_app.main.app``.
+Built-in FastAPI routes (``/openapi.json``, ``/docs``,
+``/docs/oauth2-redirect``, ``/redoc``) are filtered out because they
+vary by FastAPI version and environment.
 
 Also pins the ``response_model=`` declarations that already exist on
 the current ``main.py`` so a router extraction cannot silently drop them.
@@ -11,7 +11,7 @@ the current ``main.py`` so a router extraction cannot silently drop them.
 
 from __future__ import annotations
 
-from starlette.routing import Route, WebSocketRoute
+from starlette.routing import Route
 
 from agent_app.main import app
 
@@ -53,12 +53,6 @@ def _gridfleet_http_routes() -> set[tuple[str, str]]:
 
 def test_route_map_matches_golden() -> None:
     assert _gridfleet_http_routes() == EXPECTED_HTTP_ROUTES
-
-
-def test_websocket_terminal_route_present() -> None:
-    ws_routes = [r for r in app.routes if isinstance(r, WebSocketRoute)]
-    paths = [r.path for r in ws_routes]
-    assert paths == ["/agent/terminal"], paths
 
 
 def test_grid_node_reregister_response_model_preserved() -> None:

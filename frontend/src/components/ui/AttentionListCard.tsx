@@ -30,7 +30,7 @@ const TONE_ICON: Record<AttentionListTone, string> = {
   critical: 'bg-danger-soft text-danger-foreground',
 };
 
-export default function AttentionListCard({
+export function AttentionListCard({
   title,
   description,
   total,

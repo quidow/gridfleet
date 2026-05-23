@@ -246,107 +246,6 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     assert policy["excluded_from_run"] is True
 
 
-async def test_recovery_is_suppressed_when_auto_manage_disabled(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-recover-1",
-            connection_target="policy-recover-1",
-            name="Manual Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            auto_manage=False,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.commit()
-
-    recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
-
-    assert recovered is False
-    policy = await build_lifecycle_policy(db_session, device)
-    assert policy["recovery_state"] == "suppressed"
-    assert policy["recovery_suppressed_reason"] == "Auto-manage is disabled"
-
-
-async def test_recovery_suppressed_event_is_deduplicated(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Repeated suppression for the same reason must emit one event, not a stream."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-recover-dedup-1",
-            connection_target="policy-recover-dedup-1",
-            name="Spammy Device",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            auto_manage=False,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.commit()
-
-    for _ in range(5):
-        assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again") is False
-
-    events = await _event_types_for_device(db_session, device.id)
-    suppressed = [e for e in events if e == DeviceEventType.lifecycle_recovery_suppressed]
-    assert len(suppressed) == 1, f"expected 1 suppressed event, got {len(suppressed)}: {events}"
-
-
-async def test_recovery_suppressed_event_re_emits_when_reason_changes(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Suppression with a new reason must re-emit so operators see the change."""
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-recover-dedup-2",
-            connection_target="policy-recover-dedup-2",
-            name="Reason Changes",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            auto_manage=False,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.commit()
-
-    assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="r1") is False
-    # Flip the blocking condition: auto_manage stays False, but now also not verified.
-    # Different suppression branches yield different ``suppression_reason`` strings.
-    device.verified_at = None
-    device.auto_manage = True  # not-ready branch now applies
-    await db_session.commit()
-
-    assert await attempt_auto_recovery(db_session, device, source="device_checks", reason="r2") is False
-
-    events = await _event_types_for_device(db_session, device.id)
-    suppressed = [e for e in events if e == DeviceEventType.lifecycle_recovery_suppressed]
-    assert len(suppressed) == 2, f"expected 2 suppressed events, got {len(suppressed)}: {events}"
-
-
 async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, db_host: Host) -> None:
     with state_write_guard.bypass():
         device = Device(
@@ -1050,17 +949,6 @@ def test_lifecycle_summary_surfaces_reconciler_start_failure() -> None:
     assert summary["label"] == "Node Start Failed"
     assert summary["detail"] == "port_occupied"
 
-    manual = build_lifecycle_policy_summary(
-        {
-            "recovery_state": "manual",
-            "last_action": "operator_disabled",
-            "recovery_suppressed_reason": "manual override",
-        }
-    )
-    assert manual["state"] == "manual"
-    assert manual["label"] == "Manual Recovery"
-    assert manual["detail"] == "manual override"
-
 
 async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_incident(
     db_session: AsyncSession,
@@ -1379,6 +1267,51 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
     assert outcome is DeferredStopOutcome.NO_PENDING
 
 
+async def test_handle_session_finished_clears_stale_session_running_suppression(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """``attempt_auto_recovery`` records ``recovery_suppressed_reason="A client
+    session is still running"`` when blocked by an active session but does NOT
+    set ``stop_pending``. Without an explicit clear on session end, the
+    suppression sticks forever and the dashboard renders the device as
+    ``Unhealthy: A client session is still running`` long after the session
+    finished. Regression test for that stale-state leak.
+    """
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="lifecycle-session-suppression",
+            connection_target="lifecycle-session-suppression",
+            name="Session Suppression",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "stop_pending": False,
+                "last_action": "recovery_suppressed",
+                "last_failure_source": "node_health",
+                "last_failure_reason": "probe timed out",
+                "recovery_suppressed_reason": "A client session is still running",
+            },
+        )
+    db_session.add(device)
+    await db_session.commit()
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    outcome = await handle_session_finished(db_session, reloaded)
+    assert outcome is DeferredStopOutcome.NO_PENDING
+
+    await db_session.refresh(reloaded)
+    assert reloaded.lifecycle_policy_state["recovery_suppressed_reason"] is None
+
+
 async def test_handle_session_finished_applies_held_graceful_stop_intent(
     db_session: AsyncSession,
     db_host: Host,
@@ -1619,7 +1552,6 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
-        auto_manage=True,
         appium_node=None,
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
@@ -1680,7 +1612,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.offline,
-        auto_manage=True,
         appium_node=node,
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
@@ -1734,7 +1665,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         review_reason=None,
         recovery_blocked_reason=None,
         operational_state=DeviceOperationalState.busy,
-        auto_manage=True,
         appium_node=node,
     )
     lifecycle_policy_module._reload_device.return_value = busy
@@ -1769,7 +1699,6 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
-        auto_manage=True,
         hold=None,
         host_id=None,
         appium_node=None,
@@ -1839,7 +1768,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
         hold=None,
-        auto_manage=True,
         host_id=uuid.uuid4(),
         appium_node=None,
     )

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import BulkActionToolbar from './BulkActionToolbar';
+import { BulkActionToolbar } from './BulkActionToolbar';
 
 function wrap(ui: ReactNode) {
   const client = new QueryClient({
@@ -35,42 +35,6 @@ describe('BulkActionToolbar', () => {
     expect(screen.getByRole('button', { name: /^Start$/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Stop$/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Delete$/ })).toBeInTheDocument();
-  });
-
-  it('Auto-Manage popover closes on Escape', async () => {
-    wrap(
-      <BulkActionToolbar
-        selectedIds={new Set(['a'])}
-        selectedDevices={devices}
-        onClearSelection={() => {}}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: /Auto-Manage/ }));
-
-    expect(await screen.findByRole('menuitem', { name: 'Enable' })).toBeInTheDocument();
-
-    await userEvent.keyboard('{Escape}');
-
-    expect(screen.queryByRole('menuitem', { name: 'Enable' })).toBeNull();
-  });
-
-  it('closes Auto-Manage menu when focus leaves the menu area', async () => {
-    wrap(
-      <BulkActionToolbar
-        selectedIds={new Set(['a'])}
-        selectedDevices={devices}
-        onClearSelection={() => {}}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: /Auto-Manage/ }));
-    expect(await screen.findByRole('menuitem', { name: 'Enable' })).toBeInTheDocument();
-
-    await userEvent.tab();
-    await userEvent.tab();
-
-    expect(screen.queryByRole('menuitem', { name: 'Enable' })).toBeNull();
   });
 
   it('Escape clears the selection when no menu is open', async () => {

@@ -43,7 +43,6 @@ const DEFAULT_DEVICES = [
     host_id: 'host-1',
     status: 'available',
     tags: null,
-    auto_manage: true,
     device_type: 'simulator',
     connection_type: 'virtual',
     ip_address: null,

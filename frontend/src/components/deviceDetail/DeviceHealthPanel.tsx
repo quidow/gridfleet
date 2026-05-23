@@ -1,7 +1,7 @@
 import { Play, Wifi } from 'lucide-react';
 import { useReconnectDevice, useRunDeviceSessionTest } from '../../hooks/useDevices';
 import type { ConnectionType, DeviceHealth, DeviceType } from '../../types';
-import Button from '../ui/Button';
+import { Button } from '../ui/Button';
 import { formatDate, formatViabilityStatus, getCheckLabels } from './utils';
 import { usePlatformDescriptor } from '../../hooks/usePlatformDescriptor';
 
@@ -85,7 +85,7 @@ type Props = {
   isLoading: boolean;
 };
 
-export default function DeviceHealthPanel({
+export function DeviceHealthPanel({
   health,
   packId,
   platformId,

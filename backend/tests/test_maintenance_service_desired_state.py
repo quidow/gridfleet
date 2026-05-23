@@ -27,7 +27,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True, auto_manage=True)
+    device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True)
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
     with state_write_guard.bypass():

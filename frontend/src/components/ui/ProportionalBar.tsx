@@ -14,7 +14,7 @@ interface ProportionalBarProps {
   showLegend?: boolean;
 }
 
-export default function ProportionalBar({ segments, showLegend = true }: ProportionalBarProps) {
+export function ProportionalBar({ segments, showLegend = true }: ProportionalBarProps) {
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.count), 0);
   const safeTotal = total > 0 ? total : 1;
 

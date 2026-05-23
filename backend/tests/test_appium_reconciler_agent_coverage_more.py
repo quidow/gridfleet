@@ -5,10 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
-from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -449,7 +450,7 @@ async def test_start_stop_restart_node_guard_paths(
     assert restarted.transition_deadline is not None
 
 
-async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
@@ -472,19 +473,6 @@ async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: py
 
     db.get = AsyncMock(return_value=None)
     assert await node_agent.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
-
-    clean_device = SimpleNamespace(id=device_id, lifecycle_policy_state={})
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=clean_device))
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
-
-    dirty_device = SimpleNamespace(id=device_id, lifecycle_policy_state={"last_failure_reason": "boom"})
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=dirty_device))
-    clear_suppression = MagicMock(return_value=True)
-    monkeypatch.setattr(node_agent, "clear_manual_recovery_suppression_state", clear_suppression)
-    db.commit.reset_mock()
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
-    clear_suppression.assert_called_once_with(dirty_device)
-    db.commit.assert_awaited_once()
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -530,6 +518,114 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
 
     assert node is device.appium_node
     set_extra.assert_awaited_once_with(db, node_id=node.id, capability_key="custom:flag", value="yes")
+
+
+async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cooldowned relay that gets restarted (Appium crash, OOM, host
+    reboot, port conflict, manual restart) comes back up fresh on a new
+    port. The agent already drains the fresh ``NodeState`` from the
+    launch spec, but if that agent-side defense regresses, the only
+    self-healing on the backend side is the periodic intent reconciler —
+    which won't restage a reconfigure if the in-DB metadata is
+    unchanged. Defense in depth: stage a forced outbox row from
+    ``mark_node_started`` whenever the node carries
+    ``accepting_new_sessions=False`` or ``stop_pending=True``, so the
+    background delivery loop pushes the drain to the new relay within
+    seconds.
+    """
+    from app.agent_comm.models import AgentReconfigureOutbox
+
+    device = await _loaded_device(db_session, db_host, "mark-start-stage-drain")
+    # Seed an existing AppiumNode that was previously drained by a
+    # cooldown reconcile — accepting=False, stop_pending=True — on the
+    # PRE-restart port. The restart will call ``mark_node_started`` with
+    # a new port; the staged outbox row must target the new port.
+    with state_write_guard.bypass():
+        existing = AppiumNode(
+            device_id=device.id,
+            port=4724,
+            grid_url="http://grid",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            accepting_new_sessions=False,
+            stop_pending=True,
+            generation=5,
+        )
+        db_session.add(existing)
+        device.appium_node = existing
+    await db_session.commit()
+
+    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        node_agent.appium_node_locking,
+        "lock_appium_node_for_device",
+        AsyncMock(return_value=existing),
+    )
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
+    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+
+    await node_agent.mark_node_started(
+        db_session,
+        device,
+        port=4723,  # new port after restart
+        pid=999,
+    )
+
+    staged = (
+        (await db_session.execute(select(AgentReconfigureOutbox).where(AgentReconfigureOutbox.device_id == device.id)))
+        .scalars()
+        .all()
+    )
+    assert len(staged) == 1, "exactly one forced reconfigure row should be staged after a cooldowned restart"
+    row = staged[0]
+    assert row.port == 4723, "the staged row must target the NEW port the relay just came up on"
+    assert row.accepting_new_sessions is False
+    assert row.stop_pending is True
+    assert row.delivered_at is None
+
+
+async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_accept(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal start path (no cooldown, no pending stop) must NOT stage
+    extra outbox rows — otherwise every device start would create a
+    redundant reconfigure that the agent already handled via the launch
+    spec.
+    """
+    from app.agent_comm.models import AgentReconfigureOutbox
+
+    device = await _loaded_device(db_session, db_host, "mark-start-no-stage")
+
+    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        node_agent.appium_node_locking,
+        "lock_appium_node_for_device",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
+    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+
+    await node_agent.mark_node_started(
+        db_session,
+        device,
+        port=4723,
+        pid=111,
+    )
+
+    staged = (
+        (await db_session.execute(select(AgentReconfigureOutbox).where(AgentReconfigureOutbox.device_id == device.id)))
+        .scalars()
+        .all()
+    )
+    assert staged == [], "no reconfigure row should be staged for an unmodified accepting=True node"
 
 
 async def test_mark_node_started_clears_stale_reconciler_failure(

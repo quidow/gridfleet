@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { usePageTitle } from '../hooks/usePageTitle';
 
-export default function NotFound() {
+export function NotFound() {
   usePageTitle('Not Found');
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">

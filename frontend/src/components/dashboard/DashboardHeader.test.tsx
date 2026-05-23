@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import DashboardHeader from './DashboardHeader';
+import { DashboardHeader } from './DashboardHeader';
 
 vi.mock('../../hooks/useDevices', () => ({
   useDevices: () => ({ data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], dataUpdatedAt: 0 }),

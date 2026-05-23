@@ -5,44 +5,35 @@ import {
   useDeleteDevice,
   useDevice,
   useDeviceHealth,
-  useDeviceLogs,
-  useEnterDeviceMaintenance,
   useExitDeviceMaintenance,
-  useRestartNode,
   useRunDeviceLifecycleAction,
-  useRunDeviceSessionTest,
   useStartNode,
-  useDeviceCapabilities,
 } from '../hooks/useDevices';
 import { useHosts } from '../hooks/useHosts';
 import { PlatformIcon } from '../components/PlatformIcon';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import SetupVerificationModal from './devices/SetupVerificationModal';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
+import { SetupVerificationModal } from './devices/SetupVerificationModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { DeviceVerificationUpdate } from '../types';
-import DeviceCapabilitiesPanel from '../components/deviceDetail/DeviceCapabilitiesPanel';
-import DiagnosticBundleButton from '../components/deviceDetail/DiagnosticBundleButton';
-import DiagnosticHistoryPanel from '../components/deviceDetail/DiagnosticHistoryPanel';
-import DeviceHealthPanel from '../components/deviceDetail/DeviceHealthPanel';
-import DeviceLifecyclePolicyPanel from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
-import DeviceHardwareTelemetryCard from '../components/deviceDetail/DeviceHardwareTelemetryCard';
-import DeviceInfoPanel from '../components/deviceDetail/DeviceInfoPanel';
-import DeviceStatStrip from '../components/deviceDetail/DeviceStatStrip';
-import { buildDeviceStatSummary } from '../components/deviceDetail/deviceStatStripSummary';
-import DeviceLogsPanel from '../components/deviceDetail/DeviceLogsPanel';
-import DeviceNodePanel from '../components/deviceDetail/DeviceNodePanel';
-import DeviceSessionOutcomeHeatmapPanel from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
-import StateHistoryPanel from '../components/deviceDetail/StateHistoryPanel';
-import DeviceEditModal from './devices/DeviceEditModal';
+import { DeviceCapabilitiesPanel } from '../components/deviceDetail/DeviceCapabilitiesPanel';
+import { DiagnosticBundleButton } from '../components/deviceDetail/DiagnosticBundleButton';
+import { DiagnosticHistoryPanel } from '../components/deviceDetail/DiagnosticHistoryPanel';
+import { DeviceHealthPanel } from '../components/deviceDetail/DeviceHealthPanel';
+import { DeviceLifecyclePolicyPanel } from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
+import { DeviceHardwareTelemetryCard } from '../components/deviceDetail/DeviceHardwareTelemetryCard';
+import { DeviceInfoPanel } from '../components/deviceDetail/DeviceInfoPanel';
+import { DeviceLogsPanel } from '../components/deviceDetail/DeviceLogsPanel';
+import { DeviceNodePanel } from '../components/deviceDetail/DeviceNodePanel';
+import { DeviceSessionOutcomeHeatmapPanel } from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
+import { StateHistoryPanel } from '../components/deviceDetail/StateHistoryPanel';
+import { DeviceEditModal } from './devices/DeviceEditModal';
 import { getVerificationAction } from '../lib/deviceWorkflow';
 import { deviceChipStatus } from '../lib/deviceState';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
-import FetchError from '../components/ui/FetchError';
-import DeviceDetailStatusPills from './deviceDetail/DeviceDetailStatusPills';
-import DeviceStatusCard from './deviceDetail/DeviceStatusCard';
+import { DeviceDetailStatusPills } from './deviceDetail/DeviceDetailStatusPills';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
 import {
   deriveDeviceDetailTriage,
@@ -50,8 +41,12 @@ import {
   type DeviceDetailTriageTone,
 } from './deviceDetail/deviceDetailTriage';
 
-const DeviceConfigEditor = lazy(() => import('../components/deviceDetail/DeviceConfigEditor'));
-const DeviceTestDataEditor = lazy(() => import('../components/deviceDetail/DeviceTestDataEditor'));
+const DeviceConfigEditor = lazy(() =>
+  import('../components/deviceDetail/DeviceConfigEditor').then((m) => ({ default: m.DeviceConfigEditor })),
+);
+const DeviceTestDataEditor = lazy(() =>
+  import('../components/deviceDetail/DeviceTestDataEditor').then((m) => ({ default: m.DeviceTestDataEditor })),
+);
 
 const TABS = [
   { id: 'triage', label: 'Triage' },
@@ -62,11 +57,12 @@ const TABS = [
 
 const TAB_IDS = TABS.map((t) => t.id);
 
-const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'critical' | 'neutral'> = {
+const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'critical' | 'neutral' | 'info'> = {
   ok: 'success',
   warn: 'warning',
   error: 'critical',
   neutral: 'neutral',
+  info: 'info',
 };
 
 function actionLinkClass(tone: DeviceDetailTriageTone): string {
@@ -85,7 +81,7 @@ function TriageHero({
   onVerify,
   onLifecycleBoot,
   onStartNode,
-  onTestSession,
+  onExitMaintenance,
   pending,
   verificationLabel,
 }: {
@@ -93,11 +89,10 @@ function TriageHero({
   onVerify: () => void;
   onLifecycleBoot: () => void;
   onStartNode: () => void;
-  onTestSession: () => void;
+  onExitMaintenance: () => void;
   pending: {
     lifecycleBoot: boolean;
     startNode: boolean;
-    testSession: boolean;
   };
   verificationLabel?: string;
 }) {
@@ -122,17 +117,13 @@ function TriageHero({
     if (action.kind === 'start-node') {
       return <Button onClick={onStartNode} loading={pending.startNode} leadingIcon={<Play size={15} />}>{action.label}</Button>;
     }
-    if (action.kind === 'test-session') {
-      return <Button onClick={onTestSession} loading={pending.testSession} leadingIcon={<Play size={15} />}>{action.label}</Button>;
+    if (action.kind === 'exit-maintenance') {
+      return <Button onClick={onExitMaintenance}>{action.label}</Button>;
     }
     return null;
   })();
 
-  const showVerifySecondary = Boolean(verificationLabel) && action.kind !== 'verify';
-
-  if (!actionNode && !showVerifySecondary) {
-    return null;
-  }
+  const showVerifySecondary = Boolean(verificationLabel) && action.kind === 'start-node';
 
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
@@ -140,7 +131,12 @@ function TriageHero({
         <div className="flex items-start gap-3 sm:items-center">
           <Badge tone={TRIAGE_BADGE_TONE[triage.tone]} dot>{triage.eyebrow}</Badge>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-text-1">{triage.title}</h2>
+            <h2 className="text-sm font-semibold text-text-1">
+              {triage.title}
+              {triage.titleLink ? (
+                <>{' '}<Link to={triage.titleLink.to} className="text-accent underline hover:text-accent-hover">{triage.titleLink.text}</Link></>
+              ) : null}
+            </h2>
             {triage.detail ? <p className="mt-0.5 text-xs text-text-2">{triage.detail}</p> : null}
           </div>
         </div>
@@ -162,7 +158,7 @@ function TriageHero({
   );
 }
 
-export default function DeviceDetail() {
+export function DeviceDetail() {
   useDevRenderCrashTrigger('device-detail-page');
   const { id } = useParams<{ id: string }>();
   const deviceId = id ?? '';
@@ -173,19 +169,12 @@ export default function DeviceDetail() {
   const {
     data: health,
     isLoading: healthLoading,
-    isError: healthIsError,
-    refetch: refetchHealth,
   } = useDeviceHealth(deviceId);
-  const { data: capabilities } = useDeviceCapabilities(deviceId);
-  const { data: logsData } = useDeviceLogs(deviceId);
   const { data: hosts = [] } = useHosts();
   const deleteDevice = useDeleteDevice();
   const lifecycleAction = useRunDeviceLifecycleAction();
   const startNode = useStartNode();
-  const restartNode = useRestartNode();
-  const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
-  const runSessionTest = useRunDeviceSessionTest();
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'triage');
   const [setupRequest, setSetupRequest] = useState<{
     title: string;
@@ -203,11 +192,10 @@ export default function DeviceDetail() {
   const verificationAction = device ? getVerificationAction(device.readiness_state) : null;
   const hostLabel = device ? (hostMap.get(device.host_id) ?? device.host_id) : null;
   const canTestSession = !!device && !reservationLocked && !readinessLocked && deviceChipStatus(device) === 'available';
-  const triage = device ? deriveDeviceDetailTriage(device, { health, canTestSession }) : null;
+  const triage = device ? deriveDeviceDetailTriage(device, { health }) : null;
   const triagePending = {
     lifecycleBoot: lifecycleAction.isPending && lifecycleAction.variables?.action === 'boot',
     startNode: startNode.isPending,
-    testSession: runSessionTest.isPending,
   };
   if (!device && isLoading) {
     return (
@@ -220,16 +208,7 @@ export default function DeviceDetail() {
   }
 
   if (!device) {
-    return (
-      <div>
-        <div className="py-6">
-          <FetchError
-            message="Device not found or could not be loaded."
-            onRetry={() => void window.location.reload()}
-          />
-        </div>
-      </div>
-    );
+    return <p className="text-text-3 text-center mt-12">Device not found</p>;
   }
 
   // device is defined from here on
@@ -249,9 +228,27 @@ export default function DeviceDetail() {
         summary={<DeviceDetailStatusPills device={device} />}
       />
 
-      <div className="mb-6">
-        <DeviceStatStrip summary={buildDeviceStatSummary(device.sessions)} />
-      </div>
+      {triage ? (
+        <div className="mb-2">
+          <TriageHero
+            triage={triage}
+            pending={triagePending}
+            verificationLabel={verificationAction?.buttonLabel}
+            onVerify={() => {
+              if (!verificationAction) {
+                return;
+              }
+              setSetupRequest({
+                title: verificationAction.title,
+                handoffMessage: verificationAction.handoffMessage,
+              });
+            }}
+            onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
+            onStartNode={() => startNode.mutate(device.id)}
+            onExitMaintenance={() => exitMaintenance.mutate(device.id)}
+          />
+        </div>
+      ) : null}
 
       <Tabs
         tabs={TABS as unknown as { id: string; label: string }[]}
@@ -263,49 +260,6 @@ export default function DeviceDetail() {
       <div className="fade-in-stagger flex flex-col gap-6">
         {tab === 'triage' ? (
           <>
-            <DeviceStatusCard
-              device={device}
-              onRetry={() => restartNode.mutate(device.id)}
-              onMaintenance={() => enterMaintenance.mutate({ id: device.id })}
-              onExitMaintenance={() => exitMaintenance.mutate(device.id)}
-              onSetup={() => {
-                if (verificationAction) {
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }
-              }}
-              onVerify={() => {
-                if (verificationAction) {
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }
-              }}
-            />
-
-            {triage && triage.tone !== 'ok' ? (
-              <TriageHero
-                triage={triage}
-                pending={triagePending}
-                verificationLabel={verificationAction?.buttonLabel}
-                onVerify={() => {
-                  if (!verificationAction) {
-                    return;
-                  }
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }}
-                onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
-                onStartNode={() => startNode.mutate(device.id)}
-                onTestSession={() => runSessionTest.mutate(device.id)}
-              />
-            ) : null}
-
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
               <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
                 <SectionErrorBoundary scope="device-info-panel">
@@ -320,25 +274,18 @@ export default function DeviceDetail() {
               <section id="device-health" className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
                 <div className="divide-y divide-border">
                   <div className="p-5">
-                    {healthIsError && !health ? (
-                      <FetchError
-                        message="Could not load device health."
-                        onRetry={() => void refetchHealth()}
+                    <SectionErrorBoundary scope="device-health-panel">
+                      <DeviceHealthPanel
+                        health={health}
+                        packId={device.pack_id}
+                        platformId={device.platform_id}
+                        deviceType={device.device_type}
+                        connectionType={device.connection_type}
+                        deviceId={device.id}
+                        canTestSession={canTestSession}
+                        isLoading={healthLoading}
                       />
-                    ) : healthLoading || health ? (
-                      <SectionErrorBoundary scope="device-health-panel">
-                        <DeviceHealthPanel
-                          health={health}
-                          packId={device.pack_id}
-                          platformId={device.platform_id}
-                          deviceType={device.device_type}
-                          connectionType={device.connection_type}
-                          deviceId={device.id}
-                          canTestSession={canTestSession}
-                          isLoading={healthLoading}
-                        />
-                      </SectionErrorBoundary>
-                    ) : null}
+                    </SectionErrorBoundary>
                   </div>
                   <SectionErrorBoundary scope="device-hardware-telemetry">
                     <DeviceHardwareTelemetryCard device={device} />
@@ -362,7 +309,7 @@ export default function DeviceDetail() {
 
         {tab === 'logs' ? (
           <SectionErrorBoundary scope="device-logs-panel">
-            <DeviceLogsPanel logsData={logsData} />
+            <DeviceLogsPanel deviceId={deviceId} />
           </SectionErrorBoundary>
         ) : null}
 
@@ -383,13 +330,11 @@ export default function DeviceDetail() {
             </div>
 
             <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
-              {capabilities ? (
-                <SectionErrorBoundary scope="device-capabilities-panel">
-                  <DeviceCapabilitiesPanel capabilities={capabilities} device={device} />
-                </SectionErrorBoundary>
-              ) : null}
+              <SectionErrorBoundary scope="device-capabilities-panel">
+                <DeviceCapabilitiesPanel deviceId={deviceId} device={device} />
+              </SectionErrorBoundary>
 
-              <div className={capabilities ? 'border-t border-border' : undefined}>
+              <div className="border-t border-border">
                 <SectionErrorBoundary scope="device-config-editor">
                   <Suspense fallback={<LoadingSpinner />}>
                     <DeviceConfigEditor device={device} />

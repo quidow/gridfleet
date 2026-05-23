@@ -74,21 +74,6 @@ Treat shipped log lines as sensitive operational data:
 - Do not log credentials, tokens, customer identifiers, or private device data from agent code or driver-pack adapters.
 - Use `agent.log_ship_min_level` to reduce verbosity in shared environments. The default is `INFO`; `DEBUG` should be temporary and restricted.
 
-## Host Web Terminal
-
-The host web terminal is an opt-in feature that exposes a PTY-backed shell on any host running the agent, reachable through the GridFleet UI. This is effectively remote code execution on the host, so enable it only when all of the following are true:
-
-- You have a first-party reason to let operators run arbitrary commands on the host through the UI.
-- Backend auth (`GRIDFLEET_AUTH_ENABLED=true`) is enabled, so browser sessions are authenticated.
-- Manager↔agent transport is trusted (private network, mTLS, VPN — the shared `GRIDFLEET_AGENT_TERMINAL_TOKEN` is an authentication barrier, not a transport layer).
-- Host operators understand that `host_terminal_sessions` rows capture session metadata only. No shell transcript is stored.
-
-To enable, set on the backend: `GRIDFLEET_ENABLE_WEB_TERMINAL=true`, `GRIDFLEET_AGENT_TERMINAL_TOKEN=<secret>`, `GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS=<frontend origin>`. The `GRIDFLEET_ENABLE_WEB_TERMINAL` and `GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS` env vars now seed the runtime settings `agent.enable_web_terminal` and `agent.web_terminal_allowed_origins`; admins can flip the toggle and edit the allowlist from the Settings UI without a restart. `GRIDFLEET_AGENT_TERMINAL_TOKEN` remains env-only and must be set before enabling the terminal while auth is on.
-
-On every host agent: `AGENT_ENABLE_WEB_TERMINAL=true`, `AGENT_TERMINAL_TOKEN=<same secret>`.
-
-Restart both services after setting the variables.
-
 ### Backend → agent authentication (optional)
 
-When `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set on each agent and the matching `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` are set on the backend, the agent enforces HTTP Basic on every `/agent/*` HTTP route. Without matching credentials the backend receives 401 and surfaces an agent call failure (circuit breaker tracks consecutive 5xx; 401 is recorded as an agent response error per the existing handling). The WebSocket terminal endpoint continues to require `AGENT_TERMINAL_TOKEN` regardless of API auth. Leave all four unset for local dev or trusted networks.
+When `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set on each agent and the matching `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` are set on the backend, the agent enforces HTTP Basic on every `/agent/*` HTTP route. Without matching credentials the backend receives 401 and surfaces an agent call failure (circuit breaker tracks consecutive 5xx; 401 is recorded as an agent response error per the existing handling). Leave all four unset for local dev or trusted networks.

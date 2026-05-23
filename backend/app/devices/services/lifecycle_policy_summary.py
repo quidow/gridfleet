@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services.lifecycle_policy_state import now, parse_iso, state
+from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON, now, parse_iso, state
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 
@@ -59,7 +59,7 @@ async def build_lifecycle_policy(
     elif policy.get("recovery_suppressed_reason"):
         recovery_state = "suppressed"
     elif policy.get("excluded_from_run") or device.operational_state == DeviceOperationalState.offline:
-        recovery_state = "eligible" if device.auto_manage else "manual"
+        recovery_state = "eligible"
     else:
         recovery_state = "idle"
 
@@ -89,7 +89,11 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
     elif current_state == "suppressed":
         summary_state = DeviceLifecyclePolicySummaryState.suppressed
         label = "Suppressed"
-        detail = policy.get("recovery_suppressed_reason") or policy.get("last_failure_reason")
+        suppression = policy.get("recovery_suppressed_reason")
+        if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
+            detail = policy.get("maintenance_reason") or suppression
+        else:
+            detail = suppression or policy.get("last_failure_reason")
     elif policy.get("last_failure_source") == "appium_reconciler" and policy.get("last_failure_reason"):
         summary_state = DeviceLifecyclePolicySummaryState.recoverable
         label = "Node Start Failed"
@@ -99,15 +103,10 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
             summary_state = DeviceLifecyclePolicySummaryState.recoverable
             label = "Recovery Eligible"
             detail = policy.get("last_failure_reason") or "Automatic recovery can run when the next check succeeds"
-    elif current_state == "manual":
-        if policy.get("last_action") or policy.get("last_failure_reason"):
-            summary_state = DeviceLifecyclePolicySummaryState.manual
-            label = "Manual Recovery"
-            detail = policy.get("recovery_suppressed_reason") or "Automatic recovery is disabled"
-
     return {
         "state": summary_state,
         "label": label,
         "detail": detail,
         "backoff_until": policy.get("backoff_until"),
+        "maintenance_reason": policy.get("maintenance_reason"),
     }

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.error_codes import AgentErrorCode
+from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.operations import appium_start, appium_stop, parse_agent_error_detail, response_json_dict
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
 from app.appium_nodes.models import AppiumNode
@@ -44,7 +45,6 @@ from app.devices import locking as device_locking
 from app.devices.services import health as device_health
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.lifecycle_policy_actions import (
-    clear_manual_recovery_suppression_state,
     reset_reconciler_start_failure_state,
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -202,6 +202,32 @@ async def mark_node_started(
     if clear_transition:
         node.transition_token = None
         node.transition_deadline = None
+    # Defense in depth for the cooldown / maintenance restart path: a
+    # freshly started agent-side relay always constructs ``NodeState``
+    # with ``_drain=False``. The agent honors the launch spec's
+    # ``accepting_new_sessions=False`` and re-drains the new relay (see
+    # ``_start_grid_node_service`` in agent process.py), but if that agent
+    # fix regresses or a third-party agent fails to apply it, the new
+    # relay would silently accept hub-routed sessions until the next
+    # ``device_intent_reconciler_loop`` tick happens to stage a fresh
+    # reconfigure — and the dedup check in ``_stage_agent_reconfigure``
+    # only stages on metadata change, so a steady-state cooldown intent
+    # would never produce a follow-up row on its own. Stage a forced
+    # outbox row here whenever the restart lands on a relay that should
+    # be drained or stopping; the background delivery loop picks it up
+    # within seconds and re-pushes the drain to the new port.
+    if node.port is not None and (not node.accepting_new_sessions or node.stop_pending):
+        db.add(
+            AgentReconfigureOutbox(
+                device_id=node.device_id,
+                port=node.port,
+                accepting_new_sessions=node.accepting_new_sessions,
+                stop_pending=node.stop_pending,
+                grid_run_id=node.desired_grid_run_id,
+                reconciled_generation=node.generation,
+            )
+        )
+        await db.flush()
     queue_event_for_session(
         db,
         "node.state_changed",
@@ -795,13 +821,3 @@ async def restart_node(
     await db.commit()
     await db.refresh(node)
     return node
-
-
-async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.UUID) -> None:
-    # Use _hold_device_row_lock to translate NoResultFound (e.g. concurrent
-    # device delete after mark_node_started commits and releases the row lock)
-    # into NodeManagerError so the route returns a managed 4xx instead of 500.
-    locked = await _hold_device_row_lock(db, device_id)
-    if not clear_manual_recovery_suppression_state(locked):
-        return
-    await db.commit()

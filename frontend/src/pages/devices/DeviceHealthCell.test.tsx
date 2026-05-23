@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import DeviceHealthCell from './DeviceHealthCell';
+import { DeviceHealthCell } from './DeviceHealthCell';
 import type { DeviceRead } from '../../types';
 
 function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
@@ -16,7 +16,6 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       operational_state: 'available', hold: null,
       needs_attention: false,
       readiness_state: 'verified',
-      auto_manage: true,
       host_id: 'h1',
       identity_value: '192.168.1.2',
       tags: {},

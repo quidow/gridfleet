@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedError
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
@@ -243,6 +244,19 @@ async def cooldown_device_endpoint(
         if "ttl_seconds must be <=" in msg:
             raise HTTPException(status_code=422, detail=msg) from e
         raise HTTPException(status_code=409, detail=msg) from e
+    except InlineReconfigureDeliveryFailedError as e:
+        # The DB state has the device on cooldown (intents committed,
+        # reservation marked excluded), but the agent-side drain did not
+        # land. Returning 503 with ``Retry-After`` tells testkit not to
+        # assume the device is safely out of rotation — the next session
+        # request could still land on it. The background delivery loop
+        # will retry the drain; an operator-facing health check will
+        # surface a stuck outbox row if the agent is wedged.
+        raise HTTPException(
+            status_code=503,
+            detail=f"cooldown applied in manager but agent drain failed: {e}",
+            headers={"Retry-After": "5"},
+        ) from e
 
     if escalated:
         return RunCooldownEscalatedResponse(

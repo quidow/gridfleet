@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { formatHostTimestamp } from '../hosts/hostFormatting';
-import type { HostRead, HostDiagnostics, HostRecoveryEvent } from '../../types';
+import { useHostDiagnostics } from '../../hooks/useHosts';
+import type { HostRead, HostRecoveryEvent } from '../../types';
 
 function formatBreakerStatus(status: string) {
   switch (status) {
@@ -81,12 +82,11 @@ function formatRetryAfter(seconds: number | null) {
 
 type Props = {
   host: HostRead;
-  hostDiagnostics: HostDiagnostics | undefined;
-  diagnosticsLoading: boolean;
-  diagnosticsError: unknown;
 };
 
-export default function HostDiagnosticsPanel({ host, hostDiagnostics, diagnosticsLoading, diagnosticsError }: Props) {
+export function HostDiagnosticsPanel({ host }: Props) {
+  const { data: hostDiagnostics, isLoading: diagnosticsLoading } = useHostDiagnostics(host.id);
+
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface-1">
       <div className="border-b border-border px-5 py-4">
@@ -98,7 +98,7 @@ export default function HostDiagnosticsPanel({ host, hostDiagnostics, diagnostic
 
       {diagnosticsLoading ? (
         <p className="px-5 py-8 text-center text-sm text-text-3">Loading diagnostics...</p>
-      ) : diagnosticsError || !hostDiagnostics ? (
+      ) : !hostDiagnostics ? (
         <p className="px-5 py-8 text-center text-sm text-text-3">
           Diagnostics are currently unavailable for this host.
         </p>

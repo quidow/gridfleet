@@ -12,11 +12,15 @@ interface AnalyticsQueryOptions {
   enabled?: boolean;
 }
 
+// Aggregates change on minute-scale buckets; matches prior staleTime budget.
+const ANALYTICS_POLL_MS = 5 * 60_000;
+
 export function useSessionSummary(params?: SessionSummaryParams, options?: AnalyticsQueryOptions) {
   return useQuery({
     queryKey: ['analytics', 'sessions-summary', params],
     queryFn: () => fetchSessionSummary(params),
-    staleTime: 5 * 60_000,
+    refetchInterval: ANALYTICS_POLL_MS,
+    staleTime: ANALYTICS_POLL_MS / 2,
     enabled: options?.enabled,
   });
 }
@@ -25,7 +29,8 @@ export function useDeviceUtilization(params?: AnalyticsParams, options?: Analyti
   return useQuery({
     queryKey: ['analytics', 'device-utilization', params],
     queryFn: () => fetchDeviceUtilization(params),
-    staleTime: 5 * 60_000,
+    refetchInterval: ANALYTICS_POLL_MS,
+    staleTime: ANALYTICS_POLL_MS / 2,
     enabled: options?.enabled,
   });
 }
@@ -34,7 +39,8 @@ export function useDeviceReliability(params?: AnalyticsParams, options?: Analyti
   return useQuery({
     queryKey: ['analytics', 'device-reliability', params],
     queryFn: () => fetchDeviceReliability(params),
-    staleTime: 5 * 60_000,
+    refetchInterval: ANALYTICS_POLL_MS,
+    staleTime: ANALYTICS_POLL_MS / 2,
     enabled: options?.enabled,
   });
 }
@@ -43,7 +49,8 @@ export function useFleetOverview(params?: AnalyticsParams, options?: AnalyticsQu
   return useQuery({
     queryKey: ['analytics', 'fleet-overview', params],
     queryFn: () => fetchFleetOverview(params),
-    staleTime: 5 * 60_000,
+    refetchInterval: ANALYTICS_POLL_MS,
+    staleTime: ANALYTICS_POLL_MS / 2,
     enabled: options?.enabled,
   });
 }
@@ -55,7 +62,8 @@ export function useFleetCapacityTimeline(
   return useQuery({
     queryKey: ['analytics', 'fleet-capacity-timeline', params],
     queryFn: () => fetchFleetCapacityTimeline(params),
-    staleTime: 60_000,
+    refetchInterval: ANALYTICS_POLL_MS,
+    staleTime: ANALYTICS_POLL_MS / 2,
     enabled: options?.enabled,
   });
 }

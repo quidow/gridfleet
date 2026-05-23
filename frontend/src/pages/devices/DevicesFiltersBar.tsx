@@ -18,6 +18,7 @@ import {
 } from './devicePageHelpers';
 import { resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
+import { Select } from '../../components/ui/Select';
 
 type Props = {
   packIdFilter: string;
@@ -41,12 +42,11 @@ type Props = {
   onClear?: () => void;
 };
 
-const SELECT_CLASS =
-  'h-9 min-w-[9.5rem] rounded-md border border-border bg-surface-1 px-3 text-sm text-text-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent';
+const SELECT_CLASS = 'h-9 min-w-[9.5rem]';
 const CHIP_CLASS =
   'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs font-medium text-text-2';
 
-export default function DevicesFiltersBar({
+export function DevicesFiltersBar({
   packIdFilter,
   onPackIdFilterChange,
   platformFilter,
@@ -117,11 +117,10 @@ export default function DevicesFiltersBar({
         </label>
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="Driver pack"
+          <Select
+            ariaLabel="Driver pack"
             value={packIdFilter}
-            onChange={(event) => {
-              const nextPackId = event.target.value;
+            onChange={(nextPackId) => {
               onPackIdFilterChange(nextPackId);
               if (
                 platformFilter &&
@@ -132,40 +131,25 @@ export default function DevicesFiltersBar({
               }
             }}
             className={SELECT_CLASS}
-          >
-            <option value="">All packs</option>
-            {packOptions.map((pack) => (
-              <option key={pack.id} value={pack.id}>
-                {pack.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Platform"
+            options={[{ value: '', label: 'All packs' }, ...packOptions.map((pack) => ({ value: pack.id, label: pack.label }))]}
+          />
+          <Select
+            ariaLabel="Platform"
             value={platformFilter}
-            onChange={(event) => onPlatformFilterChange(event.target.value)}
+            onChange={(next) => onPlatformFilterChange(next)}
             className={SELECT_CLASS}
-          >
-            <option value="">All platforms</option>
-            {platformOptions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Device type"
+            options={[{ value: '', label: 'All platforms' }, ...platformOptions.map((p) => ({ value: p.id, label: p.label }))]}
+          />
+          <Select
+            ariaLabel="Device type"
             value={deviceTypeFilter}
-            onChange={(event) => onDeviceTypeFilterChange(event.target.value as DeviceType | '')}
+            onChange={(next) => onDeviceTypeFilterChange(next as DeviceType | '')}
             className={SELECT_CLASS}
-          >
-            <option value="">All types</option>
-            {DEVICE_TYPES.map((deviceType) => (
-              <option key={deviceType} value={deviceType}>
-                {DEVICE_TYPE_LABELS[deviceType]}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: 'All types' },
+              ...DEVICE_TYPES.map((deviceType) => ({ value: deviceType, label: DEVICE_TYPE_LABELS[deviceType] })),
+            ]}
+          />
           <button
             type="button"
             onClick={() => setAdvancedOpen((open) => !open)}
@@ -191,60 +175,55 @@ export default function DevicesFiltersBar({
       {advancedOpen ? (
         <div className="mt-2.5 border-t border-border pt-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              aria-label="Connection type"
+            <Select
+              ariaLabel="Connection type"
               value={connectionTypeFilter}
-              onChange={(event) => onConnectionTypeFilterChange(event.target.value as ConnectionType | '')}
+              onChange={(next) => onConnectionTypeFilterChange(next as ConnectionType | '')}
               className={SELECT_CLASS}
-            >
-              <option value="">All connections</option>
-              {CONNECTION_TYPES.map((connectionType) => (
-                <option key={connectionType} value={connectionType}>
-                  {CONNECTION_TYPE_LABELS[connectionType]}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="OS version"
+              options={[
+                { value: '', label: 'All connections' },
+                ...CONNECTION_TYPES.map((connectionType) => ({
+                  value: connectionType,
+                  label: CONNECTION_TYPE_LABELS[connectionType],
+                })),
+              ]}
+            />
+            <Select
+              ariaLabel="OS version"
               value={osVersionFilter}
-              onChange={(event) => onOsVersionFilterChange(event.target.value)}
+              onChange={(next) => onOsVersionFilterChange(next)}
               className={SELECT_CLASS}
-            >
-              <option value="">All OS versions</option>
-              {osVersions.map((osVersion) => (
-                <option key={osVersion} value={osVersion}>
-                  {osVersion}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Hardware health"
+              options={[
+                { value: '', label: 'All OS versions' },
+                ...osVersions.map((osVersion) => ({ value: osVersion, label: osVersion })),
+              ]}
+            />
+            <Select
+              ariaLabel="Hardware health"
               value={hardwareHealthStatusFilter}
-              onChange={(event) => onHardwareHealthStatusFilterChange(event.target.value as HardwareHealthStatus | '')}
+              onChange={(next) => onHardwareHealthStatusFilterChange(next as HardwareHealthStatus | '')}
               className={SELECT_CLASS}
-            >
-              <option value="">All hardware health</option>
-              {HARDWARE_HEALTH_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {HARDWARE_HEALTH_STATUS_LABELS[status]}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Telemetry state"
+              options={[
+                { value: '', label: 'All hardware health' },
+                ...HARDWARE_HEALTH_STATUSES.map((status) => ({
+                  value: status,
+                  label: HARDWARE_HEALTH_STATUS_LABELS[status],
+                })),
+              ]}
+            />
+            <Select
+              ariaLabel="Telemetry state"
               value={hardwareTelemetryStateFilter}
-              onChange={(event) =>
-                onHardwareTelemetryStateFilterChange(event.target.value as HardwareTelemetryState | '')
-              }
+              onChange={(next) => onHardwareTelemetryStateFilterChange(next as HardwareTelemetryState | '')}
               className={SELECT_CLASS}
-            >
-              <option value="">All telemetry states</option>
-              {HARDWARE_TELEMETRY_STATES.map((state) => (
-                <option key={state} value={state}>
-                  {HARDWARE_TELEMETRY_STATE_LABELS[state]}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'All telemetry states' },
+                ...HARDWARE_TELEMETRY_STATES.map((state) => ({
+                  value: state,
+                  label: HARDWARE_TELEMETRY_STATE_LABELS[state],
+                })),
+              ]}
+            />
           </div>
         </div>
       ) : activeAdvancedFilters.length > 0 ? (

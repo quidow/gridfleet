@@ -86,12 +86,7 @@ Success means:
 
 ## Node Retention After Successful Verification
 
-Verification uses a temporary Appium node for the probe. What happens after success depends on auto-manage:
-
-- if auto-manage is on, the verified node is retained as the managed Appium node
-- if auto-manage is off, the temporary node is cleaned up after verification
-
-That means verification can immediately leave an auto-managed device ready for normal node-backed work.
+Verification uses a temporary Appium node for the probe. After a successful verification, the verified node is retained as the managed Appium node, leaving the device immediately ready for normal node-backed work.
 
 ## Failure Behavior
 
@@ -174,4 +169,4 @@ The device passed health but could not sustain a real Grid-routed Appium session
 
 ### Verification succeeded, but there is no running node
 
-That is expected when auto-manage is off. The probe node is cleaned up after success in that case.
+Check that node start was not blocked by a maintenance hold or a pending readiness state. Verification cleans up the temporary probe node after success, but the managed node should be started automatically.

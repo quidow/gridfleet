@@ -174,7 +174,7 @@ vi.mock('../api/driverPackAuthoring', () => ({
   exportPack: vi.fn(),
 }));
 
-import DriverDetail from './DriverDetail';
+import { DriverDetail } from './DriverDetail';
 
 beforeEach(() => {
   deletePackMutate.mockReset();

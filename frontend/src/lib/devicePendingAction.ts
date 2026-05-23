@@ -4,8 +4,7 @@ export type DevicePendingAction =
   | 'restarting'
   | 'running-lifecycle-action'
   | 'entering-maintenance'
-  | 'exiting-maintenance'
-  | 'updating-auto-manage';
+  | 'exiting-maintenance';
 
 type PendingDeviceMutation = {
   action: DevicePendingAction;
@@ -41,8 +40,6 @@ export function getPendingDeviceActionLabel(
       return 'Entering maintenance...';
     case 'exiting-maintenance':
       return 'Exiting maintenance...';
-    case 'updating-auto-manage':
-      return 'Saving auto-manage...';
     default:
       return null;
   }

@@ -23,7 +23,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     host_id: 'host-1',
     operational_state: 'available', hold: null,
     tags: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '10.0.0.50',
@@ -95,7 +94,7 @@ describe('deviceDetailSummary', () => {
     expect(pills[1]).toMatchObject({
       key: 'connectivity',
       label: 'Connectivity',
-      value: 'ADB not responsive',
+      value: 'Failed',
       tone: 'error',
       to: `/devices/${device.id}?tab=triage#device-health`,
     });

@@ -2,8 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { useHostEvents } from '../../hooks/useHosts';
 import { LoadingSpinner } from '../LoadingSpinner';
-import FetchError from '../ui/FetchError';
-import Select from '../ui/Select';
+import { Select } from '../ui/Select';
 
 type RangeKey = '1h' | '6h' | '24h' | '7d';
 
@@ -13,7 +12,7 @@ interface Props {
 
 const RANGES: Record<RangeKey, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 24 * 7 };
 
-export default function HostEventsPanel({ hostId }: Props) {
+export function HostEventsPanel({ hostId }: Props) {
   const [range, setRange] = useState<RangeKey>('24h');
   const [typesText, setTypesText] = useState('');
   const [limit, setLimit] = useState(50);
@@ -29,14 +28,13 @@ export default function HostEventsPanel({ hostId }: Props) {
     [typesText],
   );
 
-  const { data, isLoading, error, refetch } = useHostEvents(hostId, {
+  const { data, isLoading } = useHostEvents(hostId, {
     since,
     types: types.length > 0 ? types : undefined,
     limit,
   });
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <FetchError message="Could not load host events." onRetry={() => void refetch()} />;
 
   const events = data?.events ?? [];
 

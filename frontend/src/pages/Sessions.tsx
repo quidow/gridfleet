@@ -2,15 +2,15 @@ import { Clock } from 'lucide-react';
 import { useSessions } from '../hooks/useSessions';
 import { useDevices } from '../hooks/useDevices';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
-import EmptyState from '../components/ui/EmptyState';
-import FetchError from '../components/ui/FetchError';
-import DataTable from '../components/ui/DataTable';
-import FilterBar from '../components/ui/FilterBar';
-import CursorPagination from '../components/ui/CursorPagination';
-import ListPageSubheader from '../components/ui/ListPageSubheader';
-import PageHeader from '../components/ui/PageHeader';
-import Select from '../components/ui/Select';
-import DateInput from '../components/ui/DateInput';
+import { EmptyState } from '../components/ui/EmptyState';
+import { DataTable } from '../components/ui/DataTable';
+import { FilterBar } from '../components/ui/FilterBar';
+import { CursorPagination } from '../components/ui/CursorPagination';
+import { ListPageSubheader } from '../components/ui/ListPageSubheader';
+import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
+import { Select } from '../components/ui/Select';
+import { DateInput } from '../components/ui/DateInput';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
 import type { SessionDetail, SessionSortKey, SessionStatus } from '../types';
 import { SESSION_STATUS_LABELS, resolvePlatformLabel } from '../lib/labels';
@@ -27,8 +27,7 @@ function readEnumSearchParam<T extends string>(searchParams: URLSearchParams, ke
 
 const COLUMNS = buildSessionColumns();
 
-export default function Sessions() {
-  usePageTitle('Sessions');
+function SessionsTableSection() {
   const {
     searchParams,
     pageSize,
@@ -61,7 +60,7 @@ export default function Sessions() {
     })),
   );
 
-  const { data: sessions, isLoading, isError, refetch, dataUpdatedAt } = useSessions({
+  const { data: sessions, isLoading, dataUpdatedAt } = useSessions({
     device_id: deviceFilter || undefined,
     status: statusFilter || undefined,
     platform_id: platformIdFilter || undefined,
@@ -81,7 +80,7 @@ export default function Sessions() {
   const showingLabel = `Showing ${sessionRows.length} session${sessionRows.length === 1 ? '' : 's'}`;
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Sessions"
         subtitle="Cross-run history and sessions not attached to a run."
@@ -160,13 +159,6 @@ export default function Sessions() {
 
         <ListPageSubheader title={showingLabel} />
 
-        {isError && (
-          <FetchError
-            message="Could not load sessions. Check your connection and try again."
-            onRetry={() => void refetch()}
-          />
-        )}
-
         <DataTable<SessionDetail, SessionSortKey>
           columns={COLUMNS}
           rows={sessionRows}
@@ -192,6 +184,18 @@ export default function Sessions() {
           onPageSizeChange={setPageSize}
         />
       </div>
+    </>
+  );
+}
+
+export function Sessions() {
+  usePageTitle('Sessions');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="sessions-table">
+        <SessionsTableSection />
+      </SectionErrorBoundary>
     </div>
   );
 }

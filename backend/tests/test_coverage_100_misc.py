@@ -338,7 +338,14 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
     disabled_pack = SimpleNamespace(state=PackState.disabled)
     draining_pack = SimpleNamespace(state=PackState.draining)
     unknown_pack = SimpleNamespace(state=PackState.draft)
-    db.scalar = AsyncMock(side_effect=[None, disabled_pack, draining_pack, unknown_pack])
+    db.execute = AsyncMock(
+        side_effect=[
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+            SimpleNamespace(scalar_one_or_none=lambda pack=disabled_pack: pack),
+            SimpleNamespace(scalar_one_or_none=lambda pack=draining_pack: pack),
+            SimpleNamespace(scalar_one_or_none=lambda pack=unknown_pack: pack),
+        ]
+    )
 
     with pytest.raises(pack_platform_resolver.PackUnavailableError):
         await pack_platform_resolver.assert_runnable(db, pack_id="missing", platform_id="p")
@@ -540,10 +547,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
 
     missing_pack_db = AsyncMock()
-    missing_pack_db.get = AsyncMock(return_value=None)
+    missing_pack_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(LookupError):
         await pack_lifecycle_service.try_complete_drain(missing_pack_db, "missing")
-    missing_pack_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(LookupError):
         await pack_lifecycle_service.transition_pack_state(missing_pack_db, "missing", PackState.enabled)
 

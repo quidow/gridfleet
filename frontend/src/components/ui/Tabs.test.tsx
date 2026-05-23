@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
-import Tabs from './Tabs';
+import { Tabs } from './Tabs';
 import { useTabParam } from './useTabParam';
 import type { TabDefinition } from './Tabs';
 

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import Textarea from './Textarea';
+import { Textarea } from './Textarea';
 
 describe('Textarea', () => {
   it('forwards value changes', async () => {

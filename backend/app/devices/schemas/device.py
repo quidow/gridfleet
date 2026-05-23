@@ -89,7 +89,6 @@ class DeviceLifecyclePolicySummaryState(enum.StrEnum):
     excluded = "excluded"
     suppressed = "suppressed"
     recoverable = "recoverable"
-    manual = "manual"
 
 
 class DeviceVerificationCreate(BaseModel):
@@ -110,7 +109,6 @@ class DeviceVerificationCreate(BaseModel):
     model: str | None = None
     model_number: str | None = None
     software_versions: dict[str, Any] | None = None
-    auto_manage: bool = True
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
     ip_address: str | None = None
@@ -135,7 +133,6 @@ class DeviceVerificationUpdate(BaseModel):
     model: str | None = None
     model_number: str | None = None
     software_versions: dict[str, Any] | None = None
-    auto_manage: bool | None = None
     device_type: DeviceType | None = None
     connection_type: ConnectionType | None = None
     ip_address: str | None = None
@@ -152,7 +149,6 @@ class DevicePatch(BaseModel):
     model: str | None = None
     model_number: str | None = None
     software_versions: dict[str, Any] | None = None
-    auto_manage: bool | None = None
     connection_target: str | None = None
     ip_address: str | None = None
     device_config: dict[str, Any] | None = None
@@ -273,11 +269,15 @@ class DeviceLifecyclePolicySummaryRead(BaseModel):
     label: str
     detail: str | None = None
     backoff_until: datetime | None = None
+    maintenance_reason: str | None = None
 
 
 class DeviceHealthSummaryRead(BaseModel):
     healthy: bool | None
     summary: str
+    connectivity_status: Literal["ok", "failed"] | None = None
+    node_status: str | None = None
+    session_status: Literal["passed", "failed"] | None = None
     last_checked_at: str | None = None
 
 
@@ -359,7 +359,6 @@ class DeviceRead(BaseModel):
     model: str | None
     model_number: str | None
     software_versions: dict[str, Any] | None
-    auto_manage: bool
     device_type: DeviceType
     connection_type: ConnectionType
     ip_address: str | None
@@ -490,11 +489,6 @@ class SessionCreate(BaseModel):
 
 class BulkDeviceIds(BaseModel):
     device_ids: list[uuid.UUID]
-
-
-class BulkAutoManageUpdate(BaseModel):
-    device_ids: list[uuid.UUID]
-    auto_manage: bool
 
 
 class BulkTagsUpdate(BaseModel):

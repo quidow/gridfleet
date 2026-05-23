@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import DeviceDetailStatusPills from './DeviceDetailStatusPills';
+import { DeviceDetailStatusPills } from './DeviceDetailStatusPills';
 import type { DeviceDetail } from '../../types';
 
 function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
@@ -22,7 +22,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     host_id: 'host-1',
     operational_state: 'available', hold: null,
     tags: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '10.0.0.50',

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import Modal from '../../components/ui/Modal';
-import Button from '../../components/ui/Button';
-import { Checkbox, DefinitionList, Field, Textarea, TextField } from '../../components/ui';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
+import { DefinitionList, Field, Textarea, TextField } from '../../components/ui';
 import { READINESS_GLOSSARY, deviceUpdateRequiresReverification } from '../../components/readiness';
 import { useUpdateDevice } from '../../hooks/useDevices';
-import DeviceManifestFields from './DeviceManifestFields';
+import { DeviceManifestFields } from './DeviceManifestFields';
 import type { DevicePatch, DeviceRead, DeviceVerificationUpdate } from '../../types';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
@@ -25,7 +25,7 @@ type Props = {
   onRequestVerification: (request: VerificationRequest) => void;
 };
 
-export default function DeviceEditModal({ device, hostMap, onClose, onRequestVerification }: Props) {
+export function DeviceEditModal({ device, hostMap, onClose, onRequestVerification }: Props) {
   if (!device) {
     return null;
   }
@@ -48,7 +48,6 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
   const descriptor = findPlatformDescriptor(catalog, device.pack_id, platformId);
   const [editForm, setEditForm] = useState<DevicePatch>(() => ({
     name: device.name,
-    auto_manage: device.auto_manage,
     connection_target:
       device.connection_type === 'network' || device.connection_type === 'virtual'
         ? device.connection_target
@@ -148,19 +147,6 @@ function DeviceEditModalContent({ device, hostMap, onClose, onRequestVerificatio
             onChange={(value) => setEditForm({ ...editForm, name: value })}
           />
         </Field>
-
-        <div>
-          <Checkbox
-            checked={editForm.auto_manage ?? device.auto_manage}
-            onChange={(checked) => setEditForm({ ...editForm, auto_manage: checked })}
-            label="Auto-manage"
-          />
-          <p className="mt-2 text-xs text-text-2">
-            {(editForm.auto_manage ?? device.auto_manage)
-              ? 'The manager can automatically recover this device when it becomes healthy again.'
-              : 'Operators must return this device to service manually.'}
-          </p>
-        </div>
 
         {device.connection_type === 'network' || device.connection_type === 'virtual' ? (
           <Field label="Connection Target" htmlFor="edit-device-connection-target">

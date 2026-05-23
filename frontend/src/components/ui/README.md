@@ -382,16 +382,16 @@ Page or card section heading with optional description and right-aligned actions
 
 ## FetchError
 
-Inline error banner shown in place of a content area when a query fails. Always includes a **Retry** affordance so the
-user is never left with a blank or partial page.
+Inline error banner for mutation failures or non-query error contexts. Query errors are handled globally via
+`throwOnError: true` on `QueryClient` and caught by `SectionErrorBoundary` / `PageErrorBoundary`.
 
 ```tsx
-const { data, isError, refetch } = useItems();
+const mutation = useSaveThing();
 
-{isError && (
+{mutation.isError && (
   <FetchError
-    message="Could not load items."
-    onRetry={() => void refetch()}
+    message="Could not save changes."
+    onRetry={() => mutation.mutate(data)}
     className="mb-4"
   />
 )}
@@ -403,8 +403,8 @@ const { data, isError, refetch } = useItems();
 | `message` | `string` | `'Something went wrong while loading this data.'` |
 | `className` | `string` | — |
 
-**Domain rule**: every page that fetches data must render `<FetchError>` on error. A page must never display a blank
-body when a query fails.
+**Domain rule**: query errors throw to the nearest `ErrorBoundary`. Do not use inline `isError` checks for query
+hooks — wrap the consumer in `SectionErrorBoundary` instead. Use `FetchError` only for mutation or non-query errors.
 
 ---
 

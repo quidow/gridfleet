@@ -1,6 +1,5 @@
 import api from './client';
 import type {
-  BulkAutoManageUpdate,
   BulkDeviceIds,
   BulkMaintenanceEnter,
   BulkOperationResult,
@@ -17,9 +16,6 @@ export const bulkStopNodes = (body: BulkDeviceIds) =>
 
 export const bulkRestartNodes = (body: BulkDeviceIds) =>
   api.post<BulkOperationResult>(`${BASE}/restart-nodes`, body).then(r => r.data);
-
-export const bulkSetAutoManage = (body: BulkAutoManageUpdate) =>
-  api.post<BulkOperationResult>(`${BASE}/set-auto-manage`, body).then(r => r.data);
 
 export const bulkUpdateTags = (body: BulkTagsUpdate) =>
   api.post<BulkOperationResult>(`${BASE}/update-tags`, body).then(r => r.data);

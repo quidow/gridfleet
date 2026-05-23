@@ -119,24 +119,23 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     db_host: Host,
 ) -> None:
     """Suppressions whose cause is independent of the maintenance hold
-    (``"Auto-manage is disabled"``, ``"Node restart failed"``,
-    ``"Recovery probe failed"``, an active backoff window, ...) describe a
-    real condition that survives operator-driven maintenance exit and must
-    NOT be silently wiped along with the maintenance-tautology reason.
+    (``"Node restart failed"``, ``"Recovery probe failed"``, an active backoff
+    window, ...) describe a real condition that survives operator-driven
+    maintenance exit and must NOT be silently wiped along with the
+    maintenance-tautology reason.
     """
     backoff_until = "2027-01-01T00:00:00+00:00"
     device = await create_device(
         db_session,
         host_id=db_host.id,
-        name="exit-preserves-auto-manage-suppression",
+        name="exit-preserves-backoff-suppression",
         hold=DeviceHold.maintenance,
-        auto_manage=False,
         lifecycle_policy_state={
             "last_action": "recovery_suppressed",
             "last_action_at": "2026-05-09T21:14:19+00:00",
             "last_failure_reason": "Max node health failures reached",
             "last_failure_source": "node_health",
-            "recovery_suppressed_reason": "Auto-manage is disabled",
+            "recovery_suppressed_reason": "Node restart failed",
             "recovery_backoff_attempts": 3,
             "backoff_until": backoff_until,
             "stop_pending": False,
@@ -152,7 +151,7 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     assert device.hold is None
     assert device.lifecycle_policy_state is not None
     # Suppression unrelated to the maintenance hold must persist.
-    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") == "Auto-manage is disabled"
+    assert device.lifecycle_policy_state.get("recovery_suppressed_reason") == "Node restart failed"
     assert device.lifecycle_policy_state.get("backoff_until") == backoff_until
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") == 3
     assert device.lifecycle_policy_state.get("last_action") == "recovery_suppressed"
@@ -203,3 +202,55 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
     await db_session.commit()
     schedule.side_effect = RuntimeError("queue down")
     await exit_maintenance(db_session, device)
+
+
+async def test_enter_maintenance_stores_maintenance_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reason-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    await enter_maintenance(db_session, locked, maintenance_reason="Cooldown escalation")
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") == "Cooldown escalation"
+
+
+async def test_exit_maintenance_clears_maintenance_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="clear-reason-target",
+        hold=DeviceHold.maintenance,
+        lifecycle_policy_state={
+            "last_action": None,
+            "last_action_at": None,
+            "last_failure_reason": None,
+            "last_failure_source": None,
+            "recovery_suppressed_reason": "Device is in maintenance mode",
+            "recovery_backoff_attempts": 0,
+            "backoff_until": None,
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "maintenance_reason": "Cooldown escalation",
+        },
+    )
+    await db_session.commit()
+
+    await exit_maintenance(db_session, device)
+    await db_session.refresh(device)
+
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is None

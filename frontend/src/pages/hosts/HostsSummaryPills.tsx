@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import SummaryPill from '../../components/ui/SummaryPill';
+import { SummaryPill } from '../../components/ui/SummaryPill';
 import type { HostsFleetStats } from './hostsSummary';
 import { buildHostsSummaryHref } from './hostsSummary';
 
@@ -42,7 +42,7 @@ function displayValue(isLoading: boolean, disabled: boolean | undefined, value: 
   return isLoading || disabled ? '—' : value;
 }
 
-export default function HostsSummaryPills({
+export function HostsSummaryPills({
   stats,
   searchParams,
   isLoading,

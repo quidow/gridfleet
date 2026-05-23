@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { bulkUpdateSettings, fetchSettings, resetAllSettings, resetSetting } from '../api/settings';
 
+const SETTINGS_POLL_MS = 60_000;
+
 export function useSettings() {
   return useQuery({
     queryKey: ['settings'],
     queryFn: fetchSettings,
+    refetchInterval: SETTINGS_POLL_MS,
+    staleTime: SETTINGS_POLL_MS / 2,
   });
 }
 

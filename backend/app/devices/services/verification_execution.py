@@ -484,10 +484,10 @@ async def _finalize_success(
     locked.verified_at = datetime.now(UTC)
     # Revoke the verification intent only after ``verified_at`` is set so the
     # reconcile triggered by the revoke sees the device as verified and
-    # injects ``baseline:idle`` (when ``auto_manage`` is true) instead of
-    # computing ``desired_state=stopped`` on an empty node_process intent
-    # set. Revoking earlier (e.g. in ``run_probe``'s finally block) causes a
-    # spurious ``available -> offline`` transition right after registration.
+    # injects ``baseline:idle`` instead of computing ``desired_state=stopped``
+    # on an empty node_process intent set. Revoking earlier (e.g. in
+    # ``run_probe``'s finally block) causes a spurious ``available -> offline``
+    # transition right after registration.
     await _revoke_verification_node_intent(db, locked)
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:

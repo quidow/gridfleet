@@ -6,7 +6,7 @@ type Props = {
   devicesHref?: string;
 };
 
-export default function OperationsAllIdleStrip({ runsHref, devicesHref }: Props) {
+export function OperationsAllIdleStrip({ runsHref, devicesHref }: Props) {
   return (
     <div
       role="status"

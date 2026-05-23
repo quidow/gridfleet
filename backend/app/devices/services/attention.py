@@ -4,7 +4,6 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 _LIFECYCLE_NEEDS_ATTENTION = frozenset(
     {
         DeviceLifecyclePolicySummaryState.suppressed,
-        DeviceLifecyclePolicySummaryState.manual,
     }
 )
 _READINESS_NEEDS_ATTENTION = frozenset({"setup_required", "verification_required"})

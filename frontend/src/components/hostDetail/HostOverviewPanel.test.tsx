@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
-import HostOverviewPanel from './HostOverviewPanel';
+import { HostOverviewPanel } from './HostOverviewPanel';
 import type { HostRead } from '../../types';
 
 vi.mock('../../hooks/useHosts', () => ({

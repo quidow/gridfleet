@@ -20,7 +20,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     host_id: 'host-1',
     operational_state: 'available', hold: null,
     tags: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,
@@ -184,18 +183,6 @@ describe('deriveUnifiedHealth', () => {
     const result = deriveUnifiedHealth(device);
     expect(result.tone).toBe('warn');
     expect(result.reasons).toContain('Agent failed to start node: port occupied');
-  });
-
-  it('returns error when lifecycle is manual', () => {
-    const device = makeDevice({
-      lifecycle_policy_summary: {
-        state: 'manual',
-        label: 'Manual',
-        detail: null,
-        backoff_until: null,
-      },
-    });
-    expect(deriveUnifiedHealth(device).reasons).toContain('Manual recovery requested');
   });
 
   it('returns warn when readiness is setup_required and probe is healthy', () => {

@@ -64,7 +64,6 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
             host_id=db_host.id,
             operational_state=DeviceOperationalState.offline,
             verified_at=datetime.now(UTC),
-            auto_manage=True,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
             lifecycle_policy_state={
@@ -140,7 +139,6 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
             verified_at=datetime.now(UTC),
-            auto_manage=True,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
             lifecycle_policy_state={

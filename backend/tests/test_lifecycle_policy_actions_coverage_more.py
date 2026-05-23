@@ -7,8 +7,6 @@ from app.runs.models import RunState
 
 
 def test_lifecycle_policy_action_small_branch_helpers() -> None:
-    manual = SimpleNamespace(auto_manage=False)
-    assert actions.offline_summary_state(manual) == actions.DeviceLifecyclePolicySummaryState.manual
     assert actions.failure_event_type("connectivity") == DeviceEventType.connectivity_lost
 
     device = Device(id=__import__("uuid").uuid4())

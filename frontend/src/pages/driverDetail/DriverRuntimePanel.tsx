@@ -1,4 +1,4 @@
-import Card from '../../components/ui/Card';
+import { Card } from '../../components/ui/Card';
 import { Badge, DefinitionList } from '../../components/ui';
 import type { AppiumInstallable, DriverPack } from '../../types/driverPacks';
 import { installableSummary, objectEntries, recommendedValue, runtimePolicyLabel, scalarValue } from './driverDetailFormat';
@@ -32,7 +32,7 @@ function InstallSpecCard({ title, spec }: { title: string; spec: AppiumInstallab
   );
 }
 
-export default function DriverRuntimePanel({ pack }: { pack: DriverPack }) {
+export function DriverRuntimePanel({ pack }: { pack: DriverPack }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card padding="md" className="lg:col-span-2">

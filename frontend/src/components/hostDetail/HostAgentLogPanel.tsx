@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useHostAgentLogs } from '../../hooks/useHosts';
 import { LoadingSpinner } from '../LoadingSpinner';
-import FetchError from '../ui/FetchError';
-import Select from '../ui/Select';
+import { Select } from '../ui/Select';
 
 type Level = 'INFO' | 'WARNING' | 'ERROR';
 type LineCount = 100 | 500 | 1000 | 2000;
@@ -20,7 +19,7 @@ const LEVEL_OPTIONS: { value: Level; label: string }[] = [
 
 const LINE_COUNTS: LineCount[] = [100, 500, 1000, 2000];
 
-export default function HostAgentLogPanel({ hostId }: Props) {
+export function HostAgentLogPanel({ hostId }: Props) {
   const [level, setLevel] = useState<Level>('INFO');
   const [q, setQ] = useState('');
   const [limit, setLimit] = useState<LineCount>(500);
@@ -29,10 +28,9 @@ export default function HostAgentLogPanel({ hostId }: Props) {
     () => ({ level, q: debouncedQ || undefined, limit }),
     [level, debouncedQ, limit],
   );
-  const { data, isLoading, error, refetch } = useHostAgentLogs(hostId, filters);
+  const { data, isLoading } = useHostAgentLogs(hostId, filters);
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <FetchError message="Could not load agent logs." onRetry={() => void refetch()} />;
 
   const lines = data?.lines ?? [];
 

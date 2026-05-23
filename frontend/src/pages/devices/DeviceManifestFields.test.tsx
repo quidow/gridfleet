@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import DeviceManifestFields, { defaultsForDeviceFields, setDeviceConfigField } from './DeviceManifestFields';
+import { DeviceManifestFields, defaultsForDeviceFields, setDeviceConfigField } from './DeviceManifestFields';
 import type { PlatformDeviceField } from '../../types';
 
 const fields: PlatformDeviceField[] = [

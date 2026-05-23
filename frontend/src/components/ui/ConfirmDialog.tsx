@@ -1,5 +1,5 @@
-import Modal from './Modal';
-import Button from './Button';
+import { Modal } from './Modal';
+import { Button } from './Button';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -11,7 +11,7 @@ interface ConfirmDialogProps {
   variant?: 'danger' | 'default';
 }
 
-export default function ConfirmDialog({
+export function ConfirmDialog({
   isOpen,
   onClose,
   onConfirm,

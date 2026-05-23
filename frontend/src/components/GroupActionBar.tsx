@@ -11,8 +11,8 @@ import {
   useGroupStopNodes,
   useGroupUpdateTags,
 } from '../hooks/useDeviceGroups';
-import ConfirmDialog from './ui/ConfirmDialog';
-import Card from './ui/Card';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { Card } from './ui/Card';
 import type { BulkOperationResult, DeviceRead } from '../types';
 import {
   DeviceActionErrorsDialog,
@@ -40,7 +40,7 @@ function formatFailureLines(result: BulkOperationResult, devices: DeviceRead[]) 
   }));
 }
 
-export default function GroupActionBar({ groupId, devices }: Props) {
+export function GroupActionBar({ groupId, devices }: Props) {
   const [confirmAction, setConfirmAction] = useState<PendingAction | null>(null);
   const [showTagsModal, setShowTagsModal] = useState(false);
   const [showErrorsModal, setShowErrorsModal] = useState(false);

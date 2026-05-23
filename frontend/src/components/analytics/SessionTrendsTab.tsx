@@ -7,8 +7,8 @@ import { useSessionSummary } from '../../hooks/useAnalytics';
 import { downloadAnalyticsCsv } from '../../api/analytics';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { PlatformIcon } from '../PlatformIcon';
-import AnalyticsEmptyState from './AnalyticsEmptyState';
-import Card from '../ui/Card';
+import { AnalyticsEmptyState } from './AnalyticsEmptyState';
+import { Card } from '../ui/Card';
 import { resolvePlatformLabel } from '../../lib/labels';
 import type { AnalyticsParams } from '../../api/analytics';
 import { formatDateOnly } from '../../utils/dateFormatting';
@@ -23,7 +23,7 @@ function formatDuration(sec: number | null): string {
   return `${Math.round(sec / 60)}m`;
 }
 
-export default function SessionTrendsTab({ params }: Props) {
+export function SessionTrendsTab({ params }: Props) {
   const { data: byDay, isLoading: dayLoading } = useSessionSummary({ ...params, group_by: 'day' });
   const { data: byPlatform, isLoading: platLoading } = useSessionSummary({ ...params, group_by: 'platform' });
 

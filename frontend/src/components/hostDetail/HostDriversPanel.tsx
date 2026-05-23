@@ -3,7 +3,7 @@ import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverP
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
 import type { HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
-import HostFeatureActionButton from './HostFeatureActionButton';
+import { HostFeatureActionButton } from './HostFeatureActionButton';
 
 function PackStatusBadge({ status, blockedReason }: { status: string; blockedReason: string | null }) {
   const healthy = status === 'installed';
@@ -46,7 +46,7 @@ type Props = {
   hostOnline: boolean;
 };
 
-export default function HostDriversPanel({ hostId }: Props) {
+export function HostDriversPanel({ hostId }: Props) {
   const { data: hostPacks, isLoading } = useHostDriverPacks(hostId);
   const { data: catalog } = useDriverPackCatalog();
 

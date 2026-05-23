@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import SeverityBadge from './SeverityBadge';
+import { SeverityBadge } from './SeverityBadge';
 
 describe('SeverityBadge', () => {
   it('renders the event severity when present', () => {

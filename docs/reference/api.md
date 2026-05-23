@@ -68,6 +68,36 @@ Current auth behavior:
 
 Device list `search` uses PostgreSQL full-text syntax over `name`, identity and connection target fields, manufacturer/model fields, OS version, pack ID, and platform ID. Punctuation in identifiers is tokenized, so `usb-pixel-8-pro` matches searches such as `pixel pro`; quoted phrases, negation, and `OR` follow PostgreSQL `websearch_to_tsquery` behavior. Results still use the requested list ordering rather than relevance ranking.
 
+### Devices — Portability
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/devices/export` | Export the full registered fleet as a versioned JSON bundle | none | portability bundle (`schema_version=1`) |
+| `POST` | `/api/devices/import/validate` | Preview an uploaded bundle without writing to the DB | bundle body | per-row classification, host suggestions, `bundle_hash` |
+| `POST` | `/api/devices/import` | Commit a previously-validated bundle | `{ bundle, bundle_hash, mappings: [{ index, target_host_id }] }` | `{ created, skipped, failed }` arrays |
+
+`GET /api/devices/export` returns the full registered fleet as a `schema_version=1` JSON bundle. Intended to seed a fresh GridFleet install after a DB wipe or migration. Runtime state is excluded (operational_state, telemetry, lifecycle policy state, verification stamps). The bundle preserves identity, name, tags, device_config, test_data, and the original host hostname.
+
+`POST /api/devices/import/validate` accepts a bundle and returns a preview with no DB writes:
+
+- Per-row classification: `valid_new`, `conflict_skip`, `duplicate_in_bundle`, or `invalid`.
+- Auto-matched host suggestions based on case-insensitive hostname comparison against registered hosts.
+- A canonical `bundle_hash` to pass back on commit.
+
+`POST /api/devices/import` commits a previously-validated bundle. The server recomputes the canonical bundle hash; a mismatch returns `409`. `mappings` overrides the auto-suggested host assignment per row (identified by `index`). Per-row transaction: device insert and verification job enqueue happen atomically. Response arrays (`created`, `skipped`, `failed`) contain per-index entries with reasons for non-created rows.
+
+### Devices — Inventory
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/devices/inventory` | Streaming read-only export of the live fleet | `format`, `columns`, list filters | CSV or JSON array |
+
+`GET /api/devices/inventory` exports the live fleet including runtime fields (operational_state, hold, telemetry, verification status). Query parameters:
+
+- `format` — `csv` or `json`. CSV serializes JSONB columns as JSON strings; `json` returns a JSON array of nested objects.
+- `columns` — comma-separated allowlist of dot-path column names (see `app/devices/schemas/inventory.py` for the enum). Omitting or leaving empty returns all columns.
+- List filters — `pack_id`, `platform_id`, `status`, `host_id`, `tags.*`, and others mirroring the devices list endpoint.
+
 ## Bulk Device Actions
 
 | Method | Path | Purpose | Main input | Primary response |
@@ -75,7 +105,6 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | `POST` | `/api/devices/bulk/start-nodes` | Start nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/stop-nodes` | Stop nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/restart-nodes` | Restart nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
-| `POST` | `/api/devices/bulk/set-auto-manage` | Toggle `auto_manage` in bulk | `BulkAutoManageUpdate` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/update-tags` | Merge or replace tags in bulk | `BulkTagsUpdate` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/delete` | Delete many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/enter-maintenance` | Enter maintenance in bulk | `BulkMaintenanceEnter` | `BulkOperationResult` |

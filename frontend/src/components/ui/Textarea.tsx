@@ -8,7 +8,7 @@ interface TextareaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>
   fullWidth?: boolean;
 }
 
-const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
   { value, onChange, monospace = false, invalid = false, fullWidth = true, className = '', rows = 4, ...rest },
   ref,
 ) {
@@ -34,5 +34,3 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textare
     />
   );
 });
-
-export default Textarea;

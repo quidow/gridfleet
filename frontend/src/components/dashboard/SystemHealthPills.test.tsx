@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import SystemHealthPills from './SystemHealthPills';
+import { SystemHealthPills } from './SystemHealthPills';
 
 const mockGridStatus = vi.fn(() => ({
   data: {

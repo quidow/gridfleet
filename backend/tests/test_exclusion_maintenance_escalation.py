@@ -33,7 +33,6 @@ def _make_device(
             connection_type=ConnectionType.usb,
             operational_state=operational_state,
             hold=hold,
-            auto_manage=True,
         )
     return _bypass_tmp
 

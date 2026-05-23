@@ -135,7 +135,6 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
             operational_state=DeviceOperationalState.available,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
-            auto_manage=True,
         )
     db_session.add(device)
     await db_session.commit()

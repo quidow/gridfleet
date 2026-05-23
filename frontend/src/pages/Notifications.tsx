@@ -3,25 +3,25 @@ import { Bell } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useEventCatalog } from '../hooks/useEventCatalog';
 import { usePaginatedQueryState } from '../hooks/usePaginatedQueryState';
-import DataTable from '../components/ui/DataTable';
+import { DataTable } from '../components/ui/DataTable';
 import type { DataTableColumn } from '../components/ui/DataTable';
-import EmptyState from '../components/ui/EmptyState';
-import FilterBar from '../components/ui/FilterBar';
-import ListPageSubheader from '../components/ui/ListPageSubheader';
-import Pagination from '../components/ui/Pagination';
+import { EmptyState } from '../components/ui/EmptyState';
+import { FilterBar } from '../components/ui/FilterBar';
+import { ListPageSubheader } from '../components/ui/ListPageSubheader';
+import { Pagination } from '../components/ui/Pagination';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime } from '../utils/dateFormatting';
 import type { SystemEventRead } from '../types';
-import FetchError from '../components/ui/FetchError';
-import PageHeader from '../components/ui/PageHeader';
-import Select from '../components/ui/Select';
-import Badge from '../components/ui/Badge';
-import SeverityBadge from '../components/notifications/SeverityBadge';
-import EventDetailsCell from '../components/notifications/EventDetailsCell';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Select } from '../components/ui/Select';
+import { Badge } from '../components/ui/Badge';
+import { SeverityBadge } from '../components/notifications/SeverityBadge';
+import { EventDetailsCell } from '../components/notifications/EventDetailsCell';
 import {
   EVENT_SEVERITY_LABEL,
   type EventSeverity,
 } from '../components/notifications/eventRegistry';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 const COLUMNS: DataTableColumn<SystemEventRead>[] = [
   {
@@ -93,8 +93,7 @@ function SeverityChipFilter({ selected, onToggle }: SeverityChipFilterProps) {
   );
 }
 
-export default function Notifications() {
-  usePageTitle('Notifications');
+function NotificationsContent() {
   const {
     searchParams,
     page,
@@ -110,7 +109,7 @@ export default function Notifications() {
 
   const { data: eventCatalog, isLoading: eventCatalogLoading } = useEventCatalog();
   const types = filterType ? [filterType] : undefined;
-  const { data: events, isLoading, isError, refetch, dataUpdatedAt } = useNotifications({
+  const { data: events, isLoading, dataUpdatedAt } = useNotifications({
     types,
     severities: severities.length ? severities : undefined,
     limit: pageSize,
@@ -143,7 +142,7 @@ export default function Notifications() {
   }
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Notifications"
         subtitle="System-wide event stream"
@@ -164,13 +163,6 @@ export default function Notifications() {
         </FilterBar>
 
         <ListPageSubheader title={showingLabel} />
-
-        {isError && (
-          <FetchError
-            message="Could not load notifications. Check your connection and try again."
-            onRetry={() => void refetch()}
-          />
-        )}
 
         <DataTable
           columns={COLUMNS}
@@ -194,6 +186,18 @@ export default function Notifications() {
           onPageSizeChange={setPageSize}
         />
       </div>
+    </>
+  );
+}
+
+export function Notifications() {
+  usePageTitle('Notifications');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="notifications">
+        <NotificationsContent />
+      </SectionErrorBoundary>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Terminal } from 'lucide-react';
 
-export default function DeviceLogsEmptyPanel() {
+export function DeviceLogsEmptyPanel() {
   return (
     <section className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-5 py-8">
       <div className="mx-auto flex max-w-xl flex-col items-center text-center sm:flex-row sm:text-left">

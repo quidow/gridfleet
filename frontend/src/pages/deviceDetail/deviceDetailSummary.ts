@@ -106,6 +106,17 @@ export function hardwareSummary(
   };
 }
 
+function connectivityPillValue(
+  hs: DeviceRead['health_summary'],
+): string {
+  if (hs.connectivity_status) {
+    return hs.connectivity_status === 'ok' ? 'OK' : 'Failed';
+  }
+  if (hs.healthy === true) return 'OK';
+  if (hs.healthy === false) return 'Failed';
+  return 'Unknown';
+}
+
 export function getDeviceDetailStatusPills(
   device: Pick<
     DeviceDetail,
@@ -131,7 +142,7 @@ export function getDeviceDetailStatusPills(
       key: 'connectivity',
       label: 'Connectivity',
       tone: connectivityTone(device.health_summary),
-      value: device.health_summary.summary || 'Unknown',
+      value: connectivityPillValue(device.health_summary),
       title: device.health_summary.last_checked_at
         ? `Last checked ${formatDateTime(device.health_summary.last_checked_at)}`
         : undefined,

@@ -66,7 +66,6 @@ async def create_device_record(
     manufacturer: str | None = None,
     model: str | None = None,
     tags: dict[str, Any] | None = None,
-    auto_manage: bool = True,
     ip_address: str | None = None,
     roku_password: str | None = None,
     test_data: dict[str, Any] | None = None,
@@ -126,7 +125,6 @@ async def create_device_record(
         manufacturer=manufacturer,
         model=model,
         tags=tags,
-        auto_manage=auto_manage,
         device_config=device_config,
         test_data=resolved_test_data,
     )
@@ -312,3 +310,40 @@ async def seed_host_with_devices(
         )
         devices.append(device)
     return host, devices
+
+
+async def seed_host_named(db_session: AsyncSession, hostname: str) -> Host:
+    """Create a single Host with the given hostname; no devices."""
+    host = Host(
+        hostname=hostname,
+        ip="10.0.0.99",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+    )
+    db_session.add(host)
+    await db_session.commit()
+    await db_session.refresh(host)
+    return host
+
+
+async def seed_existing_device(
+    db_session: AsyncSession,
+    *,
+    host_id: uuid.UUID | None = None,
+    identity_scheme: str,
+    identity_value: str,
+    identity_scope: str = "host",
+) -> Device:
+    """Create one Device with the given identity. Reuses create_device_record for sane defaults."""
+    if host_id is None:
+        host = await seed_host_named(db_session, f"seed-{uuid.uuid4().hex[:6]}")
+        host_id = host.id
+    return await create_device_record(
+        db_session,
+        host_id=host_id,
+        identity_value=identity_value,
+        name=f"Existing {identity_value}",
+        identity_scheme=identity_scheme,
+        identity_scope=identity_scope,
+    )

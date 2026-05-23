@@ -1,9 +1,9 @@
 import { type FormEvent, useState } from 'react';
-import Modal from '../../components/ui/Modal';
-import Button from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
 import { Field, Select, TextField } from '../../components/ui';
-import DeviceVerificationProgress from './DeviceVerificationProgress';
-import DeviceManifestFields from './DeviceManifestFields';
+import { DeviceVerificationProgress } from './DeviceVerificationProgress';
+import { DeviceManifestFields } from './DeviceManifestFields';
 import type {
   ConnectionType,
   DeviceRead,
@@ -42,7 +42,7 @@ type Props = {
   title?: string;
 };
 
-export default function SetupVerificationModal({
+export function SetupVerificationModal({
   isOpen,
   onClose,
   onCompleted,

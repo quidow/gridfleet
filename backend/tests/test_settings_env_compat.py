@@ -81,39 +81,27 @@ def test_agent_comm_config_accepts_field_name_kwargs() -> None:
     cfg = AgentCommConfig(
         agent_auth_username="agent-user",
         agent_auth_password="agent-secret",
-        agent_terminal_token="terminal-token",
-        agent_terminal_scheme="wss",
     )
     assert cfg.agent_auth_username == "agent-user"
     assert cfg.agent_auth_password == "agent-secret"
-    assert cfg.agent_terminal_token == "terminal-token"
-    assert cfg.agent_terminal_scheme == "wss"
 
 
 def test_agent_comm_config_reads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIDFLEET_AGENT_AUTH_USERNAME", "env-agent")
     monkeypatch.setenv("GRIDFLEET_AGENT_AUTH_PASSWORD", "env-secret")
-    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_TOKEN", "env-terminal")
-    monkeypatch.setenv("GRIDFLEET_AGENT_TERMINAL_SCHEME", "wss")
 
     cfg = AgentCommConfig()
     assert cfg.agent_auth_username == "env-agent"
     assert cfg.agent_auth_password == "env-secret"
-    assert cfg.agent_terminal_token == "env-terminal"
-    assert cfg.agent_terminal_scheme == "wss"
 
 
 def test_agent_comm_config_accepts_alias_kwargs() -> None:
     cfg = AgentCommConfig(
         GRIDFLEET_AGENT_AUTH_USERNAME="alias-agent",
         GRIDFLEET_AGENT_AUTH_PASSWORD="alias-secret",
-        GRIDFLEET_AGENT_TERMINAL_TOKEN="alias-terminal",
-        GRIDFLEET_AGENT_TERMINAL_SCHEME="wss",
     )
     assert cfg.agent_auth_username == "alias-agent"
     assert cfg.agent_auth_password == "alias-secret"
-    assert cfg.agent_terminal_token == "alias-terminal"
-    assert cfg.agent_terminal_scheme == "wss"
 
 
 def test_agent_comm_config_requires_agent_auth_pair() -> None:

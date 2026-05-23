@@ -35,6 +35,7 @@ from app.devices.services.lifecycle_policy_actions import (
     restore_run_if_needed,
 )
 from app.devices.services.lifecycle_policy_state import (
+    CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
@@ -256,6 +257,19 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
     # intent-driven deferrals registered by any caller.
     await reconcile_device(db, device.id)
     current_state = policy_state(device)
+
+    # Clear any stale "A client session is still running" suppression recorded by
+    # ``attempt_auto_recovery`` while a previous session was active. That branch
+    # does not set ``stop_pending``, so nothing else clears the reason once the
+    # session ends — the device renders as ``Unhealthy: A client session is still
+    # running`` indefinitely (lifecycle_policy_summary maps the suppression to
+    # ``state=suppressed`` → frontend ``deriveUnifiedHealth`` tone=error).
+    if current_state.get("recovery_suppressed_reason") == CLIENT_SESSION_RUNNING_SUPPRESSION_REASON:
+        current_state["recovery_suppressed_reason"] = None
+        set_action(current_state, "recovery_unsuppressed_after_session_end")
+        write_state(device, current_state)
+        await db.commit()
+
     if not current_state.get("stop_pending"):
         return DeferredStopOutcome.NO_PENDING
 
@@ -428,19 +442,6 @@ async def attempt_auto_recovery(
         )
         return False
 
-    # Defensive: current callers (device_connectivity_loop) pre-filter on
-    # auto_manage. Kept so callers added later (e.g. the recovery-on-
-    # exit-maintenance scheduler) do not re-derive the gate.
-    if not device.auto_manage:
-        return await record_recovery_suppressed(
-            db,
-            device,
-            current_state,
-            source=source,
-            reason=reason,
-            suppression_reason="Auto-manage is disabled",
-            run=run,
-        )
     if not await is_ready_for_use_async(db, device):
         return await record_recovery_suppressed(
             db,
@@ -488,7 +489,7 @@ async def attempt_auto_recovery(
             current_state,
             source=source,
             reason=reason,
-            suppression_reason="A client session is still running",
+            suppression_reason=CLIENT_SESSION_RUNNING_SUPPRESSION_REASON,
             run=run,
         )
 
@@ -817,7 +818,7 @@ async def attempt_auto_recovery(
         DeviceEventType.lifecycle_recovered,
         summary_state=DeviceLifecyclePolicySummaryState.idle,
         reason=reason,
-        detail="Device recovered and rejoined automatic management",
+        detail="Device recovered successfully",
         source=source,
         run_id=run.id if run is not None else None,
         run_name=run.name if run is not None else None,

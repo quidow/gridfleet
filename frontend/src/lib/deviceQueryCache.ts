@@ -28,24 +28,6 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function waitForNextPaint(minimumDelayMs = 0): Promise<void> {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (minimumDelayMs > 0) {
-          window.setTimeout(resolve, minimumDelayMs);
-          return;
-        }
-        resolve();
-      });
-    });
-  });
-}
-
 export function rollbackOptimisticDeviceQueries(
   qc: QueryClient,
   context: OptimisticDeviceContext | undefined,
@@ -108,13 +90,6 @@ export function invalidatePatchedDeviceQueries(
 ) {
   qc.invalidateQueries({ queryKey: ['devices'] });
   qc.invalidateQueries({ queryKey: ['device', deviceId] });
-}
-
-export function updateAutoManage(autoManage: boolean): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => ({
-    ...device,
-    auto_manage: autoManage,
-  });
 }
 
 export function updateHold(hold: DeviceRead['hold']): DeviceCacheUpdater {

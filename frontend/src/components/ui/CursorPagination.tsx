@@ -1,4 +1,4 @@
-import Button from './Button';
+import { Button } from './Button';
 
 interface CursorPaginationProps {
   pageSize: number;
@@ -15,7 +15,7 @@ interface CursorPaginationProps {
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
-export default function CursorPagination({
+export function CursorPagination({
   pageSize,
   pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
   nextCursor,

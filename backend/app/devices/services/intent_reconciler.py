@@ -267,12 +267,7 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         for intent in intents
         if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
     ]
-    if (
-        not active_node_intents
-        and device.auto_manage
-        and device.verified_at is not None
-        and device.hold != DeviceHold.maintenance
-    ):
+    if not active_node_intents and device.verified_at is not None and device.hold != DeviceHold.maintenance:
         intents = [
             *intents,
             DeviceIntent(

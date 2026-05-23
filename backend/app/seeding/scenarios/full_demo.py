@@ -17,7 +17,7 @@ from app.devices.models import (
     GroupType,
     HardwareHealthStatus,
 )
-from app.hosts.models import HostPluginRuntimeStatus, HostStatus, HostTerminalSession, OSType
+from app.hosts.models import HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.plugins.models import AppiumPlugin
 from app.runs.models import RunState
@@ -470,27 +470,11 @@ def _apply_lifecycle_policy_states(
 
     # Recovery Eligible — the already-offline device gets a last_action so the
     # summary promotes it from idle to "Recovery Eligible".
-    offline_device.auto_manage = True
     offline_device.lifecycle_policy_state = _policy(
         last_action="mark_unreachable",
         last_action_at=_iso(-900),
         last_failure_source="device_connectivity",
         last_failure_reason="Device dropped off ADB bus",
-    )
-
-    # Manual Recovery — another offline device with auto_manage disabled, so
-    # the operator has to intervene by hand.
-    manual_device = all_devices[12]
-    manual_device.operational_state = DeviceOperationalState.offline
-    manual_device.hardware_health_status = HardwareHealthStatus.unknown
-    manual_device.hardware_telemetry_reported_at = None
-    manual_device.auto_manage = False
-    manual_device.lifecycle_policy_state = _policy(
-        last_action="mark_unreachable",
-        last_action_at=_iso(-1800),
-        last_failure_source="appium_node",
-        last_failure_reason="Node refused to start — USB hub power cycle required",
-        recovery_suppressed_reason="auto_manage is disabled for this device",
     )
 
     # Suppressed — available device where auto-recovery is explicitly paused.
@@ -1324,41 +1308,6 @@ def _build_operator_history(ctx: SeedContext, devices: list[Device], hosts: list
                 changed_at=ctx.now - timedelta(days=7 - index, minutes=5),
             )
         )
-
-    online_hosts = [host for host in hosts if host.status is HostStatus.online]
-    terminal_rows = [
-        HostTerminalSession(
-            host_id=online_hosts[0].id,
-            opened_by="demo-admin",
-            opened_at=ctx.now - timedelta(days=2, minutes=12),
-            closed_at=ctx.now - timedelta(days=2, minutes=4),
-            close_reason="client_closed",
-            client_ip="10.0.0.42",
-            shell="/bin/zsh",
-            agent_pid=43122,
-        ),
-        HostTerminalSession(
-            host_id=online_hosts[1].id,
-            opened_by="demo-operator",
-            opened_at=ctx.now - timedelta(hours=9, minutes=30),
-            closed_at=ctx.now - timedelta(hours=9, minutes=11),
-            close_reason="agent_closed",
-            client_ip="10.0.0.43",
-            shell="/bin/bash",
-            agent_pid=28645,
-        ),
-        HostTerminalSession(
-            host_id=online_hosts[2].id,
-            opened_by="demo-admin",
-            opened_at=ctx.now - timedelta(hours=1, minutes=20),
-            closed_at=ctx.now - timedelta(hours=1, minutes=17),
-            close_reason="proxy_error",
-            client_ip="10.0.0.42",
-            shell="/bin/zsh",
-            agent_pid=39211,
-        ),
-    ]
-    session.add_all(terminal_rows)
 
 
 # ---------------------------------------------------------------------------

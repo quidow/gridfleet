@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Cable, Cloud, LockKeyhole, Pencil, Play, Power, RefreshCw, Square, Trash2, Wifi, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PlatformIcon } from '../../components/PlatformIcon';
-import Badge, { type BadgeTone } from '../../components/ui/Badge';
-import Popover from '../../components/ui/Popover';
+import { Badge, type BadgeTone } from '../../components/ui/Badge';
+import { Popover } from '../../components/ui/Popover';
 import { missingSetupFieldLabel } from '../../components/readiness';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorStopped } from '../../lib/emulatorState';
@@ -15,7 +15,7 @@ import type { DataTableColumn } from '../../components/ui/DataTable';
 import type { DeviceChipStatus, DeviceRead } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_COLORS, DEVICE_TYPE_LABELS } from './devicePageHelpers';
 import type { DeviceSortKey } from './devicePageHelpers';
-import DeviceHealthCell from './DeviceHealthCell';
+import { DeviceHealthCell } from './DeviceHealthCell';
 import type { DeviceAction } from './deviceActions';
 
 function availabilityTone(status: DeviceChipStatus): BadgeTone {
@@ -29,10 +29,23 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
   }
 }
 
+function availabilityTooltip(device: DeviceRead): string | undefined {
+  const status = deviceChipStatus(device);
+  if (status === 'maintenance') {
+    return device.lifecycle_policy_summary.maintenance_reason || 'In maintenance';
+  }
+  if (status === 'offline') {
+    if (device.health_summary.connectivity_status === 'failed') return 'Connectivity failed';
+    if (device.health_summary.healthy === false) return 'Health check failed';
+    return 'Offline';
+  }
+  return undefined;
+}
+
 export function AvailabilityCell({ device }: { device: DeviceRead }) {
   const status = deviceChipStatus(device);
   return (
-    <Badge tone={availabilityTone(status)}>
+    <Badge tone={availabilityTone(status)} title={availabilityTooltip(device)}>
       {DEVICE_STATUS_LABELS[status]}
     </Badge>
   );
@@ -114,36 +127,6 @@ function StateCell({ device, pendingAction }: { device: DeviceRead; pendingActio
         ) : null}
       </div>
     </Popover>
-  );
-}
-
-function AutoManageToggle({
-  device,
-  rowBusy,
-  onAction,
-}: {
-  device: DeviceRead;
-  rowBusy: boolean;
-  onAction: (action: DeviceAction) => void;
-}) {
-  return (
-    <label
-      className="relative inline-flex h-5 w-9 cursor-pointer items-center align-middle"
-      title={device.auto_manage ? 'Auto-manage enabled' : 'Auto-manage disabled'}
-    >
-      <input
-        type="checkbox"
-        checked={device.auto_manage}
-        disabled={rowBusy}
-        onChange={(event) =>
-          onAction({ type: 'toggle-auto-manage', deviceId: device.id, autoManage: event.target.checked })
-        }
-        className="peer absolute inset-0 z-10 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 disabled:cursor-not-allowed"
-        aria-label={`Toggle auto-manage for ${device.name}`}
-      />
-      <span className="pointer-events-none absolute inset-0 rounded-full bg-border transition peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface-1 peer-disabled:opacity-50" />
-      <span className="pointer-events-none relative ml-0.5 h-4 w-4 rounded-full bg-surface-1 shadow-sm transition peer-checked:translate-x-4 peer-disabled:opacity-70" />
-    </label>
   );
 }
 
@@ -362,19 +345,6 @@ export function buildDeviceColumns(ctx: DeviceColumnContext): DataTableColumn<De
       width: '8rem',
       className: 'whitespace-nowrap',
       render: (device) => <DeviceHealthCell device={device} />,
-    },
-    {
-      key: 'auto_manage',
-      header: 'Auto',
-      align: 'center',
-      width: '4.5rem',
-      render: (device) => (
-        <AutoManageToggle
-          device={device}
-          rowBusy={ctx.pendingActionForDevice(device.id) !== null}
-          onAction={ctx.onAction}
-        />
-      ),
     },
   ];
 }

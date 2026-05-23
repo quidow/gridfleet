@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { DeviceRead } from '../../types';
-import Popover from '../../components/ui/Popover';
+import { Popover } from '../../components/ui/Popover';
 import { deriveUnifiedHealth, type UnifiedHealthTone } from '../../lib/deviceUnifiedHealth';
 import { formatBatteryLevel, formatChargingState } from '../../lib/hardwareTelemetry';
 
@@ -50,9 +50,8 @@ function DeviceHealthCellInner({ device }: Props) {
   const telemetryLine = `${formatBatteryLevel(device.battery_level_percent)} · ${formatChargingState(device.charging_state)}`;
 
   const showReasons = health.tone !== 'ok' && health.tone !== 'unknown' && health.reasons.length > 0;
-  const showAutoManage = !device.auto_manage;
 
-  const hasDetail = showTelemetry || showReasons || showAutoManage;
+  const hasDetail = showTelemetry || showReasons;
 
   const trigger = (
     <span className="inline-flex items-center gap-1.5">
@@ -90,9 +89,6 @@ function DeviceHealthCellInner({ device }: Props) {
           <p className="text-text-2">{telemetryLine}</p>
         </div>
       ) : null}
-      {showAutoManage ? (
-        <p className="text-text-3">Auto-manage disabled</p>
-      ) : null}
     </div>
   );
 
@@ -107,5 +103,4 @@ function DeviceHealthCellInner({ device }: Props) {
   );
 }
 
-const DeviceHealthCell = memo(DeviceHealthCellInner);
-export default DeviceHealthCell;
+export const DeviceHealthCell = memo(DeviceHealthCellInner);

@@ -5,7 +5,7 @@ interface ToggleProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onC
   onChange: (checked: boolean) => void;
 }
 
-export default function Toggle({ checked, onChange, className = '', disabled, ...rest }: ToggleProps) {
+export function Toggle({ checked, onChange, className = '', disabled, ...rest }: ToggleProps) {
   return (
     <button
       type="button"

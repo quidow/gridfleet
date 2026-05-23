@@ -45,9 +45,6 @@ class Host(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     devices: Mapped[list[Any]] = relationship("Device", back_populates="host")
-    terminal_sessions: Mapped[list[Any]] = relationship(
-        "HostTerminalSession", back_populates="host", cascade="all, delete-orphan"
-    )
 
     @property
     def missing_prerequisites(self) -> list[str]:

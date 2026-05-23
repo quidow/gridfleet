@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { Activity, Server, Smartphone } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
-import StatCard from './StatCard';
+import { StatCard } from './StatCard';
 
 describe('StatCard', () => {
   it('renders label, value, and hint', () => {

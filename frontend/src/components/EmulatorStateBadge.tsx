@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react';
-import Badge, { type BadgeTone } from './ui/Badge';
+import { Badge, type BadgeTone } from './ui/Badge';
 
 const STATE_CONFIG: Record<string, { label: string; tone: BadgeTone; spinning?: boolean }> = {
   stopped: { label: 'Stopped', tone: 'neutral' },

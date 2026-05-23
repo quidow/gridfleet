@@ -240,7 +240,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
 
     success = data.get("success", False)
 
-    if success and device.auto_manage and device.appium_node:
+    if success and device.appium_node:
         # Intentionally NOT re-fetched with `get_device_for_update_or_404` here:
         # Inline restart writes desired state directly so concurrent operator
         # actions (maintenance enter, delete) can preempt — see

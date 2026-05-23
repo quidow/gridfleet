@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import StatCardsRow from './StatCardsRow';
+import { StatCardsRow } from './StatCardsRow';
 
 vi.mock('../../hooks/useDevices', () => ({
   useDevices: () => ({ data: [] }),

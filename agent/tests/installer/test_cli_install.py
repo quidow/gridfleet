@@ -35,12 +35,6 @@ def test_install_dry_run_prints_plan(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert "AGENT_MANAGER_URL=https://manager.example.com" in output
 
 
-def test_install_dry_run_validates_terminal_token(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["install", "--dry-run", "--enable-web-terminal"]) == 2
-
-    assert "AGENT_TERMINAL_TOKEN must be set" in capsys.readouterr().err
-
-
 def test_install_without_dry_run_is_not_implemented(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["install"]) == 2
 

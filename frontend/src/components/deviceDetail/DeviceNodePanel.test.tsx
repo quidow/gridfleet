@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeviceDetail } from '../../types';
-import DeviceNodePanel from './DeviceNodePanel';
+import { DeviceNodePanel } from './DeviceNodePanel';
 
 const mutation = {
   isPending: false,
@@ -16,7 +16,6 @@ vi.mock('../../hooks/useDevices', () => ({
   useRunDeviceLifecycleAction: () => mutation,
   useStartNode: () => mutation,
   useStopNode: () => mutation,
-  useToggleDeviceAutoManage: () => mutation,
   useClearAppiumNodeTransition: () => mutation,
 }));
 
@@ -45,7 +44,6 @@ function makeDevice(): DeviceDetail {
     model: 'Pixel 9',
     model_number: null,
     software_versions: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '192.168.1.254',

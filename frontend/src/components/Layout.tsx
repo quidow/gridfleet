@@ -1,14 +1,14 @@
 import { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import Sidebar from './Sidebar';
+import { Sidebar } from './Sidebar';
 import { useEventStream } from '../hooks/useEventStream';
 import { EventStreamContext } from '../context/EventStreamContext';
 import { LoadingSpinner } from './LoadingSpinner';
-import SidebarProvider from './SidebarProvider';
-import { PageErrorBoundary } from './ErrorBoundary';
+import { SidebarProvider } from './SidebarProvider';
+import { PageErrorBoundary, SectionErrorBoundary } from './ErrorBoundary';
 
-export default function Layout() {
+export function Layout() {
   const { connected } = useEventStream();
   const location = useLocation();
 
@@ -16,7 +16,9 @@ export default function Layout() {
     <EventStreamContext.Provider value={{ connected }}>
       <SidebarProvider>
         <div className="flex h-screen bg-surface-0 text-text-1">
-          <Sidebar />
+          <SectionErrorBoundary scope="sidebar">
+            <Sidebar />
+          </SectionErrorBoundary>
           <main className="flex-1 overflow-auto">
             <div className="page-gutter min-h-full">
               <PageErrorBoundary resetKey={location.pathname} scope="route-outlet">

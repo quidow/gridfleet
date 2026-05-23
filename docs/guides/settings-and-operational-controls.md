@@ -25,7 +25,7 @@ Use this page for shared fleet behavior. Do not use it as a replacement for devi
 | `General` | manager loops, health timing, session viability, lifecycle backoff | changing these affects fleet-wide recovery and detection timing |
 | `Appium & Grid` | Grid URL, Grid polling, Appium port pool, startup timeout, default plugins | bad values can stop nodes from registering or probing correctly |
 | `Notifications` | in-app toast selection and threshold | too many events create alert fatigue; too few hide incidents |
-| `Device Defaults` | default `auto_manage` and platform tag presets for newly added devices | only new devices pick up these defaults automatically |
+| `Device Defaults` | platform tag presets for newly added devices | only new devices pick up these defaults automatically |
 | `Agent` | host auto-accept, minimum agent version, default port | directly changes host onboarding and version trust behavior |
 | `Reservations` | default TTL, heartbeat timeout, stale-run reaper timing | directly affects how long devices stay locked to runs |
 | `Data Retention` | cleanup age and cleanup cadence | aggressive values reduce history available for triage |
@@ -114,12 +114,7 @@ Practical guidance:
 
 The `Device Defaults` tab affects new devices, not the entire existing registry.
 
-Current defaults:
-
-- `devices.default_auto_manage`
-  - sets the starting `auto_manage` value for newly created or discovered devices
-
-If you change this value, only later intake work picks up the new default automatically. Existing devices keep their current settings until edited directly or changed through bulk/group actions.
+If you change a default, only later intake work picks up the new value automatically. Existing devices keep their current settings until edited directly or changed through bulk/group actions.
 
 ## Agent
 

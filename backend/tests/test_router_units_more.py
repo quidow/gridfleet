@@ -54,7 +54,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
-from app.hosts import router_terminal as host_terminal
 from app.packs.routers import (
     agent_state as agent_driver_packs,
 )
@@ -737,7 +736,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
     device_ids = [uuid.uuid4()]
     body = SimpleNamespace(device_ids=device_ids)
     tags_body = SimpleNamespace(device_ids=device_ids, tags={"lab": "east"}, merge=True)
-    auto_body = SimpleNamespace(device_ids=device_ids, auto_manage=True)
 
     for call, service_name, payload in (
         (bulk.bulk_start_nodes, "bulk_start_nodes", body),
@@ -748,7 +746,6 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_exit_maintenance, "bulk_exit_maintenance", body),
         (bulk.bulk_reconnect, "bulk_reconnect", body),
         (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
-        (bulk.bulk_set_auto_manage, "bulk_set_auto_manage", auto_body),
     ):
         with patch(
             f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
@@ -1012,9 +1009,6 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     ):
         assert await hosts.list_hosts(db=object()) == [{"id": str(host_id)}]
 
-    with patch("app.hosts.router.settings_service.get", new=Mock(return_value=True)):
-        assert await hosts.host_capabilities() == {"web_terminal_enabled": True}
-
 
 async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> None:
     host_id = uuid.uuid4()
@@ -1140,131 +1134,6 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         assert await hosts.confirm_discovery(host_id, body, db=object()) == "confirmed"  # type: ignore[arg-type]
 
 
-def test_host_terminal_helpers() -> None:
-    with (
-        patch("app.hosts.router_terminal.settings_service.get", new=Mock(return_value="")),
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
-    ):
-        assert host_terminal._origin_allowed("https://example.test") is True
-        assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) is None  # type: ignore[arg-type]
-
-    with patch("app.hosts.router_terminal.settings_service.get", new=Mock(return_value="https://ok.test")):
-        assert host_terminal._origin_allowed("https://ok.test") is True
-        assert host_terminal._origin_allowed("https://bad.test") is False
-
-    state = SimpleNamespace(authenticated=True, username="admin")
-    with (
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
-        patch("app.hosts.router_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
-    ):
-        assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) == "admin"  # type: ignore[arg-type]
-
-    state = SimpleNamespace(authenticated=False, username=None)
-    with (
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
-        patch("app.hosts.router_terminal.auth.resolve_browser_session_from_headers", new=Mock(return_value=state)),
-    ):
-        assert host_terminal._resolve_browser_username(SimpleNamespace(headers={})) is None  # type: ignore[arg-type]
-
-    assert host_terminal._agent_terminal_url("10.0.0.1", 5100).endswith("://10.0.0.1:5100/agent/terminal")
-    assert host_terminal._agent_terminal_url("fd00::1", 5100).endswith("://[fd00::1]:5100/agent/terminal")
-
-
-class _FakeHostTerminalSessionScope:
-    async def __aenter__(self) -> object:
-        return object()
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
-
-
-class _FakeHostTerminalWebSocket:
-    def __init__(self, *, origin: str | None = None, inbound: str = "browser-input") -> None:
-        self.headers = {"origin": origin} if origin is not None else {}
-        self.client = SimpleNamespace(host="127.0.0.1")
-        self.inbound = inbound
-        self.accepted = False
-        self.sent: list[str] = []
-        self.close_codes: list[int] = []
-
-    async def close(self, code: int = 1000) -> None:
-        self.close_codes.append(code)
-
-    async def accept(self) -> None:
-        self.accepted = True
-
-    async def send_text(self, data: str) -> None:
-        self.sent.append(data)
-
-    async def receive_text(self) -> str:
-        return self.inbound
-
-
-async def test_host_terminal_rejects_origin_and_unauthenticated_browser() -> None:
-    host_id = uuid.uuid4()
-
-    bad_origin_ws = _FakeHostTerminalWebSocket(origin="https://bad.test")
-    with (
-        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
-    ):
-        await host_terminal.host_terminal(bad_origin_ws, host_id)  # type: ignore[arg-type]
-    assert bad_origin_ws.close_codes == [1008]
-
-    unauthenticated_ws = _FakeHostTerminalWebSocket(origin="https://ok.test")
-    session_state = SimpleNamespace(authenticated=False, username=None)
-    with (
-        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=True)),
-        patch(
-            "app.hosts.router_terminal.auth.resolve_browser_session_from_headers",
-            new=Mock(return_value=session_state),
-        ),
-    ):
-        await host_terminal.host_terminal(unauthenticated_ws, host_id)  # type: ignore[arg-type]
-    assert unauthenticated_ws.close_codes == [1008]
-
-
-async def test_host_terminal_adapter_methods_and_unexpected_proxy_error_closes_ws() -> None:
-    host_id = uuid.uuid4()
-    ws = _FakeHostTerminalWebSocket(origin="https://ok.test")
-    host = SimpleNamespace(
-        id=host_id,
-        status=SimpleNamespace(value="online"),
-        ip="10.0.0.10",
-        agent_port=5100,
-    )
-    session_id = uuid.uuid4()
-
-    async def proxy_terminal(*, browser: object, agent_url: str, agent_token: str) -> str:
-        assert agent_url.endswith("://10.0.0.10:5100/agent/terminal")
-        assert agent_token == "token"
-        await browser.send_text("agent-output")
-        assert await browser.receive_text() == "browser-input"
-        await browser.close(code=1001)
-        raise RuntimeError("proxy exploded")
-
-    close_session = AsyncMock()
-    with (
-        patch("app.hosts.router_terminal.settings_service.get", side_effect=[True, "https://ok.test"]),
-        patch("app.hosts.router_terminal.auth.is_auth_enabled", new=Mock(return_value=False)),
-        patch("app.hosts.router_terminal.async_session", new=Mock(return_value=_FakeHostTerminalSessionScope())),
-        patch("app.hosts.router_terminal.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.hosts.router_terminal.host_terminal_audit.open_session", new=AsyncMock(return_value=session_id)),
-        patch("app.hosts.router_terminal.host_terminal_audit.close_session", new=close_session),
-        patch("app.hosts.router_terminal.proxy_terminal_session", new=proxy_terminal),
-        patch("app.hosts.router_terminal.agent_settings.agent_terminal_token", "token"),
-    ):
-        await host_terminal.host_terminal(ws, host_id)  # type: ignore[arg-type]
-
-    assert ws.accepted is True
-    assert ws.sent == ["agent-output"]
-    assert ws.close_codes == [1001, 1011, 1000]
-    close_session.assert_awaited_once()
-    assert close_session.await_args.kwargs["session_id"] == session_id
-    assert close_session.await_args.kwargs["close_reason"] == "unknown"
-
-
 def _control_device(**overrides: object) -> SimpleNamespace:
     values: dict[str, Any] = {
         "id": uuid.uuid4(),
@@ -1277,7 +1146,6 @@ def _control_device(**overrides: object) -> SimpleNamespace:
         "host": SimpleNamespace(ip="10.0.0.1", agent_port=5100),
         "host_id": uuid.uuid4(),
         "connection_target": "serial",
-        "auto_manage": False,
         "appium_node": None,
     }
     values.update(overrides)
@@ -1416,7 +1284,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     assert "not supported" in str(exc.value.detail)
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
-    auto_device = _control_device(auto_manage=True, appium_node=SimpleNamespace(observed_running=False))
+    auto_device = _control_device(appium_node=SimpleNamespace(observed_running=False))
     auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
@@ -1539,7 +1407,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     node = SimpleNamespace(observed_running=False)
     device = _control_device(
         id=device_id,
-        auto_manage=True,
         appium_node=node,
         session_viability_status="failed",
         session_viability_error="Appium node is not running",
@@ -1580,47 +1447,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     assert device.recovery_blocked_reason == "Node health failure"
     db.commit.assert_awaited_once()
     start_node.assert_awaited_once()
-
-
-async def test_devices_control_reconnect_skips_recovery_cleanup_when_auto_manage_disabled() -> None:
-    device_id = uuid.uuid4()
-    resolved = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
-    device = _control_device(
-        id=device_id,
-        auto_manage=False,
-        appium_node=SimpleNamespace(observed_running=True),
-        session_viability_status="failed",
-        session_viability_error="Appium node is not running",
-        recovery_allowed=False,
-        recovery_blocked_reason="Node health failure",
-    )
-    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
-    revoke = AsyncMock()
-    start_node = AsyncMock()
-    restart_node = AsyncMock()
-
-    with (
-        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
-        patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch(
-            "app.devices.routers.control.pack_device_lifecycle_action",
-            new=AsyncMock(return_value={"success": True}),
-        ),
-        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
-        patch("app.devices.routers.control.node_manager.start_node", new=start_node),
-        patch("app.devices.routers.control.node_manager.restart_node", new=restart_node),
-    ):
-        reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
-
-    assert reconnect["message"] == "Reconnected"
-    assert device.session_viability_status == "failed"
-    assert device.session_viability_error == "Appium node is not running"
-    revoke.assert_not_awaited()
-    db.flush.assert_not_awaited()
-    db.commit.assert_not_awaited()
-    start_node.assert_not_awaited()
-    restart_node.assert_not_awaited()
 
 
 async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
@@ -2732,7 +2558,6 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         host_id=None,
         connection_target="10.0.0.20:5555",
         identity_value="stable",
-        auto_manage=True,
         appium_node=SimpleNamespace(observed_running=False),
     )
     reconnect_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())

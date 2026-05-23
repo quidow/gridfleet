@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Server } from 'lucide-react';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
-import FetchError from '../../components/ui/FetchError';
 import { Badge, DataTable, EmptyState, type DataTableColumn } from '../../components/ui';
 import { useDriverPackHosts } from '../../hooks/useDriverDetail';
 import type { DriverPackHostStatus } from '../../types/driverPacks';
@@ -93,8 +92,8 @@ const columns: DataTableColumn<DriverPackHostStatus>[] = [
   },
 ];
 
-export default function DriverHostsPanel({ packId }: { packId: string }) {
-  const { data, isLoading, error, refetch } = useDriverPackHosts(packId);
+export function DriverHostsPanel({ packId }: { packId: string }) {
+  const { data, isLoading } = useDriverPackHosts(packId);
 
   if (isLoading) return <LoadingSpinner />;
 
@@ -103,11 +102,6 @@ export default function DriverHostsPanel({ packId }: { packId: string }) {
       columns={columns}
       rows={data?.hosts ?? []}
       rowKey={(row) => row.host_id}
-      error={
-        error ? (
-          <FetchError message="Driver pack host status could not be loaded." onRetry={() => void refetch()} />
-        ) : undefined
-      }
       emptyState={<EmptyState icon={Server} title="No host installations" />}
       caption="Driver pack host installations"
     />

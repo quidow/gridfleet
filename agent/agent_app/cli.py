@@ -76,9 +76,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "Set to `host.docker.internal` when the manager runs in Docker on the same host."
         ),
     )
-    install.add_argument("--enable-web-terminal", action="store_true")
-    install.add_argument("--terminal-token", default=None)
-
     subparsers.add_parser("status", help="Show local GridFleet agent installation and health status.")
 
     uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall the GridFleet agent host service.")
@@ -151,8 +148,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 grid_subscribe_url=args.grid_subscribe_url,
                 grid_node_port_start=args.grid_node_port_start,
                 advertise_ip=args.advertise_ip,
-                enable_web_terminal=args.enable_web_terminal,
-                terminal_token=args.terminal_token,
             )
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)

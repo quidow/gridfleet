@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import DiagnosticBundleModal from './DiagnosticBundleModal';
+import { DiagnosticBundleModal } from './DiagnosticBundleModal';
 
 function renderModal(props: Partial<ComponentProps<typeof DiagnosticBundleModal>> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -7,7 +7,7 @@ interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'typ
   description?: ReactNode;
 }
 
-export default function Checkbox({
+export function Checkbox({
   checked,
   onChange,
   label,

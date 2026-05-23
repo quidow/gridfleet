@@ -2,7 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import DeviceConfigEditor from './DeviceConfigEditor';
+import { DeviceConfigEditor } from './DeviceConfigEditor';
 import * as api from '../../api/devices';
 import * as driverPacksApi from '../../api/driverPacks';
 import { AuthContext, type AuthContextValue, DEFAULT_SESSION } from '../../context/auth';

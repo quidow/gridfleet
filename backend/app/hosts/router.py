@@ -186,11 +186,6 @@ async def list_hosts(db: DbDep) -> list[dict[str, Any]]:
     return [_serialize_host(host) for host in await host_service.list_hosts(db)]
 
 
-@router.get("/capabilities")
-async def host_capabilities() -> dict[str, bool]:
-    return {"web_terminal_enabled": bool(settings_service.get("agent.enable_web_terminal"))}
-
-
 @router.get("/{host_id}", response_model=HostDetail)
 async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)

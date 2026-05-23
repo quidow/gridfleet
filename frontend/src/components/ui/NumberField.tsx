@@ -1,5 +1,5 @@
 import { forwardRef, type InputHTMLAttributes, useEffect, useState } from 'react';
-import TextField from './TextField';
+import { TextField } from './TextField';
 
 interface NumberFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'size'> {
   value: number | null;
@@ -9,7 +9,7 @@ interface NumberFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
   fullWidth?: boolean;
 }
 
-const NumberField = forwardRef<HTMLInputElement, NumberFieldProps>(function NumberField(
+export const NumberField = forwardRef<HTMLInputElement, NumberFieldProps>(function NumberField(
   { value, onChange, invalid, size, fullWidth, ...rest },
   ref,
 ) {
@@ -43,5 +43,3 @@ const NumberField = forwardRef<HTMLInputElement, NumberFieldProps>(function Numb
     />
   );
 });
-
-export default NumberField;

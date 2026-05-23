@@ -50,21 +50,6 @@ async def test_bulk_set_status_route_removed(
     assert resp.status_code == 404
 
 
-async def test_bulk_set_auto_manage(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    ids = await _create_devices(db_session, default_host_id, 2)
-    resp = await client.post(
-        "/api/devices/bulk/set-auto-manage",
-        json={"device_ids": ids, "auto_manage": False},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["succeeded"] == 2
-
-    # Verify
-    for device_id in ids:
-        r = await client.get(f"/api/devices/{device_id}")
-        assert r.json()["auto_manage"] is False
-
-
 async def test_bulk_update_tags_merge(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     ids = await _create_devices(db_session, default_host_id, 2)
     # Set initial tags on first device

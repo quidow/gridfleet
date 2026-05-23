@@ -40,9 +40,6 @@ export function deriveUnifiedHealth(device: DeviceRead): UnifiedHealth {
   if (lifecycle === 'suppressed') {
     reasons.push(device.lifecycle_policy_summary?.detail || 'Recovery paused — admin review needed');
     tone = 'error';
-  } else if (lifecycle === 'manual') {
-    reasons.push(device.lifecycle_policy_summary?.detail || 'Manual recovery requested');
-    tone = 'error';
   } else if (lifecycle === 'backoff') {
     reasons.push(device.lifecycle_policy_summary?.detail || 'Recovery backoff active');
     if (tone === 'ok') tone = 'warn';

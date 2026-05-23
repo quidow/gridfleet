@@ -15,7 +15,7 @@ const SIZE_CLASSES: Record<TextFieldSize, string> = {
   sm: 'px-2.5 py-1.5 text-xs',
 };
 
-const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(
+export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(
   { value, onChange, size = 'md', invalid = false, fullWidth = true, className = '', type = 'text', ...rest },
   ref,
 ) {
@@ -41,5 +41,3 @@ const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextFiel
     />
   );
 });
-
-export default TextField;

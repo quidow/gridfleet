@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FolderOpen, Plus, Trash2 } from 'lucide-react';
-import BulkActionToolbar from './devices/BulkActionToolbar';
-import EmptyState from '../components/ui/EmptyState';
-import FilterBuilder from './devices/FilterBuilder';
+import { BulkActionToolbar } from './devices/BulkActionToolbar';
+import { EmptyState } from '../components/ui/EmptyState';
+import { FilterBuilder } from './devices/FilterBuilder';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import Modal from '../components/ui/Modal';
-import GroupActionBar from '../components/GroupActionBar';
+import { Modal } from '../components/ui/Modal';
+import { GroupActionBar } from '../components/GroupActionBar';
 import { PlatformIcon } from '../components/PlatformIcon';
 import { AvailabilityCell } from './devices/deviceColumns';
-import DataTable from '../components/ui/DataTable';
-import Button from '../components/ui/Button';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
+import { DataTable } from '../components/ui/DataTable';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Card } from '../components/ui/Card';
 import type { DataTableColumn } from '../components/ui/DataTable';
 import { useDevices } from '../hooks/useDevices';
 import { useDeviceGroup, useUpdateDeviceGroup, useAddGroupMembers, useRemoveGroupMembers } from '../hooks/useDeviceGroups';
@@ -27,7 +27,7 @@ import { resolvePlatformLabel } from '../lib/labels';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DeviceRead } from '../types';
 
-export default function DeviceGroupDetail() {
+export function DeviceGroupDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: group, isLoading } = useDeviceGroup(id!);
   const { data: allDevices = [] } = useDevices({});

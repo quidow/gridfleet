@@ -35,7 +35,6 @@ CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
     "grid": "Appium & Grid",
     "notifications": "Notifications",
-    "devices": "Device Defaults",
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
@@ -523,14 +522,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Minimum severity for toasts: info, warning, error",
         allowed_values=["info", "warning", "error"],
     ),
-    # ── Device Defaults ──
-    SettingDefinition(
-        key="devices.default_auto_manage",
-        category="devices",
-        setting_type="bool",
-        default=True,
-        description="Default auto_manage value for newly discovered devices",
-    ),
     # ── Agent ──
     SettingDefinition(
         key="agent.min_version",
@@ -564,25 +555,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Default agent port for new hosts",
         min_value=1024,
         max_value=65535,
-    ),
-    SettingDefinition(
-        key="agent.enable_web_terminal",
-        category="agent",
-        setting_type="bool",
-        default=False,
-        description="Enable the host web terminal (backend WebSocket proxy to agent PTY)",
-        env_var="GRIDFLEET_ENABLE_WEB_TERMINAL",
-    ),
-    SettingDefinition(
-        key="agent.web_terminal_allowed_origins",
-        category="agent",
-        setting_type="string",
-        default="",
-        description=(
-            "Comma-separated allowed browser origins for the terminal WebSocket "
-            "(empty = block all when auth is enabled)"
-        ),
-        env_var="GRIDFLEET_WEB_TERMINAL_ALLOWED_ORIGINS",
     ),
     SettingDefinition(
         key="agent.http_pool_enabled",

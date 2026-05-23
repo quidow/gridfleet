@@ -47,6 +47,7 @@ def default_state() -> dict[str, Any]:
         "recovery_suppressed_reason": None,
         "backoff_until": None,
         "recovery_backoff_attempts": 0,
+        "maintenance_reason": None,
     }
 
 
@@ -138,7 +139,7 @@ def record_manual_recovered(next_state: dict[str, Any]) -> None:
     The auto-recovery loop only clears ``recovery_suppressed_reason`` when it
     runs ``attempt_auto_recovery`` end-to-end, and that path early-returns when
     the node is already running. Without this helper a successful manual
-    Restart leaves stale suppression metadata, freezing the device in the
+    restart leaves stale suppression metadata, freezing the device in the
     "Recovery paused — admin review needed" UI state.
     """
     next_state["last_failure_source"] = None
@@ -150,6 +151,13 @@ def record_manual_recovered(next_state: dict[str, Any]) -> None:
 
 MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
 
+# Recorded by ``attempt_auto_recovery`` when blocked by an active client
+# session. Unlike other suppression reasons (maintenance, cooldown, etc.)
+# this one is transient by definition — the moment the session ends, the
+# blocker is gone. Held in a constant so ``handle_session_finished`` can
+# clear it without re-stating the literal.
+CLIENT_SESSION_RUNNING_SUPPRESSION_REASON = "A client session is still running"
+
 
 def clear_maintenance_recovery_suppression(device: Device) -> None:
     """Clear lifecycle suppression that ``handle_health_failure`` records when a
@@ -157,10 +165,10 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
 
     Only clears the maintenance-tautology reason
     (``MAINTENANCE_HOLD_SUPPRESSION_REASON``). Other suppressions
-    (``"Auto-manage is disabled"``, ``"Node restart failed"``,
-    ``"Recovery probe failed"``, an active backoff window, etc.) describe a
-    real condition that is independent of the maintenance hold and must
-    survive an operator-driven exit. No-op when those are present.
+    (``"Node restart failed"``, ``"Recovery probe failed"``, an active
+    backoff window, etc.) describe a real condition that is independent of
+    the maintenance hold and must survive an operator-driven exit. No-op
+    when those are present.
 
     Caller must hold the device row lock and is responsible for the commit;
     this helper performs an in-memory read-modify-write through ``write_state``
@@ -172,6 +180,18 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
     clear_backoff(next_state)
     next_state["recovery_suppressed_reason"] = None
     set_action(next_state, "maintenance_exited")
+    write_state(device, next_state)
+
+
+def set_maintenance_reason(device: Device, reason: str) -> None:
+    next_state = state(device)
+    next_state["maintenance_reason"] = reason
+    write_state(device, next_state)
+
+
+def clear_maintenance_reason(device: Device) -> None:
+    next_state = state(device)
+    next_state["maintenance_reason"] = None
     write_state(device, next_state)
 
 

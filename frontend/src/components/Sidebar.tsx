@@ -108,7 +108,7 @@ function NavGroupHeading({ title }: { title: string }) {
   );
 }
 
-export default function Sidebar() {
+export function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const auth = useAuth();
   const { mode, toggle: toggleTheme } = useTheme();

@@ -10,7 +10,6 @@ from app.devices.services.attention import compute_needs_attention
     [
         # Lifecycle alone
         (DeviceLifecyclePolicySummaryState.suppressed, "verified", True, HardwareHealthStatus.healthy, True),
-        (DeviceLifecyclePolicySummaryState.manual, "verified", True, HardwareHealthStatus.healthy, True),
         (DeviceLifecyclePolicySummaryState.backoff, "verified", True, HardwareHealthStatus.healthy, False),
         (DeviceLifecyclePolicySummaryState.deferred_stop, "verified", True, HardwareHealthStatus.healthy, False),
         (DeviceLifecyclePolicySummaryState.excluded, "verified", True, HardwareHealthStatus.healthy, False),

@@ -89,14 +89,6 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
       ],
     },
   ],
-  devices: [
-    {
-      id: 'registration-defaults',
-      title: 'New Device Defaults',
-      description: 'Default values applied during verified intake and discovery.',
-      settingKeys: ['devices.default_auto_manage'],
-    },
-  ],
   agent: [
     {
       id: 'agent-enrollment',

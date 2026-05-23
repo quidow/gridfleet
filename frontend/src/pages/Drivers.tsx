@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Package } from 'lucide-react';
 import { Badge, Button, DataTable, EmptyState, PageHeader, type DataTableColumn } from '../components/ui';
-import FetchError from '../components/ui/FetchError';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { AddDriverDialog } from '../components/settings/AddDriverDialog';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DriverPack, RuntimePolicy } from '../types/driverPacks';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 const STATE_TONES: Record<string, 'success' | 'warning' | 'neutral'> = {
   enabled: 'success',
@@ -95,16 +95,14 @@ const columns: DataTableColumn<DriverPack>[] = [
   },
 ];
 
-export default function Drivers() {
-  usePageTitle('Driver Packs');
-  const { data, isLoading, error, refetch } = useDriverPackCatalog();
+function DriversContent() {
+  const { data, isLoading } = useDriverPackCatalog();
   const [uploadOpen, setUploadOpen] = useState(false);
 
   if (isLoading) return <LoadingSpinner />;
-  if (error) return <FetchError message="Failed to load driver packs." onRetry={() => void refetch()} />;
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Driver Packs"
         subtitle="Appium driver packs available to this fleet"
@@ -124,6 +122,18 @@ export default function Drivers() {
       />
 
       <AddDriverDialog isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
+    </>
+  );
+}
+
+export function Drivers() {
+  usePageTitle('Driver Packs');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="drivers">
+        <DriversContent />
+      </SectionErrorBoundary>
     </div>
   );
 }
