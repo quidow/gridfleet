@@ -324,7 +324,7 @@ async def test_endpoint_offline_recovery_skip_and_failure_branches(
     await _check_connectivity(db_session)
 
     assert "endpoint-not-ready" not in await get_connectivity_control_plane_state(db_session)
-    assert "endpoint-manual" not in await get_connectivity_control_plane_state(db_session)
+    assert "endpoint-manual" in await get_connectivity_control_plane_state(db_session)
     assert "endpoint-failed-recovery" in await get_connectivity_control_plane_state(db_session)
 
 

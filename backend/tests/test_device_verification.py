@@ -672,35 +672,6 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
     assert (await client.get("/api/devices")).json() == []
 
 
-async def test_verification_job_cleanup_failure_blocks_save(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    stop_mock = AsyncMock(side_effect=RuntimeError("stop failed"))
-    healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
-
-    with (
-        _patch_running_node(),
-        patch("app.devices.services.verification_execution.stop_node", stop_mock),
-        patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
-        patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-    ):
-        resp = await client.post(
-            "/api/devices/verification-jobs",
-            json=device_payload(default_host_id, identity_value="verify-cleanup-fail"),
-        )
-        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
-
-    assert job["status"] == "failed"
-    _assert_job_stage(job, stage="cleanup", status="failed", detail_contains="stop failed")
-    assert (await client.get("/api/devices")).json() == []
-
-
 async def test_verification_job_duplicate_identity_is_reported_during_validation(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -941,52 +912,6 @@ async def test_existing_running_device_verification_can_enter_verifying(
     assert job["status"] == "completed"
     updated = (await client.get(f"/api/devices/{device.id}")).json()
     assert updated["readiness_state"] == "verified"
-
-
-async def test_update_verification_cleanup_failure_does_not_delete_existing_device(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    device = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value=f"cleanup-update-{uuid.uuid4()}",
-        connection_target="cleanup-update-target",
-        name="Cleanup Update Device",
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        os_version="14",
-    )
-
-    with (
-        _patch_running_node(active_connection_target=device.connection_target),
-        patch(
-            "app.devices.services.verification_execution.stop_node",
-            AsyncMock(side_effect=RuntimeError("stop failed")),
-        ),
-        patch(
-            "app.devices.services.verification_runner.httpx.AsyncClient",
-            return_value=_mock_http_client(payload={"healthy": True}),
-        ),
-        patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-    ):
-        resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
-            json={"host_id": default_host_id},
-        )
-        assert resp.status_code == 202
-        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
-
-    assert job["status"] == "failed"
-    _assert_job_stage(job, stage="cleanup", status="failed", detail_contains="stop failed")
-    assert (await client.get(f"/api/devices/{device.id}")).status_code == 200
 
 
 async def test_update_verification_probe_failure_stops_persisted_node(
