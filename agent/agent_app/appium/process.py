@@ -896,9 +896,14 @@ class AppiumProcessManager:
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
             if spec.stop_pending:
-                # Schedule the idle-stop watcher now that the grid node is up
-                # so the carried-forward stop intent actually fires.
-                self._ensure_stop_when_grid_idle_task(port)
+                # Carry the stop-pending flag so ``_auto_restart_appium``
+                # refuses to resurrect this Appium process if it exits. The
+                # actual stop is owned by the backend's appium reconciler
+                # via ``AppiumNode.desired_state``; the agent must not
+                # tear the relay down on its own (doing so would lose the
+                # cooldown's ``_drain`` flag when the backend later restarts
+                # the relay on a fresh port).
+                self._stop_pending_ports.add(port)
             return info
 
     async def _start_grid_node_service(self, spec: AppiumLaunchSpec) -> GridNodeSupervisorHandle:
@@ -947,6 +952,27 @@ class AppiumProcessManager:
         try:
             await handle.start()
             await handle.wait_until_running()
+            # Defense in depth: a freshly constructed ``NodeState`` always
+            # initializes ``_drain=False``. If the backend asked us to start
+            # this relay with sessions blocked (cooldown / maintenance carried
+            # forward across a restart), drain it before any hub-routed
+            # ``/se/grid/node/session`` reservation can land — otherwise the
+            # relay would silently accept new sessions until a later
+            # reconfigure pushes the drain.
+            if not spec.accepting_new_sessions:
+                if handle.service is not None:
+                    await handle.service.drain_to_block_new_sessions()
+                else:
+                    # In production the supervisor always exposes the service
+                    # after ``wait_until_running``. A None here means the
+                    # supervisor protocol diverged from expectations — the
+                    # relay would silently accept hub-routed sessions despite
+                    # the cooldown spec. Log loudly so the misconfiguration
+                    # is visible instead of failing closed.
+                    logger.warning(
+                        "grid_node_drain_skipped_missing_service",
+                        extra={"port": spec.port, "connection_target": spec.connection_target},
+                    )
         except Exception:
             with contextlib.suppress(Exception):
                 await handle.stop()
@@ -1010,11 +1036,17 @@ class AppiumProcessManager:
             )
 
         if stop_pending:
+            # Track the port so ``_auto_restart_appium`` skips resurrection if
+            # the Appium process exits while a stop is pending. The actual
+            # stop is owned by the backend's appium reconciler, which
+            # converges based on ``AppiumNode.desired_state``. Stopping here
+            # used to tear down the relay whenever cooldown landed on an idle
+            # node — backend then observed pid=None, restarted Appium on a
+            # fresh port, and the new ``NodeState`` came up with ``_drain=False``,
+            # silently undoing the cooldown. See ``_start_grid_node_service``
+            # for the defense-in-depth that re-drains a fresh relay when the
+            # launch spec carries ``accepting_new_sessions=False``.
             self._stop_pending_ports.add(port)
-            if service.has_active_session():
-                self._ensure_stop_when_grid_idle_task(port)
-                return
-            await self.stop(port)
             return
         self._stop_pending_ports.discard(port)
         self._cancel_task(self._stop_pending_tasks, port)
