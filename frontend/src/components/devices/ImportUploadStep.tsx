@@ -39,7 +39,7 @@ export function ImportUploadStep({ onBundle }: Props): JSX.Element {
           if (file) void handleFile(file);
         }}
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger-foreground">{error}</p>}
     </div>
   );
 }

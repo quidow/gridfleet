@@ -24,7 +24,7 @@ export function ImportResultsStep({ result, onReset }: Props): JSX.Element {
           <ul className="list-disc pl-5">
             {result.created.map((row) => (
               <li key={row.index}>
-                <Link className="text-blue-600 hover:underline" to={`/devices/${row.device_id}`}>
+                <Link className="text-accent hover:underline" to={`/devices/${row.device_id}`}>
                   {row.device_id}
                 </Link>
               </li>
@@ -46,7 +46,7 @@ export function ImportResultsStep({ result, onReset }: Props): JSX.Element {
       )}
       {result.failed.length > 0 && (
         <section>
-          <h3 className="font-semibold text-red-700">Failed</h3>
+          <h3 className="font-semibold text-danger-foreground">Failed</h3>
           <ul className="list-disc pl-5">
             {result.failed.map((row) => (
               <li key={row.index}>
