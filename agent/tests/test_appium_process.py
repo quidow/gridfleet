@@ -31,7 +31,7 @@ from agent_app.appium.process import (
 )
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import LifecycleActionResult
+from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
@@ -2085,3 +2085,9 @@ async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
     args = create_proc.await_args_list[0].args
     assert "--use-plugins" not in args
     await manager.shutdown()
+
+
+def test_subprocess_env_contribution_defaults() -> None:
+    c = SubprocessEnvContribution()
+    assert c.env_vars == {}
+    assert c.extra_path_dirs == []
