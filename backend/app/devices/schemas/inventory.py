@@ -1,7 +1,5 @@
 import enum
 
-from pydantic import BaseModel, ConfigDict
-
 
 class InventoryColumn(enum.StrEnum):
     ID = "id"
@@ -79,10 +77,3 @@ def parse_columns_param(raw: str | None) -> list[InventoryColumn]:
 class InventoryFormat(enum.StrEnum):
     CSV = "csv"
     JSON = "json"
-
-
-class InventoryQuery(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    format: InventoryFormat = InventoryFormat.JSON
-    columns: list[InventoryColumn] | None = None

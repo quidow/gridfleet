@@ -386,13 +386,6 @@ class DeviceRead(BaseModel):
     updated_at: datetime
 
 
-class DeviceListRead(BaseModel):
-    items: list[DeviceRead]
-    total: int
-    limit: int
-    offset: int
-
-
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
     sessions: list[SessionRead] = Field(default_factory=list)

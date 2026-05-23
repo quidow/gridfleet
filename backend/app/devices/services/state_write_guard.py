@@ -216,7 +216,7 @@ def _calling_module() -> str:
 
 
 def _make_listener(table: str, column: str, allowlist: frozenset[str]) -> Callable[..., Any]:
-    def _listener(target: object, value: object, oldvalue: object, initiator: object) -> object:
+    def _listener(target: object, value: object, _oldvalue: object, _initiator: object) -> object:
         if _guard_disabled.get():
             return value
         caller = _calling_module()
