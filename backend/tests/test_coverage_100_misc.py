@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from app.seeding import runner as seeding_runner
+from app.seeding.runner import SeedResult, wipe_all_tables
+from app.seeding.scenarios import full_demo
 from pydantic import ValidationError
 
 from app.agent_comm import reconfigure_delivery as agent_reconfigure_delivery
@@ -109,9 +112,6 @@ from app.plugins import service as plugin_service
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
-from app.seeding import runner as seeding_runner
-from app.seeding.runner import SeedResult, wipe_all_tables
-from app.seeding.scenarios import full_demo
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
