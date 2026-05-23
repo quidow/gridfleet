@@ -1406,7 +1406,7 @@ test.describe('Devices page', () => {
     await expect(page.getByText('Connectivity', { exact: true })).toBeVisible();
     await expect(page.getByTestId('device-detail-status-pill')).toHaveCount(2);
 
-    await page.getByRole('link', { name: /Connectivity.*Healthy/i }).click();
+    await page.getByRole('link', { name: /Connectivity.*OK/i }).click();
     await expect(page).toHaveURL(/\/devices\/device-default\?tab=triage(#device-health)?$/);
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
   });
