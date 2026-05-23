@@ -54,9 +54,6 @@ BANNED_IMPORTS: set[tuple[str, str]] = {
 }
 
 KNOWN_VIOLATIONS: set[tuple[str, str]] = {
-    # appium/process.py — ADB env injection (audit 1.1)
-    ("agent_app/appium/process.py", "ANDROID_HOME"),
-    ("agent_app/appium/process.py", "ANDROID_SDK_ROOT"),
     # appium/process.py — hardcoded capability key (audit 1.5)
     ("agent_app/appium/process.py", "appium:udid"),
     # appium/process.py — device type conditionals (audit 1.6)
@@ -64,13 +61,6 @@ KNOWN_VIOLATIONS: set[tuple[str, str]] = {
     ("agent_app/appium/process.py", "simulator"),
     ("agent_app/appium/process.py", "booting"),
     ("agent_app/appium/process.py", "booted"),
-    # appium/process.py — banned imports of ADB utils (audit 1.1)
-    ("agent_app/appium/process.py", "import:agent_app.tools.utils._find_adb"),
-    ("agent_app/appium/process.py", "import:agent_app.tools.utils.find_android_home"),
-    # tools/utils.py — entire file is ADB-specific (audit 1.2)
-    ("agent_app/tools/utils.py", "adb"),
-    ("agent_app/tools/utils.py", "ANDROID_HOME"),
-    ("agent_app/tools/utils.py", "ANDROID_SDK_ROOT"),
     # config.py — dead ADB setting (audit 1.3)
     ("agent_app/config.py", "config:adb_reconnect_port"),
     # tools/manager.py — go_ios probing (audit 1.8)
