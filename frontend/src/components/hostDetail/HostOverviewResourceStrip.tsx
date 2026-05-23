@@ -1,5 +1,6 @@
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import type { HostResourceSample } from '../../types';
+import { formatCpuUsage } from './hostResourceFormatters';
 
 type Props = {
   hostId: string;
@@ -35,12 +36,6 @@ function formatDiskUsage(sample: HostResourceSample | null, fallbackTotalGb: num
   const totalGb = sample?.disk_total_gb ?? fallbackTotalGb;
   if (usedGb === null || totalGb === null || totalGb <= 0) return null;
   return `${usedGb.toFixed(0)} / ${totalGb.toFixed(0)} GB`;
-}
-
-export function formatCpuUsage(cpuPercent: number | null, cores: number | null): string | null {
-  if (cpuPercent === null || cores === null || cores <= 0) return null;
-  const busy = (cpuPercent / 100) * cores;
-  return `${busy.toFixed(1)} / ${cores} cores`;
 }
 
 function toneFor(percent: number | null): string {
