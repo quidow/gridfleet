@@ -8,7 +8,6 @@ import {
   useDeviceLogs,
   useEnterDeviceMaintenance,
   useExitDeviceMaintenance,
-  useRestartNode,
   useRunDeviceLifecycleAction,
   useRunDeviceSessionTest,
   useStartNode,
@@ -187,7 +186,6 @@ export default function DeviceDetail() {
   const deleteDevice = useDeleteDevice();
   const lifecycleAction = useRunDeviceLifecycleAction();
   const startNode = useStartNode();
-  const restartNode = useRestartNode();
   const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
   const runSessionTest = useRunDeviceSessionTest();
