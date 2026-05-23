@@ -6,34 +6,38 @@ import {
   fetchDriverPackReleases,
   setDriverPackCurrentRelease,
 } from '../api/driverPackDetail';
+import { useEventStreamStatus } from '../context/EventStreamContext';
 
 export function useDriverDetail(packId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['driver-pack', packId],
     queryFn: () => fetchDriverPack(packId),
     enabled: packId.length > 0,
-    refetchInterval: 15_000,
-    staleTime: 7_500,
+    refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
   });
 }
 
 export function useDriverReleases(packId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['driver-pack-releases', packId],
     queryFn: () => fetchDriverPackReleases(packId),
     enabled: packId.length > 0,
-    refetchInterval: 15_000,
-    staleTime: 7_500,
+    refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
   });
 }
 
 export function useDriverPackHosts(packId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['driver-pack-hosts', packId],
     queryFn: () => fetchDriverPackHosts(packId),
     enabled: packId.length > 0,
-    refetchInterval: 15_000,
-    staleTime: 7_500,
+    refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
   });
 }
 

@@ -14,10 +14,11 @@ export function useGridStatus() {
 }
 
 export function useHealth() {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['health'],
     queryFn: fetchHealth,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   });
 }

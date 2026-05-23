@@ -6,6 +6,7 @@ import {
   setDriverPackState,
 } from '../api/driverPacks';
 import type { DriverPack } from '../types/driverPacks';
+import { useEventStreamStatus } from '../context/EventStreamContext';
 
 function platformKey(packId: string, platformId: string): string {
   return `${packId}:${platformId}`;
@@ -44,12 +45,13 @@ const fallbackQueryClient = new QueryClient({
 });
 
 export function useDriverPackCatalog() {
+  const { connected } = useEventStreamStatus();
   const contextClient = useContext(QueryClientContext);
   return useQuery({
     queryKey: ['driver-pack-catalog'],
     queryFn: fetchDriverPackCatalog,
-    refetchInterval: 5000,
-    staleTime: 2_500,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   }, contextClient ?? fallbackQueryClient);
 }
 
@@ -72,11 +74,12 @@ export function useSetDriverPackState() {
 }
 
 export function useHostDriverPacks(hostId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['host-driver-packs', hostId],
     queryFn: () => fetchHostDriverPacks(hostId),
     enabled: !!hostId,
-    refetchInterval: 5000,
-    staleTime: 2_500,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   });
 }

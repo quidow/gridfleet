@@ -79,7 +79,7 @@ export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
     queryFn: () => fetchHostAgentLogs(hostId, filters),
     refetchInterval: connected ? 30_000 : 5_000,
     refetchIntervalInBackground: false,
-    staleTime: 4_000,
+    staleTime: connected ? 15_000 : 2_500,
     enabled: Boolean(hostId),
   });
 }
@@ -91,7 +91,7 @@ export function useHostEvents(hostId: string, filters: HostEventsQuery) {
     queryFn: () => fetchHostEvents(hostId, filters),
     refetchInterval: connected ? 30_000 : 5_000,
     refetchIntervalInBackground: false,
-    staleTime: 4_000,
+    staleTime: connected ? 15_000 : 2_500,
     enabled: Boolean(hostId),
   });
 }

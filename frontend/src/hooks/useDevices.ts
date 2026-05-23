@@ -306,11 +306,12 @@ export function useDeviceHealth(id: string) {
 }
 
 export function useDeviceConfig(id: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-config', id],
     queryFn: () => fetchDeviceConfig(id),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   });
 }
 
@@ -324,12 +325,13 @@ export function useConfigHistory(id: string) {
 }
 
 export function useDeviceTestData(id: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-test-data', id],
     queryFn: () => getDeviceTestData(id),
     enabled: Boolean(id),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   });
 }
 
@@ -375,11 +377,12 @@ export function useDeviceLogs(id: string, lines = 200) {
 }
 
 export function useDeviceCapabilities(deviceId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-capabilities', deviceId],
     queryFn: () => fetchDeviceCapabilities(deviceId),
     enabled: !!deviceId,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
   });
 }
