@@ -66,36 +66,6 @@ cd docker
 docker compose down
 ```
 
-## Demo Data
-
-The stack starts with an empty database. Seed a realistic demo fleet when you
-want the dashboard, analytics, runs, incidents, driver packs, and host screens
-to have data:
-
-```bash
-cd docker
-docker compose up --build -d
-
-cd ..
-./scripts/seed_demo.sh full_demo
-./scripts/demo-mode.sh on
-```
-
-Demo mode points the backend at `gridfleet_demo` and freezes background loops so
-the sample fleet stays stable for screenshots and walkthroughs.
-
-Useful variants:
-
-```bash
-./scripts/seed_demo.sh minimal
-./scripts/seed_demo.sh chaos
-./scripts/demo-mode.sh status
-./scripts/demo-mode.sh off
-```
-
-See [docs/guides/demo-data.md](docs/guides/demo-data.md) for the scenario
-differences and demo workflow.
-
 ## Driver Pack Tarballs
 
 GridFleet does not check in generated `.tar.gz` driver-pack artifacts. Build

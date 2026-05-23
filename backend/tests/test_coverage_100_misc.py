@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -109,9 +108,6 @@ from app.plugins import service as plugin_service
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
-from app.seeding import runner as seeding_runner
-from app.seeding.runner import SeedResult, wipe_all_tables
-from app.seeding.scenarios import full_demo
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
@@ -164,7 +160,7 @@ def test_schema_validator_and_model_guard_branches() -> None:
     assert session_create.requested_capabilities is None
 
 
-def test_device_readiness_and_full_demo_helper_branches() -> None:
+def test_device_readiness_effective_state_branches() -> None:
     now = datetime.now(UTC)
     naive_future = (now + timedelta(hours=1)).replace(tzinfo=None).isoformat()
     bad_timestamp = "not-a-date"
@@ -200,24 +196,9 @@ def test_device_readiness_and_full_demo_helper_branches() -> None:
         == "running"
     )
 
-    states = full_demo._assign_terminal_states(random.Random(1), 1)  # type: ignore[attr-defined]
-    assert len(states) == 1
-    assert len(full_demo._assign_terminal_states(random.Random(2), 3)) == 3  # type: ignore[attr-defined]
-    assert full_demo._has_started_node_setup(SimpleNamespace(pack_id="appium-roku-dlenroc", device_config={})) is False
-    assert (
-        full_demo._has_started_node_setup(
-            SimpleNamespace(pack_id="appium-roku-dlenroc", device_config={"roku_password": "secret"})
-        )
-        is True
-    )
-
 
 async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     db = AsyncMock()
-    await wipe_all_tables(db, table_names=["alembic_version"])
-    db.execute.assert_not_awaited()
-
-    assert SeedResult(scenario="demo", row_counts={"a": 2, "b": 3}, elapsed_seconds=0.1).rows_written == 5
     assert config_service._deep_merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
     audit_rows = [object()]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: audit_rows)))
@@ -844,73 +825,3 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     released_entry = SimpleNamespace(device_id=uuid.uuid4(), released_at=datetime.now(UTC))
     run = SimpleNamespace(device_reservations=[released_entry])
     assert run_reservation_service.get_reservation_entry_for_device(run, released_entry.device_id) is None
-
-
-async def test_seeding_runner_and_full_demo_remaining_branches(monkeypatch: pytest.MonkeyPatch, db_session) -> None:  # noqa: ANN001
-    with pytest.raises(ValueError, match="unknown scenario"):
-        await seeding_runner.run_scenario(session_factory=Mock(), scenario="missing", seed=1, wipe=False)
-
-    applied_calls: list[bool] = []
-
-    async def applied(_ctx: object, *, skip_telemetry: bool = False) -> None:
-        applied_calls.append(skip_telemetry)
-
-    class SessionCtx:
-        async def __aenter__(self) -> object:
-            class Session:
-                async def commit(self) -> None:
-                    return None
-
-            return Session()
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    original_collect_row_counts = seeding_runner._collect_row_counts
-    monkeypatch.setattr(
-        seeding_runner.importlib, "import_module", Mock(return_value=SimpleNamespace(apply_full_demo=applied))
-    )
-    monkeypatch.setattr(seeding_runner, "_collect_row_counts", AsyncMock(return_value={"devices": 1}))
-    result = await seeding_runner.run_scenario(
-        session_factory=SessionCtx,
-        scenario="full_demo",
-        seed=1,
-        wipe=False,
-        skip_telemetry=True,
-    )
-    assert result.rows_written == 1
-    assert applied_calls == [True]
-
-    count_db = AsyncMock()
-    count_db.scalar = AsyncMock(return_value=2)
-    with monkeypatch.context() as patch_context:
-        patch_context.setattr(
-            seeding_runner.Base,
-            "metadata",
-            SimpleNamespace(tables={"alembic_version": Device.__table__, "devices": Device.__table__}),
-        )
-        assert await original_collect_row_counts(count_db) == {"devices": 2}
-
-    session = SimpleNamespace(added=None, add_all=lambda rows: setattr(session, "added", rows))
-    ctx = SimpleNamespace(session=session, now=datetime.now(UTC), rng=random.Random(1))
-    host = SimpleNamespace(id=uuid.uuid4(), status=full_demo.HostStatus.online)
-    device = SimpleNamespace(
-        id=uuid.uuid4(),
-        host_id=host.id,
-        pack_id="appium-roku-dlenroc",
-        device_config={},
-        verified_at=datetime.now(UTC),
-        operational_state=full_demo.DeviceOperationalState.available,
-        hold=None,
-        connection_target="roku",
-    )
-    full_demo._build_appium_nodes(ctx, [device], [host], {})  # type: ignore[arg-type]
-    assert session.added == []
-
-    from app.seeding.context import SeedContext
-
-    telemetry = AsyncMock()
-    monkeypatch.setattr(full_demo, "_build_telemetry", telemetry)
-    real_ctx = SeedContext.build(session=db_session, seed=123)
-    await full_demo.apply_full_demo(real_ctx, skip_telemetry=False)
-    telemetry.assert_awaited_once()

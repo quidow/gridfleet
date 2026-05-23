@@ -19,7 +19,7 @@ from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.auth.middleware import StaticPathsAuthMiddleware
-from app.core.config import DOCS_ENABLED_ENVIRONMENTS, freeze_background_loops_enabled
+from app.core.config import DOCS_ENABLED_ENVIRONMENTS
 from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
 from app.core.database import engine
@@ -114,16 +114,6 @@ async def pack_drain_loop() -> None:
     await pack_services.drain.pack_drain_loop()
 
 
-def _freeze_background_loops() -> bool:
-    """Skip all leader-owned background loops when truthy.
-
-    Set via ``GRIDFLEET_FREEZE_BACKGROUND_LOOPS`` to keep a seeded demo database in
-    a frozen state — no heartbeat/health/reaper mutations marking hosts and
-    devices offline.
-    """
-    return freeze_background_loops_enabled()
-
-
 def _validate_leader_keepalive_settings() -> None:
     keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
     stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
@@ -213,52 +203,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    freeze = _freeze_background_loops()
     watcher_task: asyncio.Task[None] | None = None
 
-    if freeze:
-        logger.warning(
-            "GRIDFLEET_FREEZE_BACKGROUND_LOOPS is set; skipping all leader-owned "
-            "background loops (heartbeat, health, reaper, telemetry, webhook, "
-            "cleanup, capacity). State in the database will not be mutated by "
-            "the backend. Use this only for frozen demo databases."
-        )
-    if not freeze:
-        if await control_plane_leader.try_acquire(engine):
-            tasks = [
-                asyncio.create_task(control_plane_leader_keepalive_loop(), name="control_plane_leader_keepalive"),
-                asyncio.create_task(heartbeat_loop(), name="heartbeat_loop"),
-                asyncio.create_task(session_sync_loop(), name="session_sync_loop"),
-                asyncio.create_task(event_bus_subscriber_loop(), name="grid_event_bus_subscriber_loop"),
-                asyncio.create_task(node_health_loop(), name="node_health_loop"),
-                asyncio.create_task(device_connectivity_loop(), name="device_connectivity_loop"),
-                asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
-                asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
-                asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
-                asyncio.create_task(job_queue.durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
-                asyncio.create_task(
-                    webhook_dispatcher.webhook_delivery_loop(session_factory),
-                    name="webhook_dispatcher.webhook_delivery_loop",
-                ),
-                asyncio.create_task(run_reaper_loop(), name="run_reaper_loop"),
-                asyncio.create_task(data_cleanup_loop(), name="data_cleanup_loop"),
-                asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
-                asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
-                asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
-                asyncio.create_task(
-                    appium_reconciler_loop(),
-                    name="appium_reconciler_loop",
-                ),
-                asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
-                asyncio.create_task(
-                    background_loop_flush_loop(session_factory),
-                    name="background_loop_flush_loop",
-                ),
-            ]
-        watcher_task = asyncio.create_task(
-            control_plane_leader_watcher_loop(),
-            name="control_plane_leader_watcher",
-        )
+    if await control_plane_leader.try_acquire(engine):
+        tasks = [
+            asyncio.create_task(control_plane_leader_keepalive_loop(), name="control_plane_leader_keepalive"),
+            asyncio.create_task(heartbeat_loop(), name="heartbeat_loop"),
+            asyncio.create_task(session_sync_loop(), name="session_sync_loop"),
+            asyncio.create_task(event_bus_subscriber_loop(), name="grid_event_bus_subscriber_loop"),
+            asyncio.create_task(node_health_loop(), name="node_health_loop"),
+            asyncio.create_task(device_connectivity_loop(), name="device_connectivity_loop"),
+            asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
+            asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
+            asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
+            asyncio.create_task(job_queue.durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
+            asyncio.create_task(
+                webhook_dispatcher.webhook_delivery_loop(session_factory),
+                name="webhook_dispatcher.webhook_delivery_loop",
+            ),
+            asyncio.create_task(run_reaper_loop(), name="run_reaper_loop"),
+            asyncio.create_task(data_cleanup_loop(), name="data_cleanup_loop"),
+            asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
+            asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
+            asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
+            asyncio.create_task(
+                appium_reconciler_loop(),
+                name="appium_reconciler_loop",
+            ),
+            asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
+            asyncio.create_task(
+                background_loop_flush_loop(session_factory),
+                name="background_loop_flush_loop",
+            ),
+        ]
+    watcher_task = asyncio.create_task(
+        control_plane_leader_watcher_loop(),
+        name="control_plane_leader_watcher",
+    )
     try:
         yield
     finally:

@@ -11,7 +11,7 @@ GridFleet is a control plane for Appium + Selenium Grid device labs. It is a mul
 - `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
 - `testkit/` — supported Python pytest/Appium helper package (`gridfleet_testkit`). Python 3.12, managed by `uv`.
 - `driver-packs/` — curated manifests + adapter source. Tarballs are NOT checked in; build with `scripts/build_driver_tarballs.py`.
-- `docker/` — `docker-compose.yml` (dev), `docker-compose.prod.yml` (prod), `docker-compose.demo.yml` (frozen demo).
+- `docker/` — `docker-compose.yml` (dev), `docker-compose.prod.yml` (prod).
 
 When changing code in one component, run that component's checks. Cross-component changes (e.g. backend/agent contracts, backend/frontend API shapes) need both sides validated.
 
@@ -67,8 +67,6 @@ cd testkit && uv run --extra dev pytest -q
 ### Stack
 ```bash
 cd docker && docker compose up --build -d            # full dev stack
-./scripts/seed_demo.sh full_demo                     # seed demo DB
-./scripts/demo-mode.sh on                            # point backend at demo DB + freeze loops
 ```
 
 ### Driver-pack tarballs
@@ -83,7 +81,7 @@ Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent 
 ### Backend control plane and the leader-loop pattern
 The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~17 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher.
 
-Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips all of them — the demo compose sets this so seeded state does not drift. Domain-specific loops live under their owning `app/<domain>/services/` package.
+Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. Domain-specific loops live under their owning `app/<domain>/services/` package.
 
 ### Settings: env vars vs DB registry
 There are two distinct config surfaces. Do not conflate them:

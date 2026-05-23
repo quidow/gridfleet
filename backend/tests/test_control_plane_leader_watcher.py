@@ -83,16 +83,3 @@ async def test_watcher_does_not_preempt_when_disabled() -> None:
     ):
         await run_watcher_once(non_leader, engine=None)
     non_leader.try_acquire.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_watcher_skipped_when_freeze_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
-    non_leader = ControlPlaneLeader()
-    non_leader.try_acquire = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    with patch(
-        "app.core.leader.watcher._setting",
-        side_effect=lambda key: True,
-    ):
-        await run_watcher_once(non_leader, engine=None)
-    non_leader.try_acquire.assert_not_called()

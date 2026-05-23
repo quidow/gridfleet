@@ -309,6 +309,8 @@ export function useDeviceConfig(id: string) {
   return useQuery({
     queryKey: ['device-config', id],
     queryFn: () => fetchDeviceConfig(id),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
 
@@ -316,6 +318,8 @@ export function useConfigHistory(id: string) {
   return useQuery({
     queryKey: ['config-history', id],
     queryFn: () => fetchConfigHistory(id),
+    refetchInterval: false,
+    staleTime: Infinity,
   });
 }
 
@@ -324,6 +328,8 @@ export function useDeviceTestData(id: string) {
     queryKey: ['device-test-data', id],
     queryFn: () => getDeviceTestData(id),
     enabled: Boolean(id),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
 
@@ -332,6 +338,8 @@ export function useTestDataHistory(id: string) {
     queryKey: ['test-data-history', id],
     queryFn: () => getTestDataHistory(id),
     enabled: Boolean(id),
+    refetchInterval: false,
+    staleTime: Infinity,
   });
 }
 
@@ -371,5 +379,7 @@ export function useDeviceCapabilities(deviceId: string) {
     queryKey: ['device-capabilities', deviceId],
     queryFn: () => fetchDeviceCapabilities(deviceId),
     enabled: !!deviceId,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }

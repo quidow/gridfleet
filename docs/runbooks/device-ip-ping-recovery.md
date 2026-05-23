@@ -58,7 +58,6 @@ Wait for all services to be healthy (backend, Postgres, frontend). Check the UI 
 
 Attach an Android phone via USB to the agent host. Either:
 
-- Use the seeding script: `./scripts/seed_demo.sh` (if available)
 - Or manually add the device in the UI: browse to Devices, add a new device, and set its `ip_address` to the device's Wi-Fi IP (you can find this in Android Settings → System → About phone → IP address)
 
 The device must have a reachable IP address on the same network as the backend/agent.

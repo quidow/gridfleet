@@ -33,41 +33,27 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             # Device creation paths: initial state is set at construction time, not via the
             # state machine (device does not exist yet so there is no prior state to transition).
             "app.devices.services.write",
-            "app.seeding.factories.device",
-            # Seeding scenarios write operational_state directly to create demo/test fixtures.
-            "app.seeding.scenarios.minimal",
-            "app.seeding.scenarios.chaos",
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("devices", "hold"): frozenset(
         {
             "app.devices.services.state",
             "app.devices.services.lifecycle_state_machine",
-            # Seeding factories and demo scenarios set hold at construction/seed time.
-            "app.seeding.factories.device",
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("devices", "lifecycle_policy_state"): frozenset(
         {
             "app.devices.services.lifecycle_policy_state",
-            # Demo seeding writes lifecycle_policy_state directly for realistic fixture data.
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "desired_state"): frozenset(
         {
             "app.appium_nodes.services.desired_state_writer",
-            # Demo seeding creates fully-formed AppiumNode rows with desired_state set.
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "desired_port"): frozenset(
         {
             "app.appium_nodes.services.desired_state_writer",
-            # Demo seeding creates fully-formed AppiumNode rows with desired_port set.
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "transition_token"): frozenset(
@@ -89,8 +75,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler_agent",
             "app.appium_nodes.services.reconciler",
             "app.appium_nodes.services.heartbeat",
-            # Demo seeding creates fully-formed AppiumNode rows with pid set.
-            "app.seeding.scenarios.full_demo",
             # Verification teardown clears pid to signal the node has stopped.
             "app.devices.services.verification_execution",
         }
@@ -105,7 +89,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.devices.services.bulk",
             "app.devices.services.lifecycle_policy",
             "app.devices.services.operator_node_lifecycle",
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "active_connection_target"): frozenset(
@@ -113,8 +96,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler_agent",
             "app.devices.services.capability",
             "app.devices.services.verification_execution",
-            # Demo seeding creates fully-formed AppiumNode rows with active_connection_target set.
-            "app.seeding.scenarios.full_demo",
         }
     ),
     ("appium_nodes", "health_running"): frozenset(

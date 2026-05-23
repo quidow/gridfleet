@@ -4,7 +4,6 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
-from app.core.config import freeze_background_loops_enabled
 from app.core.database import engine as default_engine
 from app.core.leader.advisory import ControlPlaneLeader, control_plane_leader
 from app.core.leader.settings_provider import get as _setting
@@ -32,8 +31,6 @@ async def run_watcher_once(
     engine: AsyncEngine | None = None,
 ) -> None:
     """One iteration. Visible to tests for direct drive."""
-    if freeze_background_loops_enabled():
-        return
     if leader._connection is not None:
         return
     if not _setting("general.leader_keepalive_enabled"):

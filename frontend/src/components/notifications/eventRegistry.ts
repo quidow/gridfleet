@@ -20,25 +20,6 @@ export type EventLike = {
   data?: EventData | null;
 };
 
-export const SEEDED_EVENT_TYPES = [
-  'run.completed',
-  'run.failed',
-  'run.cancelled',
-  'host.offline',
-  'host.online',
-  'device.maintenance_start',
-  'device.maintenance_end',
-  'webhook.delivered',
-  'webhook.failed',
-  'config.updated',
-  'session.stuck',
-  'device.verified',
-  'lifecycle.incident_open',
-  'lifecycle.incident_resolved',
-  'node.crash',
-  'node.restart',
-] as const;
-
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }

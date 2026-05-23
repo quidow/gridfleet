@@ -37,7 +37,6 @@ sequenceDiagram
 Two consequences worth remembering:
 
 - **The leader survives one process; it does not migrate live.** When the leader dies, the lock is released only after the connection is closed. Loops resume in the next process to acquire — i.e. the next start. Compose/k8s `restart: unless-stopped` is what makes this acceptable.
-- **`GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1`** skips `try_acquire` and the watcher entirely. Demo databases use this to keep seeded state from drifting.
 
 The leader lock alone is **not** sufficient to prevent races. API mutators run on all workers and bypass the lock entirely. The device row lock from Doc 1 is what actually serialises a loop's write against an API write on the same device.
 
@@ -173,7 +172,6 @@ Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general
 
 ## When loops do NOT run
 
-- **Demo freeze.** `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips loop spawning entirely. The compose `docker-compose.demo.yml` sets this so seeded state never changes.
 - **Non-leader workers.** Workers that lose the advisory lock race never spawn leader-owned loops. They only run the watcher. Only one process runs maintenance work even with N replicas.
 - **`node_health` skip cases.** The loop polls every `AppiumNode` row whose `pid` and `active_connection_target` are populated; nodes that have been stopped (pid cleared) or never started are skipped. There are no per-platform exclusions — the `/status` probe is platform-agnostic.
 - **`device_connectivity` skip cases.** The connectivity loop skips a host when `/agent/pack/devices` is indeterminate. For disconnected devices, it suppresses lifecycle action when the device is in maintenance; endpoint-health platforms can still report healthy through `/agent/pack/devices/{ct}/health` even when the device target is absent from the generic pack-device list.
