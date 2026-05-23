@@ -57,6 +57,7 @@ export function useHostResourceTelemetry(id: string) {
     queryFn: () => fetchHostResourceTelemetry(id),
     refetchInterval: connected ? 60_000 : 30_000,
     enabled: !!id,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -67,6 +68,7 @@ export function useHostToolStatus(id: string, enabled = true) {
     queryFn: () => fetchHostToolStatus(id),
     refetchInterval: connected ? 60_000 : 15_000,
     enabled: !!id && enabled,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -79,6 +81,7 @@ export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
     refetchIntervalInBackground: false,
     staleTime: 4_000,
     enabled: Boolean(hostId),
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -91,6 +94,7 @@ export function useHostEvents(hostId: string, filters: HostEventsQuery) {
     refetchIntervalInBackground: false,
     staleTime: 4_000,
     enabled: Boolean(hostId),
+    meta: { handleErrorLocally: true },
   });
 }
 

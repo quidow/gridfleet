@@ -258,6 +258,7 @@ export function useDeviceSessionOutcomeHeatmap(id: string, days = 90) {
     queryFn: () => fetchDeviceSessionOutcomeHeatmap(id, days),
     refetchInterval: connected ? 60_000 : 15_000,
     enabled: !!id,
+    meta: { handleErrorLocally: true },
   });
 }
 

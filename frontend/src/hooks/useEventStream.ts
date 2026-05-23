@@ -158,6 +158,7 @@ export function useEventStream() {
   const { data: settingsGroups } = useQuery({
     queryKey: ['settings'],
     queryFn: fetchSettings,
+    meta: { handleErrorLocally: true },
   });
   const eventTypes = useMemo(() => eventCatalog?.map((event) => event.name) ?? [], [eventCatalog]);
   const settings = useMemo(() => flattenSettings(settingsGroups), [settingsGroups]);
