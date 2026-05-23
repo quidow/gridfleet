@@ -5,7 +5,6 @@ import {
   useBulkStartNodes,
   useBulkStopNodes,
   useBulkRestartNodes,
-  useBulkSetAutoManage,
   useBulkDelete,
   useBulkEnterMaintenance,
   useBulkExitMaintenance,
@@ -14,7 +13,6 @@ import {
 } from '../../hooks/useBulk';
 import { Button } from '../../components/ui';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
-import Popover from '../../components/ui/Popover';
 import type { BulkOperationResult, DeviceRead } from '../../types';
 import {
   DeviceActionErrorsDialog,
@@ -34,7 +32,6 @@ function Divider() {
 
 export default function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelection }: Props) {
   const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; action: () => Promise<void> } | null>(null);
-  const [showAutoManageMenu, setShowAutoManageMenu] = useState(false);
   const [showTagsModal, setShowTagsModal] = useState(false);
   const [showErrorsModal, setShowErrorsModal] = useState(false);
   const [tagsText, setTagsText] = useState('{\n  "team": "qa"\n}');
@@ -45,22 +42,17 @@ export default function BulkActionToolbar({ selectedIds, selectedDevices, onClea
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
-      if (showAutoManageMenu) {
-        setShowAutoManageMenu(false);
-        return;
-      }
       if (confirmAction || showTagsModal || showErrorsModal) return;
       onClearSelection();
     }
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClearSelection, showAutoManageMenu, confirmAction, showTagsModal, showErrorsModal]);
+  }, [onClearSelection, confirmAction, showTagsModal, showErrorsModal]);
 
   const startNodes = useBulkStartNodes();
   const stopNodes = useBulkStopNodes();
   const restartNodes = useBulkRestartNodes();
-  const setAutoManage = useBulkSetAutoManage();
   const updateTags = useBulkUpdateTags();
   const deleteMut = useBulkDelete();
   const enterMaintenance = useBulkEnterMaintenance();
@@ -151,47 +143,6 @@ export default function BulkActionToolbar({ selectedIds, selectedDevices, onClea
         >
           Reconnect
         </Button>
-
-        <Divider />
-
-        <Popover
-          open={showAutoManageMenu}
-          onOpenChange={setShowAutoManageMenu}
-          ariaLabel="Auto-Manage"
-          placement={['top-start', 'top-end', 'bottom-start', 'bottom-end']}
-          trigger={<span>Auto-Manage</span>}
-          triggerClassName="inline-flex items-center justify-center gap-2 rounded-md border border-border-strong bg-surface-1 px-3 py-1.5 text-sm font-medium text-text-2 transition-colors hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-          contentClassName="min-w-[140px] rounded-md border border-border bg-surface-1 py-1 shadow-lg"
-        >
-          <div role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              className="w-full px-3 py-1.5 text-left text-sm text-text-1 hover:bg-surface-2"
-              onClick={() => {
-                setShowAutoManageMenu(false);
-                runBulk('Auto-Manage', () =>
-                  setAutoManage.mutateAsync({ device_ids: ids, auto_manage: true }),
-                );
-              }}
-            >
-              Enable
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="w-full px-3 py-1.5 text-left text-sm text-text-1 hover:bg-surface-2"
-              onClick={() => {
-                setShowAutoManageMenu(false);
-                runBulk('Auto-Manage', () =>
-                  setAutoManage.mutateAsync({ device_ids: ids, auto_manage: false }),
-                );
-              }}
-            >
-              Disable
-            </button>
-          </div>
-        </Popover>
 
         <Divider />
 

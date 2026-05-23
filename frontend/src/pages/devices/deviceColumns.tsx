@@ -130,36 +130,6 @@ function StateCell({ device, pendingAction }: { device: DeviceRead; pendingActio
   );
 }
 
-function AutoManageToggle({
-  device,
-  rowBusy,
-  onAction,
-}: {
-  device: DeviceRead;
-  rowBusy: boolean;
-  onAction: (action: DeviceAction) => void;
-}) {
-  return (
-    <label
-      className="relative inline-flex h-5 w-9 cursor-pointer items-center align-middle"
-      title={device.auto_manage ? 'Auto-manage enabled' : 'Auto-manage disabled'}
-    >
-      <input
-        type="checkbox"
-        checked={device.auto_manage}
-        disabled={rowBusy}
-        onChange={(event) =>
-          onAction({ type: 'toggle-auto-manage', deviceId: device.id, autoManage: event.target.checked })
-        }
-        className="peer absolute inset-0 z-10 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 disabled:cursor-not-allowed"
-        aria-label={`Toggle auto-manage for ${device.name}`}
-      />
-      <span className="pointer-events-none absolute inset-0 rounded-full bg-border transition peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface-1 peer-disabled:opacity-50" />
-      <span className="pointer-events-none relative ml-0.5 h-4 w-4 rounded-full bg-surface-1 shadow-sm transition peer-checked:translate-x-4 peer-disabled:opacity-70" />
-    </label>
-  );
-}
-
 export function buildDeviceMenuItems(
   device: DeviceRead,
   pendingAction: DevicePendingAction | null,
@@ -375,19 +345,6 @@ export function buildDeviceColumns(ctx: DeviceColumnContext): DataTableColumn<De
       width: '8rem',
       className: 'whitespace-nowrap',
       render: (device) => <DeviceHealthCell device={device} />,
-    },
-    {
-      key: 'auto_manage',
-      header: 'Auto',
-      align: 'center',
-      width: '4.5rem',
-      render: (device) => (
-        <AutoManageToggle
-          device={device}
-          rowBusy={ctx.pendingActionForDevice(device.id) !== null}
-          onAction={ctx.onAction}
-        />
-      ),
     },
   ];
 }

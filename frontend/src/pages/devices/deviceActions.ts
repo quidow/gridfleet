@@ -8,5 +8,4 @@ export type DeviceAction =
   | { type: 'restart-node'; deviceId: string }
   | { type: 'verify'; device: DeviceRead }
   | { type: 'edit'; device: DeviceRead }
-  | { type: 'delete'; deviceId: string }
-  | { type: 'toggle-auto-manage'; deviceId: string; autoManage: boolean };
+  | { type: 'delete'; deviceId: string };

@@ -22,7 +22,7 @@ const COLUMN_GROUPS: { label: string; columns: string[] }[] = [
     ],
   },
   { label: "Host", columns: ["host.id", "host.hostname"] },
-  { label: "State", columns: ["operational_state", "hold", "review_required", "auto_manage"] },
+  { label: "State", columns: ["operational_state", "hold", "review_required"] },
   {
     label: "Hardware",
     columns: [

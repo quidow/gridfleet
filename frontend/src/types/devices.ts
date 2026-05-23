@@ -54,8 +54,7 @@ export type SessionDetail = Omit<
   requested_platform_id: string | null;
   run_id: string | null;
 };
-export type DeviceVerificationCreate = Omit<Schemas['DeviceVerificationCreate'], 'auto_manage' | 'os_version'> & {
-  auto_manage?: boolean;
+export type DeviceVerificationCreate = Omit<Schemas['DeviceVerificationCreate'], 'os_version'> & {
   os_version?: string;
 };
 export type DeviceVerificationUpdate = Schemas['DeviceVerificationUpdate'];

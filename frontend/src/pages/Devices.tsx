@@ -7,7 +7,6 @@ import {
   useRestartNode,
   useStartNode,
   useStopNode,
-  useToggleDeviceAutoManage,
 } from '../hooks/useDevices';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import BulkActionToolbar from './devices/BulkActionToolbar';
@@ -79,7 +78,6 @@ export default function Devices() {
   useDevRenderCrashTrigger('devices-page');
   usePageTitle('Devices');
   const controller = useDevicesPageController();
-  const toggleAutoManage = useToggleDeviceAutoManage();
   const deleteDevice = useDeleteDevice();
   const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
@@ -103,9 +101,6 @@ export default function Devices() {
 
   const handleDeviceAction = useCallback((action: DeviceAction) => {
     switch (action.type) {
-      case 'toggle-auto-manage':
-        toggleAutoManage.mutate({ id: action.deviceId, autoManage: action.autoManage });
-        break;
       case 'enter-maintenance':
         enterMaintenance.mutate({ id: action.deviceId });
         break;
@@ -134,7 +129,7 @@ export default function Devices() {
         controller.setDeleteId(action.deviceId);
         break;
     }
-  }, [toggleAutoManage, enterMaintenance, exitMaintenance, startNode, stopNode, restartNode, controller]);
+  }, [enterMaintenance, exitMaintenance, startNode, stopNode, restartNode, controller]);
 
   const showInitialLoading = controller.isLoading && controller.devices.length === 0;
   const hostCount = controller.hostMap.size;
@@ -150,11 +145,6 @@ export default function Devices() {
 
   function getPendingAction(deviceId: string): DevicePendingAction | null {
     return getPendingDeviceAction(deviceId, [
-      {
-        action: 'updating-auto-manage',
-        isPending: toggleAutoManage.isPending,
-        deviceId: toggleAutoManage.variables?.id,
-      },
       {
         action: 'entering-maintenance',
         isPending: enterMaintenance.isPending,

@@ -147,13 +147,6 @@ function invalidatePatchedDeviceQueries(
   qc.invalidateQueries({ queryKey: ['device', deviceId] });
 }
 
-function updateAutoManage(autoManage: boolean): DeviceCacheUpdater {
-  return <T extends DeviceRead>(device: T): T => ({
-    ...device,
-    auto_manage: autoManage,
-  });
-}
-
 function updateHold(hold: DeviceRead['hold']): DeviceCacheUpdater {
   return <T extends DeviceRead>(device: T): T => ({
     ...device,
@@ -278,27 +271,6 @@ export function useUpdateDevice() {
     onSuccess: (_data, { id }) => {
       qc.invalidateQueries({ queryKey: ['devices'] });
       qc.invalidateQueries({ queryKey: ['device', id] });
-    },
-  });
-}
-
-export function useToggleDeviceAutoManage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationKey: ['devices', 'toggle-auto-manage'],
-    mutationFn: ({ id, autoManage }: { id: string; autoManage: boolean }) =>
-      updateDevice(id, { auto_manage: autoManage }),
-    onMutate: async ({ id, autoManage }) => {
-      const context = await patchDeviceQueries(qc, id, updateAutoManage(autoManage));
-      await waitForNextPaint(150);
-      return context;
-    },
-    onError: (error, { id }, context) => {
-      rollbackOptimisticDeviceQueries(qc, context);
-      toast.error(getErrorMessage(error, `Failed to update auto-manage for device ${id}`));
-    },
-    onSettled: (_data, _error, { id }) => {
-      invalidatePatchedDeviceQueries(qc, id);
     },
   });
 }
