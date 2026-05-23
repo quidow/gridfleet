@@ -32,10 +32,21 @@ from app.runs.service_reservation_lookup import (
 from app.settings import settings_service
 
 
-async def _enter_maintenance(db: AsyncSession, device: Device) -> Device:
+async def _enter_maintenance(
+    db: AsyncSession,
+    device: Device,
+    *,
+    maintenance_reason: str = "Operator entered maintenance",
+) -> Device:
     from app.devices.services.maintenance import enter_maintenance  # noqa: PLC0415
 
-    return await enter_maintenance(db, device, commit=False, allow_reserved=True)
+    return await enter_maintenance(
+        db,
+        device,
+        commit=False,
+        allow_reserved=True,
+        maintenance_reason=maintenance_reason,
+    )
 
 
 def _cooldown_intents(
@@ -124,7 +135,7 @@ async def report_preparation_failure(
         source=source,
     )
 
-    await _enter_maintenance(db, device)
+    await _enter_maintenance(db, device, maintenance_reason="CI preparation failure")
     await device_health.update_device_checks(db, device, healthy=False, summary=reason)
 
     await lifecycle_incident_service.record_lifecycle_incident(
@@ -278,7 +289,7 @@ async def cooldown_device(
         source="testkit",
     )
 
-    await _enter_maintenance(db, device)
+    await _enter_maintenance(db, device, maintenance_reason="Cooldown escalation")
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
         device,
