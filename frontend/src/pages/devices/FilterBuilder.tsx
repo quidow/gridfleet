@@ -14,6 +14,7 @@ import {
 } from './devicePageHelpers';
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
+import Select from '../../components/ui/Select';
 
 interface Props {
   filters: DeviceGroupFilterDraft;
@@ -68,10 +69,9 @@ export default function FilterBuilder({
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Pack</span>
-          <select
+          <Select
             value={filters.pack_id}
-            onChange={(event) => {
-              const nextPackId = event.target.value;
+            onChange={(nextPackId) => {
               const nextPack = catalog.find((pack) => pack.id === nextPackId);
               const platformStillValid =
                 !nextPackId || !filters.platform_id || nextPack?.platforms?.some((platform) => platform.id === filters.platform_id);
@@ -81,95 +81,78 @@ export default function FilterBuilder({
                 platform_id: platformStillValid ? filters.platform_id : '',
               });
             }}
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any pack</option>
-            {packOptions.map((pack) => (
-              <option key={pack.id} value={pack.id}>{pack.label}</option>
-            ))}
-          </select>
+            fullWidth
+            options={[{ value: '', label: 'Any pack' }, ...packOptions.map((pack) => ({ value: pack.id, label: pack.label }))]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Platform</span>
-          <select
+          <Select
             value={filters.platform_id}
-            onChange={(event) => updateOptionalField(filters, onChange, 'platform_id', event.target.value)}
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any platform</option>
-            {platformOptions.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'platform_id', next)}
+            fullWidth
+            options={[{ value: '', label: 'Any platform' }, ...platformOptions.map((p) => ({ value: p.id, label: p.label }))]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Availability</span>
-          <select
+          <Select
             value={filters.status}
-            onChange={(event) =>
-              updateOptionalField(filters, onChange, 'status', event.target.value as DeviceChipStatus | '')
-            }
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any availability</option>
-            {CHIP_STATUSES.map((status) => (
-              <option key={status} value={status}>{DEVICE_STATUS_LABELS[status]}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'status', next as DeviceChipStatus | '')}
+            fullWidth
+            options={[
+              { value: '', label: 'Any availability' },
+              ...CHIP_STATUSES.map((status) => ({ value: status, label: DEVICE_STATUS_LABELS[status] })),
+            ]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Host</span>
-          <select
+          <Select
             value={filters.host_id}
-            onChange={(event) => updateOptionalField(filters, onChange, 'host_id', event.target.value)}
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any host</option>
-            {hostOptions.map((host) => (
-              <option key={host.id} value={host.id}>{host.name}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'host_id', next)}
+            fullWidth
+            options={[{ value: '', label: 'Any host' }, ...hostOptions.map((host) => ({ value: host.id, label: host.name }))]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Device Type</span>
-          <select
+          <Select
             value={filters.device_type}
-            onChange={(event) => updateOptionalField(filters, onChange, 'device_type', event.target.value as DeviceType | '')}
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any type</option>
-            {DEVICE_TYPES.map((deviceType) => (
-              <option key={deviceType} value={deviceType}>{DEVICE_TYPE_LABELS[deviceType]}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'device_type', next as DeviceType | '')}
+            fullWidth
+            options={[
+              { value: '', label: 'Any type' },
+              ...DEVICE_TYPES.map((deviceType) => ({ value: deviceType, label: DEVICE_TYPE_LABELS[deviceType] })),
+            ]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Connection Type</span>
-          <select
+          <Select
             value={filters.connection_type}
-            onChange={(event) =>
-              updateOptionalField(filters, onChange, 'connection_type', event.target.value as ConnectionType | '')
-            }
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any connection</option>
-            {CONNECTION_TYPES.map((connectionType) => (
-              <option key={connectionType} value={connectionType}>{CONNECTION_TYPE_LABELS[connectionType]}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'connection_type', next as ConnectionType | '')}
+            fullWidth
+            options={[
+              { value: '', label: 'Any connection' },
+              ...CONNECTION_TYPES.map((connectionType) => ({
+                value: connectionType,
+                label: CONNECTION_TYPE_LABELS[connectionType],
+              })),
+            ]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">OS Version</span>
-          <select
+          <Select
             value={filters.os_version}
-            onChange={(event) => updateOptionalField(filters, onChange, 'os_version', event.target.value)}
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Any OS version</option>
-            {availableOsVersions.map((osVersion) => (
-              <option key={osVersion} value={osVersion}>{osVersion}</option>
-            ))}
-          </select>
+            onChange={(next) => updateOptionalField(filters, onChange, 'os_version', next)}
+            fullWidth
+            options={[
+              { value: '', label: 'Any OS version' },
+              ...availableOsVersions.map((osVersion) => ({ value: osVersion, label: osVersion })),
+            ]}
+          />
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Identity Value</span>
