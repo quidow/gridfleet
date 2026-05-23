@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { FileDown, Plus, SearchX, Smartphone, Upload } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { FileDown, Plus, SearchX, Smartphone } from 'lucide-react';
 import {
   useDeleteDevice,
   useEnterDeviceMaintenance,
@@ -32,7 +31,6 @@ import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import PageHeader from '../components/ui/PageHeader';
 import Button from '../components/ui/Button';
 import ListPageSubheader from '../components/ui/ListPageSubheader';
-import { DeviceExportButton } from '../components/settings/DeviceExportButton';
 import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import Pagination from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
@@ -80,7 +78,6 @@ function DevicesEmptyPanel({
 export default function Devices() {
   useDevRenderCrashTrigger('devices-page');
   usePageTitle('Devices');
-  const navigate = useNavigate();
   const controller = useDevicesPageController();
   const toggleAutoManage = useToggleDeviceAutoManage();
   const deleteDevice = useDeleteDevice();
@@ -232,20 +229,12 @@ export default function Devices() {
           meta={subheaderMeta}
           action={
             <div className="flex items-center gap-2">
-              <DeviceExportButton />
               <Button
                 variant="secondary"
                 onClick={() => setInventoryOpen(true)}
                 leadingIcon={<FileDown size={16} />}
               >
                 Export Inventory
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => navigate('/devices/import')}
-                leadingIcon={<Upload size={16} />}
-              >
-                Import Devices
               </Button>
               <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
                 Add Device
