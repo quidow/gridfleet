@@ -366,6 +366,52 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
+  it('shows health check failed when node is running but health is unhealthy', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        health_summary: { healthy: false, summary: 'ADB not responsive', last_checked_at: null },
+      }),
+      {
+        health: makeHealth({
+          healthy: false,
+          device_checks: { healthy: false, detail: 'ADB not responsive' },
+        }),
+      },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'error',
+      eyebrow: 'Health check',
+      title: 'Device health check failed',
+    });
+  });
+
+  it('shows hardware warning when hardware health status is warning', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({ hardware_health_status: 'warning' }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'warn',
+      eyebrow: 'Hardware telemetry',
+      action: { kind: 'open-hardware-filter' },
+    });
+  });
+
+  it('shows hardware critical when hardware health status is critical', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({ hardware_health_status: 'critical' }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'error',
+      eyebrow: 'Hardware telemetry',
+      action: { kind: 'open-hardware-filter' },
+    });
+  });
+
   it('shows connectivity lost with reservation context', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({

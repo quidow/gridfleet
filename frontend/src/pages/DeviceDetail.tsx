@@ -255,10 +255,10 @@ export default function DeviceDetail() {
                 handoffMessage: verificationAction.handoffMessage,
               });
             }}
-                onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
-                onStartNode={() => startNode.mutate(device.id)}
-                onExitMaintenance={() => exitMaintenance.mutate(device.id)}
-              />
+            onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
+            onStartNode={() => startNode.mutate(device.id)}
+            onExitMaintenance={() => exitMaintenance.mutate(device.id)}
+          />
         </div>
       ) : null}
 

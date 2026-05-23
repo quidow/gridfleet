@@ -125,13 +125,12 @@ export function deriveDeviceDetailTriage(
 
   if (!node || node.effective_state !== 'running') {
     const inMaintenance = device.hold === 'maintenance';
-    const connectivityFailed = device.health_summary.connectivity_status === 'failed'
-      || device.health_summary.healthy === false;
+    const connectivityFailed = device.health_summary.connectivity_status === 'failed';
 
     let nodeAction: DeviceDetailTriageAction;
     if (inMaintenance) {
       nodeAction = { kind: 'exit-maintenance', label: 'Take out of maintenance' };
-    } else if (reservation) {
+    } else if (connectivityFailed || reservation) {
       nodeAction = { kind: 'none', label: '' };
     } else {
       nodeAction = { kind: 'start-node', label: 'Start Node' };
