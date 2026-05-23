@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import CursorPagination from './CursorPagination';
+import { CursorPagination } from './CursorPagination';
 
 describe('CursorPagination', () => {
   it('shows newest-page state and disables newer actions there', () => {

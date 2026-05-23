@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import FetchError from './FetchError';
+import { FetchError } from './FetchError';
 
 describe('FetchError', () => {
   it('renders the default message', () => {

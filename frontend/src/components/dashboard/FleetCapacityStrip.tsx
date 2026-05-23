@@ -1,5 +1,5 @@
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
-import Sparkline from '../ui/Sparkline';
+import { Sparkline } from '../ui/Sparkline';
 
 const BUCKET_MINUTES = 15;
 
@@ -10,7 +10,7 @@ type Slice = {
   values: number[];
 };
 
-export default function FleetCapacityStrip({ className }: { className?: string }) {
+export function FleetCapacityStrip({ className }: { className?: string }) {
   const { data } = useFleetCapacityTimeline({ bucket_minutes: BUCKET_MINUTES });
   const series = (data?.series ?? []).filter((point) => point.has_data);
   if (series.length < 2) return null;

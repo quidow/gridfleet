@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import Modal from './Modal';
+import { Modal } from './Modal';
 
 function TestModal({ onClose = vi.fn(), isOpen = true, ...props }: Partial<React.ComponentProps<typeof Modal>>) {
   return (

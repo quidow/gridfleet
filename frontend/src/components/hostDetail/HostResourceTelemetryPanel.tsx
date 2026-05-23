@@ -8,8 +8,8 @@ import {
   YAxis,
 } from 'recharts';
 import { LoadingSpinner } from '../LoadingSpinner';
-import FetchError from '../ui/FetchError';
-import AnalyticsEmptyState from '../analytics/AnalyticsEmptyState';
+import { FetchError } from '../ui/FetchError';
+import { AnalyticsEmptyState } from '../analytics/AnalyticsEmptyState';
 import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import { deriveHostResourceTelemetryState } from '../../lib/hostResourceTelemetry';
@@ -102,7 +102,7 @@ function MetricCard({
   );
 }
 
-export default function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
+export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
   const { data, isLoading, error, refetch } = useHostResourceTelemetry(hostId);
   const telemetryState = deriveHostResourceTelemetryState(data?.latest_recorded_at ?? null, 60);
   const chartPoints = toChartPoints(data?.samples ?? []);

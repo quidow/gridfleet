@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import FleetCapacityTab from './FleetCapacityTab';
+import { FleetCapacityTab } from './FleetCapacityTab';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
 import type { FleetCapacityTimeline } from '../../types';
 import { buildFleetCapacityChartData } from '../../lib/fleetCapacityTimeline';

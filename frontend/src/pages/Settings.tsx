@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { ConfirmDialog, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
-import BackupRestorePanel from '../components/settings/BackupRestorePanel';
-import PluginRegistryPanel from '../components/settings/PluginRegistryPanel';
-import SettingsCategoryPanel from '../components/settings/SettingsCategoryPanel';
-import WebhookRegistryPanel from '../components/settings/WebhookRegistryPanel';
+import { BackupRestorePanel } from '../components/settings/BackupRestorePanel';
+import { PluginRegistryPanel } from '../components/settings/PluginRegistryPanel';
+import { SettingsCategoryPanel } from '../components/settings/SettingsCategoryPanel';
+import { WebhookRegistryPanel } from '../components/settings/WebhookRegistryPanel';
 import { useResetAllSettings } from '../hooks/useSettings';
 import { usePageTitle } from '../hooks/usePageTitle';
 
@@ -25,7 +25,7 @@ const TAB_IDS = TABS.map((t) => t.id);
 const REGISTRY_TABS = new Set(['plugins', 'webhooks']);
 const CUSTOM_PANEL_TABS = new Set(['backup']);
 
-export default function Settings() {
+export function Settings() {
   usePageTitle('Settings');
   const [tab, setTab] = useTabParam('tab', TAB_IDS, 'general');
   const [showResetAll, setShowResetAll] = useState(false);

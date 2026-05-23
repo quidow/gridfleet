@@ -1,4 +1,4 @@
-import Modal from '../ui/Modal';
+import { Modal } from '../ui/Modal';
 import { Button, Checkbox } from '../ui';
 import { ReadinessBadge } from '../ReadinessBadge';
 import { getDiscoveryImportActionLabel } from '../../lib/deviceWorkflow';
@@ -20,7 +20,7 @@ interface HostDiscoveryModalProps {
   setSelectedRemoveIdentities: (next: Set<string>) => void;
 }
 
-export default function HostDiscoveryModal({
+export function HostDiscoveryModal({
   discoveryResult,
   isPending,
   onClose,

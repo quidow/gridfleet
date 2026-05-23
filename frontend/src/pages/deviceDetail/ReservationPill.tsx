@@ -9,7 +9,7 @@ interface ReservationPillProps {
   };
 }
 
-export default function ReservationPill({ reservation }: ReservationPillProps) {
+export function ReservationPill({ reservation }: ReservationPillProps) {
   const suffix = reservation.excluded ? ' (excluded)' : '';
   return (
     <Link

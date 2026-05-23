@@ -1,10 +1,10 @@
-import Card from '../ui/Card';
-import SectionHeader from '../ui/SectionHeader';
-import SettingsPanelLayout from './SettingsPanelLayout';
+import { Card } from '../ui/Card';
+import { SectionHeader } from '../ui/SectionHeader';
+import { SettingsPanelLayout } from './SettingsPanelLayout';
 import { DeviceExportButton } from './DeviceExportButton';
 import { DeviceImportPanel } from './DeviceImportPanel';
 
-export default function BackupRestorePanel() {
+export function BackupRestorePanel() {
   return (
     <SettingsPanelLayout
       title="Backup & Restore"

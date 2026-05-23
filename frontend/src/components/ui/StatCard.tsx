@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import Sparkline from './Sparkline';
+import { Sparkline } from './Sparkline';
 
 export type StatCardTone = 'neutral' | 'positive' | 'warn' | 'critical';
 
@@ -29,7 +29,7 @@ function hasVariation(values: number[] | undefined): values is number[] {
   return Math.max(...values) - Math.min(...values) > 0;
 }
 
-export default function StatCard({
+export function StatCard({
   label,
   value,
   icon: Icon,

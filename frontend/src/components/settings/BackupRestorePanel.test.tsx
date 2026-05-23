@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import BackupRestorePanel from './BackupRestorePanel';
+import { BackupRestorePanel } from './BackupRestorePanel';
 
 describe('BackupRestorePanel', () => {
   function renderPanel() {

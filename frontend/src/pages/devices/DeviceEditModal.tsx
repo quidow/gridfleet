@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import Modal from '../../components/ui/Modal';
-import Button from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
 import { DefinitionList, Field, Textarea, TextField } from '../../components/ui';
 import { READINESS_GLOSSARY, deviceUpdateRequiresReverification } from '../../components/readiness';
 import { useUpdateDevice } from '../../hooks/useDevices';
-import DeviceManifestFields from './DeviceManifestFields';
+import { DeviceManifestFields } from './DeviceManifestFields';
 import type { DevicePatch, DeviceRead, DeviceVerificationUpdate } from '../../types';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
@@ -25,7 +25,7 @@ type Props = {
   onRequestVerification: (request: VerificationRequest) => void;
 };
 
-export default function DeviceEditModal({ device, hostMap, onClose, onRequestVerification }: Props) {
+export function DeviceEditModal({ device, hostMap, onClose, onRequestVerification }: Props) {
   if (!device) {
     return null;
   }

@@ -93,7 +93,7 @@ function buildSegments(percentages: (number | null)[], stepX: number, usableH: n
   return segments;
 }
 
-export default function FleetHealthHistory({ livePoint }: FleetHealthHistoryProps) {
+export function FleetHealthHistory({ livePoint }: FleetHealthHistoryProps) {
   const { data } = useFleetCapacityTimeline({ bucket_minutes: BUCKET_MINUTES });
 
   const chart = useMemo(() => {

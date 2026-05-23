@@ -4,18 +4,18 @@ import { useRun, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useSessions } from '../hooks/useSessions';
 import { StatusBadge } from '../components/StatusBadge';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import DataTable from '../components/ui/DataTable';
-import FetchError from '../components/ui/FetchError';
-import PageHeader from '../components/ui/PageHeader';
-import Card from '../components/ui/Card';
-import RunActionButtons from '../components/runs/RunActionButtons';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { DataTable } from '../components/ui/DataTable';
+import { FetchError } from '../components/ui/FetchError';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Card } from '../components/ui/Card';
+import { RunActionButtons } from '../components/runs/RunActionButtons';
 import type { DataTableColumn } from '../components/ui/DataTable';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
 import type { RunState, SessionDetail, SessionSortKey } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
-import DefinitionList from '../components/ui/DefinitionList';
+import { DefinitionList } from '../components/ui/DefinitionList';
 import { resolvePlatformLabel } from '../lib/labels';
 
 const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
@@ -104,7 +104,7 @@ const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
 
 const SESSION_COLUMNS = buildSessionColumns({ hideDevice: false });
 
-export default function RunDetail() {
+export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: run, isLoading } = useRun(id!);

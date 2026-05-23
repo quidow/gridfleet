@@ -2,7 +2,7 @@ import { Download } from "lucide-react";
 import { useState } from "react";
 
 import { downloadExportBundle } from "../../api/devicesPortability";
-import Button from "../ui/Button";
+import { Button } from "../ui/Button";
 
 export function DeviceExportButton() {
   const [busy, setBusy] = useState(false);

@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom';
-import Badge from '../ui/Badge';
-import Button from '../ui/Button';
-import DataTable, { type DataTableColumn } from '../ui/DataTable';
-import SectionHeader from '../ui/SectionHeader';
+import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
+import { SectionHeader } from '../ui/SectionHeader';
 import type { ImportCommitResult } from '../../api/devicesPortability';
 
 type CreatedRow = ImportCommitResult['created'][number];

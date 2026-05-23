@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { downloadInventory, type InventoryFormat } from "../../api/devicesInventory";
-import Button from "../ui/Button";
-import Modal from "../ui/Modal";
+import { Button } from "../ui/Button";
+import { Modal } from "../ui/Modal";
 
 const STORAGE_KEY = "gridfleet:inventory-export-columns";
 

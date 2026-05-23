@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import Notifications from './Notifications';
+import { Notifications } from './Notifications';
 import { fetchNotifications } from '../api/notifications';
 import { useEventCatalog } from '../hooks/useEventCatalog';
 

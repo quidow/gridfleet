@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import DevicesTable from './DevicesTable';
+import { DevicesTable } from './DevicesTable';
 import type { DeviceRead } from '../../types';
 
 function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {

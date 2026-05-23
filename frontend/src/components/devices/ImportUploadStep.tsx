@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import SectionHeader from '../ui/SectionHeader';
+import { SectionHeader } from '../ui/SectionHeader';
 import type { ExportBundle } from '../../api/devicesPortability';
 
 interface Props {

@@ -1,11 +1,11 @@
 import { Link } from 'react-router-dom';
-import SummaryPill from '../../components/ui/SummaryPill';
+import { SummaryPill } from '../../components/ui/SummaryPill';
 import type { DeviceDetail } from '../../types';
 import { getDeviceDetailStatusPills } from './deviceDetailSummary';
 
 type Props = { device: DeviceDetail };
 
-export default function DeviceDetailStatusPills({ device }: Props) {
+export function DeviceDetailStatusPills({ device }: Props) {
   const pills = getDeviceDetailStatusPills(device);
 
   return (

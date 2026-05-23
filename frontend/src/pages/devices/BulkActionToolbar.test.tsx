@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import BulkActionToolbar from './BulkActionToolbar';
+import { BulkActionToolbar } from './BulkActionToolbar';
 
 function wrap(ui: ReactNode) {
   const client = new QueryClient({

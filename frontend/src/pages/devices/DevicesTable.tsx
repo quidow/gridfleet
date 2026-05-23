@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import DataTable, { type DataTableSort } from '../../components/ui/DataTable';
+import { DataTable, type DataTableSort } from '../../components/ui/DataTable';
 import type { DeviceRead } from '../../types';
 import type { DevicePendingAction } from '../../lib/devicePendingAction';
 import type { DeviceSortKey } from './devicePageHelpers';
@@ -18,7 +18,7 @@ type Props = {
   onAction: (action: DeviceAction) => void;
 };
 
-export default function DevicesTable({
+export function DevicesTable({
   devices,
   selectedIds,
   hostMap,

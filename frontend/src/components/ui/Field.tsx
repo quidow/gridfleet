@@ -10,7 +10,7 @@ interface FieldProps {
   className?: string;
 }
 
-export default function Field({
+export function Field({
   label,
   htmlFor,
   hint,

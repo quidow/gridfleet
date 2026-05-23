@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import EmptyState from '../components/ui/EmptyState';
-import FilterBuilder from './devices/FilterBuilder';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { EmptyState } from '../components/ui/EmptyState';
+import { FilterBuilder } from './devices/FilterBuilder';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import Modal from '../components/ui/Modal';
+import { Modal } from '../components/ui/Modal';
 import { StatusBadge } from '../components/StatusBadge';
-import DataTable from '../components/ui/DataTable';
-import Button from '../components/ui/Button';
+import { DataTable } from '../components/ui/DataTable';
+import { Button } from '../components/ui/Button';
 import { Field, Select, TextField } from '../components/ui';
 import type { DataTableColumn } from '../components/ui/DataTable';
 import { useDevices } from '../hooks/useDevices';
@@ -17,8 +17,8 @@ import { useHosts } from '../hooks/useHosts';
 import { createEmptyDeviceGroupFilterDraft, draftToDeviceGroupFilters } from '../lib/deviceGroupFilters';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DeviceGroupCreate, DeviceGroupRead } from '../types';
-import FetchError from '../components/ui/FetchError';
-import PageHeader from '../components/ui/PageHeader';
+import { FetchError } from '../components/ui/FetchError';
+import { PageHeader } from '../components/ui/PageHeader';
 
 type GroupFormState = {
   name: string;
@@ -63,7 +63,7 @@ const COLUMNS: DataTableColumn<DeviceGroupRead>[] = [
   },
 ];
 
-export default function DeviceGroups() {
+export function DeviceGroups() {
   usePageTitle('Device Groups');
   const { data: groups, isLoading, isError, refetch, dataUpdatedAt } = useDeviceGroups();
   const { data: allDevices = [] } = useDevices({});

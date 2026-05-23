@@ -1,4 +1,4 @@
-import Button from '../ui/Button';
+import { Button } from '../ui/Button';
 
 type Props = {
   onCancel: () => void;
@@ -6,7 +6,7 @@ type Props = {
   size?: 'sm' | 'md';
 };
 
-export default function RunActionButtons({ onCancel, onForceRelease, size = 'sm' }: Props) {
+export function RunActionButtons({ onCancel, onForceRelease, size = 'sm' }: Props) {
   return (
     <div className="flex items-center gap-2">
       <Button variant="secondary" size={size} onClick={onCancel}>

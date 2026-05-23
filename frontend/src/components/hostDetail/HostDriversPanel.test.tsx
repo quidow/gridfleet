@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import HostDriversPanel from './HostDriversPanel';
+import { HostDriversPanel } from './HostDriversPanel';
 
 const mockUseHostDriverPacks = vi.fn();
 const mockUseDriverPackCatalog = vi.fn();

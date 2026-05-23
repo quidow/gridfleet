@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { TrendingUp } from 'lucide-react';
-import OperationsSection, { MetricTile } from './OperationsSection';
+import { OperationsSection, MetricTile } from './OperationsSection';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('../../hooks/useRuns', () => ({

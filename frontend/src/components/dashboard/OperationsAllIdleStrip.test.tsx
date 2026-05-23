@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import OperationsAllIdleStrip from './OperationsAllIdleStrip';
+import { OperationsAllIdleStrip } from './OperationsAllIdleStrip';
 
 describe('OperationsAllIdleStrip', () => {
   it('announces idle state with role=status', () => {

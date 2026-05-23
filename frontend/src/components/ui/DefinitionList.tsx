@@ -14,7 +14,7 @@ interface DefinitionListProps {
   className?: string;
 }
 
-export default function DefinitionList({
+export function DefinitionList({
   items,
   layout = 'justified',
   className = '',

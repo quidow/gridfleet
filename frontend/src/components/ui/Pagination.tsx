@@ -1,4 +1,4 @@
-import Button from './Button';
+import { Button } from './Button';
 
 interface PaginationProps {
   page: number;
@@ -12,7 +12,7 @@ interface PaginationProps {
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
-export default function Pagination({
+export function Pagination({
   page,
   pageSize,
   total,

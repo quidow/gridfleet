@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import FleetByPlatformCard from './FleetByPlatformCard';
+import { FleetByPlatformCard } from './FleetByPlatformCard';
 import type { DeviceRead } from '../../types';
 
 function device(overrides: Partial<DeviceRead>): DeviceRead {

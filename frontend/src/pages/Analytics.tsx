@@ -1,11 +1,18 @@
 import { useSearchParams } from 'react-router-dom';
-import { useMemo } from 'react';
-import DateRangePicker from '../components/analytics/DateRangePicker';
+import { Suspense, lazy, useMemo } from 'react';
+import { DateRangePicker } from '../components/analytics/DateRangePicker';
 import type { Preset } from '../components/analytics/DateRangePicker';
-import SessionTrendsTab from '../components/analytics/SessionTrendsTab';
-import DeviceUtilizationTab from '../components/analytics/DeviceUtilizationTab';
-import ReliabilityTab from '../components/analytics/ReliabilityTab';
-import FleetCapacityTab from '../components/analytics/FleetCapacityTab';
+import { ReliabilityTab } from '../components/analytics/ReliabilityTab';
+
+const SessionTrendsTab = lazy(() =>
+  import('../components/analytics/SessionTrendsTab').then((m) => ({ default: m.SessionTrendsTab })),
+);
+const DeviceUtilizationTab = lazy(() =>
+  import('../components/analytics/DeviceUtilizationTab').then((m) => ({ default: m.DeviceUtilizationTab })),
+);
+const FleetCapacityTab = lazy(() =>
+  import('../components/analytics/FleetCapacityTab').then((m) => ({ default: m.FleetCapacityTab })),
+);
 import {
   useDeviceReliability,
   useDeviceUtilization,
@@ -15,8 +22,8 @@ import {
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
-import PageHeader from '../components/ui/PageHeader';
-import Tabs from '../components/ui/Tabs';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Tabs } from '../components/ui/Tabs';
 
 type Tab = 'sessions' | 'utilization' | 'reliability' | 'fleet-capacity';
 const DEFAULT_PRESET: Preset = '7d';
@@ -41,7 +48,7 @@ function isTab(value: string | null): value is Tab {
   return TABS.some((item) => item.key === value);
 }
 
-export default function Analytics() {
+export function Analytics() {
   useDevRenderCrashTrigger('analytics-page');
   usePageTitle('Analytics');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -119,12 +126,16 @@ export default function Analytics() {
 
       {tab === 'sessions' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-session-trends">
-          <SessionTrendsTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <SessionTrendsTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       {tab === 'utilization' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-device-utilization">
-          <DeviceUtilizationTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <DeviceUtilizationTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       {tab === 'reliability' && (
@@ -134,7 +145,9 @@ export default function Analytics() {
       )}
       {tab === 'fleet-capacity' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-fleet-capacity">
-          <FleetCapacityTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <FleetCapacityTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       </div>

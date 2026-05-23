@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi } from 'vitest';
-import HostDetail from './HostDetail';
+import { HostDetail } from './HostDetail';
 
 vi.mock('../hooks/usePageTitle', () => ({
   usePageTitle: () => undefined,
@@ -85,15 +85,15 @@ vi.mock('../components/hosts/useHostDiscoveryFlow', () => ({
 }));
 
 vi.mock('../components/hostDetail/HostToolVersionsPanel', () => ({
-  default: () => <section>Tool Versions</section>,
+  HostToolVersionsPanel: () => <section>Tool Versions</section>,
 }));
 
 vi.mock('../components/hostDetail/HostResourceTelemetryPanel', () => ({
-  default: () => <section>Resource Telemetry</section>,
+  HostResourceTelemetryPanel: () => <section>Resource Telemetry</section>,
 }));
 
 vi.mock('../components/hostDetail/HostLogsPanel', () => ({
-  default: ({ hostId }: { hostId: string }) => <section>Host logs for {hostId}</section>,
+  HostLogsPanel: ({ hostId }: { hostId: string }) => <section>Host logs for {hostId}</section>,
 }));
 
 function renderHostDetail(path: string) {
@@ -109,11 +109,12 @@ function renderHostDetail(path: string) {
   );
 }
 
-test('does not render tool versions on diagnostics tab', () => {
+test('does not render tool versions on diagnostics tab', async () => {
   renderHostDetail('/hosts/host-1?tab=diagnostics');
 
   expect(screen.getAllByText('Diagnostics').length).toBeGreaterThan(0);
-  expect(screen.getByText('Resource Telemetry')).toBeInTheDocument();
+  // HostResourceTelemetryPanel is lazy-loaded — await its Suspense resolution.
+  expect(await screen.findByText('Resource Telemetry')).toBeInTheDocument();
   expect(screen.queryByText('Tool Versions')).not.toBeInTheDocument();
 });
 

@@ -10,7 +10,7 @@ type Props = {
   showStartError?: boolean;
 };
 
-export default function DeviceVerificationProgress({ activeJob, showStartError = false }: Props) {
+export function DeviceVerificationProgress({ activeJob, showStartError = false }: Props) {
   if (!activeJob && !showStartError) return null;
 
   const overallStatus =

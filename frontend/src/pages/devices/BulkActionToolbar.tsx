@@ -12,7 +12,7 @@ import {
   useBulkUpdateTags,
 } from '../../hooks/useBulk';
 import { Button } from '../../components/ui';
-import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import type { BulkOperationResult, DeviceRead } from '../../types';
 import {
   DeviceActionErrorsDialog,
@@ -30,7 +30,7 @@ function Divider() {
   return <div className="h-6 w-px bg-sidebar-border" aria-hidden="true" />;
 }
 
-export default function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelection }: Props) {
+export function BulkActionToolbar({ selectedIds, selectedDevices, onClearSelection }: Props) {
   const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; action: () => Promise<void> } | null>(null);
   const [showTagsModal, setShowTagsModal] = useState(false);
   const [showErrorsModal, setShowErrorsModal] = useState(false);

@@ -3,21 +3,21 @@ import { Bell } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useEventCatalog } from '../hooks/useEventCatalog';
 import { usePaginatedQueryState } from '../hooks/usePaginatedQueryState';
-import DataTable from '../components/ui/DataTable';
+import { DataTable } from '../components/ui/DataTable';
 import type { DataTableColumn } from '../components/ui/DataTable';
-import EmptyState from '../components/ui/EmptyState';
-import FilterBar from '../components/ui/FilterBar';
-import ListPageSubheader from '../components/ui/ListPageSubheader';
-import Pagination from '../components/ui/Pagination';
+import { EmptyState } from '../components/ui/EmptyState';
+import { FilterBar } from '../components/ui/FilterBar';
+import { ListPageSubheader } from '../components/ui/ListPageSubheader';
+import { Pagination } from '../components/ui/Pagination';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime } from '../utils/dateFormatting';
 import type { SystemEventRead } from '../types';
-import FetchError from '../components/ui/FetchError';
-import PageHeader from '../components/ui/PageHeader';
-import Select from '../components/ui/Select';
-import Badge from '../components/ui/Badge';
-import SeverityBadge from '../components/notifications/SeverityBadge';
-import EventDetailsCell from '../components/notifications/EventDetailsCell';
+import { FetchError } from '../components/ui/FetchError';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Select } from '../components/ui/Select';
+import { Badge } from '../components/ui/Badge';
+import { SeverityBadge } from '../components/notifications/SeverityBadge';
+import { EventDetailsCell } from '../components/notifications/EventDetailsCell';
 import {
   EVENT_SEVERITY_LABEL,
   type EventSeverity,
@@ -93,7 +93,7 @@ function SeverityChipFilter({ selected, onToggle }: SeverityChipFilterProps) {
   );
 }
 
-export default function Notifications() {
+export function Notifications() {
   usePageTitle('Notifications');
   const {
     searchParams,

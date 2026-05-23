@@ -6,8 +6,8 @@ import { Download } from 'lucide-react';
 import { useDeviceUtilization } from '../../hooks/useAnalytics';
 import { downloadAnalyticsCsv } from '../../api/analytics';
 import { LoadingSpinner } from '../LoadingSpinner';
-import AnalyticsEmptyState from './AnalyticsEmptyState';
-import Card from '../ui/Card';
+import { AnalyticsEmptyState } from './AnalyticsEmptyState';
+import { Card } from '../ui/Card';
 import type { AnalyticsParams } from '../../api/analytics';
 
 interface Props {
@@ -22,7 +22,7 @@ function barColor(pct: number): string {
 
 const PIE_COLORS = ['#3b82f6', '#d1d5db', '#ef4444'];
 
-export default function DeviceUtilizationTab({ params }: Props) {
+export function DeviceUtilizationTab({ params }: Props) {
   const { data, isLoading } = useDeviceUtilization(params);
 
   if (isLoading) return <LoadingSpinner />;

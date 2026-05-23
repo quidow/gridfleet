@@ -4,10 +4,10 @@ import { Activity, Server, Smartphone, type LucideIcon } from 'lucide-react';
 import { useDevices } from '../../hooks/useDevices';
 import { useHosts } from '../../hooks/useHosts';
 import { useGridStatus, useHealth } from '../../hooks/useGrid';
-import StatCard, { type StatCardTone } from '../ui/StatCard';
+import { StatCard, type StatCardTone } from '../ui/StatCard';
 import { deriveDashboardFleetSummary, deriveSystemHealthSummary } from './dashboardSummary';
 
-export default function StatCardsRow() {
+export function StatCardsRow() {
   const { data: devices } = useDevices();
   const { data: hosts } = useHosts();
   const { data: grid } = useGridStatus();

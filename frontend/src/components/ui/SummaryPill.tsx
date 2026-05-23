@@ -15,7 +15,7 @@ const TONE_DOT: Record<SummaryPillTone, string> = {
   neutral: 'bg-neutral-strong',
 };
 
-export default function SummaryPill({ tone, label, value }: SummaryPillProps) {
+export function SummaryPill({ tone, label, value }: SummaryPillProps) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-1 px-2.5 py-1 text-xs text-text-2">
       <span className={`inline-block h-2 w-2 rounded-full ${TONE_DOT[tone]}`} />

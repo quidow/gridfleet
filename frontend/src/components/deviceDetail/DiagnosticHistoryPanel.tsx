@@ -4,9 +4,9 @@ import {
   useDeviceDiagnosticSnapshot,
   useDeviceDiagnosticSnapshots,
 } from '../../hooks/useDeviceDiagnostics';
-import Badge, { type BadgeTone } from '../ui/Badge';
-import Card from '../ui/Card';
-import DiagnosticBundleModal from './DiagnosticBundleModal';
+import { Badge, type BadgeTone } from '../ui/Badge';
+import { Card } from '../ui/Card';
+import { DiagnosticBundleModal } from './DiagnosticBundleModal';
 import { formatDate } from './utils';
 
 type Props = { deviceId: string };
@@ -16,7 +16,7 @@ const TRIGGER_LABELS: Record<string, { label: string; tone: BadgeTone }> = {
   review_required: { label: 'Auto: review', tone: 'warning' },
 };
 
-export default function DiagnosticHistoryPanel({ deviceId }: Props) {
+export function DiagnosticHistoryPanel({ deviceId }: Props) {
   const { data, isLoading } = useDeviceDiagnosticSnapshots(deviceId, 5);
   const [openSnapshotId, setOpenSnapshotId] = useState<string | null>(null);
   const [redacted, setRedacted] = useState(false);

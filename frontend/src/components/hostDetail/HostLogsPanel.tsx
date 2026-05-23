@@ -1,7 +1,7 @@
 import { SectionErrorBoundary } from '../ErrorBoundary';
 import { Tabs, useTabParam } from '../ui';
-import HostAgentLogPanel from './HostAgentLogPanel';
-import HostEventsPanel from './HostEventsPanel';
+import { HostAgentLogPanel } from './HostAgentLogPanel';
+import { HostEventsPanel } from './HostEventsPanel';
 
 interface Props {
   hostId: string;
@@ -14,7 +14,7 @@ const TABS = [
 
 const TAB_IDS = TABS.map((tab) => tab.id);
 
-export default function HostLogsPanel({ hostId }: Props) {
+export function HostLogsPanel({ hostId }: Props) {
   const [tab, setTab] = useTabParam('logs_tab', TAB_IDS as unknown as string[], 'agent');
 
   return (

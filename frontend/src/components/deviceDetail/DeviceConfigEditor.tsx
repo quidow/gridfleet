@@ -5,10 +5,10 @@ import {
   useDeviceConfig,
   useConfigHistory,
 } from '../../hooks/useDevices';
-import ConfirmDialog from '../ui/ConfirmDialog';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadingSpinner } from '../LoadingSpinner';
-import SetupVerificationModal from '../../pages/devices/SetupVerificationModal';
-import Button from '../ui/Button';
+import { SetupVerificationModal } from '../../pages/devices/SetupVerificationModal';
+import { Button } from '../ui/Button';
 import type { ConfigAuditEntry, DeviceDetail } from '../../types';
 import { formatDate } from './utils';
 
@@ -18,7 +18,7 @@ interface Props {
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
-export default function DeviceConfigEditor({ device }: Props) {
+export function DeviceConfigEditor({ device }: Props) {
   const { id: deviceId } = device;
   const { data: config, refetch } = useDeviceConfig(deviceId);
   const { data: history } = useConfigHistory(deviceId);

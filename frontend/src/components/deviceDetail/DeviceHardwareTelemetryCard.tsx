@@ -7,7 +7,7 @@ import {
 } from '../../lib/hardwareTelemetry';
 import type { DeviceDetail } from '../../types';
 import { formatDate } from './utils';
-import DefinitionList from '../ui/DefinitionList';
+import { DefinitionList } from '../ui/DefinitionList';
 
 type TelemetryItem = {
   term: string;
@@ -18,7 +18,7 @@ type Props = {
   device: DeviceDetail;
 };
 
-export default function DeviceHardwareTelemetryCard({ device }: Props) {
+export function DeviceHardwareTelemetryCard({ device }: Props) {
   const hasBatteryData =
     device.battery_level_percent !== null ||
     device.charging_state !== null;

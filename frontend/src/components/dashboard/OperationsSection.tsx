@@ -7,16 +7,16 @@ import { useFleetOverview } from '../../hooks/useAnalytics';
 import { useDevices } from '../../hooks/useDevices';
 import { useRuns } from '../../hooks/useRuns';
 import { deriveRetriableQueryState } from '../../hooks/useRetriableQueryState';
-import Sparkline from '../ui/Sparkline';
+import { Sparkline } from '../ui/Sparkline';
 import { useSessionsDaily } from '../../hooks/useSessionsDaily';
 import { PlatformIcon } from '../PlatformIcon';
 import { StatusBadge } from '../StatusBadge';
-import Badge from '../ui/Badge';
+import { Badge } from '../ui/Badge';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { DEVICE_STATUS_LABELS } from '../../lib/labels';
-import Card from '../ui/Card';
-import FetchError from '../ui/FetchError';
-import SectionSkeleton from '../ui/SectionSkeleton';
+import { Card } from '../ui/Card';
+import { FetchError } from '../ui/FetchError';
+import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { formatRelativeTime } from '../../utils/dateFormatting';
 import type { DeviceChipStatus, DeviceRead, RunRead } from '../../types';
 import { deriveDashboardFleetSummary, isActiveRun } from './dashboardSummary';
@@ -154,7 +154,7 @@ export function MetricTile({
   );
 }
 
-export default function OperationsSection() {
+export function OperationsSection() {
   const runsQuery = useRuns();
   const devicesQuery = useDevices();
   const fleetOverviewParams = useMemo(() => last7DaysParams(), []);
