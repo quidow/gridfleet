@@ -1,7 +1,3 @@
-// Cache utilities for optimistic updates on the `devices` / `device` query
-// keys owned by useDevices.ts. Lives in lib/ so the hook file stays focused
-// on the hook API.
-
 import type { QueryClient } from '@tanstack/react-query';
 import type {
   DesiredNodeState,
@@ -20,13 +16,6 @@ export type OptimisticDeviceContext = {
 };
 
 export type DeviceCacheUpdater = <T extends DeviceRead>(device: T) => T;
-
-export function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return fallback;
-}
 
 export function rollbackOptimisticDeviceQueries(
   qc: QueryClient,

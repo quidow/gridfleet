@@ -41,8 +41,8 @@ import type {
   DeviceTestData,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { getErrorMessage } from '../lib/errors';
 import {
-  getErrorMessage,
   invalidatePatchedDeviceQueries,
   patchDeviceQueries,
   rollbackOptimisticDeviceQueries,
