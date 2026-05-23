@@ -47,6 +47,7 @@ def default_state() -> dict[str, Any]:
         "recovery_suppressed_reason": None,
         "backoff_until": None,
         "recovery_backoff_attempts": 0,
+        "maintenance_reason": None,
     }
 
 
@@ -179,6 +180,18 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
     clear_backoff(next_state)
     next_state["recovery_suppressed_reason"] = None
     set_action(next_state, "maintenance_exited")
+    write_state(device, next_state)
+
+
+def set_maintenance_reason(device: Device, reason: str) -> None:
+    next_state = state(device)
+    next_state["maintenance_reason"] = reason
+    write_state(device, next_state)
+
+
+def clear_maintenance_reason(device: Device) -> None:
+    next_state = state(device)
+    next_state["maintenance_reason"] = None
     write_state(device, next_state)
 
 

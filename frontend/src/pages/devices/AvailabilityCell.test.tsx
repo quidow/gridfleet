@@ -8,6 +8,7 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     operational_state: 'available', hold: null,
     needs_attention: false,
     lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
+    health_summary: { healthy: true, summary: 'Healthy', last_checked_at: null },
     readiness_state: 'verified',
     missing_setup_fields: [],
     ...overrides,

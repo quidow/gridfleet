@@ -2804,10 +2804,16 @@ export interface components {
         };
         /** DeviceHealthSummaryRead */
         DeviceHealthSummaryRead: {
+            /** Connectivity Status */
+            connectivity_status?: ("ok" | "failed") | null;
             /** Healthy */
             healthy: boolean | null;
             /** Last Checked At */
             last_checked_at?: string | null;
+            /** Node Status */
+            node_status?: string | null;
+            /** Session Status */
+            session_status?: ("passed" | "failed") | null;
             /** Summary */
             summary: string;
         };

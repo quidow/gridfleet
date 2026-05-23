@@ -203,3 +203,55 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
     await db_session.commit()
     schedule.side_effect = RuntimeError("queue down")
     await exit_maintenance(db_session, device)
+
+
+async def test_enter_maintenance_stores_maintenance_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reason-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    await enter_maintenance(db_session, locked, maintenance_reason="Cooldown escalation")
+
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") == "Cooldown escalation"
+
+
+async def test_exit_maintenance_clears_maintenance_reason(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="clear-reason-target",
+        hold=DeviceHold.maintenance,
+        lifecycle_policy_state={
+            "last_action": None,
+            "last_action_at": None,
+            "last_failure_reason": None,
+            "last_failure_source": None,
+            "recovery_suppressed_reason": "Device is in maintenance mode",
+            "recovery_backoff_attempts": 0,
+            "backoff_until": None,
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "maintenance_reason": "Cooldown escalation",
+        },
+    )
+    await db_session.commit()
+
+    await exit_maintenance(db_session, device)
+    await db_session.refresh(device)
+
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is None

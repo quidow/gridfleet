@@ -95,7 +95,7 @@ describe('deviceDetailSummary', () => {
     expect(pills[1]).toMatchObject({
       key: 'connectivity',
       label: 'Connectivity',
-      value: 'ADB not responsive',
+      value: 'Failed',
       tone: 'error',
       to: `/devices/${device.id}?tab=triage#device-health`,
     });

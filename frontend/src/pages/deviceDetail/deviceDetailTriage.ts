@@ -19,6 +19,8 @@ export type DeviceDetailTriageActionKind =
   | 'open-control'
   | 'open-hardware-filter'
   | 'test-session'
+  | 'enter-maintenance'
+  | 'exit-maintenance'
   | 'none';
 
 export interface DeviceDetailTriageAction {
@@ -147,9 +149,15 @@ export function deriveDeviceDetailTriage(
 
   if (!node || node.effective_state !== 'running') {
     const inMaintenance = device.hold === 'maintenance';
-    const nodeAction = reservation || inMaintenance
-      ? { kind: 'open-control' as const, label: 'Review Control', to: `/devices/${device.id}?tab=control` }
-      : { kind: 'start-node' as const, label: 'Start Node' };
+
+    let nodeAction: DeviceDetailTriageAction;
+    if (inMaintenance) {
+      nodeAction = { kind: 'exit-maintenance', label: 'Take out of maintenance' };
+    } else if (reservation) {
+      nodeAction = { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` };
+    } else {
+      nodeAction = { kind: 'start-node', label: 'Start Node' };
+    }
 
     let tone: DeviceDetailTriageTone;
     let eyebrow: string;
@@ -164,16 +172,30 @@ export function deriveDeviceDetailTriage(
       eyebrow = 'Device control';
     }
 
+    const evidence: DeviceDetailTriageEvidence[] = [
+      { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'neutral' },
+      { label: 'Node state', value: node?.effective_state ?? 'none', tone: node ? 'warn' : 'neutral' },
+    ];
+
+    if (inMaintenance && device.lifecycle_policy_summary.detail) {
+      evidence.unshift({
+        label: 'Reason',
+        value: device.lifecycle_policy_summary.detail,
+        tone: 'neutral',
+      });
+    }
+
     return {
       tone,
       eyebrow,
-      title: node ? 'Appium node is stopped' : 'No Appium node configured',
-      detail: 'Start the node to register this device with Selenium Grid.',
+      title: inMaintenance
+        ? 'In maintenance'
+        : node ? 'Appium node is stopped' : 'No Appium node configured',
+      detail: inMaintenance
+        ? (device.lifecycle_policy_summary.detail || 'Device is in maintenance mode.')
+        : 'Start the node to register this device with Selenium Grid.',
       action: nodeAction,
-      evidence: [
-        { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'neutral' },
-        { label: 'Node state', value: node?.effective_state ?? 'none', tone: node ? 'warn' : 'neutral' },
-      ],
+      evidence,
     };
   }
 

@@ -8,7 +8,6 @@ import {
   useDeviceLogs,
   useEnterDeviceMaintenance,
   useExitDeviceMaintenance,
-  useRestartNode,
   useRunDeviceLifecycleAction,
   useRunDeviceSessionTest,
   useStartNode,
@@ -42,7 +41,6 @@ import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
 import FetchError from '../components/ui/FetchError';
 import DeviceDetailStatusPills from './deviceDetail/DeviceDetailStatusPills';
-import DeviceStatusCard from './deviceDetail/DeviceStatusCard';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
 import {
   deriveDeviceDetailTriage,
@@ -86,6 +84,8 @@ function TriageHero({
   onLifecycleBoot,
   onStartNode,
   onTestSession,
+  onEnterMaintenance,
+  onExitMaintenance,
   pending,
   verificationLabel,
 }: {
@@ -94,6 +94,8 @@ function TriageHero({
   onLifecycleBoot: () => void;
   onStartNode: () => void;
   onTestSession: () => void;
+  onEnterMaintenance: () => void;
+  onExitMaintenance: () => void;
   pending: {
     lifecycleBoot: boolean;
     startNode: boolean;
@@ -125,14 +127,16 @@ function TriageHero({
     if (action.kind === 'test-session') {
       return <Button onClick={onTestSession} loading={pending.testSession} leadingIcon={<Play size={15} />}>{action.label}</Button>;
     }
+    if (action.kind === 'enter-maintenance') {
+      return <Button onClick={onEnterMaintenance}>{action.label}</Button>;
+    }
+    if (action.kind === 'exit-maintenance') {
+      return <Button onClick={onExitMaintenance}>{action.label}</Button>;
+    }
     return null;
   })();
 
   const showVerifySecondary = Boolean(verificationLabel) && action.kind !== 'verify';
-
-  if (!actionNode && !showVerifySecondary) {
-    return null;
-  }
 
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
@@ -182,7 +186,6 @@ export default function DeviceDetail() {
   const deleteDevice = useDeleteDevice();
   const lifecycleAction = useRunDeviceLifecycleAction();
   const startNode = useStartNode();
-  const restartNode = useRestartNode();
   const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
   const runSessionTest = useRunDeviceSessionTest();
@@ -263,30 +266,7 @@ export default function DeviceDetail() {
       <div className="fade-in-stagger flex flex-col gap-6">
         {tab === 'triage' ? (
           <>
-            <DeviceStatusCard
-              device={device}
-              onRetry={() => restartNode.mutate(device.id)}
-              onMaintenance={() => enterMaintenance.mutate({ id: device.id })}
-              onExitMaintenance={() => exitMaintenance.mutate(device.id)}
-              onSetup={() => {
-                if (verificationAction) {
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }
-              }}
-              onVerify={() => {
-                if (verificationAction) {
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }
-              }}
-            />
-
-            {triage && triage.tone !== 'ok' ? (
+            {triage ? (
               <TriageHero
                 triage={triage}
                 pending={triagePending}
@@ -303,6 +283,8 @@ export default function DeviceDetail() {
                 onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
                 onStartNode={() => startNode.mutate(device.id)}
                 onTestSession={() => runSessionTest.mutate(device.id)}
+                onEnterMaintenance={() => enterMaintenance.mutate({ id: device.id })}
+                onExitMaintenance={() => exitMaintenance.mutate(device.id)}
               />
             ) : null}
 
