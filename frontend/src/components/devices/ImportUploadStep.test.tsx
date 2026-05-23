@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ImportUploadStep } from './ImportUploadStep';
 
@@ -17,8 +17,9 @@ describe('ImportUploadStep', () => {
     const file = new File([JSON.stringify(bundle)], 'bundle.json', { type: 'application/json' });
     Object.defineProperty(input, 'files', { value: [file] });
     fireEvent.change(input);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(onBundle).toHaveBeenCalledWith(expect.objectContaining({ schema_version: 1 }));
+    await waitFor(() =>
+      expect(onBundle).toHaveBeenCalledWith(expect.objectContaining({ schema_version: 1 })),
+    );
   });
 
   it('shows an inline error for an unsupported schema_version', async () => {

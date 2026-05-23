@@ -30,7 +30,11 @@ export function DeviceImportPanel() {
           onCommit={() => void commit()}
         />
       )}
-      {state.status === 'committing' && <p className="text-sm text-text-3">Committing…</p>}
+      {state.status === 'committing' && (
+        <p role="status" aria-live="polite" className="text-sm text-text-3">
+          Committing…
+        </p>
+      )}
       {state.status === 'done' && state.result && (
         <ImportResultsStep result={state.result} onReset={reset} />
       )}
