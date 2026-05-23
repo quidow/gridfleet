@@ -18,9 +18,6 @@ vi.mock('../../hooks/useAnalytics', () => ({
     refetch: vi.fn(),
   }),
 }));
-vi.mock('../../hooks/useRetriableQueryState', () => ({
-  deriveRetriableQueryState: () => 'success',
-}));
 vi.mock('../../hooks/useSessionsDaily', () => ({
   useSessionsDaily: () => ({ series: [], data: undefined, isError: false, refetch: vi.fn() }),
 }));

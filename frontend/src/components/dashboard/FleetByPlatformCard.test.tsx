@@ -78,10 +78,6 @@ vi.mock('../../hooks/useDevices', () => ({
   useDevices: () => mockUseDevices(),
 }));
 
-vi.mock('../../hooks/useRetriableQueryState', () => ({
-  deriveRetriableQueryState: () => 'success',
-}));
-
 vi.mock('../../hooks/useDriverPacks', () => ({
   useDriverPackCatalog: () => mockUseDriverPackCatalog(),
 }));
