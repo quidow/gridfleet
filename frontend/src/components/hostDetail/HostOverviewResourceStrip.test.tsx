@@ -24,7 +24,9 @@ const sampleWithoutTotals = {
   disk_percent: 40,
 };
 
-const useHostResourceTelemetryMock = vi.fn();
+const { useHostResourceTelemetryMock } = vi.hoisted(() => ({
+  useHostResourceTelemetryMock: vi.fn(),
+}));
 
 vi.mock('../../hooks/useHosts', () => ({
   useHostResourceTelemetry: (...args: unknown[]) => useHostResourceTelemetryMock(...args),
@@ -123,5 +125,12 @@ describe('formatCpuUsage', () => {
   test('returns null when cores is zero or negative', () => {
     expect(formatCpuUsage(28, 0)).toBeNull();
     expect(formatCpuUsage(28, -1)).toBeNull();
+  });
+
+  test('returns null for non-finite or negative cpu_percent', () => {
+    expect(formatCpuUsage(Number.NaN, 8)).toBeNull();
+    expect(formatCpuUsage(Number.POSITIVE_INFINITY, 8)).toBeNull();
+    expect(formatCpuUsage(Number.NEGATIVE_INFINITY, 8)).toBeNull();
+    expect(formatCpuUsage(-0.1, 8)).toBeNull();
   });
 });
