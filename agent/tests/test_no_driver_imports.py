@@ -82,7 +82,6 @@ KNOWN_VIOLATIONS: set[tuple[str, str]] = {
     # installer/plan.py — Android SDK in service config (audit 1.10)
     ("agent_app/installer/plan.py", "ANDROID_HOME"),
     ("agent_app/installer/plan.py", "ANDROID_SDK_ROOT"),
-    ("agent_app/installer/plan.py", "adb"),
     # grid_node/protocol.py — chrome special-case (audit 2.6)
     ("agent_app/grid_node/protocol.py", "chrome"),
 }
@@ -275,4 +274,26 @@ def test_no_driver_specific_config() -> None:
         lines.append("")
         lines.append("To fix: remove driver-specific config from agent core.")
         lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
+        raise AssertionError("\n".join(lines))
+
+
+def test_known_violations_are_current() -> None:
+    """Fail if any KNOWN_VIOLATIONS entry no longer matches an actual violation.
+
+    Forces cleanup: when a violation is fixed, its exemption must be removed.
+    """
+    actual: set[tuple[str, str]] = set()
+    for rel, pattern, _ in _collect_literal_violations():
+        actual.add((rel, pattern))
+    for rel, key, _ in _collect_import_violations():
+        actual.add((rel, key))
+    for rel, key, _ in _collect_config_violations():
+        actual.add((rel, key))
+
+    stale = KNOWN_VIOLATIONS - actual
+
+    if stale:
+        lines = ["Stale KNOWN_VIOLATIONS entries (violation no longer exists — remove from list):"]
+        for rel, key in sorted(stale):
+            lines.append(f'  ("{rel}", "{key}")')
         raise AssertionError("\n".join(lines))
