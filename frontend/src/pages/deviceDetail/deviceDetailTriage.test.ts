@@ -340,7 +340,7 @@ describe('deriveDeviceDetailTriage', () => {
       eyebrow: 'Review required',
       title: 'Device shelved — operator review required',
       detail: 'Recovery probe failed 5 times',
-      action: { kind: 'open-control' },
+      action: { kind: 'none' },
     });
   });
 

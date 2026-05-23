@@ -13,7 +13,6 @@ export type DeviceDetailTriageActionKind =
   | 'launch-emulator'
   | 'boot-simulator'
   | 'start-node'
-  | 'open-control'
   | 'open-hardware-filter'
   | 'exit-maintenance'
   | 'none';
@@ -95,7 +94,7 @@ export function deriveDeviceDetailTriage(
       detail:
         device.review_reason ||
         'Automated recovery hit the failure threshold. Restart the node, re-verify, or exit maintenance to release the device back into the recovery loop.',
-      action: { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` },
+      action: { kind: 'none', label: '' },
     };
   }
 
@@ -177,9 +176,10 @@ export function deriveDeviceDetailTriage(
     return {
       tone: 'error',
       eyebrow: 'Health check',
-      title: 'Device health check failed',
+      title: reservation ? 'Device health check failed — reserved by' : 'Device health check failed',
+      titleLink: reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined,
       detail: failedHealthDetail(device, health),
-      action: { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` },
+      action: { kind: 'none', label: '' },
     };
   }
 
