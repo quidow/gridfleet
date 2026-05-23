@@ -35,3 +35,28 @@ async def test_doctor_requires_devicectl_and_go_ios(_mock_go_ios: object, _mock_
         ("xcrun", True),
         ("go_ios", True),
     ]
+
+
+def test_tool_versions_returns_xcodebuild_and_go_ios() -> None:
+    from unittest.mock import patch
+
+    from adapter import Adapter
+
+    xcode_result = type("R", (), {"stdout": "Xcode 16.2\nBuild version 16C5032a", "returncode": 0})()
+    go_ios_result = type("R", (), {"stdout": "v1.0.301", "returncode": 0})()
+
+    with patch("subprocess.run", side_effect=[xcode_result, go_ios_result]):
+        result = Adapter().tool_versions()
+
+    assert result == {"xcodebuild": "16.2", "go_ios": "1.0.301"}
+
+
+def test_tool_versions_handles_missing_tools() -> None:
+    from unittest.mock import patch
+
+    from adapter import Adapter
+
+    with patch("subprocess.run", side_effect=FileNotFoundError()):
+        result = Adapter().tool_versions()
+
+    assert result == {"xcodebuild": None, "go_ios": None}
