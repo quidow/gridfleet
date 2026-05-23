@@ -8,7 +8,7 @@ from app.settings import service as settings_module
 from app.settings.registry import SettingDefinition
 
 
-def test_settings_service_validation_and_normalization_edges(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_service_validation_and_normalization_edges() -> None:
     service = settings_module.SettingsService()
     service._defaults = {"notifications.toast_events": ["host.status_changed"]}
 
@@ -26,12 +26,6 @@ def test_settings_service_validation_and_normalization_edges(monkeypatch: pytest
     assert "Expected list" in (service._validate_value("notifications.toast_events", "host.status_changed") or "")
     assert "item" in (service._validate_value("notifications.toast_events", [""]) or "")
     assert "item" in (service._validate_value("notifications.toast_events", ["unknown.event"]) or "")
-
-    monkeypatch.setattr(settings_module.auth_settings, "auth_enabled", True)
-    monkeypatch.setattr(settings_module.agent_settings, "agent_terminal_token", "")
-    assert "GRIDFLEET_AGENT_TERMINAL_TOKEN" in (
-        settings_module._cross_field_validate("agent.enable_web_terminal", True) or ""
-    )
 
 
 async def test_settings_service_event_refresh_and_cancel_paths(monkeypatch: pytest.MonkeyPatch) -> None:

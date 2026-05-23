@@ -36,29 +36,50 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
 
 
 async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
-    """Delete intents whose precondition no longer holds, then re-reconcile."""
+    """Delete intents whose precondition no longer holds, then re-reconcile.
+
+    The outer SELECT runs without ``FOR UPDATE``, so a concurrent producer
+    can upsert the same ``(device_id, source)`` row with a fresh
+    precondition between the snapshot read and the delete. Re-fetch each
+    candidate intent under ``SELECT … FOR UPDATE`` and re-evaluate
+    ``is_satisfied`` against the locked row before deleting; bail when
+    the locked snapshot now holds the precondition.
+    """
     rows = (await db.execute(select(DeviceIntent).where(DeviceIntent.precondition.is_not(None)))).scalars().all()
     affected: set[UUID] = set()
     for intent in rows:
         if await is_satisfied(db, intent):
             continue
-        precondition_kind = (intent.precondition or {}).get("kind") if intent.precondition else None
+        locked_stmt = (
+            select(DeviceIntent)
+            .where(DeviceIntent.id == intent.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        locked_intent = (await db.execute(locked_stmt)).scalar_one_or_none()
+        if locked_intent is None:
+            continue
+        if await is_satisfied(db, locked_intent):
+            # A concurrent producer re-registered this intent with a fresh
+            # precondition that does hold. Do not delete.
+            continue
+        precondition_kind = (locked_intent.precondition or {}).get("kind") if locked_intent.precondition else None
         await record_event(
             db,
-            intent.device_id,
+            locked_intent.device_id,
             DeviceEventType.desired_state_changed,
             {
                 "field": "device_intent",
-                "old_value": {"source": intent.source, "axis": intent.axis},
+                "old_value": {"source": locked_intent.source, "axis": locked_intent.axis},
                 "new_value": None,
                 "caller": "intent_reconciler",
                 "reason": "precondition_unsatisfied",
-                "intent_source": intent.source,
+                "intent_source": locked_intent.source,
                 "precondition_kind": precondition_kind,
             },
         )
-        affected.add(intent.device_id)
-        await db.delete(intent)
+        affected.add(locked_intent.device_id)
+        await db.delete(locked_intent)
     if not affected:
         return
     await db.flush()

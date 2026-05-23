@@ -5,7 +5,7 @@ type Props = {
   description: string;
 };
 
-export default function AnalyticsEmptyState({ title, description }: Props) {
+export function AnalyticsEmptyState({ title, description }: Props) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface-2 px-6 py-10 text-center">
       <div className="mb-3 rounded-full bg-surface-1 p-3 text-text-3 shadow-sm">

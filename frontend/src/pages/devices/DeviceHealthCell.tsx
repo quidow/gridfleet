@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { DeviceRead } from '../../types';
-import Popover from '../../components/ui/Popover';
+import { Popover } from '../../components/ui/Popover';
 import { deriveUnifiedHealth, type UnifiedHealthTone } from '../../lib/deviceUnifiedHealth';
 import { formatBatteryLevel, formatChargingState } from '../../lib/hardwareTelemetry';
 
@@ -107,5 +107,4 @@ function DeviceHealthCellInner({ device }: Props) {
   );
 }
 
-const DeviceHealthCell = memo(DeviceHealthCellInner);
-export default DeviceHealthCell;
+export const DeviceHealthCell = memo(DeviceHealthCellInner);

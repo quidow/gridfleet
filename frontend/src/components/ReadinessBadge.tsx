@@ -1,5 +1,5 @@
 import type { DeviceReadinessState } from '../types';
-import Badge, { type BadgeTone } from './ui/Badge';
+import { Badge, type BadgeTone } from './ui/Badge';
 import { readinessLabel } from './readiness';
 
 const READINESS_TONE_MAP: Record<DeviceReadinessState, BadgeTone> = {

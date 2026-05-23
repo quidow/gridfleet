@@ -7,7 +7,7 @@ import {
   useReplaceDeviceTestData,
 } from '../../hooks/useDevices';
 import { LoadingSpinner } from '../LoadingSpinner';
-import Button from '../ui/Button';
+import { Button } from '../ui/Button';
 import type { DeviceDetail, TestDataAuditEntry } from '../../types';
 import { formatDate } from './utils';
 
@@ -64,7 +64,7 @@ function formatMutationError(err: unknown): string {
   return 'Save failed: unknown error.';
 }
 
-export default function DeviceTestDataEditor({ device }: Props) {
+export function DeviceTestDataEditor({ device }: Props) {
   const { id: deviceId } = device;
   const { data: testData, refetch } = useDeviceTestData(deviceId);
   const { data: history } = useTestDataHistory(deviceId);

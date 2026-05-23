@@ -4,15 +4,15 @@ import { useDeviceReliability } from '../../hooks/useAnalytics';
 import { downloadAnalyticsCsv } from '../../api/analytics';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { PlatformIcon } from '../PlatformIcon';
-import AnalyticsEmptyState from './AnalyticsEmptyState';
-import Card from '../ui/Card';
+import { AnalyticsEmptyState } from './AnalyticsEmptyState';
+import { Card } from '../ui/Card';
 import type { AnalyticsParams } from '../../api/analytics';
 
 interface Props {
   params: AnalyticsParams;
 }
 
-export default function ReliabilityTab({ params }: Props) {
+export function ReliabilityTab({ params }: Props) {
   const { data, isLoading } = useDeviceReliability(params);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 

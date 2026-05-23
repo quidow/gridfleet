@@ -1,12 +1,12 @@
 import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
-import ConfirmDialog from '../ui/ConfirmDialog';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadingSpinner } from '../LoadingSpinner';
-import Modal from '../ui/Modal';
+import { Modal } from '../ui/Modal';
 import { usePlugins } from '../../hooks/usePlugins';
 import { usePluginRegistryAdmin } from './usePluginRegistryAdmin';
-import SettingsPanelLayout from './SettingsPanelLayout';
+import { SettingsPanelLayout } from './SettingsPanelLayout';
 
-export default function PluginRegistryPanel() {
+export function PluginRegistryPanel() {
   const { data: plugins, isLoading } = usePlugins();
   const admin = usePluginRegistryAdmin();
 

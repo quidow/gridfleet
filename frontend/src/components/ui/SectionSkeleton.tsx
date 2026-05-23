@@ -57,7 +57,7 @@ function ListSkeleton({ rows }: { rows: number }) {
   );
 }
 
-export default function SectionSkeleton({
+export function SectionSkeleton({
   shape,
   rows = 3,
   label = 'Section loading',

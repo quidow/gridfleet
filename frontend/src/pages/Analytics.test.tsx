@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Analytics from './Analytics';
+import { Analytics } from './Analytics';
 
 const analyticsHooks = vi.hoisted(() => ({
   useSessionSummary: vi.fn(),
@@ -27,23 +27,23 @@ vi.mock('../hooks/useDevRenderCrashTrigger', () => ({
 }));
 
 vi.mock('../components/analytics/DateRangePicker', () => ({
-  default: () => <div>Date Range</div>,
+  DateRangePicker: () => <div>Date Range</div>,
 }));
 
 vi.mock('../components/analytics/SessionTrendsTab', () => ({
-  default: () => <div>Session Trends</div>,
+  SessionTrendsTab: () => <div>Session Trends</div>,
 }));
 
 vi.mock('../components/analytics/DeviceUtilizationTab', () => ({
-  default: () => <div>Device Utilization</div>,
+  DeviceUtilizationTab: () => <div>Device Utilization</div>,
 }));
 
 vi.mock('../components/analytics/ReliabilityTab', () => ({
-  default: () => <div>Reliability</div>,
+  ReliabilityTab: () => <div>Reliability</div>,
 }));
 
 vi.mock('../components/analytics/FleetCapacityTab', () => ({
-  default: () => <div>Fleet Capacity</div>,
+  FleetCapacityTab: () => <div>Fleet Capacity</div>,
 }));
 
 vi.mock('../components/ErrorBoundary', () => ({
@@ -51,7 +51,7 @@ vi.mock('../components/ErrorBoundary', () => ({
 }));
 
 vi.mock('../components/ui/Tabs', () => ({
-  default: () => <div>Tabs</div>,
+  Tabs: () => <div>Tabs</div>,
 }));
 
 describe('Analytics', () => {

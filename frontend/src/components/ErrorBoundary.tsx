@@ -1,12 +1,11 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { QueryErrorResetBoundary } from '@tanstack/react-query';
 
 type ErrorBoundaryProps = {
   children: ReactNode;
   level?: 'page' | 'section';
   scope?: string;
   resetKey?: string;
-  // Called after the local error state clears so callers can reset external
-  // state (e.g. QueryErrorResetBoundary so failed queries refetch).
   onReset?: () => void;
 };
 
@@ -39,8 +38,8 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       window.location.reload();
       return;
     }
-    this.setState({ error: null });
     this.props.onReset?.();
+    this.setState({ error: null });
   };
 
   override render() {
@@ -94,5 +93,11 @@ export function PageErrorBoundary(props: BoundaryWrapperProps) {
 }
 
 export function SectionErrorBoundary(props: BoundaryWrapperProps) {
-  return <ErrorBoundaryImpl {...props} level="section" />;
+  return (
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundaryImpl {...props} level="section" onReset={reset} />
+      )}
+    </QueryErrorResetBoundary>
+  );
 }

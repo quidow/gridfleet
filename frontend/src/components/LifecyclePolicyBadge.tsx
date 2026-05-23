@@ -1,5 +1,5 @@
 import type { DeviceRead } from '../types';
-import Badge, { type BadgeTone } from './ui/Badge';
+import { Badge, type BadgeTone } from './ui/Badge';
 
 const STATE_TONE_MAP: Record<DeviceRead['lifecycle_policy_summary']['state'], BadgeTone> = {
   idle: 'neutral',

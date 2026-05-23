@@ -2,7 +2,7 @@ import type { SessionCounts } from '../../types';
 
 type Props = { counts: SessionCounts };
 
-export default function RunProgressBar({ counts }: Props) {
+export function RunProgressBar({ counts }: Props) {
   const failTotal = counts.failed + counts.error;
 
   if (counts.total === 0) {

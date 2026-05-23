@@ -4,23 +4,23 @@ import { Play } from 'lucide-react';
 import { useRuns, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
 import { StatusBadge } from '../components/StatusBadge';
-import EmptyState from '../components/ui/EmptyState';
-import DataTable from '../components/ui/DataTable';
-import FilterBar from '../components/ui/FilterBar';
-import CursorPagination from '../components/ui/CursorPagination';
+import { EmptyState } from '../components/ui/EmptyState';
+import { DataTable } from '../components/ui/DataTable';
+import { FilterBar } from '../components/ui/FilterBar';
+import { CursorPagination } from '../components/ui/CursorPagination';
 import type { DataTableColumn } from '../components/ui/DataTable';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { RunRead, RunSortKey, RunState } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
-import FetchError from '../components/ui/FetchError';
-import RunProgressBar from '../components/runs/RunProgressBar';
-import RunsSummaryRow from '../components/runs/RunsSummaryRow';
-import RunActionButtons from '../components/runs/RunActionButtons';
-import Button from '../components/ui/Button';
-import PageHeader from '../components/ui/PageHeader';
-import Select from '../components/ui/Select';
-import DateInput from '../components/ui/DateInput';
+import { FetchError } from '../components/ui/FetchError';
+import { RunProgressBar } from '../components/runs/RunProgressBar';
+import { RunsSummaryRow } from '../components/runs/RunsSummaryRow';
+import { RunActionButtons } from '../components/runs/RunActionButtons';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Select } from '../components/ui/Select';
+import { DateInput } from '../components/ui/DateInput';
 import { resolvePlatformLabel } from '../lib/labels';
 
 const RUN_STATES: RunState[] = [
@@ -46,7 +46,7 @@ function platformSummary(
   }).join(', ');
 }
 
-export default function Runs() {
+export function Runs() {
   usePageTitle('Test Runs');
   const {
     searchParams,

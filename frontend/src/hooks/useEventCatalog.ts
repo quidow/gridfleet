@@ -5,6 +5,8 @@ export function useEventCatalog() {
   return useQuery({
     queryKey: ['event-catalog'],
     queryFn: fetchEventCatalog,
-    staleTime: 60_000,
+    // Catalog is static at runtime — regenerated only on backend deploy.
+    refetchInterval: false,
+    staleTime: Infinity,
   });
 }

@@ -3,7 +3,7 @@ import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '../StatusBadge';
 import { PlatformIcon } from '../PlatformIcon';
-import Badge from '../ui/Badge';
+import { Badge } from '../ui/Badge';
 import type { DataTableColumn } from '../ui/DataTable';
 import type { SessionDetail, SessionSortKey } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';

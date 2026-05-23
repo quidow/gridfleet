@@ -13,7 +13,7 @@ interface Props {
  * above the panel body. The panel body supplies its own visual container
  * (SettingsSection uses its own card grid; registry panels use a shadow table).
  */
-export default function SettingsPanelLayout({ title, description, actions, children }: Props) {
+export function SettingsPanelLayout({ title, description, actions, children }: Props) {
   return (
     <div>
       <SectionHeader title={title} description={description} actions={actions} className="mb-4" />

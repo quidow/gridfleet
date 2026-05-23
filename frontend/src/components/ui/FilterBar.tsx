@@ -7,7 +7,7 @@ interface FilterBarProps {
   className?: string;
 }
 
-export default function FilterBar({ children, onClear, trailing, className = '' }: FilterBarProps) {
+export function FilterBar({ children, onClear, trailing, className = '' }: FilterBarProps) {
   return (
     <div
       className={[

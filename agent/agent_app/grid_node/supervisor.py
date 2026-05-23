@@ -160,21 +160,34 @@ class GridNodeSupervisorHandle:
                 self._running.clear()
                 self._stopped.set()
                 return
-            while not self._stop_requested.is_set():
-                await self._clock.sleep(self._heartbeat_sec)
-                if self._stop_requested.is_set():
-                    break
-                try:
+            try:
+                while not self._stop_requested.is_set():
+                    await self._clock.sleep(self._heartbeat_sec)
+                    if self._stop_requested.is_set():
+                        break
                     await service.run_heartbeat_once()
-                except Exception:
+                    if service.snapshot().get("requested_stop") is True:
+                        break
+            except Exception:
+                # A heartbeat-time failure (zmq disconnect, hub flap, transient
+                # network blip) used to terminate the supervisor and leave the
+                # dead ``GridNodeService`` reachable via ``handle.service`` —
+                # subsequent ``reconfigure``/``drain`` calls would then invoke
+                # methods that raise ``called before start()`` because the
+                # service had been stopped. A real supervisor restarts: tear
+                # the dead instance down, then re-enter the outer loop so the
+                # factory mints a fresh instance and ``start()`` reruns. The
+                # shared backoff budget guards against tight crash loops and
+                # still terminates with ``_errored`` when the failure persists.
+                self._running.clear()
+                with contextlib.suppress(Exception):
+                    await service.stop()
+                if not backoff.can_attempt(asyncio.get_running_loop().time()):
                     self._errored.set()
-                    self._running.clear()
-                    with contextlib.suppress(Exception):
-                        await service.stop()
                     self._stopped.set()
                     return
-                if service.snapshot().get("requested_stop") is True:
-                    break
+                await self._clock.sleep(backoff.next_delay())
+                continue
             await service.stop()
             self._running.clear()
             self._stopped.set()

@@ -1,4 +1,4 @@
-import DateInput from '../ui/DateInput';
+import { DateInput } from '../ui/DateInput';
 
 export type Preset = '24h' | '7d' | '30d' | 'custom';
 
@@ -19,7 +19,7 @@ function getPresetRange(preset: '24h' | '7d' | '30d'): [string, string] {
   return [from.toISOString(), to];
 }
 
-export default function DateRangePicker({ dateFrom, dateTo, activePreset, onChange }: Props) {
+export function DateRangePicker({ dateFrom, dateTo, activePreset, onChange }: Props) {
   const presets: { key: Preset; label: string }[] = [
     { key: '24h', label: 'Last 24h' },
     { key: '7d', label: 'Last 7 days' },

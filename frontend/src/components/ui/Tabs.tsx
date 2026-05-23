@@ -18,7 +18,7 @@ interface TabsProps {
  * When any tab carries a `section` field, tabs are grouped under muted section
  * headers. Otherwise a flat strip is rendered (matches Analytics.tsx visual style).
  */
-export default function Tabs({ tabs, activeId, onChange, className }: TabsProps) {
+export function Tabs({ tabs, activeId, onChange, className }: TabsProps) {
   const isGrouped = tabs.some((t) => t.section !== undefined);
 
   if (isGrouped) {

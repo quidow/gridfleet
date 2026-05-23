@@ -159,6 +159,93 @@ async def test_supervisor_reports_errored_after_heartbeat_failure() -> None:
     assert handle.snapshot()["status"] == "error"
 
 
+class HeartbeatFlakyService(RecordingService):
+    def __init__(self, *, fail_first_heartbeat: bool) -> None:
+        super().__init__()
+        self._fail_first_heartbeat = fail_first_heartbeat
+
+    async def run_heartbeat_once(self) -> None:
+        self.heartbeat_calls += 1
+        if self._fail_first_heartbeat and self.heartbeat_calls == 1:
+            raise RuntimeError("heartbeat flap")
+
+
+class HeartbeatFlakyServiceFactory:
+    """Mints a single failing service then healthy ones, so the supervisor
+    settles instead of cycling — used to assert single-flap recovery."""
+
+    def __init__(self) -> None:
+        self.services: list[HeartbeatFlakyService] = []
+
+    @property
+    def created(self) -> int:
+        return len(self.services)
+
+    def __call__(self) -> HeartbeatFlakyService:
+        service = HeartbeatFlakyService(fail_first_heartbeat=not self.services)
+        self.services.append(service)
+        return service
+
+
+@pytest.mark.asyncio
+async def test_supervisor_restarts_service_when_heartbeat_raises() -> None:
+    """A heartbeat-time crash used to set ``_errored`` and exit the supervisor,
+    leaving the dead ``GridNodeService`` reachable via ``handle.service`` —
+    subsequent ``reconfigure`` calls would invoke ``reregister_with_caps_update``
+    on the stopped instance and raise ``called before start()``. The supervisor
+    must restart instead: stop the dead instance, factory a fresh one, and
+    resume heartbeating. ``_errored`` only fires after the backoff budget is
+    exhausted within the window.
+    """
+    factory = HeartbeatFlakyServiceFactory()
+    clock = FakeClock()
+    handle = start_grid_node_supervisor(factory=factory, clock=clock, config=_config(heartbeat_sec=0.01))
+    await handle.start()
+    await handle.wait_until_running()
+    for _ in range(200):
+        if factory.created >= 2 and any(s.heartbeat_calls >= 1 for s in factory.services[1:]):
+            break
+        await asyncio.sleep(0)
+    assert factory.created >= 2, "supervisor did not respawn service after heartbeat failure"
+    assert factory.services[0].stop_called is True, "supervisor did not stop dead service before restart"
+    assert handle.errored is False
+    # Backoff must space restart attempts to prevent a tight crash loop — a
+    # regression that drops ``await self._clock.sleep(backoff.next_delay())``
+    # from the heartbeat-fail path would skip this entry entirely.
+    assert any(delay >= 1.0 for delay in clock.sleeps), (
+        f"supervisor did not honor backoff sleep before restart; recorded sleeps: {clock.sleeps}"
+    )
+    await handle.stop()
+
+
+class AlwaysHeartbeatCrashingService(RecordingService):
+    async def run_heartbeat_once(self) -> None:
+        self.heartbeat_calls += 1
+        raise RuntimeError("heartbeat always fails")
+
+
+@pytest.mark.asyncio
+async def test_supervisor_reports_errored_after_repeated_heartbeat_failures() -> None:
+    """When heartbeat crashes survive every restart attempt, the shared backoff
+    budget eventually trips and ``_errored`` becomes terminal — preventing an
+    infinite restart loop on a permanently broken relay.
+    """
+    services: list[AlwaysHeartbeatCrashingService] = []
+
+    def factory() -> AlwaysHeartbeatCrashingService:
+        service = AlwaysHeartbeatCrashingService()
+        services.append(service)
+        return service
+
+    handle = start_grid_node_supervisor(factory=factory, clock=FakeClock(), config=_config(heartbeat_sec=0.01))
+    await handle.start()
+    await handle.wait_until_errored()
+    assert handle.errored is True
+    assert handle.is_running() is False
+    assert len(services) >= 2
+    assert all(s.stop_called for s in services)
+
+
 def _config(*, heartbeat_sec: float) -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",

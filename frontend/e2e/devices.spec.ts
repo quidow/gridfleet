@@ -1361,7 +1361,7 @@ test.describe('Devices page', () => {
     // Switch to Setup tab — node controls + capabilities + config editor
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: 'Appium Node' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Appium Node', exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('heading', { name: 'Configuration' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('No config overrides')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Add override' })).toBeVisible({ timeout: 15_000 });
@@ -1406,7 +1406,7 @@ test.describe('Devices page', () => {
     await expect(page.getByText('Connectivity', { exact: true })).toBeVisible();
     await expect(page.getByTestId('device-detail-status-pill')).toHaveCount(2);
 
-    await page.getByRole('link', { name: /Connectivity.*Healthy/i }).click();
+    await page.getByRole('link', { name: /Connectivity.*OK/i }).click();
     await expect(page).toHaveURL(/\/devices\/device-default\?tab=triage(#device-health)?$/);
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
   });
@@ -2603,5 +2603,19 @@ test.describe('Devices page', () => {
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Danger Zone' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete Device', exact: true })).toBeVisible();
+  });
+
+  test('Devices page subheader has no Export Config or Import Devices buttons', async ({ page }) => {
+    await page.goto('/devices');
+    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
+
+    // Guard: the old Export Config and Import Devices buttons must be absent
+    await expect(page.getByRole('button', { name: /export config/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /import devices/i })).toHaveCount(0);
+
+    // Positive assertion: the current subheader actions are present
+    const subheader = page.getByTestId('list-page-subheader');
+    await expect(subheader.getByRole('button', { name: 'Export Inventory' })).toBeVisible();
+    await expect(subheader.getByRole('button', { name: 'Add Device' })).toBeVisible();
   });
 });

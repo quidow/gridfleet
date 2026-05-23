@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import SettingField from './SettingField';
+import { SettingField } from './SettingField';
 import type { SettingsSectionGroup } from './settings/settingsSections';
 import type { SettingRead } from '../types';
 
@@ -26,7 +26,7 @@ function buildSettingsKey(settings: SettingRead[]): string {
   return settings.map((setting) => `${setting.key}:${JSON.stringify(setting.value)}`).join('|');
 }
 
-export default function SettingsSection({ sections, onSave, onReset }: Props) {
+export function SettingsSection({ sections, onSave, onReset }: Props) {
   const settings = useMemo(() => sections.flatMap((section) => section.settings), [sections]);
   const settingsKey = useMemo(() => buildSettingsKey(settings), [settings]);
 

@@ -1,13 +1,13 @@
 import { RotateCcw } from 'lucide-react';
 import { useClearAppiumNodeTransition } from '../../hooks/useDevices';
-import Button from '../ui/Button';
+import { Button } from '../ui/Button';
 
 type Props = {
   nodeId: string;
   transitionToken: string | null | undefined;
 };
 
-export default function ForceClearRestartButton({ nodeId, transitionToken }: Props) {
+export function ForceClearRestartButton({ nodeId, transitionToken }: Props) {
   const mutation = useClearAppiumNodeTransition();
 
   if (!transitionToken) {

@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 
 import { useHostEvents } from '../../hooks/useHosts';
 import { LoadingSpinner } from '../LoadingSpinner';
-import FetchError from '../ui/FetchError';
-import Select from '../ui/Select';
+import { FetchError } from '../ui/FetchError';
+import { Select } from '../ui/Select';
 
 type RangeKey = '1h' | '6h' | '24h' | '7d';
 
@@ -13,7 +13,7 @@ interface Props {
 
 const RANGES: Record<RangeKey, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 24 * 7 };
 
-export default function HostEventsPanel({ hostId }: Props) {
+export function HostEventsPanel({ hostId }: Props) {
   const [range, setRange] = useState<RangeKey>('24h');
   const [typesText, setTypesText] = useState('');
   const [limit, setLimit] = useState(50);

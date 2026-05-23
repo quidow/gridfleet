@@ -15,7 +15,9 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
+    clear_maintenance_reason,
     clear_maintenance_recovery_suppression,
+    set_maintenance_reason,
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
@@ -79,6 +81,7 @@ async def enter_maintenance(
     *,
     commit: bool = True,
     allow_reserved: bool = False,
+    maintenance_reason: str = "Operator entered maintenance",
 ) -> Device:
     if not allow_reserved and device.hold == DeviceHold.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
@@ -86,14 +89,16 @@ async def enter_maintenance(
     await _MACHINE.transition(
         device,
         TransitionEvent.MAINTENANCE_ENTERED,
-        reason="Operator entered maintenance",
+        reason=maintenance_reason,
     )
+
+    set_maintenance_reason(device, maintenance_reason)
 
     await register_intents_and_reconcile(
         db,
         device_id=device.id,
         intents=_maintenance_intents(device.id),
-        reason="Operator entered maintenance",
+        reason=maintenance_reason,
     )
 
     if commit:
@@ -117,6 +122,7 @@ async def exit_maintenance(
         reason="Operator exited maintenance",
     )
     clear_maintenance_recovery_suppression(device)
+    clear_maintenance_reason(device)
     # Maintenance exit is a sanctioned "give it another chance" signal —
     # clear the review-shelving flag so the recovery loop picks the device
     # back up.

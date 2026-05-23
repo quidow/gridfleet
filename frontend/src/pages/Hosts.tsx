@@ -3,12 +3,12 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Plus, Server, Trash2 } from 'lucide-react';
 import { useApproveHost, useCreateHost, useDeleteHost, useHosts, useRejectHost } from '../hooks/useHosts';
 import { useDevices } from '../hooks/useDevices';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import EmptyState from '../components/ui/EmptyState';
-import SetupVerificationModal from './devices/SetupVerificationModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { EmptyState } from '../components/ui/EmptyState';
+import { SetupVerificationModal } from './devices/SetupVerificationModal';
 import { StatusBadge } from '../components/StatusBadge';
-import AddHostModal from '../components/hosts/AddHostModal';
-import HostDiscoveryModal from '../components/hosts/HostDiscoveryModal';
+import { AddHostModal } from '../components/hosts/AddHostModal';
+import { HostDiscoveryModal } from '../components/hosts/HostDiscoveryModal';
 import { formatHostLastHeartbeat } from '../components/hosts/hostFormatting';
 import {
   HostActionButtons,
@@ -18,14 +18,14 @@ import { useHostDiscoveryFlow } from '../components/hosts/useHostDiscoveryFlow';
 import { getVerificationAction } from '../lib/deviceWorkflow';
 import { formatHostPrerequisiteList } from '../lib/hostPrerequisites';
 import { usePageTitle } from '../hooks/usePageTitle';
-import DataTable from '../components/ui/DataTable';
-import Button from '../components/ui/Button';
-import FetchError from '../components/ui/FetchError';
-import ListPageSubheader from '../components/ui/ListPageSubheader';
-import PageHeader from '../components/ui/PageHeader';
+import { DataTable } from '../components/ui/DataTable';
+import { Button } from '../components/ui/Button';
+import { FetchError } from '../components/ui/FetchError';
+import { ListPageSubheader } from '../components/ui/ListPageSubheader';
+import { PageHeader } from '../components/ui/PageHeader';
 import type { DataTableColumn, DataTableSort } from '../components/ui/DataTable';
 import type { HostRead } from '../types';
-import HostsSummaryPills from './hosts/HostsSummaryPills';
+import { HostsSummaryPills } from './hosts/HostsSummaryPills';
 import {
   deriveHostsFleetStats,
   filterHostsBySummary,
@@ -35,7 +35,7 @@ import {
 
 type HostSortKey = 'hostname' | 'ip' | 'os_type' | 'status' | 'agent_version' | 'devices' | 'last_heartbeat';
 
-export default function Hosts() {
+export function Hosts() {
   usePageTitle('Hosts');
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: hosts = [], isLoading: hostsLoading, isError: hostsError, refetch, dataUpdatedAt: hostsUpdatedAt } = useHosts();

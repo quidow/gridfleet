@@ -10,10 +10,14 @@ import {
 } from '../api/webhooks';
 import type { WebhookCreate, WebhookUpdate } from '../types';
 
+const WEBHOOKS_POLL_MS = 30_000;
+
 export function useWebhooks() {
   return useQuery({
     queryKey: ['webhooks'],
     queryFn: fetchWebhooks,
+    refetchInterval: WEBHOOKS_POLL_MS,
+    staleTime: WEBHOOKS_POLL_MS / 2,
   });
 }
 
@@ -52,6 +56,8 @@ export function useWebhookDeliveries(id: string, enabled = true, limit = 10) {
     queryKey: ['webhooks', id, 'deliveries', limit],
     queryFn: () => fetchWebhookDeliveries(id, limit),
     enabled,
+    refetchInterval: WEBHOOKS_POLL_MS,
+    staleTime: WEBHOOKS_POLL_MS / 2,
   });
 }
 

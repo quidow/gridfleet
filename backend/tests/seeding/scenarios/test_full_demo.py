@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import presenter as device_presenter
-from app.hosts.models import Host, HostStatus, HostTerminalSession
+from app.hosts.models import Host, HostStatus
 from app.packs.models import (
     DriverPack,
     DriverPackPlatform,
@@ -186,7 +186,6 @@ async def test_full_demo_seeds_operator_history_surfaces(db_session) -> None:  #
     await db_session.commit()
 
     assert await db_session.scalar(select(func.count()).select_from(ConfigAuditLog)) == 3
-    assert await db_session.scalar(select(func.count()).select_from(HostTerminalSession)) == 3
 
 
 @pytest.mark.asyncio

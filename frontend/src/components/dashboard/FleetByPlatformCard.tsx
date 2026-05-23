@@ -5,11 +5,11 @@ import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { deriveRetriableQueryState } from '../../hooks/useRetriableQueryState';
 import { PlatformIcon } from '../PlatformIcon';
 import { NoDriverPacksBanner } from '../NoDriverPacksBanner';
-import Card from '../ui/Card';
-import FetchError from '../ui/FetchError';
-import ProportionalBar from '../ui/ProportionalBar';
-import SectionSkeleton from '../ui/SectionSkeleton';
-import FleetHealthHistory from './FleetHealthHistory';
+import { Card } from '../ui/Card';
+import { FetchError } from '../ui/FetchError';
+import { ProportionalBar } from '../ui/ProportionalBar';
+import { SectionSkeleton } from '../ui/SectionSkeleton';
+import { FleetHealthHistory } from './FleetHealthHistory';
 import { deriveDashboardFleetSummary } from './dashboardSummary';
 import { resolvePlatformLabel } from '../../lib/labels';
 
@@ -53,7 +53,7 @@ const BAR_SEGMENTS = [
 
 type SegmentKey = (typeof BAR_SEGMENTS)[number]['key'];
 
-export default function FleetByPlatformCard() {
+export function FleetByPlatformCard() {
   const devicesQuery = useDevices();
   const { data: devices, refetch } = devicesQuery;
   const state = deriveRetriableQueryState(devicesQuery);

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import SummaryPill from './SummaryPill';
+import { SummaryPill } from './SummaryPill';
 
 describe('SummaryPill', () => {
   it('renders label and value', () => {

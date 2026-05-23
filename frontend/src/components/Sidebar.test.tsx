@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import Sidebar from './Sidebar';
+import { Sidebar } from './Sidebar';
 
 const mockUseAuth = vi.fn();
 const mockUseSidebar = vi.fn();

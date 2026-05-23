@@ -101,6 +101,22 @@ def test_mark_drain_blocks_new_reservations_and_is_idempotent() -> None:
         state.reserve({"platformName": "Android"})
 
 
+def test_clear_drain_restores_reservation_path() -> None:
+    """After a cooldown is lifted via ``reregister_with_caps_update``, the
+    local ``_drain`` flag must be cleared. Without ``clear_drain`` the
+    relay would keep rejecting hub reservations because ``mark_drain``
+    latches ``True`` for the lifetime of the ``NodeState``.
+    """
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    state.mark_drain()
+    assert state.snapshot().drain is True
+    state.clear_drain()
+    state.clear_drain()  # idempotent
+    assert state.snapshot().drain is False
+    reservation = state.reserve({"platformName": "Android"})
+    assert reservation.id
+
+
 def test_expire_idle_returns_busy_sessions_past_timeout() -> None:
     state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
     reservation = state.reserve({"platformName": "Android"})

@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Cable, Cloud, LockKeyhole, Pencil, Play, Power, RefreshCw, Square, Trash2, Wifi, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PlatformIcon } from '../../components/PlatformIcon';
-import Badge, { type BadgeTone } from '../../components/ui/Badge';
-import Popover from '../../components/ui/Popover';
+import { Badge, type BadgeTone } from '../../components/ui/Badge';
+import { Popover } from '../../components/ui/Popover';
 import { missingSetupFieldLabel } from '../../components/readiness';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorStopped } from '../../lib/emulatorState';
@@ -15,7 +15,7 @@ import type { DataTableColumn } from '../../components/ui/DataTable';
 import type { DeviceChipStatus, DeviceRead } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_COLORS, DEVICE_TYPE_LABELS } from './devicePageHelpers';
 import type { DeviceSortKey } from './devicePageHelpers';
-import DeviceHealthCell from './DeviceHealthCell';
+import { DeviceHealthCell } from './DeviceHealthCell';
 import type { DeviceAction } from './deviceActions';
 
 function availabilityTone(status: DeviceChipStatus): BadgeTone {
@@ -29,10 +29,23 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
   }
 }
 
+function availabilityTooltip(device: DeviceRead): string | undefined {
+  const status = deviceChipStatus(device);
+  if (status === 'maintenance') {
+    return device.lifecycle_policy_summary.maintenance_reason || 'In maintenance';
+  }
+  if (status === 'offline') {
+    if (device.health_summary.connectivity_status === 'failed') return 'Connectivity failed';
+    if (device.health_summary.healthy === false) return 'Health check failed';
+    return 'Offline';
+  }
+  return undefined;
+}
+
 export function AvailabilityCell({ device }: { device: DeviceRead }) {
   const status = deviceChipStatus(device);
   return (
-    <Badge tone={availabilityTone(status)}>
+    <Badge tone={availabilityTone(status)} title={availabilityTooltip(device)}>
       {DEVICE_STATUS_LABELS[status]}
     </Badge>
   );

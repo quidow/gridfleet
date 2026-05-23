@@ -37,7 +37,7 @@ type Props = {
   idPrefix?: string;
 };
 
-export default function DeviceManifestFields({ fields, value, onChange, idPrefix = 'device-field' }: Props) {
+export function DeviceManifestFields({ fields, value, onChange, idPrefix = 'device-field' }: Props) {
   const visibleFields = fields.filter((field) => field.id !== 'no_os_version');
   if (visibleFields.length === 0) return null;
 

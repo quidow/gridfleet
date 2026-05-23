@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import Modal from '../ui/Modal';
+import { Modal } from '../ui/Modal';
 import { Button, Field, NumberField, Select, TextField } from '../ui';
 import type { HostCreate, OSType } from '../../types';
 
@@ -17,7 +17,7 @@ const EMPTY_FORM: HostCreate = {
   agent_port: 5100,
 };
 
-export default function AddHostModal({ isOpen, isPending, onClose, onSubmit }: Props) {
+export function AddHostModal({ isOpen, isPending, onClose, onSubmit }: Props) {
   const [form, setForm] = useState<HostCreate>(EMPTY_FORM);
 
   return (

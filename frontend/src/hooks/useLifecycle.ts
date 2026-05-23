@@ -18,11 +18,17 @@ export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
   });
 }
 
+const RECENT_INCIDENTS_FALLBACK_POLL_MS = 10_000;
+const RECENT_INCIDENTS_CONNECTED_POLL_MS = 60_000;
+
 export function useRecentLifecycleIncidents(params?: { limit?: number; device_id?: string }) {
+  const { connected } = useEventStreamStatus();
+  const interval = connected ? RECENT_INCIDENTS_CONNECTED_POLL_MS : RECENT_INCIDENTS_FALLBACK_POLL_MS;
   return useQuery({
     queryKey: ['lifecycle', 'incidents', 'recent', params],
     queryFn: () => fetchRecentLifecycleIncidents(params),
-    staleTime: 30_000,
+    refetchInterval: interval,
+    staleTime: interval / 2,
     meta: { handleErrorLocally: true },
   });
 }

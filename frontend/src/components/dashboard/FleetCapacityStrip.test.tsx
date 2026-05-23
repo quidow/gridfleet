@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import FleetCapacityStrip from './FleetCapacityStrip';
+import { FleetCapacityStrip } from './FleetCapacityStrip';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
 
 vi.mock('../../hooks/useAnalytics', () => ({

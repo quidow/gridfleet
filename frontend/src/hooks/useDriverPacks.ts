@@ -48,6 +48,7 @@ export function useDriverPackCatalog() {
     queryKey: ['driver-pack-catalog'],
     queryFn: fetchDriverPackCatalog,
     refetchInterval: 5000,
+    meta: { handleErrorLocally: true },
   }, contextClient ?? fallbackQueryClient);
 }
 

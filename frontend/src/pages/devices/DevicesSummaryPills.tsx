@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import SummaryPill from '../../components/ui/SummaryPill';
+import { SummaryPill } from '../../components/ui/SummaryPill';
 import {
   buildDevicesSummaryHref,
   getAttentionHrefOptions,
@@ -39,7 +39,7 @@ function displayValue(isLoading: boolean, value: number) {
   return isLoading ? '—' : value;
 }
 
-export default function DevicesSummaryPills({ stats, searchParams, isLoading }: Props) {
+export function DevicesSummaryPills({ stats, searchParams, isLoading }: Props) {
   const attentionHref = buildDevicesSummaryHref(searchParams, getAttentionHrefOptions());
 
   return (

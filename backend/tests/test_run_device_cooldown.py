@@ -98,6 +98,73 @@ async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSes
     assert entry.excluded_until is not None
 
 
+async def test_cooldown_device_returns_503_when_inline_delivery_fails(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the inline ``deliver_agent_reconfigures`` cannot reach the agent,
+    the cooldown HTTP handler must return 5xx — not 200. The DB state is
+    already updated (intents committed, reservation excluded), but the
+    agent-side drain did not land. Returning 200 misleads testkit into
+    requesting another session that lands on the very device that was
+    supposed to be on cooldown (this is the original repro).
+    """
+    from app.core.errors import AgentUnreachableError
+
+    device = await _create_available_device(db_session, default_host_id, "cooldown-flaky-agent")
+    # Seed an AppiumNode so ``reconcile_device`` stages a real reconfigure
+    # outbox row — without a node the intent reconciler returns early and
+    # no agent call is attempted, so the failure path stays unexercised.
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid:4444",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=12345,
+                active_connection_target=device.connection_target,
+                generation=1,
+            )
+        )
+    await db_session.commit()
+    run = await _create_run(client)
+    run_id = run["id"]
+    device_id = str(device.id)
+
+    # Override the autouse stub so the inline delivery sees an unreachable
+    # agent. The exception type matches what ``agent_appium_reconfigure``
+    # raises in production when the agent socket is closed.
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(side_effect=AgentUnreachableError("10.0.0.1", "offline")),
+    )
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/devices/{device_id}/cooldown",
+        json={"reason": "flaky connection", "ttl_seconds": 120},
+    )
+    assert resp.status_code == 503
+    assert resp.headers.get("retry-after") == "5"
+
+    # DB state is still committed — the cooldown intent + reservation
+    # exclusion landed; only the agent-side drain push failed. The
+    # background delivery loop will retry it.
+    entry = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.run_id == uuid.UUID(run_id),
+                DeviceReservation.device_id == device.id,
+            )
+        )
+    ).scalar_one()
+    assert entry.excluded is True
+    assert entry.exclusion_reason == "flaky connection"
+
+
 async def test_cooldown_device_not_found_run(client: AsyncClient) -> None:
     resp = await client.post(
         f"/api/runs/{uuid.uuid4()}/devices/{uuid.uuid4()}/cooldown",

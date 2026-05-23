@@ -1,4 +1,4 @@
-import Card from '../../components/ui/Card';
+import { Card } from '../../components/ui/Card';
 import { Badge, DefinitionList } from '../../components/ui';
 import type { DriverPackPlatform } from '../../types/driverPacks';
 import { objectEntries, scalarValue } from './driverDetailFormat';
@@ -129,7 +129,7 @@ function PlatformCard({ platform }: { platform: DriverPackPlatform }) {
   );
 }
 
-export default function DriverPlatformCards({ platforms }: { platforms: DriverPackPlatform[] }) {
+export function DriverPlatformCards({ platforms }: { platforms: DriverPackPlatform[] }) {
   if (platforms.length === 0) {
     return <p className="py-4 text-center text-text-3">No platforms defined.</p>;
   }

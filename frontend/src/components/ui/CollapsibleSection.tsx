@@ -26,7 +26,7 @@ function useDisclosureState(persistKey: string | undefined, defaultOpen: boolean
  * Body is hidden (but kept in DOM) when collapsed for stable selector targeting.
  * Open/closed state can optionally be persisted to localStorage via `persistKey`.
  */
-export default function CollapsibleSection({
+export function CollapsibleSection({
   title,
   description,
   summary,

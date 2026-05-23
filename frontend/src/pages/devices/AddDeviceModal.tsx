@@ -1,10 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import Modal from '../../components/ui/Modal';
-import Button from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
 import { Field, Select, TextField } from '../../components/ui';
-import DeviceVerificationProgress from './DeviceVerificationProgress';
-import DeviceManifestFields, { defaultsForDeviceFields, type DeviceConfigDraft } from './DeviceManifestFields';
+import { DeviceVerificationProgress } from './DeviceVerificationProgress';
+import { DeviceManifestFields, defaultsForDeviceFields, type DeviceConfigDraft } from './DeviceManifestFields';
 import type {
   ConnectionType,
   DeviceType,
@@ -42,7 +42,7 @@ type Props = {
   hostOptions: HostOption[];
 };
 
-export default function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Props) {
+export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Props) {
   const startVerification = useStartDeviceVerification();
   const [hostId, setHostId] = useState<string>('');
   const { data: catalog = [] } = useDriverPackCatalog();

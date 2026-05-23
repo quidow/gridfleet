@@ -44,9 +44,13 @@ export default defineConfig([
     },
   },
   {
+    // Allowlist is technical debt — shrink, do not grow.
+    // UI primitives need the raw underlying element; non-primitive entries
+    // are tracked migration debt.
     files: [
+      'src/components/ui/**/*.{ts,tsx}',
+      // Pending Card-primitive migration:
       'src/components/RowActionsMenu.tsx',
-      'src/components/SettingField.tsx',
       'src/components/SettingsSection.tsx',
       'src/components/analytics/FleetCapacityTab.tsx',
       'src/components/dashboard/OperationsSection.tsx',
@@ -65,17 +69,10 @@ export default defineConfig([
       'src/components/hostDetail/HostTerminalPanel.tsx',
       'src/components/hostDetail/HostToolVersionsPanel.tsx',
       'src/components/settings/WebhookRegistryPanel.tsx',
-      'src/components/ui/Card.tsx',
-      'src/components/ui/CursorPagination.tsx',
-      'src/components/ui/DataTable.tsx',
-      'src/components/ui/DateInput.tsx',
-      'src/components/ui/Pagination.tsx',
-      'src/components/ui/Popover.tsx',
-      'src/components/ui/Select.tsx',
       'src/pages/DeviceDetail.tsx',
       'src/pages/Devices.tsx',
+      // Pending TextField-primitive migration:
       'src/pages/Login.tsx',
-      'src/pages/devices/DevicesFiltersBar.tsx',
       'src/pages/devices/FilterBuilder.tsx',
     ],
     rules: {

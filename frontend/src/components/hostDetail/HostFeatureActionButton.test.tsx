@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import HostFeatureActionButton from './HostFeatureActionButton';
+import { HostFeatureActionButton } from './HostFeatureActionButton';
 
 const mockInvokeFeatureAction = vi.fn();
 

@@ -745,12 +745,16 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     if device is None or device.appium_node is None:
         return
     node = device.appium_node
+    # ``transition_token_natural_clear`` keeps this expiry-driven clear out
+    # of the ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN`` metric: the old token
+    # was not contended by a competing writer, the deadline elapsed.
     await write_desired_state(
         db,
         node=node,
         target=node.desired_state,
         caller="appium_reconciler",
         desired_port=node.desired_port,
+        transition_token_natural_clear=True,
     )
     await db.commit()
 

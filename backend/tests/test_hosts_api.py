@@ -619,21 +619,6 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
     sync.assert_awaited_once_with(host, [])
 
 
-async def test_hosts_capabilities_reports_terminal_flag(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.settings import settings_service
-
-    # Default is False
-    monkeypatch.setitem(settings_service._cache, "agent.enable_web_terminal", False)
-    resp = await client.get("/api/hosts/capabilities")
-    assert resp.status_code == 200
-    assert resp.json()["web_terminal_enabled"] is False
-
-    monkeypatch.setitem(settings_service._cache, "agent.enable_web_terminal", True)
-    resp = await client.get("/api/hosts/capabilities")
-    assert resp.status_code == 200
-    assert resp.json()["web_terminal_enabled"] is True
-
-
 @pytest.mark.asyncio
 async def test_host_discovery_returns_pack_shaped_candidates(
     client: AsyncClient, db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch

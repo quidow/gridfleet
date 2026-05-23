@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AddDeviceModal from './AddDeviceModal';
+import { AddDeviceModal } from './AddDeviceModal';
 import type { IntakeCandidate } from '../../types';
 
 const startVerification = vi.fn();

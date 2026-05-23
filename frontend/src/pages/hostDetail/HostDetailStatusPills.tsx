@@ -1,4 +1,4 @@
-import SummaryPill, { type SummaryPillTone } from '../../components/ui/SummaryPill';
+import { SummaryPill, type SummaryPillTone } from '../../components/ui/SummaryPill';
 import type { AgentVersionStatus, HostDetail, HostStatus } from '../../types';
 
 type Props = { host: HostDetail };
@@ -29,7 +29,7 @@ const AGENT_TONE: Record<AgentVersionStatus, SummaryPillTone> = {
   disabled: 'neutral',
 };
 
-export default function HostDetailStatusPills({ host }: Props) {
+export function HostDetailStatusPills({ host }: Props) {
   const deviceCount = host.devices.length;
   const missingPrereqs = host.missing_prerequisites?.length ?? 0;
 

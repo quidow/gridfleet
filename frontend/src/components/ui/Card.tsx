@@ -16,7 +16,7 @@ const PADDING_CLASSES: Record<CardPadding, string> = {
   lg: 'p-6',
 };
 
-export default function Card({ padding = 'md', as: Tag = 'div', className = '', children }: CardProps) {
+export function Card({ padding = 'md', as: Tag = 'div', className = '', children }: CardProps) {
   return (
     <Tag
       className={[

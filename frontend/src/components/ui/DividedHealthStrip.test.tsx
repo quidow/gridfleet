@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { Database, Server } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
-import DividedHealthStrip from './DividedHealthStrip';
+import { DividedHealthStrip } from './DividedHealthStrip';
 
 describe('DividedHealthStrip', () => {
   it('renders cells with values and details', () => {

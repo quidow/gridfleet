@@ -34,7 +34,7 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function DeviceLifecyclePolicyPanel({ policy }: Props) {
+export function DeviceLifecyclePolicyPanel({ policy }: Props) {
   const effective = policy ?? DEFAULT_POLICY;
 
   return (

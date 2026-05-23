@@ -1,4 +1,4 @@
-import SummaryPill from '../ui/SummaryPill';
+import { SummaryPill } from '../ui/SummaryPill';
 import { deriveRunsSummary } from './runsSummaryDerivation';
 import type { RunRead } from '../../types';
 
@@ -8,7 +8,7 @@ type Props = {
   now?: Date;
 };
 
-export default function RunsSummaryRow({ currentPageRuns, last24hRuns, now }: Props) {
+export function RunsSummaryRow({ currentPageRuns, last24hRuns, now }: Props) {
   const reference = now ?? new Date();
   const live = deriveRunsSummary(currentPageRuns, reference);
   const windowSummary = last24hRuns ? deriveRunsSummary(last24hRuns, reference) : undefined;
