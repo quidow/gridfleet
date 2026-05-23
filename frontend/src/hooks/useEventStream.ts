@@ -3,7 +3,7 @@ import { useQuery, useQueryClient, type Query, type QueryClient } from '@tanstac
 import { toast } from 'sonner';
 import { useAuth } from '../context/auth';
 import { fetchSettings } from '../api/settings';
-import { useEventCatalog } from './useEventCatalog';
+import { fetchEventCatalog } from '../api/events';
 import type { SettingsGrouped } from '../types';
 import { formatEventDetails } from '../components/notifications/eventRegistry';
 
@@ -154,10 +154,17 @@ export function useEventStream() {
   const queryClient = useQueryClient();
   const auth = useAuth();
   const [connected, setConnected] = useState(false);
-  const { data: eventCatalog } = useEventCatalog();
+  const { data: eventCatalog } = useQuery({
+    queryKey: ['event-catalog'],
+    queryFn: fetchEventCatalog,
+    refetchInterval: false,
+    staleTime: Infinity,
+    throwOnError: false,
+  });
   const { data: settingsGroups } = useQuery({
     queryKey: ['settings'],
     queryFn: fetchSettings,
+    throwOnError: false,
   });
   const eventTypes = useMemo(() => eventCatalog?.map((event) => event.name) ?? [], [eventCatalog]);
   const settings = useMemo(() => flattenSettings(settingsGroups), [settingsGroups]);

@@ -10,6 +10,7 @@ import './index.css';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      throwOnError: true,
       staleTime: 5_000,
       retry: 1,
       refetchOnWindowFocus: true,

@@ -37,6 +37,7 @@ export function buildPlatformIdLabelMap(packs: DriverPack[]): Map<string, string
 const fallbackQueryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      throwOnError: true,
       retry: false,
     },
   },

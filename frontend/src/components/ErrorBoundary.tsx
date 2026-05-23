@@ -1,10 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { QueryErrorResetBoundary } from '@tanstack/react-query';
 
 type ErrorBoundaryProps = {
   children: ReactNode;
   level?: 'page' | 'section';
   scope?: string;
   resetKey?: string;
+  onReset?: () => void;
 };
 
 type ErrorBoundaryState = {
@@ -36,6 +38,7 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       window.location.reload();
       return;
     }
+    this.props.onReset?.();
     this.setState({ error: null });
   };
 
@@ -83,12 +86,18 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
   }
 }
 
-type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level'>;
+type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level' | 'onReset'>;
 
 export function PageErrorBoundary(props: BoundaryWrapperProps) {
   return <ErrorBoundaryImpl {...props} level="page" />;
 }
 
 export function SectionErrorBoundary(props: BoundaryWrapperProps) {
-  return <ErrorBoundaryImpl {...props} level="section" />;
+  return (
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundaryImpl {...props} level="section" onReset={reset} />
+      )}
+    </QueryErrorResetBoundary>
+  );
 }
