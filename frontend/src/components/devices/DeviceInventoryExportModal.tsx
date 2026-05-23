@@ -69,7 +69,7 @@ interface Props {
   filters: Record<string, string | string[] | undefined>;
 }
 
-export function DeviceInventoryExportModal({ isOpen, onClose, filters }: Props): JSX.Element {
+export function DeviceInventoryExportModal({ isOpen, onClose, filters }: Props) {
   const [format, setFormat] = useState<InventoryFormat>("csv");
   const [selected, setSelected] = useState<Set<string>>(() => loadStored() ?? new Set(DEFAULT_COLUMNS));
   const [busy, setBusy] = useState(false);

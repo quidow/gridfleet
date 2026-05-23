@@ -3,7 +3,7 @@ import { ImportReviewStep } from "../components/devices/ImportReviewStep";
 import { ImportUploadStep } from "../components/devices/ImportUploadStep";
 import { useDeviceImport } from "../hooks/useDeviceImport";
 
-export default function DeviceImportWizard(): JSX.Element {
+export default function DeviceImportWizard() {
   const { state, upload, commit, reset, dispatch } = useDeviceImport();
 
   return (

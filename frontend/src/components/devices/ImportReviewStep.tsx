@@ -28,7 +28,7 @@ export function ImportReviewStep({
   onSetMapping,
   onToggleIncluded,
   onCommit,
-}: Props): JSX.Element {
+}: Props) {
   const includedRows = preview.rows.filter(
     (r) => r.status === "valid_new" && mappings[r.index]?.included,
   );

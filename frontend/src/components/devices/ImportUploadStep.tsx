@@ -6,7 +6,7 @@ interface Props {
   onBundle: (bundle: ExportBundle) => void;
 }
 
-export function ImportUploadStep({ onBundle }: Props): JSX.Element {
+export function ImportUploadStep({ onBundle }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const handleFile = async (file: File): Promise<void> => {

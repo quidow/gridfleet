@@ -4,7 +4,7 @@ import { useState } from "react";
 import { downloadExportBundle } from "../../api/devicesPortability";
 import Button from "../ui/Button";
 
-export function DeviceExportButton(): JSX.Element {
+export function DeviceExportButton() {
   const [busy, setBusy] = useState(false);
   const handleClick = async (): Promise<void> => {
     setBusy(true);

@@ -8,7 +8,7 @@ interface Props {
   onReset: () => void;
 }
 
-export function ImportResultsStep({ result, onReset }: Props): JSX.Element {
+export function ImportResultsStep({ result, onReset }: Props) {
   return (
     <div className="space-y-3 text-sm">
       <p>
