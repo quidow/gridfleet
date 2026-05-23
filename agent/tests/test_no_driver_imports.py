@@ -201,3 +201,28 @@ def test_deleted_driver_modules_are_absent_and_not_imported() -> None:
                 violations.append(f"{_module_name(path)} imports from {node.module}")
 
     assert violations == []
+
+
+def test_no_driver_specific_literals() -> None:
+    """Fail if any agent_app/ file contains a banned driver-specific string literal."""
+    raw_violations = _collect_literal_violations()
+
+    found: set[tuple[str, str]] = set()
+    details: dict[tuple[str, str], list[int]] = {}
+    for rel, pattern, lineno in raw_violations:
+        pair = (rel, pattern)
+        found.add(pair)
+        details.setdefault(pair, []).append(lineno)
+
+    literal_known = {kv for kv in KNOWN_VIOLATIONS if not kv[1].startswith(("import:", "config:"))}
+    new_violations = found - literal_known
+
+    if new_violations:
+        lines = ["New driver-specific literal(s) found (not in KNOWN_VIOLATIONS):"]
+        for rel, pattern in sorted(new_violations):
+            linenos = ", ".join(str(ln) for ln in sorted(details[(rel, pattern)]))
+            lines.append(f'  {rel}:{linenos} — banned literal "{pattern}"')
+        lines.append("")
+        lines.append("To fix: move driver-specific logic to driver-pack adapter.")
+        lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
+        raise AssertionError("\n".join(lines))
