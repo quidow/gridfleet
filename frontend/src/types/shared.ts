@@ -25,10 +25,12 @@ export type AgentVersionStatus = Schemas['AgentVersionStatus'];
 export type DeviceLifecyclePolicySummaryState = Schemas['DeviceLifecyclePolicySummaryState'];
 export type DeviceEventType = Schemas['DeviceEventType'];
 
-// Backend currently exposes these as plain strings/Literals rather than named OpenAPI components.
-export type DeviceReadinessState = 'setup_required' | 'verification_required' | 'verified';
-export type DeviceVerificationStageStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
-export type DeviceVerificationJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+// Derived from backend Literal types (inlined in OpenAPI, not separate named components).
+export type DeviceReadinessState = Schemas['DeviceRead']['readiness_state'];
+export type DeviceVerificationJobStatus = Schemas['DeviceVerificationJobRead']['status'];
+export type DeviceVerificationStageStatus = NonNullable<
+  Schemas['DeviceVerificationJobRead']['current_stage_status']
+>;
 
 // Frontend-only composites and pagination helpers (not on the backend).
 export type SortDirection = 'asc' | 'desc';

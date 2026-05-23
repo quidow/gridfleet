@@ -7,47 +7,12 @@ export type PlatformIconKind = 'mobile' | 'tv' | 'set_top' | 'generic';
 
 export type PlatformDeviceFieldDefault = string | number | boolean;
 
-export type PlatformDeviceField = {
-  id: string;
-  label: string;
-  type: 'string' | 'int' | 'bool' | 'path' | 'network_endpoint' | 'file_upload';
-  required_for_session?: boolean;
-  required_for_discovery?: boolean;
-  sensitive?: boolean;
-  required_for?: string[];
-  default?: PlatformDeviceFieldDefault;
-  capability_name?: string;
-};
-
-export type PlatformConnectionBehavior = {
-  default_device_type?: DeviceType;
-  default_connection_type?: ConnectionType;
-  requires_ip_address?: boolean;
-  requires_connection_target?: boolean;
-  allow_transport_identity_until_host_resolution?: boolean;
-  host_resolution_action?: string;
-};
-
-export type PlatformLifecycleAction = {
-  id: string;
-  label?: string;
-};
-
-export type PlatformHealthCheckLabel = {
-  id: string;
-  label: string;
-};
-
-export type PlatformDeviceTypeOverride = {
-  identity?: {
-    scheme?: string;
-    scope?: 'global' | 'host';
-  };
-  lifecycle_actions?: PlatformLifecycleAction[];
-  device_fields_schema?: PlatformDeviceField[];
-  default_capabilities?: Record<string, unknown>;
-  connection_behavior?: PlatformConnectionBehavior;
-};
+// Re-exported from generated OpenAPI types (previously hand-typed).
+export type PlatformDeviceField = Schemas['FieldSchemaOut'];
+export type PlatformConnectionBehavior = Schemas['ConnectionBehaviorOut'];
+export type PlatformLifecycleAction = Schemas['LifecycleActionOut'];
+export type PlatformHealthCheckLabel = Schemas['HealthCheckLabelOut'];
+export type PlatformDeviceTypeOverride = Schemas['PlatformDeviceTypeOverrideOut'];
 
 export type PlatformDescriptor = {
   packId: string;
@@ -148,23 +113,14 @@ export type DriverPackReleasesResponse = Omit<Schemas['PackReleasesOut'], 'relea
   releases: DriverPackRelease[];
 };
 
-type RuntimePluginStatus = {
-  name: string;
-  version: string;
-  status: string;
-  blocked_reason: string | null;
-};
+// Re-exported from generated OpenAPI types (previously hand-typed).
+export type RuntimePluginStatus = Schemas['HostPluginStatusOut'];
 
-export type HostRuntimeStatus = Omit<Schemas['HostRuntimeStatusOut'], 'plugins'> & {
-  plugins: RuntimePluginStatus[];
-};
+export type HostRuntimeStatus = Schemas['HostRuntimeStatusOut'];
 export type HostPackDoctorStatus = Schemas['HostPackDoctorOut'];
 export type HostPackFeatureStatus = Schemas['HostPackFeatureStatusOut'];
 export type HostPackStatus = Schemas['HostPackStatusOut'];
-export type HostDriverPacksStatus = Omit<Schemas['HostDriverPacksOut'], 'features' | 'runtimes'> & {
-  runtimes: HostRuntimeStatus[];
-  features: HostPackFeatureStatus[];
-};
+export type HostDriverPacksStatus = Schemas['HostDriverPacksOut'];
 
 export type DriverPackHostDoctor = Schemas['DriverPackHostDoctorOut'];
 export type DriverPackHostStatus = Omit<Schemas['DriverPackHostStatusOut'], 'doctor'> & {
