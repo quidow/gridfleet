@@ -51,7 +51,13 @@ function Gauge({ label, percent, detail }: { label: string; percent: number | nu
         <span className="text-xs text-text-3">{label}</span>
         <span className="text-sm font-semibold tabular-nums text-text-1">{formatPercent(percent)}</span>
       </div>
-      {detail ? <div className="mt-0.5 truncate text-xs text-text-3">{detail}</div> : null}
+      <div
+        className="mt-0.5 h-4 truncate text-xs text-text-3"
+        data-testid="gauge-detail"
+        aria-hidden={detail === null}
+      >
+        {detail}
+      </div>
       <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
         <div
           className={`h-full ${toneFor(percent)}`}
