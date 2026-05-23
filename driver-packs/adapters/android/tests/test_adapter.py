@@ -61,3 +61,30 @@ def test_subprocess_env_no_adb_found() -> None:
     assert isinstance(result, SubprocessEnvContribution)
     assert result.env_vars == {}
     assert result.extra_path_dirs == []
+
+
+def test_tool_versions_returns_adb_version() -> None:
+    from unittest.mock import patch
+
+    with (
+        patch("adapter.tools.find_adb", return_value="/opt/android/platform-tools/adb"),
+        patch(
+            "subprocess.run",
+            return_value=type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\nRevision 1234", "returncode": 0})(),
+        ),
+    ):
+        result = Adapter().tool_versions()
+
+    assert result == {"adb": "1.0.41"}
+
+
+def test_tool_versions_returns_none_when_adb_missing() -> None:
+    from unittest.mock import patch
+
+    with (
+        patch("adapter.tools.find_adb", return_value="adb"),
+        patch("subprocess.run", side_effect=FileNotFoundError()),
+    ):
+        result = Adapter().tool_versions()
+
+    assert result == {"adb": None}
