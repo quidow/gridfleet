@@ -1,8 +1,9 @@
 import { Copy } from 'lucide-react';
+import { useDeviceCapabilities } from '../../hooks/useDevices';
 import type { DeviceDetail } from '../../types';
 
 type Props = {
-  capabilities: Record<string, unknown> | null | undefined;
+  deviceId: string;
   device?: DeviceDetail;
 };
 
@@ -15,7 +16,8 @@ function expectedUdid(device: DeviceDetail | undefined): string | null {
   return device.appium_node?.active_connection_target ?? device.connection_target ?? device.identity_value;
 }
 
-export function DeviceCapabilitiesPanel({ capabilities, device }: Props) {
+export function DeviceCapabilitiesPanel({ deviceId, device }: Props) {
+  const { data: capabilities } = useDeviceCapabilities(deviceId);
   if (!capabilities) {
     return null;
   }

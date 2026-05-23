@@ -20,7 +20,6 @@ import { formatHostPrerequisiteList } from '../lib/hostPrerequisites';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { DataTable } from '../components/ui/DataTable';
 import { Button } from '../components/ui/Button';
-import { FetchError } from '../components/ui/FetchError';
 import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { PageHeader } from '../components/ui/PageHeader';
 import type { DataTableColumn, DataTableSort } from '../components/ui/DataTable';
@@ -38,7 +37,7 @@ type HostSortKey = 'hostname' | 'ip' | 'os_type' | 'status' | 'agent_version' | 
 export function Hosts() {
   usePageTitle('Hosts');
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data: hosts = [], isLoading: hostsLoading, isError: hostsError, refetch, dataUpdatedAt: hostsUpdatedAt } = useHosts();
+  const { data: hosts = [], isLoading: hostsLoading, dataUpdatedAt: hostsUpdatedAt } = useHosts();
   const { data: devices = [], dataUpdatedAt: devicesUpdatedAt } = useDevices();
   const createHost = useCreateHost();
   const deleteHostMut = useDeleteHost();
@@ -224,69 +223,61 @@ export function Hosts() {
             stats={fleetStats}
             searchParams={searchParams}
             isLoading={showInitialLoading}
-            disabled={hostsError}
           />
         )}
       />
 
-      {hostsError ? (
-        <FetchError
-          message="Could not load hosts. Check your connection and try again."
-          onRetry={() => void refetch()}
-        />
-      ) : (
-        <div className="fade-in-stagger flex min-h-0 flex-1 flex-col">
-          <ListPageSubheader
-            title={showingLabel}
-            action={
-              <div className="flex items-center gap-2">
-                {activeSummaryFilters ? (
-                  <Button variant="ghost" size="sm" onClick={clearSummaryFilters}>
-                    Clear filters
-                  </Button>
-                ) : null}
-                <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
-                  Add Host
+      <div className="fade-in-stagger flex min-h-0 flex-1 flex-col">
+        <ListPageSubheader
+          title={showingLabel}
+          action={
+            <div className="flex items-center gap-2">
+              {activeSummaryFilters ? (
+                <Button variant="ghost" size="sm" onClick={clearSummaryFilters}>
+                  Clear filters
                 </Button>
-              </div>
-            }
-          />
+              ) : null}
+              <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
+                Add Host
+              </Button>
+            </div>
+          }
+        />
 
-          <DataTable<HostRead, HostSortKey>
-            columns={columns}
-            rows={sortedHosts}
-            rowKey={(host) => host.id}
-            sort={sort}
-            onSortChange={setSort}
-            loading={showInitialLoading}
-            emptyState={
-              filteredEmpty ? (
-                <EmptyState
-                  icon={Server}
-                  title="No hosts match current filters"
-                  description="Try clearing filters to widen the fleet view."
-                  action={
-                    <Button variant="secondary" onClick={clearSummaryFilters}>
-                      Clear Filters
-                    </Button>
-                  }
-                />
-              ) : (
-                <EmptyState
-                  icon={Server}
-                  title="No hosts registered"
-                  description="Add a host to start managing devices."
-                  action={
-                    <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
-                      Add Host
-                    </Button>
-                  }
-                />
-              )
-            }
-          />
-        </div>
-      )}
+        <DataTable<HostRead, HostSortKey>
+          columns={columns}
+          rows={sortedHosts}
+          rowKey={(host) => host.id}
+          sort={sort}
+          onSortChange={setSort}
+          loading={showInitialLoading}
+          emptyState={
+            filteredEmpty ? (
+              <EmptyState
+                icon={Server}
+                title="No hosts match current filters"
+                description="Try clearing filters to widen the fleet view."
+                action={
+                  <Button variant="secondary" onClick={clearSummaryFilters}>
+                    Clear Filters
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={Server}
+                title="No hosts registered"
+                description="Add a host to start managing devices."
+                action={
+                  <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
+                    Add Host
+                  </Button>
+                }
+              />
+            )
+          }
+        />
+      </div>
 
       <AddHostModal
         isOpen={showAdd}

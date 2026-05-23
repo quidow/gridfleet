@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApproveHost, useHost, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
+import { useApproveHost, useHost, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SetupVerificationModal } from './devices/SetupVerificationModal';
 import { HostDiscoveryModal } from '../components/hosts/HostDiscoveryModal';
@@ -8,7 +8,7 @@ import { useHostDiscoveryFlow } from '../components/hosts/useHostDiscoveryFlow';
 import { getVerificationAction } from '../lib/deviceWorkflow';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { PageHeader, Tabs, useTabParam } from '../components/ui';
-import { FetchError } from '../components/ui/FetchError';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { HostDetailStatusPills } from './hostDetail/HostDetailStatusPills';
 import { HostOverviewPanel } from '../components/hostDetail/HostOverviewPanel';
 import { HostDiagnosticsPanel } from '../components/hostDetail/HostDiagnosticsPanel';
@@ -36,8 +36,7 @@ const TAB_IDS = TABS.map((t) => t.id);
 
 export function HostDetail() {
   const { id } = useParams<{ id: string }>();
-  const { data: host, isLoading, error, dataUpdatedAt } = useHost(id!);
-  const { data: hostDiagnostics, isLoading: diagnosticsLoading, error: diagnosticsError } = useHostDiagnostics(id!);
+  const { data: host, isLoading, dataUpdatedAt } = useHost(id!);
   usePageTitle(host?.hostname ?? 'Host');
   const approveMut = useApproveHost();
   const rejectMut = useRejectHost();
@@ -48,16 +47,7 @@ export function HostDetail() {
     return <LoadingSpinner />;
   }
 
-  if (error || !host) {
-    return (
-      <div className="py-6">
-        <FetchError
-          message="Host not found or could not be loaded."
-          onRetry={() => void window.location.reload()}
-        />
-      </div>
-    );
-  }
+  if (!host) return null;
 
   const hostOnline = host.status === 'online';
   const hostDetail = host as HostDetailType;
@@ -88,25 +78,36 @@ export function HostDetail() {
 
       {tab === 'diagnostics' && (
         <div className="space-y-6">
-          <HostDiagnosticsPanel
-            host={host}
-            hostDiagnostics={hostDiagnostics}
-            diagnosticsLoading={diagnosticsLoading}
-            diagnosticsError={diagnosticsError}
-          />
-          <Suspense fallback={<div className="h-48 animate-pulse rounded-md border border-border bg-surface-1" />}>
-            <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
-          </Suspense>
+          <SectionErrorBoundary scope="host-diagnostics">
+            <HostDiagnosticsPanel host={host} />
+          </SectionErrorBoundary>
+          <SectionErrorBoundary scope="host-resource-telemetry">
+            <Suspense fallback={<div className="h-48 animate-pulse rounded-md border border-border bg-surface-1" />}>
+              <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
+            </Suspense>
+          </SectionErrorBoundary>
         </div>
       )}
 
       {tab === 'logs' && <HostLogsPanel hostId={id!} />}
 
-      {tab === 'devices' && <HostDevicesPanel host={hostDetail} />}
+      {tab === 'devices' && (
+        <SectionErrorBoundary scope="host-devices">
+          <HostDevicesPanel host={hostDetail} />
+        </SectionErrorBoundary>
+      )}
 
-      {tab === 'drivers' && <HostDriversPanel hostId={id!} hostOnline={hostOnline} />}
+      {tab === 'drivers' && (
+        <SectionErrorBoundary scope="host-drivers">
+          <HostDriversPanel hostId={id!} hostOnline={hostOnline} />
+        </SectionErrorBoundary>
+      )}
 
-      {tab === 'plugins' && <HostPluginsPanel hostId={id!} />}
+      {tab === 'plugins' && (
+        <SectionErrorBoundary scope="host-plugins">
+          <HostPluginsPanel hostId={id!} />
+        </SectionErrorBoundary>
+      )}
       </div>
 
       <HostDiscoveryModal

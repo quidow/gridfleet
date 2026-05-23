@@ -6,7 +6,6 @@ import type { LucideIcon } from 'lucide-react';
 import { useFleetOverview } from '../../hooks/useAnalytics';
 import { useDevices } from '../../hooks/useDevices';
 import { useRuns } from '../../hooks/useRuns';
-import { deriveRetriableQueryState } from '../../hooks/useRetriableQueryState';
 import { Sparkline } from '../ui/Sparkline';
 import { useSessionsDaily } from '../../hooks/useSessionsDaily';
 import { PlatformIcon } from '../PlatformIcon';
@@ -15,7 +14,6 @@ import { Badge } from '../ui/Badge';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import { Card } from '../ui/Card';
-import { FetchError } from '../ui/FetchError';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { formatRelativeTime } from '../../utils/dateFormatting';
 import type { DeviceChipStatus, DeviceRead, RunRead } from '../../types';
@@ -169,17 +167,13 @@ export function OperationsSection() {
   );
   const hasPassRateTrend = passRateSeries.length >= 2;
 
-  const runsState = deriveRetriableQueryState(runsQuery);
-  const devicesState = deriveRetriableQueryState(devicesQuery);
   const activeRuns = useMemo(() => runItems(runsQuery.data).filter(isActiveRun), [runsQuery.data]);
   const busyDevices = useMemo(
     () => deriveDashboardFleetSummary(devicesQuery.data ?? []).busyDevices,
     [devicesQuery.data],
   );
 
-  const isLoading = runsState === 'initial-loading' || devicesState === 'initial-loading';
-  const runsError = runsState === 'error';
-  const devicesError = devicesState === 'error';
+  const isLoading = runsQuery.status === 'pending' || devicesQuery.status === 'pending';
 
   return (
     <Card padding="none" as="section">
@@ -192,55 +186,46 @@ export function OperationsSection() {
         <div className="border-t border-border p-6">
           <SectionSkeleton shape="split" rows={3} label="Operations loading" />
         </div>
-      ) : runsError || devicesError ? (
-        <div className="space-y-3 border-t border-border p-6">
-          {runsError ? <FetchError message="Could not load active runs." onRetry={() => void runsQuery.refetch()} /> : null}
-          {devicesError ? <FetchError message="Could not load busy devices." onRetry={() => void devicesQuery.refetch()} /> : null}
-        </div>
       ) : (
         <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
           <div className="p-5">
             <div className="mb-3">
               <h3 className="heading-label">Last 7 days</h3>
             </div>
-            {analyticsQuery.isError ? (
-              <FetchError message="Could not load analytics summary." onRetry={() => void analyticsQuery.refetch()} />
-            ) : (
-              <div className="grid grid-cols-1 gap-3">
-                <MetricTile
-                  icon={TrendingUp}
-                  label="Pass rate"
-                  value={analyticsQuery.data?.pass_rate_pct != null ? `${analyticsQuery.data.pass_rate_pct}%` : 'No runs'}
-                  to="/analytics"
-                  tone={analyticsQuery.data?.pass_rate_pct != null ? 'success' : 'neutral'}
-                  sparkline={
-                    hasPassRateTrend ? (
-                      <Sparkline
-                        values={passRateSeries}
-                        width={60}
-                        height={16}
-                        className="text-success-strong"
-                        ariaLabel={`Pass rate last 7 days: ${passRateSeries.map((v) => `${v.toFixed(0)}%`).join(', ')}`}
-                      />
-                    ) : undefined
-                  }
-                />
-                <MetricTile
-                  icon={BarChart3}
-                  label="Fleet utilization"
-                  value={analyticsQuery.data?.avg_utilization_pct != null ? `${analyticsQuery.data.avg_utilization_pct}%` : '—'}
-                  to="/analytics"
-                  tone={analyticsQuery.data?.avg_utilization_pct != null ? 'info' : 'neutral'}
-                />
-                <MetricTile
-                  icon={AlertTriangle}
-                  label="Reliability watchlist"
-                  value={analyticsQuery.data?.devices_needing_attention ?? '—'}
-                  to="/analytics?tab=reliability"
-                  tone={(analyticsQuery.data?.devices_needing_attention ?? 0) > 0 ? 'warning' : 'neutral'}
-                />
-              </div>
-            )}
+            <div className="grid grid-cols-1 gap-3">
+              <MetricTile
+                icon={TrendingUp}
+                label="Pass rate"
+                value={analyticsQuery.data?.pass_rate_pct != null ? `${analyticsQuery.data.pass_rate_pct}%` : 'No runs'}
+                to="/analytics"
+                tone={analyticsQuery.data?.pass_rate_pct != null ? 'success' : 'neutral'}
+                sparkline={
+                  hasPassRateTrend ? (
+                    <Sparkline
+                      values={passRateSeries}
+                      width={60}
+                      height={16}
+                      className="text-success-strong"
+                      ariaLabel={`Pass rate last 7 days: ${passRateSeries.map((v) => `${v.toFixed(0)}%`).join(', ')}`}
+                    />
+                  ) : undefined
+                }
+              />
+              <MetricTile
+                icon={BarChart3}
+                label="Fleet utilization"
+                value={analyticsQuery.data?.avg_utilization_pct != null ? `${analyticsQuery.data.avg_utilization_pct}%` : '—'}
+                to="/analytics"
+                tone={analyticsQuery.data?.avg_utilization_pct != null ? 'info' : 'neutral'}
+              />
+              <MetricTile
+                icon={AlertTriangle}
+                label="Reliability watchlist"
+                value={analyticsQuery.data?.devices_needing_attention ?? '—'}
+                to="/analytics?tab=reliability"
+                tone={(analyticsQuery.data?.devices_needing_attention ?? 0) > 0 ? 'warning' : 'neutral'}
+              />
+            </div>
           </div>
 
           <div className="p-5">

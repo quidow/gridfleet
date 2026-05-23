@@ -12,7 +12,6 @@ import { Pagination } from '../components/ui/Pagination';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime } from '../utils/dateFormatting';
 import type { SystemEventRead } from '../types';
-import { FetchError } from '../components/ui/FetchError';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Select } from '../components/ui/Select';
 import { Badge } from '../components/ui/Badge';
@@ -110,7 +109,7 @@ export function Notifications() {
 
   const { data: eventCatalog, isLoading: eventCatalogLoading } = useEventCatalog();
   const types = filterType ? [filterType] : undefined;
-  const { data: events, isLoading, isError, refetch, dataUpdatedAt } = useNotifications({
+  const { data: events, isLoading, dataUpdatedAt } = useNotifications({
     types,
     severities: severities.length ? severities : undefined,
     limit: pageSize,
@@ -164,13 +163,6 @@ export function Notifications() {
         </FilterBar>
 
         <ListPageSubheader title={showingLabel} />
-
-        {isError && (
-          <FetchError
-            message="Could not load notifications. Check your connection and try again."
-            onRetry={() => void refetch()}
-          />
-        )}
 
         <DataTable
           columns={COLUMNS}

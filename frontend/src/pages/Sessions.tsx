@@ -3,7 +3,6 @@ import { useSessions } from '../hooks/useSessions';
 import { useDevices } from '../hooks/useDevices';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
 import { EmptyState } from '../components/ui/EmptyState';
-import { FetchError } from '../components/ui/FetchError';
 import { DataTable } from '../components/ui/DataTable';
 import { FilterBar } from '../components/ui/FilterBar';
 import { CursorPagination } from '../components/ui/CursorPagination';
@@ -61,7 +60,7 @@ export function Sessions() {
     })),
   );
 
-  const { data: sessions, isLoading, isError, refetch, dataUpdatedAt } = useSessions({
+  const { data: sessions, isLoading, dataUpdatedAt } = useSessions({
     device_id: deviceFilter || undefined,
     status: statusFilter || undefined,
     platform_id: platformIdFilter || undefined,
@@ -159,13 +158,6 @@ export function Sessions() {
         </FilterBar>
 
         <ListPageSubheader title={showingLabel} />
-
-        {isError && (
-          <FetchError
-            message="Could not load sessions. Check your connection and try again."
-            onRetry={() => void refetch()}
-          />
-        )}
 
         <DataTable<SessionDetail, SessionSortKey>
           columns={COLUMNS}

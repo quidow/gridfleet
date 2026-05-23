@@ -4,7 +4,6 @@ import { useRecentLifecycleIncidents } from '../../hooks/useLifecycle';
 import { LifecyclePolicyBadge } from '../LifecyclePolicyBadge';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
-import { FetchError } from '../ui/FetchError';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { deriveDashboardFleetSummary, groupLifecycleIncidents, incidentToneFromEventType } from './dashboardSummary';
 
@@ -25,7 +24,7 @@ function compactRelativeTime(isoString: string): string {
 export function RecentIncidentsCard() {
   const devicesQuery = useDevices();
   const incidentsQuery = useRecentLifecycleIncidents({ limit: 20 });
-  const { data, isError, status, refetch } = incidentsQuery;
+  const { data, status } = incidentsQuery;
 
   const isInitialLoading = devicesQuery.status === 'pending' || status === 'pending';
 
@@ -40,7 +39,7 @@ export function RecentIncidentsCard() {
   const fleet = deriveDashboardFleetSummary(devicesQuery.data ?? []);
   const lifecycleDevices = fleet.lifecycleDevices;
   const incidents = groupLifecycleIncidents(data ?? []).slice(0, MAX_INCIDENTS);
-  const hasRecoveryWork = lifecycleDevices.length > 0 || incidents.length > 0 || isError || devicesQuery.isError;
+  const hasRecoveryWork = lifecycleDevices.length > 0 || incidents.length > 0;
 
   return (
     <Card padding="lg" className="h-full">
@@ -61,11 +60,7 @@ export function RecentIncidentsCard() {
         </Link>
       </div>
 
-      {devicesQuery.isError ? (
-        <div className="mt-4">
-          <FetchError message="Could not load device recovery data." onRetry={() => void devicesQuery.refetch()} />
-        </div>
-      ) : !hasRecoveryWork ? (
+      {!hasRecoveryWork ? (
         <p className="mt-4 text-sm text-text-2">No recovery work right now.</p>
       ) : (
         <>
@@ -110,9 +105,7 @@ export function RecentIncidentsCard() {
                 <span className="text-xs text-text-3">{incidents.length}</span>
               ) : null}
             </div>
-            {isError ? (
-              <FetchError message="Could not load incidents." onRetry={() => void refetch()} />
-            ) : incidents.length === 0 ? (
+            {incidents.length === 0 ? (
               <p className="text-sm text-text-2">No recent incidents.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">

@@ -15,7 +15,7 @@ export function HostToolVersionsPanel({ host }: Props) {
   const hostId = host.id;
   const hostOnline = host.status === 'online';
   const missingPrerequisites = host.missing_prerequisites ?? [];
-  const { data: toolStatus, isLoading: toolsLoading, error: toolsError } = useHostToolStatus(hostId, hostOnline);
+  const { data: toolStatus, isLoading: toolsLoading } = useHostToolStatus(hostId, hostOnline);
 
   return (
     <div className="space-y-6">
@@ -27,7 +27,7 @@ export function HostToolVersionsPanel({ host }: Props) {
           <p className="px-5 py-8 text-center text-sm text-text-3">Host must be online to read tool versions.</p>
         ) : toolsLoading ? (
           <p className="px-5 py-8 text-center text-sm text-text-3">Loading tool versions...</p>
-        ) : toolsError || !toolStatus ? (
+        ) : toolsLoading || !toolStatus ? (
           <p className="px-5 py-8 text-center text-sm text-text-3">Tool versions are currently unavailable.</p>
         ) : (
           <div className="grid grid-cols-1 divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">

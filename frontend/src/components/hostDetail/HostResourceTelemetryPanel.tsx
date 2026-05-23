@@ -8,7 +8,6 @@ import {
   YAxis,
 } from 'recharts';
 import { LoadingSpinner } from '../LoadingSpinner';
-import { FetchError } from '../ui/FetchError';
 import { AnalyticsEmptyState } from '../analytics/AnalyticsEmptyState';
 import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
@@ -103,7 +102,7 @@ function MetricCard({
 }
 
 export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
-  const { data, isLoading, error, refetch } = useHostResourceTelemetry(hostId);
+  const { data, isLoading } = useHostResourceTelemetry(hostId);
   const telemetryState = deriveHostResourceTelemetryState(data?.latest_recorded_at ?? null, 60);
   const chartPoints = toChartPoints(data?.samples ?? []);
   const lastSampleText = data?.latest_recorded_at
@@ -131,15 +130,6 @@ export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
 
       {isLoading ? (
         <LoadingSpinner />
-      ) : error ? (
-        <div className="mt-4">
-          <FetchError
-            message="Could not load host resource telemetry."
-            onRetry={() => {
-              void refetch();
-            }}
-          />
-        </div>
       ) : !data || data.samples.length === 0 ? (
         <div className="mt-4">
           <AnalyticsEmptyState

@@ -17,7 +17,6 @@ import { useHosts } from '../hooks/useHosts';
 import { createEmptyDeviceGroupFilterDraft, draftToDeviceGroupFilters } from '../lib/deviceGroupFilters';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DeviceGroupCreate, DeviceGroupRead } from '../types';
-import { FetchError } from '../components/ui/FetchError';
 import { PageHeader } from '../components/ui/PageHeader';
 
 type GroupFormState = {
@@ -65,7 +64,7 @@ const COLUMNS: DataTableColumn<DeviceGroupRead>[] = [
 
 export function DeviceGroups() {
   usePageTitle('Device Groups');
-  const { data: groups, isLoading, isError, refetch, dataUpdatedAt } = useDeviceGroups();
+  const { data: groups, isLoading, dataUpdatedAt } = useDeviceGroups();
   const { data: allDevices = [] } = useDevices({});
   const { data: hosts = [] } = useHosts();
   const createGroup = useCreateDeviceGroup();
@@ -103,18 +102,6 @@ export function DeviceGroups() {
       <div>
         {header}
         <LoadingSpinner />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div>
-        {header}
-        <FetchError
-          message="Could not load device groups. Check your connection and try again."
-          onRetry={() => void refetch()}
-        />
       </div>
     );
   }

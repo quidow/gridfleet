@@ -13,7 +13,6 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { RunRead, RunSortKey, RunState } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
-import { FetchError } from '../components/ui/FetchError';
 import { RunProgressBar } from '../components/runs/RunProgressBar';
 import { RunsSummaryRow } from '../components/runs/RunsSummaryRow';
 import { RunActionButtons } from '../components/runs/RunActionButtons';
@@ -64,7 +63,7 @@ export function Runs() {
   const stateFilter = readEnumSearchParam(searchParams, 'state', RUN_STATES);
   const createdFrom = searchParams.get('created_from') ?? '';
   const createdTo = searchParams.get('created_to') ?? '';
-  const { data: runs, isLoading, isError, refetch, dataUpdatedAt } = useRuns({
+  const { data: runs, isLoading, dataUpdatedAt } = useRuns({
     state: stateFilter || undefined,
     created_from: createdFrom || undefined,
     created_to: createdTo || undefined,
@@ -202,13 +201,6 @@ export function Runs() {
           ariaLabel="Created to"
         />
       </FilterBar>
-
-      {isError && (
-        <FetchError
-          message="Could not load test runs. Check your connection and try again."
-          onRetry={() => void refetch()}
-        />
-      )}
 
       <DataTable<RunRead, RunSortKey>
         columns={columns}
