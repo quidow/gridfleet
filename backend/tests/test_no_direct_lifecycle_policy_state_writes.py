@@ -6,9 +6,6 @@ lifecycle policy facade mutate the column directly. Engineers reading older
 docs can misread ``record_control_action`` as the only writer and add a new
 direct JSON patch elsewhere. This static guard keeps the writer boundary
 mechanical.
-
-The seeding subtree (``app/seeding/``) is exempt because fixture builders run
-inside a one-shot transaction with no event consumers attached.
 """
 
 from __future__ import annotations
@@ -17,7 +14,6 @@ import re
 from pathlib import Path
 
 BACKEND_APP = Path(__file__).resolve().parents[1] / "app"
-EXEMPT_DIRS = {BACKEND_APP / "seeding"}
 EXEMPT_FILES = {
     BACKEND_APP / "devices" / "services" / "lifecycle_policy_state.py",
     BACKEND_APP / "services" / "lifecycle_policy_state.py",
@@ -30,8 +26,6 @@ def _scan() -> list[tuple[Path, int, str]]:
     findings: list[tuple[Path, int, str]] = []
     for path in BACKEND_APP.rglob("*.py"):
         if path in EXEMPT_FILES:
-            continue
-        if any(path.is_relative_to(d) for d in EXEMPT_DIRS):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if line.lstrip().startswith("#"):

@@ -11,7 +11,6 @@ AGENT_ROOT = ROOT.parent / "agent" / "agent_app"
 SCAN_ROOTS = [
     ROOT / "app",
     ROOT / "tests",
-    ROOT / "app" / "seeding" / "scenarios",
     ROOT.parent / "frontend" / "src",
 ]
 
@@ -23,27 +22,6 @@ LEGACY_FIELD = re.compile(r"\bidentity_kind\b|\brequested_platform\b(?!_id)")
 # Matches legacy driver registry API paths in source code.
 # Only scan frontend/src (not e2e) to avoid false positives on playwright specs.
 LEGACY_DRIVER_API = re.compile(r"/api/drivers|/drivers/sync-all|/hosts/.*/drivers")
-
-# Matches bare "platform": key used in run requirement dicts (legacy shape).
-# Allowlist: platformName, platform_id, platform_name, platform_key, pack_platform, DriverPackPlatform
-# and Python dict projection (device.platform_id / platform_id_expr).
-# The goal is to catch {"platform": "android_mobile"} style run requirements,
-# NOT {"platform_id": "..."} or {"platformName": "..."}.
-LEGACY_RUN_REQUIREMENT = re.compile(r"""[\"']platform[\"']\s*:""")
-# Lines that contain these substrings are legitimate and must not be flagged.
-_RUN_REQ_ALLOWLIST = re.compile(
-    r"platform(?:Name|_id|_name|_key|Id)\b"
-    r"|pack_platform"
-    r"|DriverPackPlatform"
-    r"|platform_id_expr"
-    r"|Device\.platform_id"
-    r"|filter_rules"
-    r"|\"Platform\""
-    r"|'Platform'"
-    r"|label\s*=\s*[\"']Platform[\"']"
-    r"|htmlFor.*platform"
-    r"|running_nodes"
-)
 
 
 def test_backend_no_longer_uses_legacy_enums() -> None:
@@ -88,27 +66,6 @@ def test_frontend_no_legacy_driver_api_calls() -> None:
         for line_no, line in enumerate(text.splitlines(), 1):
             if LEGACY_DRIVER_API.search(line):
                 offenders.append(f"{path.relative_to(ROOT.parent)}:{line_no}: legacy driver API call")
-    assert offenders == [], "\n".join(offenders)
-
-
-def test_seed_scenarios_no_legacy_run_requirements() -> None:
-    """Seed scenario files must not use bare 'platform': key in run requirement dicts.
-
-    Allowed: platform_id, platformName, pack_platform, DriverPackPlatform, etc.
-    Forbidden: {"platform": "android_mobile"} style legacy run requirement keys.
-
-    Only scans seeding scenario files — general device fixture dicts that use a
-    'platform' column key are out of scope for this guard.
-    """
-    scenario_dir = ROOT / "app" / "seeding" / "scenarios"
-    offenders: list[str] = []
-
-    for path in sorted(scenario_dir.glob("*.py")):
-        text = path.read_text()
-        for line_no, line in enumerate(text.splitlines(), 1):
-            if LEGACY_RUN_REQUIREMENT.search(line) and not _RUN_REQ_ALLOWLIST.search(line):
-                offenders.append(f"{path.relative_to(ROOT)}:{line_no}: legacy bare 'platform': key in run requirement")
-
     assert offenders == [], "\n".join(offenders)
 
 
