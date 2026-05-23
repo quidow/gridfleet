@@ -177,10 +177,11 @@ export function deriveDeviceDetailTriage(
       { label: 'Node state', value: node?.effective_state ?? 'none', tone: node ? 'warn' : 'neutral' },
     ];
 
-    if (inMaintenance && device.lifecycle_policy_summary.detail) {
+    const maintenanceReason = device.lifecycle_policy_summary.maintenance_reason;
+    if (inMaintenance && maintenanceReason) {
       evidence.unshift({
         label: 'Reason',
-        value: device.lifecycle_policy_summary.detail,
+        value: maintenanceReason,
         tone: 'neutral',
       });
     }
@@ -192,7 +193,7 @@ export function deriveDeviceDetailTriage(
         ? 'In maintenance'
         : node ? 'Appium node is stopped' : 'No Appium node configured',
       detail: inMaintenance
-        ? (device.lifecycle_policy_summary.detail || 'Device is in maintenance mode.')
+        ? (maintenanceReason || 'Device is in maintenance mode.')
         : 'Start the node to register this device with Selenium Grid.',
       action: nodeAction,
       evidence,

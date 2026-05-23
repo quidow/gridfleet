@@ -32,7 +32,7 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
 function availabilityTooltip(device: DeviceRead): string | undefined {
   const status = deviceChipStatus(device);
   if (status === 'maintenance') {
-    return device.lifecycle_policy_summary.detail || 'In maintenance';
+    return device.lifecycle_policy_summary.maintenance_reason || 'In maintenance';
   }
   if (status === 'offline') {
     if (device.health_summary.connectivity_status === 'failed') return 'Connectivity failed';

@@ -114,4 +114,5 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
         "label": label,
         "detail": detail,
         "backoff_until": policy.get("backoff_until"),
+        "maintenance_reason": policy.get("maintenance_reason"),
     }

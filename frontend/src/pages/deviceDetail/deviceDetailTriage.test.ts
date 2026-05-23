@@ -195,17 +195,18 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('shows maintenance reason from lifecycle_policy_summary.detail as evidence', () => {
+  it('shows maintenance_reason from lifecycle_policy_summary as evidence', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'offline',
         hold: 'maintenance',
         appium_node: null,
         lifecycle_policy_summary: {
-          state: 'suppressed',
-          label: 'Suppressed',
-          detail: 'Cooldown escalation',
+          state: 'idle',
+          label: 'Idle',
+          detail: null,
           backoff_until: null,
+          maintenance_reason: 'Cooldown escalation',
         },
       }),
       { canTestSession: false },
