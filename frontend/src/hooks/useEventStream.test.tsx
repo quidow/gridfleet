@@ -7,14 +7,6 @@ import type { AuthSession } from '../types';
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 const probeSession = vi.fn<() => Promise<AuthSession>>();
 const authValue = { probeSession };
-const EVENT_CATALOG = [
-  { name: 'session.started' },
-  { name: 'run.created' },
-  { name: 'device.operational_state_changed' },
-  { name: 'device.hold_changed' },
-  { name: 'device.health_changed' },
-];
-
 vi.mock('../api/settings', () => ({
   fetchSettings: vi.fn().mockResolvedValue([]),
 }));
