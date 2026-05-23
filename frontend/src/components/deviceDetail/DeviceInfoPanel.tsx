@@ -36,7 +36,7 @@ function softwareVersionsList(versions: Record<string, unknown> | null | undefin
     .filter((entry): entry is [string, string | number | boolean] =>
       ['string', 'number', 'boolean'].includes(typeof entry[1]) && String(entry[1]).length > 0,
     )
-    .sort(([a], [b]) => a.localeCompare(b));
+    .toSorted(([a], [b]) => a.localeCompare(b));
   if (entries.length === 0) return EMPTY_GLYPH;
   return (
     <dl className="space-y-1">
@@ -51,7 +51,7 @@ function softwareVersionsList(versions: Record<string, unknown> | null | undefin
 }
 
 function tagsList(tags: DeviceDetail['tags']) {
-  const entries = Object.entries(tags ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(tags ?? {}).toSorted(([a], [b]) => a.localeCompare(b));
   if (entries.length === 0) return EMPTY_GLYPH;
   return (
     <div className="flex flex-wrap gap-1.5">

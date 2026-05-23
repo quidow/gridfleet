@@ -65,7 +65,7 @@ test.describe('Dashboard', () => {
 
     await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible();
     await expect(page.getByTestId('stat-card')).toHaveCount(3);
-    await expect(page.getByTestId('system-health-pill')).toHaveCount(3);
+    await expect(page.getByLabel(/^(Stream|DB|Grid) /)).toHaveCount(3);
   });
 
   test('Fleet card renders heading and platform chips when devices exist', async ({ page }) => {

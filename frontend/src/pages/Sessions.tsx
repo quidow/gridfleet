@@ -72,7 +72,7 @@ function SessionsTableSection() {
     direction,
   });
 
-  const sortedDevices = [...(devices ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const sortedDevices = (devices ?? []).toSorted((a, b) => a.name.localeCompare(b.name));
   const sessionRows = sessions?.items ?? [];
   const hasFilters = Boolean(
     deviceFilter || statusFilter || platformIdFilter || startedAfter || startedBefore || includeProbes,

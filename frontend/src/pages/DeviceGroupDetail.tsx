@@ -50,7 +50,7 @@ export function DeviceGroupDetail() {
   const isStatic = group.group_type === 'static';
   const hostOptions = hosts.map((host) => ({ id: host.id, name: host.hostname }));
   const hostMap = new Map(hosts.map((host) => [host.id, host.hostname]));
-  const osVersionOptions = Array.from(new Set(allDevices.map((device) => device.os_version))).sort();
+  const osVersionOptions = Array.from(new Set(allDevices.map((device) => device.os_version))).toSorted();
   const filterSummaries = describeDeviceGroupFilters(group.filters, hostMap, platformLabels);
 
   const columns: DataTableColumn<DeviceRead>[] = [

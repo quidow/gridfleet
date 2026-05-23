@@ -62,7 +62,7 @@ describe('DeviceDetailStatusPills', () => {
         <DeviceDetailStatusPills device={makeDevice()} />
       </MemoryRouter>,
     );
-    expect(screen.getAllByTestId('device-detail-status-pill')).toHaveLength(2);
+    expect(screen.getAllByLabelText(/^(Hardware|Connectivity) /)).toHaveLength(2);
   });
 
   it('connectivity pill links to triage tab with device-health anchor', () => {

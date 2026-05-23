@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { downloadInventory, type InventoryFormat } from "../../api/devicesInventory";
 import { Button } from "../ui/Button";
@@ -95,7 +95,7 @@ export function DeviceInventoryExportModal({ isOpen, onClose, filters }: Props) 
     }
   };
 
-  const summary = useMemo(() => `${selected.size} columns selected`, [selected]);
+  const summary = `${selected.size} columns selected`;
 
   return (
     <Modal

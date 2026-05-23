@@ -1,18 +1,19 @@
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Smartphone, Server, Clock, FolderOpen, Package, Bell, Play, BarChart3, Settings2, PanelLeftClose, PanelLeftOpen, LogOut, Moon, Sun } from 'lucide-react';
+import { type ElementType } from 'react';
 import { useAuth } from '../context/auth';
 import { useSidebar } from '../context/SidebarContext';
 import { useTheme } from '../context/theme';
 import { useDevices } from '../hooks/useDevices';
 import { useHosts } from '../hooks/useHosts';
 import { useRuns } from '../hooks/useRuns';
-import type { RunState } from '../types';
+import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
 type CountTone = 'neutral' | 'warn';
 type NavLinkDef = {
   to: string;
   label: string;
-  icon: React.ElementType;
+  icon: ElementType;
   count?: number;
   countTone?: CountTone;
 };
@@ -21,8 +22,6 @@ type NavGroup = {
   title: string;
   links: NavLinkDef[];
 };
-
-const ACTIVE_RUN_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 function AppMark() {
   return (
@@ -121,7 +120,7 @@ export function Sidebar() {
   const hostCount = hostsQuery.data?.length;
   const runItems = runsQuery.data?.items;
   const activeRunCount = Array.isArray(runItems)
-    ? runItems.filter((r) => ACTIVE_RUN_STATES.includes(r.state)).length
+    ? runItems.filter((r) => ACTIVE_RUN_STATES.has(r.state)).length
     : undefined;
 
   const groups: NavGroup[] = [

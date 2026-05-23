@@ -7,16 +7,14 @@ import type {
   HostRead,
   LifecycleIncidentRead,
   RunRead,
-  RunState,
 } from '../../types';
 import type { BadgeTone } from '../ui/Badge';
 import { isLifecycleSummaryActive } from '../lifecyclePolicy';
 import { deviceChipStatus } from '../../lib/deviceState';
 import type { DeviceChipStatus } from '../../types';
+import { ACTIVE_RUN_STATES } from '../../lib/runStates';
 
 type GridHealthTone = 'ready' | 'warning' | 'error';
-
-const ACTIVE_RUN_STATES: readonly RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 interface DashboardFleetSummary {
   total: number;
@@ -107,7 +105,7 @@ export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): Dashboa
 }
 
 export function isActiveRun(run: Pick<RunRead, 'state'>): boolean {
-  return ACTIVE_RUN_STATES.includes(run.state);
+  return ACTIVE_RUN_STATES.has(run.state);
 }
 
 export function getGridHealth(status: GridStatus | null | undefined): GridHealth | null {
@@ -214,7 +212,7 @@ export function groupLifecycleIncidents(incidents: LifecycleIncidentRead[] = [])
     }
   }
 
-  return [...grouped.values()].sort((a, b) => timestamp(b.latestCreatedAt) - timestamp(a.latestCreatedAt));
+  return [...grouped.values()].toSorted((a, b) => timestamp(b.latestCreatedAt) - timestamp(a.latestCreatedAt));
 }
 
 export function incidentToneFromEventType(eventType: DeviceEventType): BadgeTone {

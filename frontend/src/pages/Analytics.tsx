@@ -2,13 +2,15 @@ import { useSearchParams } from 'react-router-dom';
 import { Suspense, lazy, useMemo } from 'react';
 import { DateRangePicker } from '../components/analytics/DateRangePicker';
 import type { Preset } from '../components/analytics/DateRangePicker';
-import { ReliabilityTab } from '../components/analytics/ReliabilityTab';
 
 const SessionTrendsTab = lazy(() =>
   import('../components/analytics/SessionTrendsTab').then((m) => ({ default: m.SessionTrendsTab })),
 );
 const DeviceUtilizationTab = lazy(() =>
   import('../components/analytics/DeviceUtilizationTab').then((m) => ({ default: m.DeviceUtilizationTab })),
+);
+const ReliabilityTab = lazy(() =>
+  import('../components/analytics/ReliabilityTab').then((m) => ({ default: m.ReliabilityTab })),
 );
 const FleetCapacityTab = lazy(() =>
   import('../components/analytics/FleetCapacityTab').then((m) => ({ default: m.FleetCapacityTab })),
@@ -140,7 +142,9 @@ export function Analytics() {
       )}
       {tab === 'reliability' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-reliability">
-          <ReliabilityTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <ReliabilityTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       {tab === 'fleet-capacity' && (

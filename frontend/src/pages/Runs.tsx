@@ -22,12 +22,12 @@ import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Select } from '../components/ui/Select';
 import { DateInput } from '../components/ui/DateInput';
 import { resolvePlatformLabel } from '../lib/labels';
+import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
 const RUN_STATES: RunState[] = [
   'pending', 'preparing', 'active', 'completing',
   'completed', 'failed', 'expired', 'cancelled',
 ];
-const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
 
 function readEnumSearchParam<T extends string>(searchParams: URLSearchParams, key: string, values: readonly T[]): T | '' {
   const value = searchParams.get(key);
@@ -136,7 +136,7 @@ function RunsTableSection() {
       key: 'actions',
       header: 'Actions',
       render: (run) => {
-        const isActive = ACTIVE_STATES.includes(run.state);
+        const isActive = ACTIVE_RUN_STATES.has(run.state);
         return (
           <div className="flex items-center gap-2">
             <Link to={`/runs/${run.id}`}>

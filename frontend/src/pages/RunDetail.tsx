@@ -17,8 +17,9 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
 import { DefinitionList } from '../components/ui/DefinitionList';
 import { resolvePlatformLabel } from '../lib/labels';
+import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
-const ACTIVE_STATES: RunState[] = ['pending', 'preparing', 'active', 'completing'];
+const TERMINAL_NON_HAPPY_STATES: ReadonlySet<RunState> = new Set<RunState>(['failed', 'expired', 'cancelled']);
 const STATE_ORDER: RunState[] = ['pending', 'preparing', 'active', 'completing', 'completed'];
 
 function formatDate(dateStr: string | null): string {
@@ -146,9 +147,9 @@ export function RunDetail() {
   if (isLoading) return <LoadingSpinner />;
   if (!run) return <p className="text-text-3 text-center mt-12">Run not found</p>;
 
-  const isActive = ACTIVE_STATES.includes(run.state);
+  const isActive = ACTIVE_RUN_STATES.has(run.state);
   const stateIndex = STATE_ORDER.indexOf(run.state as RunState);
-  const isTerminalNonHappy = ['failed', 'expired', 'cancelled'].includes(run.state);
+  const isTerminalNonHappy = TERMINAL_NON_HAPPY_STATES.has(run.state as RunState);
 
   return (
     <div>
