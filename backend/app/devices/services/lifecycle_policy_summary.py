@@ -103,12 +103,6 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
             summary_state = DeviceLifecyclePolicySummaryState.recoverable
             label = "Recovery Eligible"
             detail = policy.get("last_failure_reason") or "Automatic recovery can run when the next check succeeds"
-    elif current_state == "manual":
-        if policy.get("last_action") or policy.get("last_failure_reason"):
-            summary_state = DeviceLifecyclePolicySummaryState.manual
-            label = "Manual Recovery"
-            detail = policy.get("recovery_suppressed_reason") or "Automatic recovery is disabled"
-
     return {
         "state": summary_state,
         "label": label,

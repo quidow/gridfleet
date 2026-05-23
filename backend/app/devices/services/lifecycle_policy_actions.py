@@ -24,7 +24,6 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    record_manual_recovered,
     set_action,
     write_state,
 )
@@ -70,10 +69,6 @@ def failure_event_type(source: str) -> DeviceEventType:
     return DeviceEventType.connectivity_lost if source == "connectivity" else DeviceEventType.health_check_fail
 
 
-def offline_summary_state(device: Device) -> DeviceLifecyclePolicySummaryState:
-    return DeviceLifecyclePolicySummaryState.recoverable
-
-
 def record_reconciler_start_failure_state(
     device: Device,
     *,
@@ -102,31 +97,6 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
     fresh["backoff_until"] = None
     if fresh != original:
         write_state(device, fresh)
-
-
-def clear_manual_recovery_suppression_state(device: Device) -> bool:
-    fresh = policy_state(device)
-    if (
-        fresh.get("recovery_suppressed_reason") is None
-        and fresh.get("last_failure_reason") is None
-        and fresh.get("backoff_until") is None
-    ):
-        return False
-    record_manual_recovered(fresh)
-    write_state(device, fresh)
-    return True
-
-
-def auto_stopped_summary_state(
-    device: Device,
-    run: TestRun | None,
-) -> DeviceLifecyclePolicySummaryState:
-    # ``run is not None`` only reaches here from genuine-exclusion callers
-    # (complete_auto_stop and CI preparation flows). Connectivity-loss
-    # callers always pass run=None after D1.
-    if run is not None:
-        return DeviceLifecyclePolicySummaryState.excluded
-    return offline_summary_state(device)
 
 
 async def exclude_run_if_needed(
@@ -416,7 +386,11 @@ async def record_auto_stopped_incident(
         db,
         device,
         DeviceEventType.lifecycle_auto_stopped,
-        summary_state=auto_stopped_summary_state(device, run),
+        summary_state=(
+            DeviceLifecyclePolicySummaryState.excluded
+            if run is not None
+            else DeviceLifecyclePolicySummaryState.recoverable
+        ),
         reason=reason,
         detail=detail,
         source=source,

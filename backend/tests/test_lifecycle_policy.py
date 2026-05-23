@@ -949,17 +949,6 @@ def test_lifecycle_summary_surfaces_reconciler_start_failure() -> None:
     assert summary["label"] == "Node Start Failed"
     assert summary["detail"] == "port_occupied"
 
-    manual = build_lifecycle_policy_summary(
-        {
-            "recovery_state": "manual",
-            "last_action": "operator_disabled",
-            "recovery_suppressed_reason": "manual override",
-        }
-    )
-    assert manual["state"] == "manual"
-    assert manual["label"] == "Manual Recovery"
-    assert manual["detail"] == "manual override"
-
 
 async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_incident(
     db_session: AsyncSession,

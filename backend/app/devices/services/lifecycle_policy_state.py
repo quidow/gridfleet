@@ -139,7 +139,7 @@ def record_manual_recovered(next_state: dict[str, Any]) -> None:
     The auto-recovery loop only clears ``recovery_suppressed_reason`` when it
     runs ``attempt_auto_recovery`` end-to-end, and that path early-returns when
     the node is already running. Without this helper a successful manual
-    Restart leaves stale suppression metadata, freezing the device in the
+    restart leaves stale suppression metadata, freezing the device in the
     "Recovery paused — admin review needed" UI state.
     """
     next_state["last_failure_source"] = None
@@ -165,10 +165,10 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
 
     Only clears the maintenance-tautology reason
     (``MAINTENANCE_HOLD_SUPPRESSION_REASON``). Other suppressions
-    (``"Auto-manage is disabled"``, ``"Node restart failed"``,
-    ``"Recovery probe failed"``, an active backoff window, etc.) describe a
-    real condition that is independent of the maintenance hold and must
-    survive an operator-driven exit. No-op when those are present.
+    (``"Node restart failed"``, ``"Recovery probe failed"``, an active
+    backoff window, etc.) describe a real condition that is independent of
+    the maintenance hold and must survive an operator-driven exit. No-op
+    when those are present.
 
     Caller must hold the device row lock and is responsible for the commit;
     this helper performs an in-memory read-modify-write through ``write_state``

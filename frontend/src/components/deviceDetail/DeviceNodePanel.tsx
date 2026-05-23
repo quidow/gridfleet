@@ -10,10 +10,7 @@ import {
   useStopNode,
 } from '../../hooks/useDevices';
 import { platformDescriptorForDeviceType, usePlatformDescriptor } from '../../hooks/usePlatformDescriptor';
-import {
-  getPendingDeviceAction,
-
-} from '../../lib/devicePendingAction';
+import { getPendingDeviceAction } from '../../lib/devicePendingAction';
 import type { DeviceDetail } from '../../types';
 import { Button } from '../ui/Button';
 import { DefinitionList } from '../ui/DefinitionList';

@@ -450,7 +450,7 @@ async def test_start_stop_restart_node_guard_paths(
     assert restarted.transition_deadline is not None
 
 
-async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
@@ -473,19 +473,6 @@ async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: py
 
     db.get = AsyncMock(return_value=None)
     assert await node_agent.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
-
-    clean_device = SimpleNamespace(id=device_id, lifecycle_policy_state={})
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=clean_device))
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
-
-    dirty_device = SimpleNamespace(id=device_id, lifecycle_policy_state={"last_failure_reason": "boom"})
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=dirty_device))
-    clear_suppression = MagicMock(return_value=True)
-    monkeypatch.setattr(node_agent, "clear_manual_recovery_suppression_state", clear_suppression)
-    db.commit.reset_mock()
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
-    clear_suppression.assert_called_once_with(dirty_device)
-    db.commit.assert_awaited_once()
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
