@@ -173,7 +173,6 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
         "operational_state": DeviceOperationalState.offline,
         "device_type": device.device_type,
         "connection_type": device.connection_type,
-        "auto_manage": device.auto_manage,
         "tags": dict(device.tags),
         "device_config": dict(device.device_config),
         "test_data": dict(device.test_data),
@@ -194,7 +193,6 @@ async def _enqueue_verification(session: AsyncSession, device: Device) -> None:
         host_id=device.host_id,
         device_type=device.device_type,
         connection_type=device.connection_type,
-        auto_manage=device.auto_manage,
         tags=device.tags or None,
     )
     payload: dict[str, Any] = {"mode": "create", "data": data.model_dump(mode="json")}

@@ -71,9 +71,7 @@ def failure_event_type(source: str) -> DeviceEventType:
 
 
 def offline_summary_state(device: Device) -> DeviceLifecyclePolicySummaryState:
-    if device.auto_manage:
-        return DeviceLifecyclePolicySummaryState.recoverable
-    return DeviceLifecyclePolicySummaryState.manual
+    return DeviceLifecyclePolicySummaryState.recoverable
 
 
 def record_reconciler_start_failure_state(
@@ -303,18 +301,17 @@ async def handle_node_crash(
         db,
         device.id,
         DeviceEventType.node_crash,
-        {"error": reason, "source": source, "will_restart": bool(device.auto_manage)},
+        {"error": reason, "source": source, "will_restart": True},
     )
-    _will_restart = bool(device.auto_manage)
     queue_device_crashed_event(
         db,
         device_id=str(device.id),
         device_name=device.name,
         source=source,
         reason=reason,
-        will_restart=_will_restart,
+        will_restart=True,
         process=None,
-        severity="warning" if _will_restart else "critical",
+        severity="warning",
     )
 
     if node is not None and node.observed_running:

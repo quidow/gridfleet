@@ -92,8 +92,6 @@ async def _restore_available_for_healthy_signal(
 ) -> None:
     if locked.operational_state != DeviceOperationalState.offline:
         return
-    if not locked.auto_manage:
-        return
     node = locked.appium_node
     if node is None or not node_running_signal(node):
         return

@@ -29,7 +29,6 @@ class ExportedDevice(BaseModel):
     device_type: DeviceType
     connection_type: ConnectionType
     connection_target: str | None = None
-    auto_manage: bool = True
     tags: dict[str, str] = Field(default_factory=dict)
     device_config: dict[str, Any] = Field(default_factory=dict)
     test_data: dict[str, Any] = Field(default_factory=dict)

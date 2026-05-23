@@ -176,25 +176,6 @@ async def bulk_restart_nodes(
     )
 
 
-async def bulk_set_auto_manage(db: AsyncSession, device_ids: list[uuid.UUID], auto_manage: bool) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    for device in devices:
-        device.auto_manage = auto_manage
-    queue_event_for_session(
-        db,
-        "bulk.operation_completed",
-        {
-            "operation": "set_auto_manage",
-            "total": len(devices),
-            "succeeded": len(devices),
-            "failed": 0,
-        },
-        severity=_bulk_severity(len(devices), len(devices), 0),
-    )
-    await db.commit()
-    return _result(len(devices), len(devices), {})
-
-
 async def bulk_update_tags(
     db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
 ) -> dict[str, Any]:

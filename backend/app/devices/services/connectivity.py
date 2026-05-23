@@ -321,7 +321,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                     else:
                         others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
                     gated_ip_ping_ok = True
-                    if ip_ping_entry is not None and device.hold != DeviceHold.maintenance and device.auto_manage:
+                    if ip_ping_entry is not None and device.hold != DeviceHold.maintenance:
                         gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                             db,
                             device,
@@ -381,10 +381,6 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         logger.debug("Device %s is connected but still awaiting setup/verification", device.name)
                         await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
                         continue
-                    if not device.auto_manage:
-                        logger.debug("Device %s is connected but auto_manage is off — skipping auto-start", device.name)
-                        await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
-                        continue
                     previously_offline = await control_plane_state_store.get_value(
                         db,
                         CONNECTIVITY_NAMESPACE,
@@ -426,7 +422,7 @@ async def _check_connectivity(db: AsyncSession) -> None:
                         else:
                             others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
                         gated_ip_ping_ok = True
-                        if ip_ping_entry is not None and device.hold != DeviceHold.maintenance and device.auto_manage:
+                        if ip_ping_entry is not None and device.hold != DeviceHold.maintenance:
                             gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                                 db,
                                 device,
@@ -468,15 +464,6 @@ async def _check_connectivity(db: AsyncSession) -> None:
                                         db, CONNECTIVITY_NAMESPACE, device.identity_value
                                     )
                                     continue
-                                if not device.auto_manage:
-                                    logger.debug(
-                                        "Device %s is healthy but auto_manage is off — skipping auto-start",
-                                        device.name,
-                                    )
-                                    await control_plane_state_store.delete_value(
-                                        db, CONNECTIVITY_NAMESPACE, device.identity_value
-                                    )
-                                    continue
                                 previously_offline = await control_plane_state_store.get_value(
                                     db,
                                     CONNECTIVITY_NAMESPACE,
@@ -510,8 +497,6 @@ async def _check_connectivity(db: AsyncSession) -> None:
                 # disconnects are not actionable — skip silently to match pre-PR
                 # behavior (no connectivity_lost event, no lifecycle write).
                 if device.hold == DeviceHold.maintenance:
-                    continue
-                if not device.auto_manage:
                     continue
                 await assert_current_leader(db)
                 stopped_node = await _stop_disconnected_node(db, device)

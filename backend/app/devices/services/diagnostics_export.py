@@ -72,7 +72,6 @@ def _project_device(device: Device) -> dict[str, Any]:
         "model": device.model,
         "model_number": device.model_number,
         "software_versions": device.software_versions,
-        "auto_manage": device.auto_manage,
         "device_type": device.device_type.value if device.device_type else None,
         "connection_type": device.connection_type.value if device.connection_type else None,
         "ip_address": device.ip_address,

@@ -140,7 +140,6 @@ class Device(Base):
     model: Mapped[str | None] = mapped_column(String, nullable=True)
     model_number: Mapped[str | None] = mapped_column(String, nullable=True)
     software_versions: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, default=dict)
-    auto_manage: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     device_type: Mapped[DeviceType] = mapped_column(Enum(DeviceType), nullable=False)
     connection_type: Mapped[ConnectionType] = mapped_column(Enum(ConnectionType), nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String, nullable=True)

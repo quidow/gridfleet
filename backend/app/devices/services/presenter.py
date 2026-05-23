@@ -188,7 +188,6 @@ async def serialize_device(
         "operational_state": device.operational_state,
         "hold": device.hold,
         "tags": device.tags,
-        "auto_manage": device.auto_manage,
         "device_type": device.device_type,
         "connection_type": device.connection_type,
         "ip_address": device.ip_address,

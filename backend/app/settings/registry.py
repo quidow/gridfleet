@@ -523,14 +523,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Minimum severity for toasts: info, warning, error",
         allowed_values=["info", "warning", "error"],
     ),
-    # ── Device Defaults ──
-    SettingDefinition(
-        key="devices.default_auto_manage",
-        category="devices",
-        setting_type="bool",
-        default=True,
-        description="Default auto_manage value for newly discovered devices",
-    ),
     # ── Agent ──
     SettingDefinition(
         key="agent.min_version",

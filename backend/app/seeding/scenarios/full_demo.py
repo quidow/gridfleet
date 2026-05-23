@@ -470,27 +470,11 @@ def _apply_lifecycle_policy_states(
 
     # Recovery Eligible — the already-offline device gets a last_action so the
     # summary promotes it from idle to "Recovery Eligible".
-    offline_device.auto_manage = True
     offline_device.lifecycle_policy_state = _policy(
         last_action="mark_unreachable",
         last_action_at=_iso(-900),
         last_failure_source="device_connectivity",
         last_failure_reason="Device dropped off ADB bus",
-    )
-
-    # Manual Recovery — another offline device with auto_manage disabled, so
-    # the operator has to intervene by hand.
-    manual_device = all_devices[12]
-    manual_device.operational_state = DeviceOperationalState.offline
-    manual_device.hardware_health_status = HardwareHealthStatus.unknown
-    manual_device.hardware_telemetry_reported_at = None
-    manual_device.auto_manage = False
-    manual_device.lifecycle_policy_state = _policy(
-        last_action="mark_unreachable",
-        last_action_at=_iso(-1800),
-        last_failure_source="appium_node",
-        last_failure_reason="Node refused to start — USB hub power cycle required",
-        recovery_suppressed_reason="auto_manage is disabled for this device",
     )
 
     # Suppressed — available device where auto-recovery is explicitly paused.

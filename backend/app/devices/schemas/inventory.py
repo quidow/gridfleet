@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 class InventoryColumn(enum.StrEnum):
     ID = "id"
     NAME = "name"
-    AUTO_MANAGE = "auto_manage"
     REVIEW_REQUIRED = "review_required"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
