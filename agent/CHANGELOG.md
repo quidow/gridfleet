@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.18.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.18.0...gridfleet-agent-v0.18.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **agent:** restart grid node service after heartbeat failure ([#350](https://github.com/quidow/gridfleet/issues/350)) ([c3f88af](https://github.com/quidow/gridfleet/commit/c3f88afb711b0b45a4a8e85d15591bc0b11032bd))
+
 ## [0.18.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.17.0...gridfleet-agent-v0.18.0) (2026-05-23)
 
 
