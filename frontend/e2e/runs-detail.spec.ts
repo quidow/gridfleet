@@ -151,9 +151,9 @@ test.describe('RunDetail sessions panel', () => {
     // Run metadata still renders
     await expect(page.getByRole('heading', { name: 'my-ci-run' })).toBeVisible({ timeout: 15_000 });
 
-    // Sessions error banner appears with retry button
-    await expect(page.getByText('Could not load sessions for this run.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+    // Sessions section boundary shows error fallback
+    await expect(page.getByText('Something went wrong')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
   });
 
   test('sessions query includes run_id param', async ({ page }) => {

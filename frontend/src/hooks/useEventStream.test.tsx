@@ -7,22 +7,18 @@ import type { AuthSession } from '../types';
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 const probeSession = vi.fn<() => Promise<AuthSession>>();
 const authValue = { probeSession };
-const EVENT_CATALOG = [
-  { name: 'session.started' },
-  { name: 'run.created' },
-  { name: 'device.operational_state_changed' },
-  { name: 'device.hold_changed' },
-  { name: 'device.health_changed' },
-];
-
 vi.mock('../api/settings', () => ({
   fetchSettings: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('./useEventCatalog', () => ({
-  useEventCatalog: () => ({
-    data: EVENT_CATALOG,
-  }),
+vi.mock('../api/events', () => ({
+  fetchEventCatalog: vi.fn().mockResolvedValue([
+    { name: 'session.started' },
+    { name: 'run.created' },
+    { name: 'device.operational_state_changed' },
+    { name: 'device.hold_changed' },
+    { name: 'device.health_changed' },
+  ]),
 }));
 
 vi.mock('../context/auth', () => ({
@@ -75,7 +71,7 @@ function HookProbe() {
   return <div>{connected ? 'connected' : 'disconnected'}</div>;
 }
 
-function renderHookProbe() {
+async function renderHookProbe() {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -85,11 +81,15 @@ function renderHookProbe() {
   });
   vi.spyOn(queryClient, 'invalidateQueries').mockImplementation(invalidateQueries);
 
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <HookProbe />
     </QueryClientProvider>,
   );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  return result;
 }
 
 describe('useEventStream', () => {
@@ -114,7 +114,7 @@ describe('useEventStream', () => {
   });
 
   it('batches high-volume invalidations into a single 3-second flush window', async () => {
-    renderHookProbe();
+    await renderHookProbe();
     const source = MockEventSource.instances.at(-1)!;
     await act(async () => {
       source.onopen?.();
@@ -139,7 +139,7 @@ describe('useEventStream', () => {
   });
 
   it('uses exponential reconnect backoff and resets after a successful reconnect', async () => {
-    renderHookProbe();
+    await renderHookProbe();
     const initialCount = MockEventSource.instances.length;
     const initial = MockEventSource.instances.at(-1)!;
 
@@ -182,7 +182,7 @@ describe('useEventStream', () => {
   });
 
   it('invalidates devices and device queries on device.health_changed', async () => {
-    renderHookProbe();
+    await renderHookProbe();
     const source = MockEventSource.instances.at(-1)!;
 
     await act(async () => {
@@ -214,7 +214,7 @@ describe('useEventStream', () => {
       expires_at: null,
     });
 
-    renderHookProbe();
+    await renderHookProbe();
     const initialCount = MockEventSource.instances.length;
     const source = MockEventSource.instances.at(-1)!;
 

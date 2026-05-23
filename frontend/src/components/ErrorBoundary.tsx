@@ -1,10 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { QueryErrorResetBoundary } from '@tanstack/react-query';
 
 type ErrorBoundaryProps = {
   children: ReactNode;
   level?: 'page' | 'section';
   scope?: string;
   resetKey?: string;
+  onReset?: () => void;
 };
 
 type ErrorBoundaryState = {
@@ -36,6 +38,7 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       window.location.reload();
       return;
     }
+    this.props.onReset?.();
     this.setState({ error: null });
   };
 
@@ -65,11 +68,14 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       );
     }
 
+    const scope = this.props.scope;
     return (
       <div className="rounded-lg border border-warning-strong/30 bg-warning-soft px-5 py-6">
         <h2 className="text-sm font-semibold text-warning-foreground">Something went wrong</h2>
         <p className="mt-1 text-sm text-warning-foreground">
-          This section failed to render. Reload to try again.
+          {scope
+            ? `Could not load ${scope.replaceAll('-', ' ')}. Reload to try again.`
+            : 'This section failed to render. Reload to try again.'}
         </p>
         <button
           type="button"
@@ -83,12 +89,18 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
   }
 }
 
-type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level'>;
+type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level' | 'onReset'>;
 
 export function PageErrorBoundary(props: BoundaryWrapperProps) {
   return <ErrorBoundaryImpl {...props} level="page" />;
 }
 
 export function SectionErrorBoundary(props: BoundaryWrapperProps) {
-  return <ErrorBoundaryImpl {...props} level="section" />;
+  return (
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundaryImpl {...props} level="section" onReset={reset} />
+      )}
+    </QueryErrorResetBoundary>
+  );
 }

@@ -14,7 +14,6 @@ import type { AnalyticsParams } from '../../api/analytics';
 import type { FleetCapacityTimelinePoint } from '../../types';
 import { buildFleetCapacityChartData } from '../../lib/fleetCapacityTimeline';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
-import { FetchError } from '../ui/FetchError';
 
 interface Props {
   params: AnalyticsParams;
@@ -71,12 +70,9 @@ function MetricSummary({ label, value, detail }: { label: string; value: number;
 
 export function FleetCapacityTab({ params }: Props) {
   const queryParams = { ...params, bucket_minutes: 1 };
-  const { data, isLoading, isError, refetch } = useFleetCapacityTimeline(queryParams);
+  const { data, isLoading } = useFleetCapacityTimeline(queryParams);
 
   if (isLoading) return <SectionSkeleton shape="split" rows={3} label="Fleet capacity loading" />;
-  if (isError) {
-    return <FetchError message="Could not load fleet capacity timeline." onRetry={() => void refetch()} />;
-  }
 
   const rows = data?.series ?? [];
   const chartData = buildFleetCapacityChartData(data);

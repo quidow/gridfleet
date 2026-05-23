@@ -1448,7 +1448,7 @@ test.describe('Devices page', () => {
 
     await page.goto(`/devices/${DEFAULT_DEVICE.id}?tab=history`);
 
-    await expect(page.getByText('Could not load device session outcome heatmap.')).toBeVisible();
+    await expect(page.getByText('Something went wrong')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'State History' })).toBeVisible();
   });
 

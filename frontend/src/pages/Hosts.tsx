@@ -20,9 +20,9 @@ import { formatHostPrerequisiteList } from '../lib/hostPrerequisites';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { DataTable } from '../components/ui/DataTable';
 import { Button } from '../components/ui/Button';
-import { FetchError } from '../components/ui/FetchError';
 import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import type { DataTableColumn, DataTableSort } from '../components/ui/DataTable';
 import type { HostRead } from '../types';
 import { HostsSummaryPills } from './hosts/HostsSummaryPills';
@@ -35,20 +35,31 @@ import {
 
 type HostSortKey = 'hostname' | 'ip' | 'os_type' | 'status' | 'agent_version' | 'devices' | 'last_heartbeat';
 
-export function Hosts() {
-  usePageTitle('Hosts');
+type HostsTableSectionProps = {
+  onDeleteRequest: (hostId: string) => void;
+  onApprove: (hostId: string) => void;
+  onReject: (hostId: string) => void;
+  onDiscover: (hostId: string) => Promise<void>;
+  onAddHost: () => void;
+  approvePending: boolean;
+  rejectPending: boolean;
+  discoverPending: boolean;
+};
+
+function HostsTableSection({
+  onDeleteRequest,
+  onApprove,
+  onReject,
+  onDiscover,
+  onAddHost,
+  approvePending,
+  rejectPending,
+  discoverPending,
+}: HostsTableSectionProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data: hosts = [], isLoading: hostsLoading, isError: hostsError, refetch, dataUpdatedAt: hostsUpdatedAt } = useHosts();
+  const { data: hosts = [], isLoading: hostsLoading, dataUpdatedAt: hostsUpdatedAt } = useHosts();
   const { data: devices = [], dataUpdatedAt: devicesUpdatedAt } = useDevices();
-  const createHost = useCreateHost();
-  const deleteHostMut = useDeleteHost();
-  const approveMut = useApproveHost();
-  const rejectMut = useRejectHost();
-  const [showAdd, setShowAdd] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [discoveryHostId, setDiscoveryHostId] = useState<string | null>(null);
   const [sort, setSort] = useState<DataTableSort<HostSortKey>>({ key: 'hostname', direction: 'asc' });
-  const discoveryFlow = useHostDiscoveryFlow(discoveryHostId);
   const filters = useMemo(() => readHostsSummaryFilters(searchParams), [searchParams]);
   const activeSummaryFilters = hasActiveHostsSummaryFilters(filters);
   const showInitialLoading = hostsLoading && hosts.length === 0;
@@ -107,11 +118,6 @@ export function Hosts() {
       nextParams.delete('agent_version_status');
       return nextParams;
     });
-  }
-
-  async function handleDiscover(hostId: string) {
-    setDiscoveryHostId(hostId);
-    await discoveryFlow.handleDiscover(hostId);
   }
 
   const columns: DataTableColumn<HostRead, HostSortKey>[] = [
@@ -186,16 +192,16 @@ export function Hosts() {
         <div className="flex items-center justify-end gap-2">
           <HostActionButtons
             status={host.status}
-            onApprove={() => approveMut.mutate(host.id)}
-            onReject={() => rejectMut.mutate(host.id)}
-            onDiscover={() => handleDiscover(host.id)}
-            approvePending={approveMut.isPending}
-            rejectPending={rejectMut.isPending}
-            discoverPending={discoveryFlow.discoverMut.isPending}
+            onApprove={() => onApprove(host.id)}
+            onReject={() => onReject(host.id)}
+            onDiscover={() => { void onDiscover(host.id); }}
+            approvePending={approvePending}
+            rejectPending={rejectPending}
+            discoverPending={discoverPending}
           />
           {host.status !== 'pending' ? (
             <button
-              onClick={() => setDeleteId(host.id)}
+              onClick={() => onDeleteRequest(host.id)}
               className="rounded p-1.5 text-text-3 hover:text-danger-foreground"
               title="Delete Host"
             >
@@ -214,7 +220,7 @@ export function Hosts() {
     : `Showing ${sortedHosts.length} hosts`;
 
   return (
-    <div className="flex h-full flex-col">
+    <>
       <PageHeader
         title="Hosts"
         subtitle="Monitor host reachability, agent drift, and discovery readiness"
@@ -224,69 +230,95 @@ export function Hosts() {
             stats={fleetStats}
             searchParams={searchParams}
             isLoading={showInitialLoading}
-            disabled={hostsError}
           />
         )}
       />
 
-      {hostsError ? (
-        <FetchError
-          message="Could not load hosts. Check your connection and try again."
-          onRetry={() => void refetch()}
-        />
-      ) : (
-        <div className="fade-in-stagger flex min-h-0 flex-1 flex-col">
-          <ListPageSubheader
-            title={showingLabel}
-            action={
-              <div className="flex items-center gap-2">
-                {activeSummaryFilters ? (
-                  <Button variant="ghost" size="sm" onClick={clearSummaryFilters}>
-                    Clear filters
-                  </Button>
-                ) : null}
-                <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
-                  Add Host
+      <div className="fade-in-stagger flex min-h-0 flex-1 flex-col">
+        <ListPageSubheader
+          title={showingLabel}
+          action={
+            <div className="flex items-center gap-2">
+              {activeSummaryFilters ? (
+                <Button variant="ghost" size="sm" onClick={clearSummaryFilters}>
+                  Clear filters
                 </Button>
-              </div>
-            }
-          />
+              ) : null}
+              <Button leadingIcon={<Plus size={16} />} onClick={onAddHost}>
+                Add Host
+              </Button>
+            </div>
+          }
+        />
 
-          <DataTable<HostRead, HostSortKey>
-            columns={columns}
-            rows={sortedHosts}
-            rowKey={(host) => host.id}
-            sort={sort}
-            onSortChange={setSort}
-            loading={showInitialLoading}
-            emptyState={
-              filteredEmpty ? (
-                <EmptyState
-                  icon={Server}
-                  title="No hosts match current filters"
-                  description="Try clearing filters to widen the fleet view."
-                  action={
-                    <Button variant="secondary" onClick={clearSummaryFilters}>
-                      Clear Filters
-                    </Button>
-                  }
-                />
-              ) : (
-                <EmptyState
-                  icon={Server}
-                  title="No hosts registered"
-                  description="Add a host to start managing devices."
-                  action={
-                    <Button leadingIcon={<Plus size={16} />} onClick={() => setShowAdd(true)}>
-                      Add Host
-                    </Button>
-                  }
-                />
-              )
-            }
-          />
-        </div>
-      )}
+        <DataTable<HostRead, HostSortKey>
+          columns={columns}
+          rows={sortedHosts}
+          rowKey={(host) => host.id}
+          sort={sort}
+          onSortChange={setSort}
+          loading={showInitialLoading}
+          emptyState={
+            filteredEmpty ? (
+              <EmptyState
+                icon={Server}
+                title="No hosts match current filters"
+                description="Try clearing filters to widen the fleet view."
+                action={
+                  <Button variant="secondary" onClick={clearSummaryFilters}>
+                    Clear Filters
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={Server}
+                title="No hosts registered"
+                description="Add a host to start managing devices."
+                action={
+                  <Button leadingIcon={<Plus size={16} />} onClick={onAddHost}>
+                    Add Host
+                  </Button>
+                }
+              />
+            )
+          }
+        />
+      </div>
+    </>
+  );
+}
+
+export function Hosts() {
+  usePageTitle('Hosts');
+  const createHost = useCreateHost();
+  const deleteHostMut = useDeleteHost();
+  const approveMut = useApproveHost();
+  const rejectMut = useRejectHost();
+  const [showAdd, setShowAdd] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [discoveryHostId, setDiscoveryHostId] = useState<string | null>(null);
+  const discoveryFlow = useHostDiscoveryFlow(discoveryHostId);
+
+  async function handleDiscover(hostId: string) {
+    setDiscoveryHostId(hostId);
+    await discoveryFlow.handleDiscover(hostId);
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <SectionErrorBoundary scope="hosts-table">
+        <HostsTableSection
+          onDeleteRequest={setDeleteId}
+          onApprove={(id) => approveMut.mutate(id)}
+          onReject={(id) => rejectMut.mutate(id)}
+          onDiscover={handleDiscover}
+          onAddHost={() => setShowAdd(true)}
+          approvePending={approveMut.isPending}
+          rejectPending={rejectMut.isPending}
+          discoverPending={discoveryFlow.discoverMut.isPending}
+        />
+      </SectionErrorBoundary>
 
       <AddHostModal
         isOpen={showAdd}

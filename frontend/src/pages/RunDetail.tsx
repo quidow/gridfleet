@@ -6,8 +6,8 @@ import { StatusBadge } from '../components/StatusBadge';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DataTable } from '../components/ui/DataTable';
-import { FetchError } from '../components/ui/FetchError';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Card } from '../components/ui/Card';
 import { RunActionButtons } from '../components/runs/RunActionButtons';
 import type { DataTableColumn } from '../components/ui/DataTable';
@@ -104,13 +104,39 @@ const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
 
 const SESSION_COLUMNS = buildSessionColumns({ hideDevice: false });
 
+function RunSessionsCard({ runId }: { runId: string }) {
+  const { data: sessionsData, isLoading: sessionsLoading } = useSessions(
+    { run_id: runId, limit: 50, direction: 'older' },
+  );
+  return (
+    <Card padding="none">
+      <div className="px-5 py-4 border-b border-border">
+        <h2 className="text-sm font-medium text-text-2">
+          Sessions ({sessionsData?.items?.length ?? 0}{sessionsData?.next_cursor ? '+' : ''})
+        </h2>
+      </div>
+      <DataTable<SessionDetail, SessionSortKey>
+        columns={SESSION_COLUMNS}
+        rows={sessionsData?.items ?? []}
+        rowKey={(s) => s.id}
+        loading={sessionsLoading}
+        emptyState={<p className="px-5 py-8 text-sm text-text-3 text-center">No sessions yet for this run.</p>}
+      />
+      {sessionsData?.next_cursor && (
+        <div className="px-5 py-3 border-t border-border">
+          <Link to={`/sessions?run_id=${runId}`} className="text-sm text-accent hover:underline">
+            View all sessions in the Sessions explorer →
+          </Link>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: run, isLoading } = useRun(id!);
-  const { data: sessionsData, isLoading: sessionsLoading, isError: sessionsError, refetch: refetchSessions } = useSessions(
-    id ? { run_id: id, limit: 50, direction: 'older' } : undefined,
-  );
   usePageTitle(run?.name ?? 'Run');
   const cancelMutation = useCancelRun();
   const forceReleaseMutation = useForceReleaseRun();
@@ -209,37 +235,9 @@ export function RunDetail() {
         />
       </Card>
 
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-border">
-          <h2 className="text-sm font-medium text-text-2">
-            Sessions ({sessionsData?.items?.length ?? 0}{sessionsData?.next_cursor ? '+' : ''})
-          </h2>
-        </div>
-        {sessionsError ? (
-          <FetchError
-            message="Could not load sessions for this run."
-            onRetry={() => void refetchSessions()}
-            className="m-4"
-          />
-        ) : (
-          <DataTable<SessionDetail, SessionSortKey>
-            columns={SESSION_COLUMNS}
-            rows={sessionsData?.items ?? []}
-            rowKey={(s) => s.id}
-            loading={sessionsLoading}
-            emptyState={
-              <p className="px-5 py-8 text-sm text-text-3 text-center">No sessions yet for this run.</p>
-            }
-          />
-        )}
-        {sessionsData?.next_cursor && (
-          <div className="px-5 py-3 border-t border-border">
-            <Link to={`/sessions?run_id=${id}`} className="text-sm text-accent hover:underline">
-              View all sessions in the Sessions explorer →
-            </Link>
-          </div>
-        )}
-      </Card>
+      <SectionErrorBoundary scope="run-sessions">
+        <RunSessionsCard runId={id!} />
+      </SectionErrorBoundary>
       </div>
 
       <ConfirmDialog

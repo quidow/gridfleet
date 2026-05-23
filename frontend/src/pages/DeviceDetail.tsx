@@ -5,11 +5,9 @@ import {
   useDeleteDevice,
   useDevice,
   useDeviceHealth,
-  useDeviceLogs,
   useExitDeviceMaintenance,
   useRunDeviceLifecycleAction,
   useStartNode,
-  useDeviceCapabilities,
 } from '../hooks/useDevices';
 import { useHosts } from '../hooks/useHosts';
 import { PlatformIcon } from '../components/PlatformIcon';
@@ -35,7 +33,6 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
-import { FetchError } from '../components/ui/FetchError';
 import { DeviceDetailStatusPills } from './deviceDetail/DeviceDetailStatusPills';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
 import {
@@ -172,11 +169,7 @@ export function DeviceDetail() {
   const {
     data: health,
     isLoading: healthLoading,
-    isError: healthIsError,
-    refetch: refetchHealth,
   } = useDeviceHealth(deviceId);
-  const { data: capabilities } = useDeviceCapabilities(deviceId);
-  const { data: logsData } = useDeviceLogs(deviceId);
   const { data: hosts = [] } = useHosts();
   const deleteDevice = useDeleteDevice();
   const lifecycleAction = useRunDeviceLifecycleAction();
@@ -215,16 +208,7 @@ export function DeviceDetail() {
   }
 
   if (!device) {
-    return (
-      <div>
-        <div className="py-6">
-          <FetchError
-            message="Device not found or could not be loaded."
-            onRetry={() => void window.location.reload()}
-          />
-        </div>
-      </div>
-    );
+    return <p className="text-text-3 text-center mt-12">Device not found</p>;
   }
 
   // device is defined from here on
@@ -290,25 +274,18 @@ export function DeviceDetail() {
               <section id="device-health" className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
                 <div className="divide-y divide-border">
                   <div className="p-5">
-                    {healthIsError && !health ? (
-                      <FetchError
-                        message="Could not load device health."
-                        onRetry={() => void refetchHealth()}
+                    <SectionErrorBoundary scope="device-health-panel">
+                      <DeviceHealthPanel
+                        health={health}
+                        packId={device.pack_id}
+                        platformId={device.platform_id}
+                        deviceType={device.device_type}
+                        connectionType={device.connection_type}
+                        deviceId={device.id}
+                        canTestSession={canTestSession}
+                        isLoading={healthLoading}
                       />
-                    ) : healthLoading || health ? (
-                      <SectionErrorBoundary scope="device-health-panel">
-                        <DeviceHealthPanel
-                          health={health}
-                          packId={device.pack_id}
-                          platformId={device.platform_id}
-                          deviceType={device.device_type}
-                          connectionType={device.connection_type}
-                          deviceId={device.id}
-                          canTestSession={canTestSession}
-                          isLoading={healthLoading}
-                        />
-                      </SectionErrorBoundary>
-                    ) : null}
+                    </SectionErrorBoundary>
                   </div>
                   <SectionErrorBoundary scope="device-hardware-telemetry">
                     <DeviceHardwareTelemetryCard device={device} />
@@ -332,7 +309,7 @@ export function DeviceDetail() {
 
         {tab === 'logs' ? (
           <SectionErrorBoundary scope="device-logs-panel">
-            <DeviceLogsPanel logsData={logsData} />
+            <DeviceLogsPanel deviceId={deviceId} />
           </SectionErrorBoundary>
         ) : null}
 
@@ -353,13 +330,11 @@ export function DeviceDetail() {
             </div>
 
             <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
-              {capabilities ? (
-                <SectionErrorBoundary scope="device-capabilities-panel">
-                  <DeviceCapabilitiesPanel capabilities={capabilities} device={device} />
-                </SectionErrorBoundary>
-              ) : null}
+              <SectionErrorBoundary scope="device-capabilities-panel">
+                <DeviceCapabilitiesPanel deviceId={deviceId} device={device} />
+              </SectionErrorBoundary>
 
-              <div className={capabilities ? 'border-t border-border' : undefined}>
+              <div className="border-t border-border">
                 <SectionErrorBoundary scope="device-config-editor">
                   <Suspense fallback={<LoadingSpinner />}>
                     <DeviceConfigEditor device={device} />

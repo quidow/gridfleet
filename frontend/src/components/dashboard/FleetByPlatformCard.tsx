@@ -2,11 +2,9 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useDevices } from '../../hooks/useDevices';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import { deriveRetriableQueryState } from '../../hooks/useRetriableQueryState';
 import { PlatformIcon } from '../PlatformIcon';
 import { NoDriverPacksBanner } from '../NoDriverPacksBanner';
 import { Card } from '../ui/Card';
-import { FetchError } from '../ui/FetchError';
 import { ProportionalBar } from '../ui/ProportionalBar';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
 import { FleetHealthHistory } from './FleetHealthHistory';
@@ -55,8 +53,7 @@ type SegmentKey = (typeof BAR_SEGMENTS)[number]['key'];
 
 export function FleetByPlatformCard() {
   const devicesQuery = useDevices();
-  const { data: devices, refetch } = devicesQuery;
-  const state = deriveRetriableQueryState(devicesQuery);
+  const { data: devices } = devicesQuery;
   const { data: catalog = [] } = useDriverPackCatalog();
   const enabledPackCount = catalog.filter((pack) => pack.state === 'enabled').length;
 
@@ -75,18 +72,10 @@ export function FleetByPlatformCard() {
 
   const fleet = useMemo(() => deriveDashboardFleetSummary(devices ?? []), [devices]);
 
-  if (state === 'initial-loading') {
+  if (!devices) {
     return (
       <Card padding="lg" className="h-full">
         <SectionSkeleton shape="list" rows={4} label="Fleet loading" />
-      </Card>
-    );
-  }
-
-  if (state === 'error') {
-    return (
-      <Card padding="lg" className="h-full">
-        <FetchError message="Could not load fleet data." onRetry={() => void refetch()} />
       </Card>
     );
   }
