@@ -70,10 +70,6 @@ def failure_event_type(source: str) -> DeviceEventType:
     return DeviceEventType.connectivity_lost if source == "connectivity" else DeviceEventType.health_check_fail
 
 
-def offline_summary_state(device: Device) -> DeviceLifecyclePolicySummaryState:
-    return DeviceLifecyclePolicySummaryState.recoverable
-
-
 def record_reconciler_start_failure_state(
     device: Device,
     *,
@@ -118,15 +114,11 @@ def clear_manual_recovery_suppression_state(device: Device) -> bool:
 
 
 def auto_stopped_summary_state(
-    device: Device,
     run: TestRun | None,
 ) -> DeviceLifecyclePolicySummaryState:
-    # ``run is not None`` only reaches here from genuine-exclusion callers
-    # (complete_auto_stop and CI preparation flows). Connectivity-loss
-    # callers always pass run=None after D1.
     if run is not None:
         return DeviceLifecyclePolicySummaryState.excluded
-    return offline_summary_state(device)
+    return DeviceLifecyclePolicySummaryState.recoverable
 
 
 async def exclude_run_if_needed(
@@ -416,7 +408,7 @@ async def record_auto_stopped_incident(
         db,
         device,
         DeviceEventType.lifecycle_auto_stopped,
-        summary_state=auto_stopped_summary_state(device, run),
+        summary_state=auto_stopped_summary_state(run),
         reason=reason,
         detail=detail,
         source=source,

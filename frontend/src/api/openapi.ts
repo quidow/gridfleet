@@ -2827,7 +2827,7 @@ export interface components {
          * DeviceLifecyclePolicySummaryState
          * @enum {string}
          */
-        DeviceLifecyclePolicySummaryState: "idle" | "deferred_stop" | "backoff" | "excluded" | "suppressed" | "recoverable" | "manual";
+        DeviceLifecyclePolicySummaryState: "idle" | "deferred_stop" | "backoff" | "excluded" | "suppressed" | "recoverable";
         /** DeviceMaintenanceUpdate */
         DeviceMaintenanceUpdate: Record<string, never>;
         /**

@@ -89,7 +89,6 @@ class DeviceLifecyclePolicySummaryState(enum.StrEnum):
     excluded = "excluded"
     suppressed = "suppressed"
     recoverable = "recoverable"
-    manual = "manual"
 
 
 class DeviceVerificationCreate(BaseModel):
