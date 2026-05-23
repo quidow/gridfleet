@@ -35,6 +35,7 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
 
   private readonly handleReload = () => {
     if (this.props.level === 'page') {
+      this.props.onReset?.();
       window.location.reload();
       return;
     }
@@ -89,7 +90,13 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
 type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level'>;
 
 export function PageErrorBoundary(props: BoundaryWrapperProps) {
-  return <ErrorBoundaryImpl {...props} level="page" />;
+  return (
+    <QueryErrorResetBoundary>
+      {({ reset }) => (
+        <ErrorBoundaryImpl {...props} level="page" onReset={reset} />
+      )}
+    </QueryErrorResetBoundary>
+  );
 }
 
 export function SectionErrorBoundary(props: BoundaryWrapperProps) {

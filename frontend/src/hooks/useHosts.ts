@@ -46,6 +46,7 @@ export function useHostDiagnostics(id: string) {
     queryFn: () => fetchHostDiagnostics(id),
     refetchInterval: connected ? 60_000 : 10_000,
     enabled: !!id,
+    meta: { handleErrorLocally: true },
   });
 }
 

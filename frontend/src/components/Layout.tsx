@@ -1,7 +1,6 @@
 import { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import { QueryErrorResetBoundary } from '@tanstack/react-query';
 import { Sidebar } from './Sidebar';
 import { useEventStream } from '../hooks/useEventStream';
 import { EventStreamContext } from '../context/EventStreamContext';
@@ -20,19 +19,11 @@ export function Layout() {
           <Sidebar />
           <main className="flex-1 overflow-auto">
             <div className="page-gutter min-h-full">
-              <QueryErrorResetBoundary>
-                {({ reset }) => (
-                  <PageErrorBoundary
-                    resetKey={location.pathname}
-                    scope="route-outlet"
-                    onReset={reset}
-                  >
-                    <Suspense fallback={<LoadingSpinner />}>
-                      <Outlet />
-                    </Suspense>
-                  </PageErrorBoundary>
-                )}
-              </QueryErrorResetBoundary>
+              <PageErrorBoundary resetKey={location.pathname} scope="route-outlet">
+                <Suspense fallback={<LoadingSpinner />}>
+                  <Outlet />
+                </Suspense>
+              </PageErrorBoundary>
             </div>
           </main>
           <Toaster position="top-right" richColors closeButton />

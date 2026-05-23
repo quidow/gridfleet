@@ -33,6 +33,7 @@ export function useDriverPackHosts(packId: string) {
     queryFn: () => fetchDriverPackHosts(packId),
     enabled: packId.length > 0,
     refetchInterval: 15_000,
+    meta: { handleErrorLocally: true },
   });
 }
 
