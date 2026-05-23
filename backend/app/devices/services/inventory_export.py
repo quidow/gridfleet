@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, select
@@ -72,6 +73,8 @@ def _nested_set(out: dict[str, Any], dotted: str, value: object) -> None:
 def _normalize_scalar(raw: object) -> object:
     if raw is None:
         return None
+    if isinstance(raw, uuid.UUID):
+        return str(raw)
     if hasattr(raw, "isoformat"):
         return raw.isoformat()
     if hasattr(raw, "value"):

@@ -128,3 +128,18 @@ async def test_iter_inventory_csv_serializes_jsonb_as_json_string(db_session: As
     body = "".join(chunks)
     assert "{" in body
     assert "team" in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_iter_inventory_json_serializes_uuid_id(db_session: AsyncSession) -> None:
+    _, device = await seed_host_and_device(db_session, identity="INV-4")
+    chunks: list[str] = []
+    async for chunk in iter_inventory_json(
+        db_session,
+        columns=[InventoryColumn.ID],
+        filters=None,
+    ):
+        chunks.append(chunk)
+    payload = json.loads("".join(chunks))
+    assert payload[0]["id"] == str(device.id)
