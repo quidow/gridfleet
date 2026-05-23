@@ -36,6 +36,12 @@ function formatDiskUsage(sample: HostResourceSample | null, fallbackTotalGb: num
   return `${usedGb.toFixed(0)} / ${totalGb.toFixed(0)} GB`;
 }
 
+export function formatCpuUsage(cpuPercent: number | null, cores: number | null): string | null {
+  if (cpuPercent === null || cores === null || cores <= 0) return null;
+  const busy = (cpuPercent / 100) * cores;
+  return `${busy.toFixed(1)} / ${cores} cores`;
+}
+
 function toneFor(percent: number | null): string {
   if (percent === null) return 'bg-surface-2';
   if (percent >= 90) return 'bg-danger-strong';

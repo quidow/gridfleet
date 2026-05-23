@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
-import HostOverviewResourceStrip from './HostOverviewResourceStrip';
+import HostOverviewResourceStrip, { formatCpuUsage } from './HostOverviewResourceStrip';
 
 const sampleWithTotals = {
   timestamp: '2026-05-15T00:00:00Z',
@@ -71,5 +71,32 @@ test('reserves detail row height when a gauge has no detail', () => {
   expect(detailRows).toHaveLength(3);
   detailRows.forEach((row) => {
     expect(row.className).toMatch(/\bh-4\b/);
+  });
+});
+
+describe('formatCpuUsage', () => {
+  test('returns busy/total cores for valid inputs', () => {
+    expect(formatCpuUsage(28, 8)).toBe('2.2 / 8 cores');
+  });
+
+  test('rounds busy cores to one decimal', () => {
+    expect(formatCpuUsage(62, 8)).toBe('5.0 / 8 cores');
+  });
+
+  test('preserves saturation above 100%', () => {
+    expect(formatCpuUsage(105, 8)).toBe('8.4 / 8 cores');
+  });
+
+  test('returns null when cpu_percent is null', () => {
+    expect(formatCpuUsage(null, 8)).toBeNull();
+  });
+
+  test('returns null when cores is null', () => {
+    expect(formatCpuUsage(28, null)).toBeNull();
+  });
+
+  test('returns null when cores is zero or negative', () => {
+    expect(formatCpuUsage(28, 0)).toBeNull();
+    expect(formatCpuUsage(28, -1)).toBeNull();
   });
 });
