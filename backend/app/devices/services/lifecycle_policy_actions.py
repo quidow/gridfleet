@@ -24,7 +24,7 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    record_operator_recovered,
+    record_manual_recovered,
     set_action,
     write_state,
 )
@@ -100,7 +100,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def clear_operator_recovery_suppression_state(device: Device) -> bool:
+def clear_manual_recovery_suppression_state(device: Device) -> bool:
     fresh = policy_state(device)
     if (
         fresh.get("recovery_suppressed_reason") is None
@@ -108,7 +108,7 @@ def clear_operator_recovery_suppression_state(device: Device) -> bool:
         and fresh.get("backoff_until") is None
     ):
         return False
-    record_operator_recovered(fresh)
+    record_manual_recovered(fresh)
     write_state(device, fresh)
     return True
 

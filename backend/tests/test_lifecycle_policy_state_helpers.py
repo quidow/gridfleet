@@ -8,7 +8,7 @@ from app.devices.services.lifecycle_policy_state import (
     default_state,
     parse_iso,
     record_backoff_suppressed,
-    record_operator_recovered,
+    record_manual_recovered,
     record_recovery_failed,
     record_recovery_recovered,
     record_recovery_started,
@@ -98,7 +98,7 @@ def test_parse_iso_and_manual_recovered_edges() -> None:
     state["backoff_until"] = "2026-05-07T01:02:03+00:00"
     state["recovery_backoff_attempts"] = 2
 
-    record_operator_recovered(state)
+    record_manual_recovered(state)
 
     assert state["last_failure_source"] is None
     assert state["last_failure_reason"] is None

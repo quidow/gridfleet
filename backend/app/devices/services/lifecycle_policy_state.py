@@ -133,12 +133,12 @@ def record_recovery_recovered(next_state: dict[str, Any]) -> None:
     set_action(next_state, "auto_recovered")
 
 
-def record_operator_recovered(next_state: dict[str, Any]) -> None:
-    """Operator returned the device to a healthy state via an explicit action.
+def record_manual_recovered(next_state: dict[str, Any]) -> None:
+    """Operator manually returned the device to a healthy state.
 
     The auto-recovery loop only clears ``recovery_suppressed_reason`` when it
     runs ``attempt_auto_recovery`` end-to-end, and that path early-returns when
-    the node is already running. Without this helper a successful operator
+    the node is already running. Without this helper a successful manual
     restart leaves stale suppression metadata, freezing the device in the
     "Recovery paused — admin review needed" UI state.
     """
