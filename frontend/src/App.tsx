@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components -- routes manifest mixes lazy components and the route-tree config */
 import { lazy } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router-dom';
 import type { RouteObject } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
 import { Dashboard } from './pages/Dashboard';
 import { Layout } from './components/Layout';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -24,30 +25,35 @@ const Sessions = lazy(() => import('./pages/Sessions').then((m) => ({ default: m
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 
 export const routes: RouteObject[] = [
-  { path: '/login', element: <Login /> },
   {
-    element: <ProtectedRoute />,
+    element: <AuthProvider><Outlet /></AuthProvider>,
     children: [
+      { path: '/login', element: <Login /> },
       {
-        element: <Layout />,
+        element: <ProtectedRoute />,
         children: [
-          { index: true, element: <Dashboard /> },
-          { path: 'devices', element: <Devices /> },
-          { path: 'devices/import', element: <Navigate to="/settings?tab=backup" replace /> },
-          { path: 'devices/:id', element: <DeviceDetail /> },
-          { path: 'hosts', element: <Hosts /> },
-          { path: 'hosts/:id', element: <HostDetail /> },
-          { path: 'sessions', element: <Sessions /> },
-          { path: 'runs', element: <Runs /> },
-          { path: 'runs/:id', element: <RunDetail /> },
-          { path: 'analytics', element: <Analytics /> },
-          { path: 'notifications', element: <Notifications /> },
-          { path: 'groups', element: <DeviceGroups /> },
-          { path: 'groups/:id', element: <DeviceGroupDetail /> },
-          { path: 'drivers', element: <Drivers /> },
-          { path: 'drivers/:id', element: <DriverDetail /> },
-          { path: 'settings', element: <Settings /> },
-          { path: '*', element: <NotFound /> },
+          {
+            element: <Layout />,
+            children: [
+              { index: true, element: <Dashboard /> },
+              { path: 'devices', element: <Devices /> },
+              { path: 'devices/import', element: <Navigate to="/settings?tab=backup" replace /> },
+              { path: 'devices/:id', element: <DeviceDetail /> },
+              { path: 'hosts', element: <Hosts /> },
+              { path: 'hosts/:id', element: <HostDetail /> },
+              { path: 'sessions', element: <Sessions /> },
+              { path: 'runs', element: <Runs /> },
+              { path: 'runs/:id', element: <RunDetail /> },
+              { path: 'analytics', element: <Analytics /> },
+              { path: 'notifications', element: <Notifications /> },
+              { path: 'groups', element: <DeviceGroups /> },
+              { path: 'groups/:id', element: <DeviceGroupDetail /> },
+              { path: 'drivers', element: <Drivers /> },
+              { path: 'drivers/:id', element: <DriverDetail /> },
+              { path: 'settings', element: <Settings /> },
+              { path: '*', element: <NotFound /> },
+            ],
+          },
         ],
       },
     ],
