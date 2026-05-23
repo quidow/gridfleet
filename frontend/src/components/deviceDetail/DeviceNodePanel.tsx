@@ -12,7 +12,7 @@ import {
 import { platformDescriptorForDeviceType, usePlatformDescriptor } from '../../hooks/usePlatformDescriptor';
 import {
   getPendingDeviceAction,
-  getPendingDeviceActionLabel,
+
 } from '../../lib/devicePendingAction';
 import type { DeviceDetail } from '../../types';
 import { Button } from '../ui/Button';
@@ -83,7 +83,6 @@ export function DeviceNodePanel({ device }: Props) {
     },
   ]);
   const rowBusy = pendingAction !== null;
-  const pendingLabel = getPendingDeviceActionLabel(pendingAction);
 
   return (
     <div>

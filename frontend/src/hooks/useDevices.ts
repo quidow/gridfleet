@@ -65,24 +65,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function waitForNextPaint(minimumDelayMs = 0): Promise<void> {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (minimumDelayMs > 0) {
-          window.setTimeout(resolve, minimumDelayMs);
-          return;
-        }
-        resolve();
-      });
-    });
-  });
-}
-
 function rollbackOptimisticDeviceQueries(
   qc: QueryClient,
   context: OptimisticDeviceContext | undefined,
