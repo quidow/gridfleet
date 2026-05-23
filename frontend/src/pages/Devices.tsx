@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { FileDown, Plus, SearchX, Smartphone, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -92,6 +92,17 @@ export default function Devices() {
   const { data: catalog = [] } = useDriverPackCatalog();
   const enabledPackCount = catalog.filter((pack) => pack.state === 'enabled').length;
   const [inventoryOpen, setInventoryOpen] = useState(false);
+
+  const inventoryFilters = useMemo(() => {
+    const out: Record<string, string> = {};
+    const skip = new Set(['sort_by', 'sort_dir', 'page', 'page_size']);
+    for (const [key, value] of controller.searchParams.entries()) {
+      if (skip.has(key)) continue;
+      if (value === '') continue;
+      out[key] = value;
+    }
+    return out;
+  }, [controller.searchParams]);
 
   const handleDeviceAction = useCallback((action: DeviceAction) => {
     switch (action.type) {
@@ -336,7 +347,7 @@ export default function Devices() {
       <DeviceInventoryExportModal
         isOpen={inventoryOpen}
         onClose={() => setInventoryOpen(false)}
-        filters={{}} // TODO: wire current filter-bar values for filter-aware inventory export
+        filters={inventoryFilters}
       />
     </div>
   );
