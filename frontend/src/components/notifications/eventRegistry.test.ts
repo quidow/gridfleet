@@ -1,34 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { formatEventDetails, SEEDED_EVENT_TYPES } from './eventRegistry';
+import { formatEventDetails } from './eventRegistry';
 
 describe('eventRegistry', () => {
-  it('covers every full-demo seeded event type', () => {
-    expect(SEEDED_EVENT_TYPES).toEqual([
-      'run.completed',
-      'run.failed',
-      'run.cancelled',
-      'host.offline',
-      'host.online',
-      'device.maintenance_start',
-      'device.maintenance_end',
-      'webhook.delivered',
-      'webhook.failed',
-      'config.updated',
-      'session.stuck',
-      'device.verified',
-      'lifecycle.incident_open',
-      'lifecycle.incident_resolved',
-      'node.crash',
-      'node.restart',
-    ]);
-
-    for (const type of SEEDED_EVENT_TYPES) {
-      const formatted = formatEventDetails(type, { seed: true, event_type: type });
-      expect(formatted.kind).toBe('text');
-      expect(formatted.text).not.toContain('undefined');
-    }
-  });
-
   it('formats named run and host events as sentences', () => {
     expect(formatEventDetails('run.completed', { name: 'live-run-00' })).toEqual({
       kind: 'text',

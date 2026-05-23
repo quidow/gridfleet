@@ -62,8 +62,6 @@ set_hold(device, new_hold, *, reason=None, publish_event=True)
 
 Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition unless `publish_event=False`, and return `False` when the value is unchanged. A row-level lock is required before calling them. Most writers acquire it through `device_locking.lock_device` or `lock_devices`; run creation uses its matching query's `SELECT ... FOR UPDATE SKIP LOCKED` window before setting `hold=reserved`. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
 
-Seeding scripts under `backend/app/seeding/` are exempt because fixture builders run in a single short-lived transaction with no event consumers attached.
-
 ### UI projection
 
 The legacy chip, one of `available|busy|offline|maintenance|reserved`, is computed:

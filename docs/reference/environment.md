@@ -26,7 +26,6 @@ These are read directly by `backend/app/core/config.py` and domain config module
 | `GRIDFLEET_MACHINE_AUTH_PASSWORD` | unset | backend auth gate | Basic-auth password accepted for machine clients such as agents, CI helpers, and metrics scrapers |
 | `GRIDFLEET_AGENT_AUTH_USERNAME` | unset | backend process | Username sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_PASSWORD`. |
 | `GRIDFLEET_AGENT_AUTH_PASSWORD` | unset | backend process | Password sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_USERNAME`. |
-| `GRIDFLEET_FREEZE_BACKGROUND_LOOPS` | unset | backend process | Truthy value (`1`/`true`/`yes`/`on`) skips all 15 leader-owned background loops (leader keepalive, heartbeat, session sync, node health, device connectivity, property refresh, hardware/host telemetry, durable jobs, webhook delivery, run reaper, data cleanup, session viability, fleet capacity, pack drain). Intended for frozen demo databases so seeded state does not drift. Set automatically by `docker-compose.demo.yml`. |
 
 ## Backend Settings-Registry Fallback Variables
 
