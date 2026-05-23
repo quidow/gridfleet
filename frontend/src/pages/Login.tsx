@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { LockKeyhole, Shield } from 'lucide-react';
 import { Button, Card } from '../components/ui';
+import { TextField } from '../components/ui/TextField';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useAuth } from '../context/auth';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -68,13 +69,11 @@ export function Login() {
             <label htmlFor="username" className="text-sm font-medium text-text-2">
               Username
             </label>
-            <input
+            <TextField
               id="username"
-              type="text"
               autoComplete="username"
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm text-text-1 shadow-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent"
+              onChange={setUsername}
               placeholder="operator"
               required
             />
@@ -84,13 +83,12 @@ export function Login() {
             <label htmlFor="password" className="text-sm font-medium text-text-2">
               Password
             </label>
-            <input
+            <TextField
               id="password"
               type="password"
               autoComplete="current-password"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm text-text-1 shadow-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent"
+              onChange={setPassword}
               placeholder="Enter password"
               required
             />

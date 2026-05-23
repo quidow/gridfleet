@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { uploadDriverPack } from '../../api/driverPackAuthoring';
 import { Card } from '../ui/Card';
+import { Checkbox } from '../ui/Checkbox';
 
 const DRIVER_PACK_ACCEPT = '.tar.gz,.tgz,.tar,.gz,application/gzip,application/x-gzip,application/x-tar';
 
@@ -71,18 +72,11 @@ export function UploadDriverPackForm({ onSuccess, onClose }: UploadDriverPackFor
           />
         </label>
 
-        <label className="flex cursor-pointer items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={confirmed}
-            onChange={(e) => setConfirmed(e.target.checked)}
-            aria-label="I confirm this driver may execute Python code on host machines."
-            className="mt-0.5 h-4 w-4 rounded border-border accent-accent"
-          />
-          <span className="text-text-2">
-            I confirm this driver may execute Python code on host machines.
-          </span>
-        </label>
+        <Checkbox
+          checked={confirmed}
+          onChange={setConfirmed}
+          label="I confirm this driver may execute Python code on host machines."
+        />
 
         {errorMessage && (
           <p role="alert" className="rounded border border-danger-foreground bg-danger-soft px-3 py-2 text-sm text-danger-foreground">

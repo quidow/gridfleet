@@ -1,7 +1,9 @@
 import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { Checkbox } from '../ui/Checkbox';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { Modal } from '../ui/Modal';
+import { TextField } from '../ui/TextField';
 import { usePlugins } from '../../hooks/usePlugins';
 import { usePluginRegistryAdmin } from './usePluginRegistryAdmin';
 import { SettingsPanelLayout } from './SettingsPanelLayout';
@@ -88,60 +90,51 @@ export function PluginRegistryPanel() {
         <form onSubmit={admin.handlePluginSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-text-2">Name</label>
-            <input
+            <TextField
               value={admin.pluginForm.name}
-              onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, name: event.target.value })}
+              onChange={(value) => admin.setPluginForm({ ...admin.pluginForm, name: value })}
               required
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
               placeholder="e.g. execute-driver"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-text-2">Version</label>
-              <input
+              <TextField
                 value={admin.pluginForm.version}
-                onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, version: event.target.value })}
+                onChange={(value) => admin.setPluginForm({ ...admin.pluginForm, version: value })}
                 required
-                className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
                 placeholder="e.g. 1.0.0"
               />
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-text-2">Source</label>
-              <input
+              <TextField
                 value={admin.pluginForm.source}
-                onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, source: event.target.value })}
+                onChange={(value) => admin.setPluginForm({ ...admin.pluginForm, source: value })}
                 required
-                className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
                 placeholder="npm:@appium/execute-driver-plugin"
               />
             </div>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-text-2">Package</label>
-            <input
+            <TextField
               value={admin.pluginForm.package ?? ''}
-              onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, package: event.target.value })}
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
+              onChange={(value) => admin.setPluginForm({ ...admin.pluginForm, package: value })}
               placeholder="Required for some git/github sources"
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-text-2">
-            <input
-              type="checkbox"
-              checked={admin.pluginForm.enabled ?? true}
-              onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, enabled: event.target.checked })}
-              className="rounded border-border-strong"
-            />
-            Install during plugin sync
-          </label>
+          <Checkbox
+            checked={admin.pluginForm.enabled ?? true}
+            onChange={(checked) => admin.setPluginForm({ ...admin.pluginForm, enabled: checked })}
+            label="Install during plugin sync"
+          />
           <div>
             <label className="mb-1 block text-sm font-medium text-text-2">Notes</label>
-            <input
+            <TextField
               value={admin.pluginForm.notes ?? ''}
-              onChange={(event) => admin.setPluginForm({ ...admin.pluginForm, notes: event.target.value })}
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
+              onChange={(value) => admin.setPluginForm({ ...admin.pluginForm, notes: value })}
               placeholder="Optional notes"
             />
           </div>

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { downloadInventory, type InventoryFormat } from "../../api/devicesInventory";
 import { Button } from "../ui/Button";
+import { Checkbox } from "../ui/Checkbox";
 import { Modal } from "../ui/Modal";
 
 const STORAGE_KEY = "gridfleet:inventory-export-columns";
@@ -144,15 +145,12 @@ export function DeviceInventoryExportModal({ isOpen, onClose, filters }: Props) 
               <legend className="text-xs font-semibold uppercase text-text-3">{group.label}</legend>
               <div className="mt-1 grid grid-cols-2 gap-1">
                 {group.columns.map((col) => (
-                  <label key={col} className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(col)}
-                      onChange={() => toggle(col)}
-                      aria-label={col}
-                    />
-                    <span className="font-mono">{col}</span>
-                  </label>
+                  <Checkbox
+                    key={col}
+                    checked={selected.has(col)}
+                    onChange={() => toggle(col)}
+                    label={<span className="font-mono">{col}</span>}
+                  />
                 ))}
               </div>
             </fieldset>
