@@ -2,23 +2,24 @@ import { Suspense, lazy } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApproveHost, useHost, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import SetupVerificationModal from './devices/SetupVerificationModal';
-import HostDiscoveryModal from '../components/hosts/HostDiscoveryModal';
+import { SetupVerificationModal } from './devices/SetupVerificationModal';
+import { HostDiscoveryModal } from '../components/hosts/HostDiscoveryModal';
 import { useHostDiscoveryFlow } from '../components/hosts/useHostDiscoveryFlow';
 import { getVerificationAction } from '../lib/deviceWorkflow';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { PageHeader, Tabs, useTabParam } from '../components/ui';
-import FetchError from '../components/ui/FetchError';
-import HostDetailStatusPills from './hostDetail/HostDetailStatusPills';
-import HostOverviewPanel from '../components/hostDetail/HostOverviewPanel';
-import HostDiagnosticsPanel from '../components/hostDetail/HostDiagnosticsPanel';
+import { FetchError } from '../components/ui/FetchError';
+import { HostDetailStatusPills } from './hostDetail/HostDetailStatusPills';
+import { HostOverviewPanel } from '../components/hostDetail/HostOverviewPanel';
+import { HostDiagnosticsPanel } from '../components/hostDetail/HostDiagnosticsPanel';
 
-// Defers recharts to first diagnostics-tab view.
-const HostResourceTelemetryPanel = lazy(() => import('../components/hostDetail/HostResourceTelemetryPanel'));
-import HostDevicesPanel from '../components/hostDetail/HostDevicesPanel';
-import HostDriversPanel from '../components/hostDetail/HostDriversPanel';
-import HostPluginsPanel from '../components/hostDetail/HostPluginsPanel';
-import HostLogsPanel from '../components/hostDetail/HostLogsPanel';
+const HostResourceTelemetryPanel = lazy(() =>
+  import('../components/hostDetail/HostResourceTelemetryPanel').then((m) => ({ default: m.HostResourceTelemetryPanel })),
+);
+import { HostDevicesPanel } from '../components/hostDetail/HostDevicesPanel';
+import { HostDriversPanel } from '../components/hostDetail/HostDriversPanel';
+import { HostPluginsPanel } from '../components/hostDetail/HostPluginsPanel';
+import { HostLogsPanel } from '../components/hostDetail/HostLogsPanel';
 import type { HostDetail as HostDetailType } from '../types';
 // HostDetail type alias avoids shadowing the default-exported component name
 
@@ -33,7 +34,7 @@ const TABS = [
 
 const TAB_IDS = TABS.map((t) => t.id);
 
-export default function HostDetail() {
+export function HostDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: host, isLoading, error, dataUpdatedAt } = useHost(id!);
   const { data: hostDiagnostics, isLoading: diagnosticsLoading, error: diagnosticsError } = useHostDiagnostics(id!);

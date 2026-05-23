@@ -19,7 +19,7 @@ const SIZE_CLASSES: Record<DateInputSize, string> = {
   sm: 'px-2 py-1.5 text-xs',
 };
 
-export default function DateInput({
+export function DateInput({
   value,
   onChange,
   ariaLabel,

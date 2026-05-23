@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import DashboardCard from './DashboardCard';
+import { DashboardCard } from './DashboardCard';
 
 describe('DashboardCard', () => {
   it('renders header, slots, body, and footer', () => {

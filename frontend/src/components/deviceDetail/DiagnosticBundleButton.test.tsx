@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import DiagnosticBundleButton from './DiagnosticBundleButton';
+import { DiagnosticBundleButton } from './DiagnosticBundleButton';
 
 const mockExport = vi.fn();
 const mockUseExport = vi.fn(() => ({

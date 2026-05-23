@@ -3,11 +3,11 @@ import { useState } from 'react';
 import { fetchDeviceDiagnosticSnapshot } from '../../api/deviceDiagnostics';
 import { useExportDeviceDiagnostics } from '../../hooks/useDeviceDiagnostics';
 import { Button } from '../ui';
-import DiagnosticBundleModal from './DiagnosticBundleModal';
+import { DiagnosticBundleModal } from './DiagnosticBundleModal';
 
 type Props = { deviceId: string };
 
-export default function DiagnosticBundleButton({ deviceId }: Props) {
+export function DiagnosticBundleButton({ deviceId }: Props) {
   // Capture is a single POST that persists a snapshot row. The redact toggle
   // re-renders the same snapshot via GET /snapshots/{id}?redact=true rather
   // than re-POSTing. This avoids the per-device 5-second rate limit on the

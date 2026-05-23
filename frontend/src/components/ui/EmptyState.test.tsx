@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { Table } from 'lucide-react';
 import { describe, expect, it } from 'vitest';
-import EmptyState from './EmptyState';
+import { EmptyState } from './EmptyState';
 
 describe('EmptyState', () => {
   it('renders icon, title, description, and action', () => {

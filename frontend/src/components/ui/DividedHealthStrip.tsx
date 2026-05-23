@@ -32,7 +32,7 @@ const TONE_DOT: Record<DividedHealthStripTone, string> = {
   neutral: 'bg-neutral-strong',
 };
 
-export default function DividedHealthStrip({ cells }: DividedHealthStripProps) {
+export function DividedHealthStrip({ cells }: DividedHealthStripProps) {
   return (
     <div className="flex flex-col divide-y divide-border rounded-lg border border-border md:flex-row md:divide-x md:divide-y-0">
       {cells.map((cell) => {

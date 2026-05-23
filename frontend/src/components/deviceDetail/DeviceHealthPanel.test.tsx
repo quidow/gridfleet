@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import DeviceHealthPanel from './DeviceHealthPanel';
+import { DeviceHealthPanel } from './DeviceHealthPanel';
 import { getCheckLabels } from './utils';
 import type { DeviceHealth, PlatformDescriptor } from '../../types';
 

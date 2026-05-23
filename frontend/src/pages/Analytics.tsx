@@ -1,13 +1,18 @@
 import { useSearchParams } from 'react-router-dom';
 import { Suspense, lazy, useMemo } from 'react';
-import DateRangePicker from '../components/analytics/DateRangePicker';
+import { DateRangePicker } from '../components/analytics/DateRangePicker';
 import type { Preset } from '../components/analytics/DateRangePicker';
-import ReliabilityTab from '../components/analytics/ReliabilityTab';
+import { ReliabilityTab } from '../components/analytics/ReliabilityTab';
 
-// Recharts is a heavy dep — defer the three tabs that pull it in.
-const SessionTrendsTab = lazy(() => import('../components/analytics/SessionTrendsTab'));
-const DeviceUtilizationTab = lazy(() => import('../components/analytics/DeviceUtilizationTab'));
-const FleetCapacityTab = lazy(() => import('../components/analytics/FleetCapacityTab'));
+const SessionTrendsTab = lazy(() =>
+  import('../components/analytics/SessionTrendsTab').then((m) => ({ default: m.SessionTrendsTab })),
+);
+const DeviceUtilizationTab = lazy(() =>
+  import('../components/analytics/DeviceUtilizationTab').then((m) => ({ default: m.DeviceUtilizationTab })),
+);
+const FleetCapacityTab = lazy(() =>
+  import('../components/analytics/FleetCapacityTab').then((m) => ({ default: m.FleetCapacityTab })),
+);
 import {
   useDeviceReliability,
   useDeviceUtilization,
@@ -17,8 +22,8 @@ import {
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
-import PageHeader from '../components/ui/PageHeader';
-import Tabs from '../components/ui/Tabs';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Tabs } from '../components/ui/Tabs';
 
 type Tab = 'sessions' | 'utilization' | 'reliability' | 'fleet-capacity';
 const DEFAULT_PRESET: Preset = '7d';
@@ -43,7 +48,7 @@ function isTab(value: string | null): value is Tab {
   return TABS.some((item) => item.key === value);
 }
 
-export default function Analytics() {
+export function Analytics() {
   useDevRenderCrashTrigger('analytics-page');
   usePageTitle('Analytics');
   const [searchParams, setSearchParams] = useSearchParams();

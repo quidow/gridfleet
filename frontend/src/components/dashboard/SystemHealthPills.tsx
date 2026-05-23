@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import SummaryPill, { type SummaryPillTone } from '../ui/SummaryPill';
+import { SummaryPill, type SummaryPillTone } from '../ui/SummaryPill';
 import { useGridStatus, useHealth } from '../../hooks/useGrid';
 import { useHosts } from '../../hooks/useHosts';
 import { useEventStreamStatus } from '../../context/EventStreamContext';
@@ -21,7 +21,7 @@ function toneFromGridTone(tone: 'ready' | 'warning' | 'error' | undefined): Summ
   return 'neutral';
 }
 
-export default function SystemHealthPills() {
+export function SystemHealthPills() {
   const { connected } = useEventStreamStatus();
   const { data: grid } = useGridStatus();
   const { data: health } = useHealth();

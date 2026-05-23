@@ -26,7 +26,7 @@ function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
   return document.querySelector('main');
 }
 
-export default function Popover({
+export function Popover({
   trigger,
   children,
   ariaLabel,

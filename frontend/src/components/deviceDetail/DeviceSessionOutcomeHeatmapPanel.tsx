@@ -5,7 +5,7 @@ import {
   SESSION_OUTCOME_HEATMAP_WEEKDAY_LABELS,
   type SessionOutcomeHeatmapCell,
 } from '../../lib/deviceSessionOutcomeHeatmap';
-import FetchError from '../ui/FetchError';
+import { FetchError } from '../ui/FetchError';
 
 type Props = {
   deviceId: string;
@@ -70,7 +70,7 @@ function CompactHeatmapEmptyState({ days }: { days: number }) {
   );
 }
 
-export default function DeviceSessionOutcomeHeatmapPanel({ deviceId, days = 90 }: Props) {
+export function DeviceSessionOutcomeHeatmapPanel({ deviceId, days = 90 }: Props) {
   const { data = [], isLoading, error, refetch } = useDeviceSessionOutcomeHeatmap(deviceId, days);
   const heatmap = buildSessionOutcomeHeatmap(data, days);
 

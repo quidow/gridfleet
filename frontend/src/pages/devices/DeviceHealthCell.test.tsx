@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import DeviceHealthCell from './DeviceHealthCell';
+import { DeviceHealthCell } from './DeviceHealthCell';
 import type { DeviceRead } from '../../types';
 
 function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {

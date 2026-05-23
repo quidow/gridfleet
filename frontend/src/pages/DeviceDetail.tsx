@@ -14,29 +14,29 @@ import {
 import { useHosts } from '../hooks/useHosts';
 import { PlatformIcon } from '../components/PlatformIcon';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import SetupVerificationModal from './devices/SetupVerificationModal';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
+import { SetupVerificationModal } from './devices/SetupVerificationModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { DeviceVerificationUpdate } from '../types';
-import DeviceCapabilitiesPanel from '../components/deviceDetail/DeviceCapabilitiesPanel';
-import DiagnosticBundleButton from '../components/deviceDetail/DiagnosticBundleButton';
-import DiagnosticHistoryPanel from '../components/deviceDetail/DiagnosticHistoryPanel';
-import DeviceHealthPanel from '../components/deviceDetail/DeviceHealthPanel';
-import DeviceLifecyclePolicyPanel from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
-import DeviceHardwareTelemetryCard from '../components/deviceDetail/DeviceHardwareTelemetryCard';
-import DeviceInfoPanel from '../components/deviceDetail/DeviceInfoPanel';
-import DeviceLogsPanel from '../components/deviceDetail/DeviceLogsPanel';
-import DeviceNodePanel from '../components/deviceDetail/DeviceNodePanel';
-import DeviceSessionOutcomeHeatmapPanel from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
-import StateHistoryPanel from '../components/deviceDetail/StateHistoryPanel';
-import DeviceEditModal from './devices/DeviceEditModal';
+import { DeviceCapabilitiesPanel } from '../components/deviceDetail/DeviceCapabilitiesPanel';
+import { DiagnosticBundleButton } from '../components/deviceDetail/DiagnosticBundleButton';
+import { DiagnosticHistoryPanel } from '../components/deviceDetail/DiagnosticHistoryPanel';
+import { DeviceHealthPanel } from '../components/deviceDetail/DeviceHealthPanel';
+import { DeviceLifecyclePolicyPanel } from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
+import { DeviceHardwareTelemetryCard } from '../components/deviceDetail/DeviceHardwareTelemetryCard';
+import { DeviceInfoPanel } from '../components/deviceDetail/DeviceInfoPanel';
+import { DeviceLogsPanel } from '../components/deviceDetail/DeviceLogsPanel';
+import { DeviceNodePanel } from '../components/deviceDetail/DeviceNodePanel';
+import { DeviceSessionOutcomeHeatmapPanel } from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
+import { StateHistoryPanel } from '../components/deviceDetail/StateHistoryPanel';
+import { DeviceEditModal } from './devices/DeviceEditModal';
 import { getVerificationAction } from '../lib/deviceWorkflow';
 import { deviceChipStatus } from '../lib/deviceState';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
-import FetchError from '../components/ui/FetchError';
-import DeviceDetailStatusPills from './deviceDetail/DeviceDetailStatusPills';
+import { FetchError } from '../components/ui/FetchError';
+import { DeviceDetailStatusPills } from './deviceDetail/DeviceDetailStatusPills';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
 import {
   deriveDeviceDetailTriage,
@@ -44,8 +44,12 @@ import {
   type DeviceDetailTriageTone,
 } from './deviceDetail/deviceDetailTriage';
 
-const DeviceConfigEditor = lazy(() => import('../components/deviceDetail/DeviceConfigEditor'));
-const DeviceTestDataEditor = lazy(() => import('../components/deviceDetail/DeviceTestDataEditor'));
+const DeviceConfigEditor = lazy(() =>
+  import('../components/deviceDetail/DeviceConfigEditor').then((m) => ({ default: m.DeviceConfigEditor })),
+);
+const DeviceTestDataEditor = lazy(() =>
+  import('../components/deviceDetail/DeviceTestDataEditor').then((m) => ({ default: m.DeviceTestDataEditor })),
+);
 
 const TABS = [
   { id: 'triage', label: 'Triage' },
@@ -157,7 +161,7 @@ function TriageHero({
   );
 }
 
-export default function DeviceDetail() {
+export function DeviceDetail() {
   useDevRenderCrashTrigger('device-detail-page');
   const { id } = useParams<{ id: string }>();
   const deviceId = id ?? '';

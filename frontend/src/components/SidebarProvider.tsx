@@ -11,7 +11,7 @@ function getInitialCollapsed(): boolean {
   return typeof window !== 'undefined' && window.innerWidth < 768;
 }
 
-export default function SidebarProvider({ children }: { children: ReactNode }) {
+export function SidebarProvider({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(getInitialCollapsed);
 
   useEffect(() => {

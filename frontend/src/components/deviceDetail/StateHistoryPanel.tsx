@@ -1,8 +1,8 @@
 import { useCursorQueryState } from '../../hooks/useCursorQueryState';
 import { useLifecycleIncidents } from '../../hooks/useLifecycle';
 import type { LifecycleIncidentRead } from '../../types';
-import Badge, { type BadgeTone } from '../ui/Badge';
-import CursorPagination from '../ui/CursorPagination';
+import { Badge, type BadgeTone } from '../ui/Badge';
+import { CursorPagination } from '../ui/CursorPagination';
 import { formatDate } from './utils';
 
 const EVENT_BADGE_MAP: Record<string, { label: string; tone: BadgeTone }> = {
@@ -31,7 +31,7 @@ type Props = {
   deviceId: string;
 };
 
-export default function StateHistoryPanel({ deviceId }: Props) {
+export function StateHistoryPanel({ deviceId }: Props) {
   const { pageSize, cursor, direction, setPageSize, goOlder, goNewer, resetToNewest } =
     useCursorQueryState({ defaultPageSize: 25 });
 

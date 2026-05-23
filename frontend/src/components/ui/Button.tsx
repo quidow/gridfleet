@@ -28,7 +28,7 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
   sm: 'px-3 py-1.5 text-sm',
 };
 
-export default function Button({
+export function Button({
   variant = 'primary',
   size = 'md',
   loading = false,

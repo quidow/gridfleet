@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import FilterBar from './FilterBar';
+import { FilterBar } from './FilterBar';
 
 describe('FilterBar', () => {
   it('renders children', () => {

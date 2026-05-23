@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Package } from 'lucide-react';
 import { Badge, Button, DataTable, EmptyState, PageHeader, type DataTableColumn } from '../components/ui';
-import FetchError from '../components/ui/FetchError';
+import { FetchError } from '../components/ui/FetchError';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { AddDriverDialog } from '../components/settings/AddDriverDialog';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
@@ -95,7 +95,7 @@ const columns: DataTableColumn<DriverPack>[] = [
   },
 ];
 
-export default function Drivers() {
+export function Drivers() {
   usePageTitle('Driver Packs');
   const { data, isLoading, error, refetch } = useDriverPackCatalog();
   const [uploadOpen, setUploadOpen] = useState(false);

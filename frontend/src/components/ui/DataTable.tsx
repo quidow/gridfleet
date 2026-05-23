@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { SortableHeader } from '../SortableHeader';
 import { RowActionsMenu, type RowActionItem } from '../RowActionsMenu';
-import EmptyState from './EmptyState';
+import { EmptyState } from './EmptyState';
 import { Table } from 'lucide-react';
 
 export type SortDirection = 'asc' | 'desc';
@@ -277,11 +277,9 @@ function DataTableInner<Row, SortKey extends string = string>({
 }
 
 // Cast to preserve generics at call sites
-const DataTable = DataTableInner as <Row, SortKey extends string = string>(
+export const DataTable = DataTableInner as <Row, SortKey extends string = string>(
   props: DataTableProps<Row, SortKey>,
 ) => React.JSX.Element;
-
-export default DataTable;
 
 // Required for the cast above
 import * as React from 'react';

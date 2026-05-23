@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import DivergedFromUpstreamBadge from './DivergedFromUpstreamBadge';
+import { DivergedFromUpstreamBadge } from './DivergedFromUpstreamBadge';
 import type { DriverPack } from '../../types/driverPacks';
 
 function makePack(overrides: Partial<DriverPack> = {}): DriverPack {

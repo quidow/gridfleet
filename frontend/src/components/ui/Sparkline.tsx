@@ -36,7 +36,7 @@ function buildFillPath(strokePath: string, width: number, height: number): strin
   return `${strokePath} L ${width.toFixed(2)} ${height.toFixed(2)} L 0 ${height.toFixed(2)} Z`;
 }
 
-export default function Sparkline({
+export function Sparkline({
   values,
   width = 64,
   height = 28,

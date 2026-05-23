@@ -27,7 +27,7 @@ const SIZE_CLASSES: Record<SelectSize, string> = {
   sm: 'px-2 py-1.5 text-xs',
 };
 
-export default function Select({
+export function Select({
   value,
   onChange,
   options,

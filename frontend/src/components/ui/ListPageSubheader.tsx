@@ -7,7 +7,7 @@ interface ListPageSubheaderProps {
   className?: string;
 }
 
-export default function ListPageSubheader({ title, meta, action, className = '' }: ListPageSubheaderProps) {
+export function ListPageSubheader({ title, meta, action, className = '' }: ListPageSubheaderProps) {
   const titleId = useId();
 
   return (

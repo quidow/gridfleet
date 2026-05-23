@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeviceDetail } from '../../types';
-import DeviceNodePanel from './DeviceNodePanel';
+import { DeviceNodePanel } from './DeviceNodePanel';
 
 const mutation = {
   isPending: false,

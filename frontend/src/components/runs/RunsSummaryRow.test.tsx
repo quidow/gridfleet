@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import RunsSummaryRow from './RunsSummaryRow';
+import { RunsSummaryRow } from './RunsSummaryRow';
 
 const baseRun = (overrides: Record<string, unknown>) => ({
   id: 'r', name: 'r', state: 'pending', requirements: [],

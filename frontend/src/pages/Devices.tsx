@@ -10,14 +10,14 @@ import {
   useToggleDeviceAutoManage,
 } from '../hooks/useDevices';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import BulkActionToolbar from './devices/BulkActionToolbar';
-import AddDeviceModal from './devices/AddDeviceModal';
-import SetupVerificationModal from './devices/SetupVerificationModal';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
-import DeviceEditModal from './devices/DeviceEditModal';
-import DevicesFiltersBar from './devices/DevicesFiltersBar';
-import DevicesTable from './devices/DevicesTable';
-import DevicesSummaryPills from './devices/DevicesSummaryPills';
+import { BulkActionToolbar } from './devices/BulkActionToolbar';
+import { AddDeviceModal } from './devices/AddDeviceModal';
+import { SetupVerificationModal } from './devices/SetupVerificationModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { DeviceEditModal } from './devices/DeviceEditModal';
+import { DevicesFiltersBar } from './devices/DevicesFiltersBar';
+import { DevicesTable } from './devices/DevicesTable';
+import { DevicesSummaryPills } from './devices/DevicesSummaryPills';
 import { NoDriverPacksBanner } from '../components/NoDriverPacksBanner';
 import {
   getVerificationAction,
@@ -28,11 +28,11 @@ import { getVerificationAction as getWorkflowVerificationAction } from '../lib/d
 import { usePageTitle } from '../hooks/usePageTitle';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
-import PageHeader from '../components/ui/PageHeader';
-import Button from '../components/ui/Button';
-import ListPageSubheader from '../components/ui/ListPageSubheader';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Button } from '../components/ui/Button';
+import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
-import Pagination from '../components/ui/Pagination';
+import { Pagination } from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
 
 function DevicesEmptyPanel({
@@ -75,7 +75,7 @@ function DevicesEmptyPanel({
   );
 }
 
-export default function Devices() {
+export function Devices() {
   useDevRenderCrashTrigger('devices-page');
   usePageTitle('Devices');
   const controller = useDevicesPageController();

@@ -1,4 +1,4 @@
-import Badge, { type BadgeTone } from './ui/Badge';
+import { Badge, type BadgeTone } from './ui/Badge';
 import { formatStatus } from '../utils/formatStatus';
 
 const STATUS_TONE_MAP: Record<string, BadgeTone> = {

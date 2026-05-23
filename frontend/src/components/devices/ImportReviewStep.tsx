@@ -1,8 +1,8 @@
-import Badge, { type BadgeTone } from '../ui/Badge';
-import Button from '../ui/Button';
-import DataTable, { type DataTableColumn } from '../ui/DataTable';
-import SectionHeader from '../ui/SectionHeader';
-import Select from '../ui/Select';
+import { Badge, type BadgeTone } from '../ui/Badge';
+import { Button } from '../ui/Button';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
+import { SectionHeader } from '../ui/SectionHeader';
+import { Select } from '../ui/Select';
 import type { ImportPreview } from '../../api/devicesPortability';
 
 interface Mapping {

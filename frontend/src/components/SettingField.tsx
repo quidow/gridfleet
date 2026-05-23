@@ -1,5 +1,5 @@
 import { RotateCcw } from 'lucide-react';
-import Select from './ui/Select';
+import { Select } from './ui/Select';
 import type { SettingRead } from '../types';
 
 interface Props {
@@ -9,7 +9,7 @@ interface Props {
   onReset: () => void;
 }
 
-export default function SettingField({ setting, value, onChange, onReset }: Props) {
+export function SettingField({ setting, value, onChange, onReset }: Props) {
   const hasError = validateField(setting, value);
 
   return (

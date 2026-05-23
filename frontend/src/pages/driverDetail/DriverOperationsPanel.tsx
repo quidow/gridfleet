@@ -1,8 +1,8 @@
-import Card from '../../components/ui/Card';
+import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui';
 import type { DriverPack } from '../../types/driverPacks';
 
-export default function DriverOperationsPanel({ pack }: { pack: DriverPack }) {
+export function DriverOperationsPanel({ pack }: { pack: DriverPack }) {
   const entries = Object.entries(pack.features ?? {});
   if (entries.length === 0) {
     return <p className="py-4 text-center text-text-3">No operations declared.</p>;

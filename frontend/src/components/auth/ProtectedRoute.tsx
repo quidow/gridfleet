@@ -3,7 +3,7 @@ import { useAuth } from '../../context/auth';
 import { buildLocationTarget, normalizeNextTarget } from '../../lib/authRouting';
 import { LoadingSpinner } from '../LoadingSpinner';
 
-export default function ProtectedRoute() {
+export function ProtectedRoute() {
   const auth = useAuth();
   const location = useLocation();
 

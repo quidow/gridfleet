@@ -1,11 +1,11 @@
 import { usePageTitle } from '../hooks/usePageTitle';
-import DashboardHeader from '../components/dashboard/DashboardHeader';
-import StatCardsRow from '../components/dashboard/StatCardsRow';
-import FleetByPlatformCard from '../components/dashboard/FleetByPlatformCard';
-import RecentIncidentsCard from '../components/dashboard/RecentIncidentsCard';
-import OperationsSection from '../components/dashboard/OperationsSection';
+import { DashboardHeader } from '../components/dashboard/DashboardHeader';
+import { StatCardsRow } from '../components/dashboard/StatCardsRow';
+import { FleetByPlatformCard } from '../components/dashboard/FleetByPlatformCard';
+import { RecentIncidentsCard } from '../components/dashboard/RecentIncidentsCard';
+import { OperationsSection } from '../components/dashboard/OperationsSection';
 
-export default function Dashboard() {
+export function Dashboard() {
   usePageTitle('Dashboard');
 
   return (

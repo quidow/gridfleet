@@ -14,7 +14,7 @@ function truncate(value: string, max: number): string {
   return `${value.slice(0, max - 1)}...`;
 }
 
-export default function EventDetailsCell({ type, data }: EventDetailsCellProps) {
+export function EventDetailsCell({ type, data }: EventDetailsCellProps) {
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   const formatted = formatEventDetails(type, data);

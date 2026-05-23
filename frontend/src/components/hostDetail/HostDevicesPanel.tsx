@@ -45,7 +45,7 @@ type Props = {
   host: HostDetail;
 };
 
-export default function HostDevicesPanel({ host }: Props) {
+export function HostDevicesPanel({ host }: Props) {
   return (
     <div className="rounded-lg border border-border bg-surface-1">
       <div className="border-b border-border px-5 py-4">

@@ -23,7 +23,7 @@ const SIZE_CLASSES: Record<ModalSize, string> = {
   xl: 'max-w-4xl',
 };
 
-export default function Modal({
+export function Modal({
   isOpen,
   onClose,
   title,

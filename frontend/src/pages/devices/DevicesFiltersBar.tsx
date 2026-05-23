@@ -18,7 +18,7 @@ import {
 } from './devicePageHelpers';
 import { resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
-import Select from '../../components/ui/Select';
+import { Select } from '../../components/ui/Select';
 
 type Props = {
   packIdFilter: string;
@@ -46,7 +46,7 @@ const SELECT_CLASS = 'h-9 min-w-[9.5rem]';
 const CHIP_CLASS =
   'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs font-medium text-text-2';
 
-export default function DevicesFiltersBar({
+export function DevicesFiltersBar({
   packIdFilter,
   onPackIdFilterChange,
   platformFilter,

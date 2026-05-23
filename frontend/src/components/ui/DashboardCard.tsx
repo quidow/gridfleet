@@ -22,7 +22,7 @@ const HEADER_CLASS: Record<DashboardCardVariant, string> = {
   secondary: 'bg-surface-soft',
 };
 
-export default function DashboardCard({
+export function DashboardCard({
   title,
   titleSlot,
   description,

@@ -15,7 +15,7 @@ interface DivergedFromUpstreamBadgeProps {
  * - the upstream pack is not present in `catalog`
  * - the upstream's `current_release` matches `pack.derived_from.release`
  */
-export default function DivergedFromUpstreamBadge({
+export function DivergedFromUpstreamBadge({
   pack,
   catalog,
 }: DivergedFromUpstreamBadgeProps) {

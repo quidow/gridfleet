@@ -15,7 +15,7 @@ function expectedUdid(device: DeviceDetail | undefined): string | null {
   return device.appium_node?.active_connection_target ?? device.connection_target ?? device.identity_value;
 }
 
-export default function DeviceCapabilitiesPanel({ capabilities, device }: Props) {
+export function DeviceCapabilitiesPanel({ capabilities, device }: Props) {
   if (!capabilities) {
     return null;
   }
