@@ -24,7 +24,6 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    record_manual_recovered,
     set_action,
     write_state,
 )
@@ -98,19 +97,6 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
     fresh["backoff_until"] = None
     if fresh != original:
         write_state(device, fresh)
-
-
-def clear_manual_recovery_suppression_state(device: Device) -> bool:
-    fresh = policy_state(device)
-    if (
-        fresh.get("recovery_suppressed_reason") is None
-        and fresh.get("last_failure_reason") is None
-        and fresh.get("backoff_until") is None
-    ):
-        return False
-    record_manual_recovered(fresh)
-    write_state(device, fresh)
-    return True
 
 
 async def exclude_run_if_needed(
