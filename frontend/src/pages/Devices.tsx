@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { Plus, SearchX, Smartphone } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { FileDown, Plus, SearchX, Smartphone } from 'lucide-react';
 import {
   useDeleteDevice,
   useEnterDeviceMaintenance,
@@ -32,6 +32,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Button from '../components/ui/Button';
 import ListPageSubheader from '../components/ui/ListPageSubheader';
 import { DeviceExportButton } from '../components/devices/DeviceExportButton';
+import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import Pagination from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
 
@@ -88,6 +89,7 @@ export default function Devices() {
   const restartNode = useRestartNode();
   const { data: catalog = [] } = useDriverPackCatalog();
   const enabledPackCount = catalog.filter((pack) => pack.state === 'enabled').length;
+  const [inventoryOpen, setInventoryOpen] = useState(false);
 
   const handleDeviceAction = useCallback((action: DeviceAction) => {
     switch (action.type) {
@@ -218,6 +220,13 @@ export default function Devices() {
           action={
             <div className="flex items-center gap-2">
               <DeviceExportButton />
+              <Button
+                variant="secondary"
+                onClick={() => setInventoryOpen(true)}
+                leadingIcon={<FileDown size={16} />}
+              >
+                Export Inventory
+              </Button>
               <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
                 Add Device
               </Button>
@@ -313,6 +322,12 @@ export default function Devices() {
         message="Are you sure you want to delete this device? This action cannot be undone."
         confirmLabel="Delete"
         variant="danger"
+      />
+
+      <DeviceInventoryExportModal
+        isOpen={inventoryOpen}
+        onClose={() => setInventoryOpen(false)}
+        filters={{}} // TODO: wire current filter-bar values for filter-aware inventory export
       />
     </div>
   );
