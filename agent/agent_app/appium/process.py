@@ -959,8 +959,20 @@ class AppiumProcessManager:
             # ``/se/grid/node/session`` reservation can land — otherwise the
             # relay would silently accept new sessions until a later
             # reconfigure pushes the drain.
-            if not spec.accepting_new_sessions and handle.service is not None:
-                await handle.service.drain_to_block_new_sessions()
+            if not spec.accepting_new_sessions:
+                if handle.service is not None:
+                    await handle.service.drain_to_block_new_sessions()
+                else:
+                    # In production the supervisor always exposes the service
+                    # after ``wait_until_running``. A None here means the
+                    # supervisor protocol diverged from expectations — the
+                    # relay would silently accept hub-routed sessions despite
+                    # the cooldown spec. Log loudly so the misconfiguration
+                    # is visible instead of failing closed.
+                    logger.warning(
+                        "grid_node_drain_skipped_missing_service",
+                        extra={"port": spec.port, "connection_target": spec.connection_target},
+                    )
         except Exception:
             with contextlib.suppress(Exception):
                 await handle.stop()
