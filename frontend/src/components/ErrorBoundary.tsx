@@ -68,11 +68,14 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
       );
     }
 
+    const scope = this.props.scope;
     return (
       <div className="rounded-lg border border-warning-strong/30 bg-warning-soft px-5 py-6">
         <h2 className="text-sm font-semibold text-warning-foreground">Something went wrong</h2>
         <p className="mt-1 text-sm text-warning-foreground">
-          This section failed to render. Reload to try again.
+          {scope
+            ? `Could not load ${scope.replaceAll('-', ' ')}. Reload to try again.`
+            : 'This section failed to render. Reload to try again.'}
         </p>
         <button
           type="button"

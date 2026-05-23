@@ -208,7 +208,7 @@ export function DeviceDetail() {
   }
 
   if (!device) {
-    return null;
+    return <p className="text-text-3 text-center mt-12">Device not found</p>;
   }
 
   // device is defined from here on

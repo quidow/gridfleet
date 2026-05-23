@@ -122,7 +122,7 @@ export function DriverDetail() {
   usePageTitle(pack?.display_name ?? 'Driver Pack');
 
   if (isLoading) return <LoadingSpinner />;
-  if (!pack) return null;
+  if (!pack) return <p className="text-text-3 text-center mt-12">Driver pack not found</p>;
   async function handleExport() {
     if (!pack?.current_release) return;
     setExporting(true);

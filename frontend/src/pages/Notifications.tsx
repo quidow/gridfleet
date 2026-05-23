@@ -21,6 +21,7 @@ import {
   EVENT_SEVERITY_LABEL,
   type EventSeverity,
 } from '../components/notifications/eventRegistry';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 const COLUMNS: DataTableColumn<SystemEventRead>[] = [
   {
@@ -92,8 +93,7 @@ function SeverityChipFilter({ selected, onToggle }: SeverityChipFilterProps) {
   );
 }
 
-export function Notifications() {
-  usePageTitle('Notifications');
+function NotificationsContent() {
   const {
     searchParams,
     page,
@@ -142,7 +142,7 @@ export function Notifications() {
   }
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Notifications"
         subtitle="System-wide event stream"
@@ -186,6 +186,18 @@ export function Notifications() {
           onPageSizeChange={setPageSize}
         />
       </div>
+    </>
+  );
+}
+
+export function Notifications() {
+  usePageTitle('Notifications');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="notifications">
+        <NotificationsContent />
+      </SectionErrorBoundary>
     </div>
   );
 }

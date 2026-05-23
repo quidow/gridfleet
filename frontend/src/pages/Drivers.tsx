@@ -7,6 +7,7 @@ import { AddDriverDialog } from '../components/settings/AddDriverDialog';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DriverPack, RuntimePolicy } from '../types/driverPacks';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 const STATE_TONES: Record<string, 'success' | 'warning' | 'neutral'> = {
   enabled: 'success',
@@ -94,15 +95,14 @@ const columns: DataTableColumn<DriverPack>[] = [
   },
 ];
 
-export function Drivers() {
-  usePageTitle('Driver Packs');
+function DriversContent() {
   const { data, isLoading } = useDriverPackCatalog();
   const [uploadOpen, setUploadOpen] = useState(false);
 
   if (isLoading) return <LoadingSpinner />;
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Driver Packs"
         subtitle="Appium driver packs available to this fleet"
@@ -122,6 +122,18 @@ export function Drivers() {
       />
 
       <AddDriverDialog isOpen={uploadOpen} onClose={() => setUploadOpen(false)} />
+    </>
+  );
+}
+
+export function Drivers() {
+  usePageTitle('Driver Packs');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="drivers">
+        <DriversContent />
+      </SectionErrorBoundary>
     </div>
   );
 }

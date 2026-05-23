@@ -18,6 +18,7 @@ import { createEmptyDeviceGroupFilterDraft, draftToDeviceGroupFilters } from '..
 import { usePageTitle } from '../hooks/usePageTitle';
 import type { DeviceGroupCreate, DeviceGroupRead } from '../types';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 
 type GroupFormState = {
   name: string;
@@ -62,8 +63,7 @@ const COLUMNS: DataTableColumn<DeviceGroupRead>[] = [
   },
 ];
 
-export function DeviceGroups() {
-  usePageTitle('Device Groups');
+function DeviceGroupsContent() {
   const { data: groups, isLoading, dataUpdatedAt } = useDeviceGroups();
   const { data: allDevices = [] } = useDevices({});
   const { data: hosts = [] } = useHosts();
@@ -81,29 +81,8 @@ export function DeviceGroups() {
   const hostOptions = hosts.map((host) => ({ id: host.id, name: host.hostname }));
   const osVersionOptions = Array.from(new Set(allDevices.map((device) => device.os_version))).sort();
 
-  const header = (
-    <PageHeader
-      title="Device Groups"
-      subtitle={`${groups?.length ?? 0} groups`}
-      updatedAt={dataUpdatedAt}
-      actions={
-        <Button
-          leadingIcon={<Plus size={16} />}
-          onClick={() => { resetForm(); setShowAdd(true); }}
-        >
-          Create Group
-        </Button>
-      }
-    />
-  );
-
   if (isLoading) {
-    return (
-      <div>
-        {header}
-        <LoadingSpinner />
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
   const columnsWithActions: DataTableColumn<DeviceGroupRead>[] = [
@@ -130,8 +109,20 @@ export function DeviceGroups() {
   ];
 
   return (
-    <div>
-      {header}
+    <>
+      <PageHeader
+        title="Device Groups"
+        subtitle={`${groups?.length ?? 0} groups`}
+        updatedAt={dataUpdatedAt}
+        actions={
+          <Button
+            leadingIcon={<Plus size={16} />}
+            onClick={() => { resetForm(); setShowAdd(true); }}
+          >
+            Create Group
+          </Button>
+        }
+      />
 
       <div className="fade-in-stagger">
         <DataTable
@@ -236,6 +227,18 @@ export function DeviceGroups() {
         confirmLabel="Delete"
         variant="danger"
       />
+    </>
+  );
+}
+
+export function DeviceGroups() {
+  usePageTitle('Device Groups');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="device-groups">
+        <DeviceGroupsContent />
+      </SectionErrorBoundary>
     </div>
   );
 }

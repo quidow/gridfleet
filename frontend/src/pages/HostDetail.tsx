@@ -47,7 +47,7 @@ export function HostDetail() {
     return <LoadingSpinner />;
   }
 
-  if (!host) return null;
+  if (!host) return <p className="text-text-3 text-center mt-12">Host not found</p>;
 
   const hostOnline = host.status === 'online';
   const hostDetail = host as HostDetailType;

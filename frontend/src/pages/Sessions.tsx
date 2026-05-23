@@ -8,6 +8,7 @@ import { FilterBar } from '../components/ui/FilterBar';
 import { CursorPagination } from '../components/ui/CursorPagination';
 import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Select } from '../components/ui/Select';
 import { DateInput } from '../components/ui/DateInput';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
@@ -26,8 +27,7 @@ function readEnumSearchParam<T extends string>(searchParams: URLSearchParams, ke
 
 const COLUMNS = buildSessionColumns();
 
-export function Sessions() {
-  usePageTitle('Sessions');
+function SessionsTableSection() {
   const {
     searchParams,
     pageSize,
@@ -80,7 +80,7 @@ export function Sessions() {
   const showingLabel = `Showing ${sessionRows.length} session${sessionRows.length === 1 ? '' : 's'}`;
 
   return (
-    <div>
+    <>
       <PageHeader
         title="Sessions"
         subtitle="Cross-run history and sessions not attached to a run."
@@ -184,6 +184,18 @@ export function Sessions() {
           onPageSizeChange={setPageSize}
         />
       </div>
+    </>
+  );
+}
+
+export function Sessions() {
+  usePageTitle('Sessions');
+
+  return (
+    <div>
+      <SectionErrorBoundary scope="sessions-table">
+        <SessionsTableSection />
+      </SectionErrorBoundary>
     </div>
   );
 }
