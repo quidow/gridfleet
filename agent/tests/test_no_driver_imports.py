@@ -70,8 +70,6 @@ KNOWN_VIOLATIONS: set[tuple[str, str]] = {
     # installer/plan.py — Android SDK in service config (audit 1.10)
     ("agent_app/installer/plan.py", "ANDROID_HOME"),
     ("agent_app/installer/plan.py", "ANDROID_SDK_ROOT"),
-    # grid_node/protocol.py — chrome special-case (audit 2.6)
-    ("agent_app/grid_node/protocol.py", "chrome"),
 }
 
 
