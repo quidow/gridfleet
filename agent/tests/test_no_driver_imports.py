@@ -61,19 +61,9 @@ KNOWN_VIOLATIONS: set[tuple[str, str]] = {
     ("agent_app/appium/process.py", "simulator"),
     ("agent_app/appium/process.py", "booting"),
     ("agent_app/appium/process.py", "booted"),
-    # config.py — dead ADB setting (audit 1.3)
-    ("agent_app/config.py", "config:adb_reconnect_port"),
-    # tools/manager.py — go_ios probing (audit 1.8)
-    ("agent_app/tools/manager.py", "go_ios"),
-    # host/capabilities.py — hardcoded tool checks (audit 1.9)
-    ("agent_app/host/capabilities.py", "adb"),
-    ("agent_app/host/capabilities.py", "xcodebuild"),
-    ("agent_app/host/capabilities.py", "go_ios"),
     # installer/plan.py — Android SDK in service config (audit 1.10)
     ("agent_app/installer/plan.py", "ANDROID_HOME"),
     ("agent_app/installer/plan.py", "ANDROID_SDK_ROOT"),
-    # grid_node/protocol.py — chrome special-case (audit 2.6)
-    ("agent_app/grid_node/protocol.py", "chrome"),
 }
 
 

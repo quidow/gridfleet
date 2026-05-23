@@ -54,6 +54,16 @@ def test_build_slots_preserves_explicit_grid_run_id() -> None:
     assert slots[0].stereotype.caps["gridfleet:run_id"] == "run-1"
 
 
+def test_build_slots_sets_browser_name_for_non_native_slots() -> None:
+    slots = build_slots(
+        base_caps={"platformName": "Android"},
+        grid_slots=["native", "chrome", "firefox"],
+    )
+    assert slots[0].stereotype.caps.get("browserName") is None
+    assert slots[1].stereotype.caps["browserName"] == "chrome"
+    assert slots[2].stereotype.caps["browserName"] == "firefox"
+
+
 def test_slot_round_trip_dict() -> None:
     slot = Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "iOS"}), state="AVAILABLE")
     assert Slot.from_dict(slot.to_dict()) == slot

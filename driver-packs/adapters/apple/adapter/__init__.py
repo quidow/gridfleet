@@ -97,3 +97,31 @@ class Adapter:
         action: Literal["start", "stop", "status"],
     ) -> SidecarStatus:
         return SidecarStatus(ok=False, detail="No sidecars")
+
+    def tool_versions(self) -> dict[str, str | None]:
+        import re
+        import subprocess
+
+        versions: dict[str, str | None] = {"xcodebuild": None, "go_ios": None}
+
+        try:
+            result = subprocess.run(
+                ["xcodebuild", "-version"], capture_output=True, text=True, timeout=5
+            )
+            match = re.search(r"Xcode\s+(\d+\.\d+(?:\.\d+)?)", result.stdout)
+            if match:
+                versions["xcodebuild"] = match.group(1)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass  # version stays None from default
+
+        try:
+            result = subprocess.run(
+                ["ios", "--version"], capture_output=True, text=True, timeout=5
+            )
+            match = re.search(r"v?(\d+\.\d+\.\d+)", result.stdout)
+            if match:
+                versions["go_ios"] = match.group(1)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass  # version stays None from default
+
+        return versions

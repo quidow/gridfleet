@@ -205,3 +205,6 @@ class DriverPackAdapter(Protocol):
 
     def subprocess_env(self) -> SubprocessEnvContribution:
         return SubprocessEnvContribution()
+
+    def tool_versions(self) -> dict[str, str | None]:
+        return {}

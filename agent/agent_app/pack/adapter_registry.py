@@ -49,6 +49,11 @@ class AdapterRegistry:
         with self._lock:
             return (pack_id, release) in self._by_key
 
+    def pack_ids(self) -> list[str]:
+        """Return all pack_ids that have a current release loaded."""
+        with self._lock:
+            return list(self._current_release)
+
     def clear(self) -> None:
         with self._lock:
             self._by_key.clear()

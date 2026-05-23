@@ -15,7 +15,6 @@ from agent_app.tools.manager import (
     _first_version,
     _fnm_base_dirs,
     _fnm_default_bin_dirs,
-    _get_go_ios_version,
     _get_node_version,
     _is_executable,
     _prepend_process_path,
@@ -323,30 +322,3 @@ def test_node_provider_command_npm_and_default() -> None:
 async def test_detect_fnm_provider_none_when_fnm_not_found() -> None:
     with patch("agent_app.tools.manager._find_fnm_binary", return_value=None):
         assert await _detect_fnm_provider() is None
-
-
-async def test_get_go_ios_version_command_prefix_failure_then_success() -> None:
-    provider = NodeProvider(
-        name="fnm",
-        node_path="/fnm/node",
-        npm_path="/fnm/npm",
-        command_prefix=["fnm", "exec", "--using", "default"],
-    )
-    with patch(
-        "agent_app.tools.manager._run_optional",
-        new_callable=AsyncMock,
-        side_effect=[
-            CommandResult(1, "err"),  # first call fails
-            CommandResult(0, "1.0.207"),  # prefix call succeeds
-        ],
-    ):
-        assert await _get_go_ios_version(provider) == "1.0.207"
-
-
-async def test_get_go_ios_version_uses_raw_output_when_no_version_match() -> None:
-    with patch(
-        "agent_app.tools.manager._run_optional",
-        new_callable=AsyncMock,
-        return_value=CommandResult(0, "some raw output"),
-    ):
-        assert await _get_go_ios_version(None) == "some raw output"

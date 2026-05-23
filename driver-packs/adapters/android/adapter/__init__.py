@@ -104,6 +104,23 @@ class Adapter:
             return await sidecar_lifecycle(action)
         return SidecarStatus(ok=False, detail=f"Unknown feature: {feature_id}")
 
+    def tool_versions(self) -> dict[str, str | None]:
+        import re
+        import subprocess
+
+        from adapter.tools import find_adb
+
+        adb = find_adb()
+        try:
+            result = subprocess.run(
+                [adb, "--version"], capture_output=True, text=True, timeout=5
+            )
+            match = re.search(r"(\d+\.\d+\.\d+)", result.stdout)
+            version = match.group(1) if match else None
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            version = None
+        return {"adb": version}
+
     def subprocess_env(self) -> SubprocessEnvContribution:
         import os
 
