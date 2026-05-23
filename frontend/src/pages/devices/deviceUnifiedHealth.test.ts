@@ -185,18 +185,6 @@ describe('deriveUnifiedHealth', () => {
     expect(result.reasons).toContain('Agent failed to start node: port occupied');
   });
 
-  it('returns error when lifecycle is manual', () => {
-    const device = makeDevice({
-      lifecycle_policy_summary: {
-        state: 'manual',
-        label: 'Manual',
-        detail: null,
-        backoff_until: null,
-      },
-    });
-    expect(deriveUnifiedHealth(device).reasons).toContain('Manual recovery requested');
-  });
-
   it('returns warn when readiness is setup_required and probe is healthy', () => {
     const device = makeDevice({
       readiness_state: 'setup_required',

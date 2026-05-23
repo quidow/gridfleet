@@ -8,7 +8,6 @@ const STATE_TONE_MAP: Record<DeviceRead['lifecycle_policy_summary']['state'], Ba
   excluded: 'critical',
   suppressed: 'warning',
   recoverable: 'info',
-  manual: 'neutral',
 };
 
 export function LifecyclePolicyBadge({

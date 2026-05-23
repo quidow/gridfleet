@@ -24,7 +24,7 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
-    record_manual_recovered,
+    record_operator_recovered,
     set_action,
     write_state,
 )
@@ -100,7 +100,7 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-def clear_manual_recovery_suppression_state(device: Device) -> bool:
+def clear_operator_recovery_suppression_state(device: Device) -> bool:
     fresh = policy_state(device)
     if (
         fresh.get("recovery_suppressed_reason") is None
@@ -108,17 +108,9 @@ def clear_manual_recovery_suppression_state(device: Device) -> bool:
         and fresh.get("backoff_until") is None
     ):
         return False
-    record_manual_recovered(fresh)
+    record_operator_recovered(fresh)
     write_state(device, fresh)
     return True
-
-
-def auto_stopped_summary_state(
-    run: TestRun | None,
-) -> DeviceLifecyclePolicySummaryState:
-    if run is not None:
-        return DeviceLifecyclePolicySummaryState.excluded
-    return DeviceLifecyclePolicySummaryState.recoverable
 
 
 async def exclude_run_if_needed(
@@ -408,7 +400,11 @@ async def record_auto_stopped_incident(
         db,
         device,
         DeviceEventType.lifecycle_auto_stopped,
-        summary_state=auto_stopped_summary_state(run),
+        summary_state=(
+            DeviceLifecyclePolicySummaryState.excluded
+            if run is not None
+            else DeviceLifecyclePolicySummaryState.recoverable
+        ),
         reason=reason,
         detail=detail,
         source=source,

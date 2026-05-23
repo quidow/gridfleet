@@ -45,7 +45,7 @@ from app.devices import locking as device_locking
 from app.devices.services import health as device_health
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.lifecycle_policy_actions import (
-    clear_manual_recovery_suppression_state,
+    clear_operator_recovery_suppression_state,
     reset_reconciler_start_failure_state,
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -824,11 +824,8 @@ async def restart_node(
     return node
 
 
-async def _clear_manual_recovery_suppression(db: AsyncSession, device_id: uuid.UUID) -> None:
-    # Use _hold_device_row_lock to translate NoResultFound (e.g. concurrent
-    # device delete after mark_node_started commits and releases the row lock)
-    # into NodeManagerError so the route returns a managed 4xx instead of 500.
+async def _clear_operator_recovery_suppression(db: AsyncSession, device_id: uuid.UUID) -> None:
     locked = await _hold_device_row_lock(db, device_id)
-    if not clear_manual_recovery_suppression_state(locked):
+    if not clear_operator_recovery_suppression_state(locked):
         return
     await db.commit()

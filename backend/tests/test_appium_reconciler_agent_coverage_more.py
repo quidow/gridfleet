@@ -476,14 +476,14 @@ async def test_wait_for_node_running_and_manual_recovery_helpers(monkeypatch: py
 
     clean_device = SimpleNamespace(id=device_id, lifecycle_policy_state={})
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=clean_device))
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
+    await node_agent._clear_operator_recovery_suppression(db, device_id)
 
     dirty_device = SimpleNamespace(id=device_id, lifecycle_policy_state={"last_failure_reason": "boom"})
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=dirty_device))
     clear_suppression = MagicMock(return_value=True)
-    monkeypatch.setattr(node_agent, "clear_manual_recovery_suppression_state", clear_suppression)
+    monkeypatch.setattr(node_agent, "clear_operator_recovery_suppression_state", clear_suppression)
     db.commit.reset_mock()
-    await node_agent._clear_manual_recovery_suppression(db, device_id)
+    await node_agent._clear_operator_recovery_suppression(db, device_id)
     clear_suppression.assert_called_once_with(dirty_device)
     db.commit.assert_awaited_once()
 

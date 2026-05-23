@@ -818,7 +818,7 @@ async def attempt_auto_recovery(
         DeviceEventType.lifecycle_recovered,
         summary_state=DeviceLifecyclePolicySummaryState.idle,
         reason=reason,
-        detail="Device recovered and rejoined automatic management",
+        detail="Device recovered successfully",
         source=source,
         run_id=run.id if run is not None else None,
         run_name=run.name if run is not None else None,
