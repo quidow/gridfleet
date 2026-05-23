@@ -33,7 +33,10 @@ async def export_devices(db: DbDep, response: Response) -> ExportBundle:
     summary="Validate a device import bundle and return a per-row preview",
 )
 async def import_validate(bundle: ExportBundle, db: DbDep) -> ImportPreview:
-    return await validate_bundle(db, bundle)
+    try:
+        return await validate_bundle(db, bundle)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post(

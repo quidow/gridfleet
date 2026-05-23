@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.schemas.portability import (
@@ -36,6 +37,7 @@ from app.devices.services.portability_hash import compute_bundle_hash
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
+from app.packs.services import platform_resolver as pack_platform_resolver
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -79,6 +81,16 @@ async def _classify_row(
     hosts: Sequence[Host],
     duplicate_keys: set[tuple[str, str, str]],
 ) -> tuple[ImportRowStatus, list[str]]:
+    try:
+        await pack_platform_resolver.assert_runnable(session, pack_id=device.pack_id, platform_id=device.platform_id)
+    except PackUnavailableError:
+        return (ImportRowStatus.INVALID, [f"pack/platform not installed: {device.pack_id}/{device.platform_id}"])
+    except PackDisabledError:
+        return (ImportRowStatus.INVALID, [f"pack/platform not installed: {device.pack_id}/{device.platform_id}"])
+    except PackDrainingError:
+        return (ImportRowStatus.INVALID, [f"pack not runnable: pack {device.pack_id} is draining"])
+    except PlatformRemovedError:
+        return (ImportRowStatus.INVALID, [f"pack/platform not installed: {device.pack_id}/{device.platform_id}"])
     if _identity_key(device) in duplicate_keys:
         return (ImportRowStatus.DUPLICATE_IN_BUNDLE, ["identity duplicated within bundle"])
     suggestion = _pick_host_suggestion(device, hosts)

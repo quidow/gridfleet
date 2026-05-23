@@ -48,7 +48,9 @@ def _device(identity_value: str = "R58", hostname: str = "lab-04") -> ExportedDe
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_creates_device_and_enqueues_verification(db_session: AsyncSession) -> None:
+async def test_commit_creates_device_and_enqueues_verification(
+    db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     request = ImportCommitRequest(
@@ -74,7 +76,7 @@ async def test_commit_creates_device_and_enqueues_verification(db_session: Async
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession) -> None:
+async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     request = ImportCommitRequest(
@@ -88,7 +90,7 @@ async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession) -> None:
+async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device(identity_value="X"), _device(identity_value="X")])
     request = ImportCommitRequest(
@@ -107,7 +109,9 @@ async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession) -
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_skips_existing_identity_as_conflict_skip(db_session: AsyncSession) -> None:
+async def test_commit_skips_existing_identity_as_conflict_skip(
+    db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     await seed_existing_device(
         db_session,
@@ -130,7 +134,7 @@ async def test_commit_skips_existing_identity_as_conflict_skip(db_session: Async
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_fails_row_when_host_missing(db_session: AsyncSession) -> None:
+async def test_commit_fails_row_when_host_missing(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     bogus = uuid.uuid4()
@@ -147,7 +151,9 @@ async def test_commit_fails_row_when_host_missing(db_session: AsyncSession) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_rolls_back_device_when_verification_enqueue_fails(db_session: AsyncSession) -> None:
+async def test_commit_rolls_back_device_when_verification_enqueue_fails(
+    db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     request = ImportCommitRequest(
@@ -171,7 +177,7 @@ async def test_commit_rolls_back_device_when_verification_enqueue_fails(db_sessi
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_import_mapping_forbids_device_field(db_session: AsyncSession) -> None:
+async def test_import_mapping_forbids_device_field(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     """Server re-parses bundle; mappings carry only target_host_id (no per-row device override)."""
     host = await seed_host_named(db_session, "lab-04")
     with pytest.raises(ValidationError):
@@ -180,7 +186,9 @@ async def test_import_mapping_forbids_device_field(db_session: AsyncSession) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_import_endpoint_returns_409_on_hash_mismatch(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_import_endpoint_returns_409_on_hash_mismatch(
+    client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     body = {
         "bundle": {
@@ -213,7 +221,9 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(client: AsyncClient,
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_import_endpoint_commits_valid_row(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_import_endpoint_commits_valid_row(
+    client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle_body = {
         "schema_version": 1,
@@ -248,3 +258,41 @@ async def test_import_endpoint_commits_valid_row(client: AsyncClient, db_session
     assert len(result["created"]) == 1
     assert result["skipped"] == []
     assert result["failed"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+    """One created, one skipped (conflict), one failed (missing host)."""
+    host = await seed_host_named(db_session, "lab-04")
+    await seed_existing_device(
+        db_session,
+        host_id=host.id,
+        identity_scheme="android_serial",
+        identity_value="CONFLICT",
+        identity_scope="host",
+    )
+    bundle = _bundle(
+        [
+            _device(identity_value="NEW-1"),
+            _device(identity_value="CONFLICT"),
+            _device(identity_value="NEW-2"),
+        ]
+    )
+    bogus_host = uuid.uuid4()
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[
+            ImportMapping(index=0, target_host_id=host.id),
+            ImportMapping(index=1, target_host_id=host.id),
+            ImportMapping(index=2, target_host_id=bogus_host),
+        ],
+    )
+    result = await commit_import(db_session, request)
+    assert len(result.created) == 1
+    assert result.created[0].index == 0
+    assert len(result.skipped) == 1
+    assert result.skipped[0].index == 1
+    assert len(result.failed) == 1
+    assert result.failed[0].index == 2
