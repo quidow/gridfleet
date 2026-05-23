@@ -2,6 +2,33 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.18.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.17.0...gridfleet-agent-v0.18.0) (2026-05-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** agent no longer exposes the /agent/terminal WS endpoint.
+
+### Bug Fixes
+
+* **agent:** keep cooldown drain across forced relay restart ([#346](https://github.com/quidow/gridfleet/issues/346)) ([6e93247](https://github.com/quidow/gridfleet/commit/6e932479824850eafc660ec12f1bf93c09326324))
+
+
+### Dependencies
+
+* **deps:** bump idna from 3.11 to 3.15 in /agent ([#308](https://github.com/quidow/gridfleet/issues/308)) ([b96e628](https://github.com/quidow/gridfleet/commit/b96e628040050bbec5ca42dd0162bdfe210ae720))
+* **deps:** bump ruff in /agent in the python-dependencies group ([#340](https://github.com/quidow/gridfleet/issues/340)) ([5cdc82a](https://github.com/quidow/gridfleet/commit/5cdc82aec13c3f0c9814430feb4411d62b78a264))
+
+
+### Documentation
+
+* **docs:** drop web terminal references ([e954fc0](https://github.com/quidow/gridfleet/commit/e954fc065b87ebd951eaddab4b2ad70354055971))
+
+
+### Code Refactoring
+
+* **agent:** remove web terminal package ([d6b7b37](https://github.com/quidow/gridfleet/commit/d6b7b3725f498449705e70a796bfd8a821720756))
+
 ## [0.17.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.16.0...gridfleet-agent-v0.17.0) (2026-05-20)
 
 
