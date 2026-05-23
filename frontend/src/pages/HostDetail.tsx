@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApproveHost, useHost, useHostDiagnostics, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -11,7 +12,9 @@ import FetchError from '../components/ui/FetchError';
 import HostDetailStatusPills from './hostDetail/HostDetailStatusPills';
 import HostOverviewPanel from '../components/hostDetail/HostOverviewPanel';
 import HostDiagnosticsPanel from '../components/hostDetail/HostDiagnosticsPanel';
-import HostResourceTelemetryPanel from '../components/hostDetail/HostResourceTelemetryPanel';
+
+// Defers recharts to first diagnostics-tab view.
+const HostResourceTelemetryPanel = lazy(() => import('../components/hostDetail/HostResourceTelemetryPanel'));
 import HostDevicesPanel from '../components/hostDetail/HostDevicesPanel';
 import HostDriversPanel from '../components/hostDetail/HostDriversPanel';
 import HostPluginsPanel from '../components/hostDetail/HostPluginsPanel';
@@ -90,7 +93,9 @@ export default function HostDetail() {
             diagnosticsLoading={diagnosticsLoading}
             diagnosticsError={diagnosticsError}
           />
-          <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
+          <Suspense fallback={<div className="h-48 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
+          </Suspense>
         </div>
       )}
 

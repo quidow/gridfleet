@@ -1,11 +1,13 @@
 import { useSearchParams } from 'react-router-dom';
-import { useMemo } from 'react';
+import { Suspense, lazy, useMemo } from 'react';
 import DateRangePicker from '../components/analytics/DateRangePicker';
 import type { Preset } from '../components/analytics/DateRangePicker';
-import SessionTrendsTab from '../components/analytics/SessionTrendsTab';
-import DeviceUtilizationTab from '../components/analytics/DeviceUtilizationTab';
 import ReliabilityTab from '../components/analytics/ReliabilityTab';
-import FleetCapacityTab from '../components/analytics/FleetCapacityTab';
+
+// Recharts is a heavy dep — defer the three tabs that pull it in.
+const SessionTrendsTab = lazy(() => import('../components/analytics/SessionTrendsTab'));
+const DeviceUtilizationTab = lazy(() => import('../components/analytics/DeviceUtilizationTab'));
+const FleetCapacityTab = lazy(() => import('../components/analytics/FleetCapacityTab'));
 import {
   useDeviceReliability,
   useDeviceUtilization,
@@ -119,12 +121,16 @@ export default function Analytics() {
 
       {tab === 'sessions' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-session-trends">
-          <SessionTrendsTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <SessionTrendsTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       {tab === 'utilization' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-device-utilization">
-          <DeviceUtilizationTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <DeviceUtilizationTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       {tab === 'reliability' && (
@@ -134,7 +140,9 @@ export default function Analytics() {
       )}
       {tab === 'fleet-capacity' && (
         <SectionErrorBoundary resetKey={tab} scope="analytics-fleet-capacity">
-          <FleetCapacityTab params={params} />
+          <Suspense fallback={<div className="h-64 animate-pulse rounded-md border border-border bg-surface-1" />}>
+            <FleetCapacityTab params={params} />
+          </Suspense>
         </SectionErrorBoundary>
       )}
       </div>

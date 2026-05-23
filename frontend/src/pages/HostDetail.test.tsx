@@ -109,11 +109,12 @@ function renderHostDetail(path: string) {
   );
 }
 
-test('does not render tool versions on diagnostics tab', () => {
+test('does not render tool versions on diagnostics tab', async () => {
   renderHostDetail('/hosts/host-1?tab=diagnostics');
 
   expect(screen.getAllByText('Diagnostics').length).toBeGreaterThan(0);
-  expect(screen.getByText('Resource Telemetry')).toBeInTheDocument();
+  // HostResourceTelemetryPanel is lazy-loaded — await its Suspense resolution.
+  expect(await screen.findByText('Resource Telemetry')).toBeInTheDocument();
   expect(screen.queryByText('Tool Versions')).not.toBeInTheDocument();
 });
 
