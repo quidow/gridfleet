@@ -21,7 +21,7 @@ from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 VerificationJobStatus = Literal["pending", "running", "completed", "failed"]
-VerificationStageStatus = Literal["pending", "running", "failed", "passed"]
+VerificationStageStatus = Literal["pending", "running", "failed", "passed", "skipped"]
 
 DeviceTags = dict[str, str]
 

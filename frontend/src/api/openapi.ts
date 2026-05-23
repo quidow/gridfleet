@@ -3145,7 +3145,7 @@ export interface components {
             /** Current Stage */
             current_stage?: string | null;
             /** Current Stage Status */
-            current_stage_status?: ("pending" | "running" | "failed" | "passed") | null;
+            current_stage_status?: ("pending" | "running" | "failed" | "passed" | "skipped") | null;
             /** Detail */
             detail?: string | null;
             /** Device Id */
@@ -4527,6 +4527,8 @@ export interface components {
              * @enum {string}
              */
             id: "state" | "reconnect" | "boot" | "shutdown";
+            /** Label */
+            label?: string | null;
         };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
