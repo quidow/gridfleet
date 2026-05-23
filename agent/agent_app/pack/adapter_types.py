@@ -202,3 +202,6 @@ class DriverPackAdapter(Protocol):
 
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
         raise NotImplementedError
+
+    def subprocess_env(self) -> SubprocessEnvContribution:
+        return SubprocessEnvContribution()
