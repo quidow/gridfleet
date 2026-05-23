@@ -29,10 +29,23 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
   }
 }
 
+function availabilityTooltip(device: DeviceRead): string | undefined {
+  const status = deviceChipStatus(device);
+  if (status === 'maintenance') {
+    return device.lifecycle_policy_summary.detail || 'In maintenance';
+  }
+  if (status === 'offline') {
+    if (device.health_summary.connectivity_status === 'failed') return 'Connectivity failed';
+    if (device.health_summary.healthy === false) return 'Health check failed';
+    return 'Offline';
+  }
+  return undefined;
+}
+
 export function AvailabilityCell({ device }: { device: DeviceRead }) {
   const status = deviceChipStatus(device);
   return (
-    <Badge tone={availabilityTone(status)}>
+    <Badge tone={availabilityTone(status)} title={availabilityTooltip(device)}>
       {DEVICE_STATUS_LABELS[status]}
     </Badge>
   );
