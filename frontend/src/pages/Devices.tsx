@@ -32,7 +32,7 @@ import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import PageHeader from '../components/ui/PageHeader';
 import Button from '../components/ui/Button';
 import ListPageSubheader from '../components/ui/ListPageSubheader';
-import { DeviceExportButton } from '../components/devices/DeviceExportButton';
+import { DeviceExportButton } from '../components/settings/DeviceExportButton';
 import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import Pagination from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
