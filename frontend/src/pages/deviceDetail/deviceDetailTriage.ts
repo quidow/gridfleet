@@ -154,7 +154,7 @@ export function deriveDeviceDetailTriage(
       eyebrow = 'Connectivity';
       title = reservation ? 'Device connectivity lost — reserved by' : 'Device connectivity lost';
       titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
-      detail = failedHealthDetail(device);
+      detail = failedHealthDetail(device, health);
     } else if (!node) {
       tone = 'neutral';
       eyebrow = 'Node idle';
