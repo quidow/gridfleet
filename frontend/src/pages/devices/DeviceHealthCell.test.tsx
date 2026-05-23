@@ -16,7 +16,6 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       operational_state: 'available', hold: null,
       needs_attention: false,
       readiness_state: 'verified',
-      auto_manage: true,
       host_id: 'h1',
       identity_value: '192.168.1.2',
       tags: {},

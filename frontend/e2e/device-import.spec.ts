@@ -15,7 +15,6 @@ const BUNDLE_BODY = {
       name: 'Pixel 7',
       device_type: 'real_device',
       connection_type: 'usb',
-      auto_manage: true,
       tags: {},
       device_config: {},
       test_data: {},

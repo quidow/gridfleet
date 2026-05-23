@@ -59,7 +59,6 @@ const DEVICES = [
     platform_label: 'Android (real device)',
     os_version: '14',
     tags: {},
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,

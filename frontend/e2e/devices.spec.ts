@@ -75,7 +75,6 @@ const DEFAULT_DEVICE = {
   operational_state: 'available',
   hold: null,
   tags: { team: 'qa' },
-  auto_manage: true,
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.50',
@@ -658,7 +657,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -691,7 +689,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.25',
@@ -772,7 +769,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -809,14 +805,6 @@ test.describe('Devices page', () => {
     await expect(page.getByText(/OS: 14/)).toBeVisible();
   });
 
-  test('auto-manage checkboxes are present', async ({ page }) => {
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-
-    const checkboxes = firstDeviceRow(page).getByRole('checkbox');
-    await expect(checkboxes).toHaveCount(2);
-  });
-
   test('renders the devices list directly for a small fleet', async ({ page }) => {
     const mockApi = await mockAddDeviceVerificationSurface(page);
     mockApi.setDevices(
@@ -835,7 +823,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'emulator',
         connection_type: 'virtual',
         ip_address: null,
@@ -860,73 +847,6 @@ test.describe('Devices page', () => {
     await expect(page.getByTestId('device-row-device-000')).toBeVisible();
     await expect(deviceRows(page)).toHaveCount(80);
     await expect(page.getByTestId('device-row-device-079')).toHaveCount(1);
-  });
-
-  test('rolls back optimistic auto-manage changes when the mutation fails', async ({ page }) => {
-    const mockApi = await mockAddDeviceVerificationSurface(page);
-    mockApi.setDevices([
-      {
-        id: 'device-auto-manage',
-        identity_scheme: 'android_serial',
-        identity_scope: 'host',
-        identity_value: 'auto-manage-001',
-        connection_target: 'auto-manage-001',
-        name: 'Auto Manage Device',
-        pack_id: 'appium-uiautomator2',
-        platform_id: 'android_mobile',
-        platform_label: 'Android (real device)',
-        os_version: '14',
-        host_id: 'host-1',
-        operational_state: 'available',
-        hold: null,
-        tags: null,
-        auto_manage: true,
-        device_type: 'real_device',
-        connection_type: 'usb',
-        ip_address: null,
-        health_summary: mockHealthSummary(true, 'Healthy'),
-        readiness_state: 'verified',
-        missing_setup_fields: [],
-        verified_at: '2026-03-30T10:00:03Z',
-        reservation: null,
-        lifecycle_policy_summary: {
-          state: 'idle',
-          label: 'Idle',
-          detail: null,
-          backoff_until: null,
-        },
-        created_at: '2026-03-30T10:00:03Z',
-        updated_at: '2026-03-30T10:00:03Z',
-      },
-    ]);
-
-    await page.route((url) => new URL(url).pathname === '/api/devices/device-auto-manage', async (route) => {
-      if (route.request().method() !== 'PATCH') {
-        await route.fallback();
-        return;
-      }
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          error: {
-            code: 'CONFLICT',
-            message: 'Cannot update auto-manage right now',
-            request_id: 'req-auto-manage',
-          },
-        }),
-      });
-    });
-
-    await page.goto('/devices');
-    await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
-
-    const autoManageToggle = firstDeviceRow(page).getByRole('checkbox').nth(1);
-    await expect(autoManageToggle).toBeChecked();
-    await autoManageToggle.click();
-
-    await expect(page.getByText('Cannot update auto-manage right now')).toBeVisible({ timeout: 5000 });
-    await expect(autoManageToggle).toBeChecked({ timeout: 5000 });
   });
 
   test('shows the page error boundary fallback when the devices page throws', async ({ page }) => {
@@ -957,7 +877,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1007,7 +926,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1067,7 +985,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1116,7 +1033,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1592,7 +1508,6 @@ test.describe('Devices page', () => {
         hold: null,
         needs_attention: true,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -1624,7 +1539,6 @@ test.describe('Devices page', () => {
         host_id: 'host-1',
         needs_attention: false,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -2007,7 +1921,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
           tags: null,
-          auto_manage: true,
           device_type: 'real_device',
           connection_type: 'usb',
           ip_address: null,
@@ -2080,7 +1993,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.20',
@@ -2124,7 +2036,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
           tags: null,
-          auto_manage: true,
           device_type: 'real_device',
           connection_type: 'network',
           ip_address: '10.0.0.15',
@@ -2199,7 +2110,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'network',
         ip_address: '192.168.1.22',
@@ -2282,7 +2192,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'emulator',
         connection_type: 'virtual',
         ip_address: null,
@@ -2333,7 +2242,6 @@ test.describe('Devices page', () => {
         hold: null,
         needs_attention: true,
         tags: null,
-        auto_manage: true,
         device_type: 'real_device',
         connection_type: 'usb',
         ip_address: null,
@@ -2378,7 +2286,6 @@ test.describe('Devices page', () => {
         operational_state: 'available',
         hold: null,
         tags: null,
-        auto_manage: true,
         device_type: 'emulator',
         connection_type: 'virtual',
         ip_address: null,

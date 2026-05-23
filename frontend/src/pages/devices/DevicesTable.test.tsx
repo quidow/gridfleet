@@ -22,7 +22,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     operational_state: 'available', hold: null,
     needs_attention: false,
     readiness_state: 'verified',
-    auto_manage: true,
     emulator_state: null,
     reservation: null,
     missing_setup_fields: [],
@@ -105,16 +104,6 @@ describe('DevicesTable', () => {
     const { props } = renderTable();
     fireEvent.click(screen.getByRole('button', { name: /^Platform/i }));
     expect(props.onSortChange).toHaveBeenCalledWith({ key: 'platform', direction: 'asc' });
-  });
-
-  it('fires toggle-auto-manage action when the toggle is clicked', () => {
-    const { props } = renderTable();
-    fireEvent.click(screen.getByLabelText('Toggle auto-manage for Pixel-7'));
-    expect(props.onAction).toHaveBeenCalledWith({
-      type: 'toggle-auto-manage',
-      deviceId: 'd1',
-      autoManage: false,
-    });
   });
 
   it('marks row as selected when id is in selectedIds', () => {
