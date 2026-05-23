@@ -241,14 +241,18 @@ async def get_tool_status(
         _prepend_process_path(provider.bin_paths)
     node_version = await _get_node_version(provider)
 
-    adapter_tools: dict[str, str | None] = {}
-    if adapter_registry is not None:
-        for pack_id in adapter_registry.pack_ids():
-            adapter = adapter_registry.get_current(pack_id)
-            if adapter is not None and hasattr(adapter, "tool_versions"):
-                for name, version in adapter.tool_versions().items():
-                    if name not in adapter_tools:
-                        adapter_tools[name] = version
+    def _collect() -> dict[str, str | None]:
+        tools: dict[str, str | None] = {}
+        if adapter_registry is not None:
+            for pack_id in adapter_registry.pack_ids():
+                adapter = adapter_registry.get_current(pack_id)
+                if adapter is not None and hasattr(adapter, "tool_versions"):
+                    for name, version in adapter.tool_versions().items():
+                        if name not in tools:
+                            tools[name] = version
+        return tools
+
+    adapter_tools = await asyncio.to_thread(_collect)
 
     result: dict[str, Any] = {
         "node": node_version,

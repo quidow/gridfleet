@@ -48,7 +48,7 @@ def _collect_adapter_tool_versions() -> dict[str, str]:
 
 async def detect_capabilities() -> dict[str, Any]:
     """Detect installed tools and infer supported platforms."""
-    tools = _collect_adapter_tool_versions()
+    tools = await asyncio.to_thread(_collect_adapter_tool_versions)
     platforms: list[str] = []
     missing_prerequisites: list[str] = []
 
