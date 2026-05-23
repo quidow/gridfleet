@@ -99,13 +99,14 @@ function makeHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
 }
 
 describe('deriveDeviceDetailTriage', () => {
-  it('returns all-clear action for verified healthy device', () => {
-    const triage = deriveDeviceDetailTriage(makeDevice(), { health: makeHealth(), canTestSession: true });
+  it('returns ready card for healthy available device', () => {
+    const triage = deriveDeviceDetailTriage(makeDevice(), { health: makeHealth() });
 
     expect(triage).toMatchObject({
       tone: 'ok',
+      eyebrow: 'Ready',
       title: 'Device ready for sessions',
-      action: { kind: 'test-session', label: 'Test Session' },
+      action: { kind: 'none' },
     });
   });
 
@@ -117,7 +118,7 @@ describe('deriveDeviceDetailTriage', () => {
         operational_state: 'offline', hold: null,
         emulator_state: 'stopped',
       }),
-      { canTestSession: false },
+      {},
     );
 
     expect(triage).toMatchObject({
@@ -136,7 +137,7 @@ describe('deriveDeviceDetailTriage', () => {
         operational_state: 'offline', hold: null,
         emulator_state: 'shutdown',
       }),
-      { canTestSession: false },
+      {},
     );
 
     expect(triage).toMatchObject({
@@ -146,7 +147,7 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('prioritizes node stopped after virtual device state', () => {
+  it('shows start-node for stopped node', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         appium_node: {
@@ -157,7 +158,7 @@ describe('deriveDeviceDetailTriage', () => {
           effective_state: 'stopped',
         },
       }),
-      { canTestSession: false },
+      {},
     );
 
     expect(triage).toMatchObject({
@@ -170,7 +171,7 @@ describe('deriveDeviceDetailTriage', () => {
   it('returns neutral tone when verified device has no node yet', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({ appium_node: null }),
-      { canTestSession: false },
+      {},
     );
 
     expect(triage).toMatchObject({
@@ -181,21 +182,7 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('returns neutral tone with Maintenance eyebrow and exit action when device is in maintenance', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({ operational_state: 'available', hold: 'maintenance', appium_node: null }),
-      { canTestSession: false },
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'neutral',
-      eyebrow: 'Maintenance',
-      title: 'In maintenance',
-      action: { kind: 'exit-maintenance', label: 'Take out of maintenance' },
-    });
-  });
-
-  it('shows maintenance_reason from lifecycle_policy_summary as evidence', () => {
+  it('shows maintenance with exit action and reason', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'offline',
@@ -209,46 +196,143 @@ describe('deriveDeviceDetailTriage', () => {
           maintenance_reason: 'Cooldown escalation',
         },
       }),
-      { canTestSession: false },
+      {},
     );
 
-    expect(triage.evidence).toContainEqual(
-      expect.objectContaining({ label: 'Reason', value: 'Cooldown escalation' }),
-    );
-    expect(triage.action.kind).toBe('exit-maintenance');
+    expect(triage).toMatchObject({
+      tone: 'neutral',
+      eyebrow: 'Maintenance',
+      title: 'In maintenance',
+      detail: 'Cooldown escalation',
+      action: { kind: 'exit-maintenance', label: 'Take out of maintenance' },
+    });
   });
 
-  it('prioritizes unhealthy health snapshot after running node', () => {
+  it('shows connectivity lost when health checks fail with node stopped', () => {
     const triage = deriveDeviceDetailTriage(
-      makeDevice({ health_summary: { healthy: false, summary: 'ADB not responsive', last_checked_at: null } }),
-      {
-        health: makeHealth({
-          healthy: false,
-          device_checks: { healthy: false, detail: 'ADB not responsive' },
-        }),
-        canTestSession: false,
-      },
+      makeDevice({
+        operational_state: 'offline',
+        hold: null,
+        health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
+        appium_node: {
+          ...makeDevice().appium_node!,
+          effective_state: 'error',
+        },
+      }),
+      {},
     );
 
     expect(triage).toMatchObject({
       tone: 'error',
-      title: 'Device health check failed',
-      action: { kind: 'open-control', label: 'Review Control' },
+      eyebrow: 'Connectivity',
+      title: 'Device connectivity lost',
     });
   });
 
-  it('prioritizes review_required card over every other branch', () => {
+  it('shows reserved card with run link', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        hold: 'reserved',
+        reservation: {
+          run_id: 'run-1',
+          run_name: 'my-test-run',
+          excluded: false,
+        } as DeviceDetail['reservation'],
+      }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'info',
+      eyebrow: 'Reserved',
+      title: 'Reserved by',
+      titleLink: { text: 'my-test-run', to: '/runs/run-1' },
+    });
+  });
+
+  it('shows busy+reserved with run context', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        operational_state: 'busy',
+        hold: 'reserved',
+        reservation: {
+          run_id: 'run-1',
+          run_name: 'my-test-run',
+          excluded: false,
+        } as DeviceDetail['reservation'],
+      }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'warn',
+      eyebrow: 'Busy',
+      title: 'Running a session — reserved by',
+      titleLink: { text: 'my-test-run' },
+    });
+  });
+
+  it('shows draining state for busy+maintenance', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        operational_state: 'busy',
+        hold: 'maintenance',
+        lifecycle_policy_summary: {
+          state: 'idle',
+          label: 'Idle',
+          detail: null,
+          backoff_until: null,
+          maintenance_reason: 'Operator entered maintenance',
+        },
+      }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'warn',
+      eyebrow: 'Draining',
+      title: 'Session active — maintenance pending',
+      detail: 'Operator entered maintenance',
+    });
+  });
+
+  it('shows verifying state', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({ operational_state: 'verifying' }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'warn',
+      eyebrow: 'Verifying',
+      title: 'Verification in progress',
+    });
+  });
+
+  it('shows busy state', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({ operational_state: 'busy' }),
+      { health: makeHealth() },
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'warn',
+      eyebrow: 'Busy',
+      title: 'Running a session',
+    });
+  });
+
+  it('prioritizes review_required over everything', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         review_required: true,
         review_reason: 'Recovery probe failed 5 times',
         review_set_at: '2026-05-17T15:00:00Z',
-        // Conditions that would otherwise drive a lower-tone card; review must win.
         operational_state: 'offline',
         hardware_health_status: 'warning',
         appium_node: null,
       }),
-      { health: makeHealth(), canTestSession: false },
+      { health: makeHealth() },
     );
 
     expect(triage).toMatchObject({
@@ -258,37 +342,51 @@ describe('deriveDeviceDetailTriage', () => {
       detail: 'Recovery probe failed 5 times',
       action: { kind: 'open-control' },
     });
-    expect(triage.evidence[0]).toMatchObject({ label: 'Reason', value: 'Recovery probe failed 5 times' });
-  });
-
-  it('falls back to a generic detail when review_reason is missing', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({ review_required: true, review_reason: null }),
-      { health: makeHealth(), canTestSession: false },
-    );
-    expect(triage.detail).toContain('Automated recovery hit the failure threshold');
   });
 
   it('keeps unsupported telemetry passive while surfacing stale telemetry', () => {
     const unsupported = deriveDeviceDetailTriage(
       makeDevice({ hardware_telemetry_state: 'unsupported' }),
-      { health: makeHealth(), canTestSession: false },
+      { health: makeHealth() },
     );
     const stale = deriveDeviceDetailTriage(
       makeDevice({ hardware_telemetry_state: 'stale' }),
-      { health: makeHealth(), canTestSession: false },
+      { health: makeHealth() },
     );
 
     expect(unsupported).toMatchObject({
       tone: 'ok',
       title: 'Device ready for sessions',
-      action: { kind: 'open-control' },
+      action: { kind: 'none' },
     });
-    expect(unsupported.evidence).toContainEqual({ label: 'Telemetry', value: 'No telemetry', tone: 'neutral' });
     expect(stale).toMatchObject({
       tone: 'warn',
       title: 'Hardware Stale',
       action: { kind: 'open-hardware-filter' },
+    });
+  });
+
+  it('shows connectivity lost with reservation context', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        operational_state: 'offline',
+        hold: 'reserved',
+        health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
+        appium_node: { ...makeDevice().appium_node!, effective_state: 'error' },
+        reservation: {
+          run_id: 'run-1',
+          run_name: 'my-run',
+          excluded: false,
+        } as DeviceDetail['reservation'],
+      }),
+      {},
+    );
+
+    expect(triage).toMatchObject({
+      tone: 'error',
+      eyebrow: 'Connectivity',
+      title: 'Device connectivity lost — reserved by',
+      titleLink: { text: 'my-run', to: '/runs/run-1' },
     });
   });
 });
