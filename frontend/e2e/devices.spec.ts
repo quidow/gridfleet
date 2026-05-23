@@ -1361,7 +1361,7 @@ test.describe('Devices page', () => {
     // Switch to Setup tab — node controls + capabilities + config editor
     await page.getByRole('button', { name: 'Setup', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Device Control' })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: 'Appium Node' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Appium Node', exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('heading', { name: 'Configuration' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('No config overrides')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('button', { name: 'Add override' })).toBeVisible({ timeout: 15_000 });
