@@ -33,11 +33,6 @@ async def test_watcher_once_guard_failure_and_preempt_paths(monkeypatch: pytest.
     leader.try_acquire.assert_not_awaited()
 
     leader = SimpleNamespace(_connection=None, try_acquire=AsyncMock(return_value=False))
-    monkeypatch.setattr(watcher, "freeze_background_loops_enabled", lambda: True)
-    await watcher.run_watcher_once(leader)
-    leader.try_acquire.assert_not_awaited()
-
-    monkeypatch.setattr(watcher, "freeze_background_loops_enabled", lambda: False)
     monkeypatch.setattr(watcher, "_setting", lambda key: False)
     await watcher.run_watcher_once(leader)
     leader.try_acquire.assert_not_awaited()

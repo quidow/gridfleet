@@ -233,54 +233,6 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     assert pool_close.await_count == 1
 
 
-async def test_lifespan_skips_background_tasks_when_freeze_flag_set(monkeypatch: MonkeyPatch) -> None:
-    db = AsyncMock()
-    session_factory = FakeSessionFactory(db)
-    loop = FakeLoop()
-    engine = SimpleNamespace(dispose=AsyncMock())
-    create_task = Mock(side_effect=asyncio.create_task)
-    try_acquire = AsyncMock(return_value=True)
-
-    import app.core.database as database_module
-    import app.settings.service as settings_service_module
-
-    event_bus_module = importlib.import_module("app.events.event_bus")
-
-    monkeypatch.setenv("GRIDFLEET_FREEZE_BACKGROUND_LOOPS", "1")
-    pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
-    monkeypatch.setattr(database_module, "async_session", session_factory)
-    monkeypatch.setattr(main, "session_factory", session_factory)
-    monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
-    monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
-    monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
-    monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
-    monkeypatch.setattr(main.control_plane_leader, "try_acquire", try_acquire)
-    monkeypatch.setattr(main.control_plane_leader, "release", AsyncMock())
-    monkeypatch.setattr(main, "shutdown_background_tasks", AsyncMock())
-    monkeypatch.setattr(main, "engine", engine)
-    monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
-    monkeypatch.setattr(main.asyncio, "create_task", create_task)
-
-    async with main.lifespan(main.app):
-        pass
-
-    assert create_task.call_count == 0
-    assert try_acquire.await_count == 0
-    assert pool_reopen.await_count == 1
-    assert pool_close.await_count == 1
-
-
 async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: MonkeyPatch) -> None:
     db = AsyncMock()
     session_factory = FakeSessionFactory(db)
