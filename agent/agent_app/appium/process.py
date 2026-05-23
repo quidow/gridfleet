@@ -204,6 +204,7 @@ def _build_env(
         for d in adapter_env.extra_path_dirs:
             if d and d not in env.get("PATH", ""):
                 extra_paths.append(d)
+        # setdefault: host env wins; workaround_env overrides later via update()
         for k, v in adapter_env.env_vars.items():
             env.setdefault(k, v)
 
