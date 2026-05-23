@@ -123,6 +123,8 @@ export function useIntakeCandidates(hostId: string | null) {
     queryKey: ['intake-candidates', hostId],
     queryFn: () => fetchIntakeCandidates(hostId!),
     enabled: !!hostId,
+    refetchInterval: 5_000,
+    staleTime: 2_500,
   });
 }
 
