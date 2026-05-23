@@ -226,3 +226,28 @@ def test_no_driver_specific_literals() -> None:
         lines.append("To fix: move driver-specific logic to driver-pack adapter.")
         lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
         raise AssertionError("\n".join(lines))
+
+
+def test_no_driver_specific_imports() -> None:
+    """Fail if any agent_app/ file imports banned driver-specific symbols."""
+    raw_violations = _collect_import_violations()
+
+    found: set[tuple[str, str]] = set()
+    details: dict[tuple[str, str], list[int]] = {}
+    for rel, key, lineno in raw_violations:
+        pair = (rel, key)
+        found.add(pair)
+        details.setdefault(pair, []).append(lineno)
+
+    import_known = {kv for kv in KNOWN_VIOLATIONS if kv[1].startswith("import:")}
+    new_violations = found - import_known
+
+    if new_violations:
+        lines = ["New driver-specific import(s) found (not in KNOWN_VIOLATIONS):"]
+        for rel, key in sorted(new_violations):
+            linenos = ", ".join(str(ln) for ln in sorted(details[(rel, key)]))
+            lines.append(f"  {rel}:{linenos} — {key}")
+        lines.append("")
+        lines.append("To fix: move driver-specific logic to driver-pack adapter.")
+        lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
+        raise AssertionError("\n".join(lines))
