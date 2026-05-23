@@ -8,5 +8,6 @@ export function useEventCatalog() {
     // Catalog is static at runtime — regenerated only on backend deploy.
     refetchInterval: false,
     staleTime: Infinity,
+    meta: { handleErrorLocally: true },
   });
 }

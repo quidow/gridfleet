@@ -18,6 +18,7 @@ export function useWebhooks() {
     queryFn: fetchWebhooks,
     refetchInterval: WEBHOOKS_POLL_MS,
     staleTime: WEBHOOKS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -58,6 +59,7 @@ export function useWebhookDeliveries(id: string, enabled = true, limit = 10) {
     enabled,
     refetchInterval: WEBHOOKS_POLL_MS,
     staleTime: WEBHOOKS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 

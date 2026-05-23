@@ -9,6 +9,7 @@ export function useGridStatus() {
     queryFn: fetchGridStatus,
     refetchInterval: connected ? 60_000 : 10_000,
     refetchOnWindowFocus: false,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -17,5 +18,6 @@ export function useHealth() {
     queryKey: ['health'],
     queryFn: fetchHealth,
     refetchInterval: 30_000,
+    meta: { handleErrorLocally: true },
   });
 }

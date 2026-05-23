@@ -18,6 +18,7 @@ export function usePlugins() {
     queryFn: fetchPlugins,
     refetchInterval: PLUGINS_POLL_MS,
     staleTime: PLUGINS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -52,6 +53,7 @@ export function useHostPlugins(hostId: string) {
     enabled: !!hostId,
     refetchInterval: PLUGINS_POLL_MS,
     staleTime: PLUGINS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 

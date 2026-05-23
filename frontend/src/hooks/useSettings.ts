@@ -9,6 +9,7 @@ export function useSettings() {
     queryFn: fetchSettings,
     refetchInterval: SETTINGS_POLL_MS,
     staleTime: SETTINGS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 

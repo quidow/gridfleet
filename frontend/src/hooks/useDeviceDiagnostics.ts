@@ -16,6 +16,7 @@ export function useDeviceDiagnosticSnapshots(deviceId: string, limit = 5) {
     refetchInterval: DIAGNOSTIC_SNAPSHOTS_POLL_MS,
     refetchIntervalInBackground: false,
     staleTime: DIAGNOSTIC_SNAPSHOTS_POLL_MS / 2,
+    meta: { handleErrorLocally: true },
   });
 }
 
@@ -31,6 +32,7 @@ export function useDeviceDiagnosticSnapshot(
     // Snapshot payload is immutable once written — no polling.
     refetchInterval: false,
     staleTime: Infinity,
+    meta: { handleErrorLocally: true },
   });
 }
 
