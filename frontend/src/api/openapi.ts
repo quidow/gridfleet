@@ -2845,6 +2845,8 @@ export interface components {
             detail?: string | null;
             /** Label */
             label: string;
+            /** Maintenance Reason */
+            maintenance_reason?: string | null;
             state: components["schemas"]["DeviceLifecyclePolicySummaryState"];
         };
         /**

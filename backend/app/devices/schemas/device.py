@@ -273,6 +273,7 @@ class DeviceLifecyclePolicySummaryRead(BaseModel):
     label: str
     detail: str | None = None
     backoff_until: datetime | None = None
+    maintenance_reason: str | None = None
 
 
 class DeviceHealthSummaryRead(BaseModel):
