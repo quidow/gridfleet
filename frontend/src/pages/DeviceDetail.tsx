@@ -24,8 +24,6 @@ import DeviceHealthPanel from '../components/deviceDetail/DeviceHealthPanel';
 import DeviceLifecyclePolicyPanel from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
 import DeviceHardwareTelemetryCard from '../components/deviceDetail/DeviceHardwareTelemetryCard';
 import DeviceInfoPanel from '../components/deviceDetail/DeviceInfoPanel';
-import DeviceStatStrip from '../components/deviceDetail/DeviceStatStrip';
-import { buildDeviceStatSummary } from '../components/deviceDetail/deviceStatStripSummary';
 import DeviceLogsPanel from '../components/deviceDetail/DeviceLogsPanel';
 import DeviceNodePanel from '../components/deviceDetail/DeviceNodePanel';
 import DeviceSessionOutcomeHeatmapPanel from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
@@ -242,9 +240,27 @@ export default function DeviceDetail() {
         summary={<DeviceDetailStatusPills device={device} />}
       />
 
-      <div className="mb-6">
-        <DeviceStatStrip summary={buildDeviceStatSummary(device.sessions)} />
-      </div>
+      {triage ? (
+        <div className="mb-2">
+          <TriageHero
+            triage={triage}
+            pending={triagePending}
+            verificationLabel={verificationAction?.buttonLabel}
+            onVerify={() => {
+              if (!verificationAction) {
+                return;
+              }
+              setSetupRequest({
+                title: verificationAction.title,
+                handoffMessage: verificationAction.handoffMessage,
+              });
+            }}
+                onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
+                onStartNode={() => startNode.mutate(device.id)}
+                onExitMaintenance={() => exitMaintenance.mutate(device.id)}
+              />
+        </div>
+      ) : null}
 
       <Tabs
         tabs={TABS as unknown as { id: string; label: string }[]}
@@ -256,26 +272,6 @@ export default function DeviceDetail() {
       <div className="fade-in-stagger flex flex-col gap-6">
         {tab === 'triage' ? (
           <>
-            {triage ? (
-              <TriageHero
-                triage={triage}
-                pending={triagePending}
-                verificationLabel={verificationAction?.buttonLabel}
-                onVerify={() => {
-                  if (!verificationAction) {
-                    return;
-                  }
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }}
-                onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
-                onStartNode={() => startNode.mutate(device.id)}
-                onExitMaintenance={() => exitMaintenance.mutate(device.id)}
-              />
-            ) : null}
-
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
               <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
                 <SectionErrorBoundary scope="device-info-panel">
