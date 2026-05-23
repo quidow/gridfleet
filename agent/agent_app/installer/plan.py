@@ -47,8 +47,6 @@ class InstallConfig:
     grid_subscribe_url: str = "tcp://localhost:4443"
     grid_node_port_start: int = 5555
     advertise_ip: str | None = None
-    enable_web_terminal: bool = False
-    terminal_token: str | None = None
 
     def __post_init__(self) -> None:
         has_username = bool(self.manager_auth_username)
@@ -59,8 +57,6 @@ class InstallConfig:
         has_api_password = bool(self.api_auth_password)
         if has_api_username != has_api_password:
             raise ValueError("AGENT_API_AUTH_USERNAME and AGENT_API_AUTH_PASSWORD must be set together.")
-        if self.enable_web_terminal and not self.terminal_token:
-            raise ValueError("AGENT_TERMINAL_TOKEN must be set when AGENT_ENABLE_WEB_TERMINAL=true.")
 
     @property
     def resolved_bin_path(self) -> str:
@@ -243,10 +239,6 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
                 f"AGENT_API_AUTH_PASSWORD={api_password}",
             ]
         )
-    if config.enable_web_terminal:
-        terminal_token = "<redacted>" if redact_secrets else config.terminal_token
-        lines.append("AGENT_ENABLE_WEB_TERMINAL=true")
-        lines.append(f"AGENT_TERMINAL_TOKEN={terminal_token}")
     return "\n".join(lines) + "\n"
 
 
@@ -292,8 +284,6 @@ def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfi
         grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
         grid_node_port_start=_env_int(values, "AGENT_GRID_NODE_PORT_START", base.grid_node_port_start),
         advertise_ip=values.get("AGENT_ADVERTISE_IP", base.advertise_ip),
-        enable_web_terminal=values.get("AGENT_ENABLE_WEB_TERMINAL", str(base.enable_web_terminal)).lower() == "true",
-        terminal_token=values.get("AGENT_TERMINAL_TOKEN", base.terminal_token),
     )
 
 
@@ -376,9 +366,6 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
     if config.api_auth_username:
         entries["AGENT_API_AUTH_USERNAME"] = config.api_auth_username
         entries["AGENT_API_AUTH_PASSWORD"] = config.api_auth_password or ""
-    if config.enable_web_terminal:
-        entries["AGENT_ENABLE_WEB_TERMINAL"] = "true"
-        entries["AGENT_TERMINAL_TOKEN"] = config.terminal_token or ""
 
     lines: list[str] = []
     for key, value in entries.items():
@@ -420,7 +407,6 @@ Settings:
   Grid publish URL: {config.grid_publish_url}
   Grid subscribe URL: {config.grid_subscribe_url}
   Advertise IP: {config.advertise_ip or "<auto-detect>"}
-  Web terminal: {"enabled" if config.enable_web_terminal else "disabled"}
 
 Detected tools:
   Node bin dir: {node_line}
@@ -453,6 +439,4 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
         grid_subscribe_url=config.grid_subscribe_url,
         grid_node_port_start=config.grid_node_port_start,
         advertise_ip=config.advertise_ip,
-        enable_web_terminal=config.enable_web_terminal,
-        terminal_token="<redacted>" if config.terminal_token else None,
     )

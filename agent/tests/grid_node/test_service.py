@@ -205,6 +205,32 @@ async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence()
 
 
 @pytest.mark.asyncio
+async def test_reregister_with_caps_update_clears_drain_flag() -> None:
+    """A relay that previously cooled down (``mark_drain``) and is now coming
+    back to accepting=True via ``reregister_with_caps_update`` must have its
+    local ``_drain`` flag cleared. ``NodeState._drain`` latches ``True``
+    once set, so without an explicit clear the relay's local
+    ``reserve()`` guard would keep rejecting hub reservations even after the
+    re-NODE_ADDED returned the node to the hub registry.
+    """
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    service.state.mark_drain()
+    assert service.state.snapshot().drain is True
+
+    await service.reregister_with_caps_update(
+        updates={"gridfleet:run_id": "run-after-cooldown"},
+        drain_grace_sec=0,
+    )
+
+    assert service.state.snapshot().drain is False, "reregister must un-drain the local NodeState"
+    # Sanity: NodeState.reserve no longer rejects on drain.
+    reservation = service.state.reserve({"platformName": "Android"})
+    assert reservation.id
+
+
+@pytest.mark.asyncio
 async def test_drain_to_block_new_sessions_publishes_drain_only() -> None:
     """``drain_to_block_new_sessions`` flips the relay into Selenium DRAINING
     state — the hub stops routing new sessions to the node — without removing

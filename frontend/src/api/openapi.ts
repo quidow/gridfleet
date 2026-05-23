@@ -603,6 +603,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/devices/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export all registered devices as a portable JSON bundle */
+        get: operations["export_devices_api_devices_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit a previously-validated device import bundle */
+        post: operations["import_commit_api_devices_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/import/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a device import bundle and return a per-row preview */
+        post: operations["import_validate_api_devices_import_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read-only device inventory export (JSON or CSV) */
+        get: operations["inventory_api_devices_inventory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/devices/verification-jobs": {
         parameters: {
             query?: never;
@@ -1409,23 +1477,6 @@ export interface paths {
         put?: never;
         /** Create Host */
         post: operations["create_host_api_hosts_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/hosts/capabilities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Host Capabilities */
-        get: operations["host_capabilities_api_hosts_capabilities_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2753,10 +2804,16 @@ export interface components {
         };
         /** DeviceHealthSummaryRead */
         DeviceHealthSummaryRead: {
+            /** Connectivity Status */
+            connectivity_status?: ("ok" | "failed") | null;
             /** Healthy */
             healthy: boolean | null;
             /** Last Checked At */
             last_checked_at?: string | null;
+            /** Node Status */
+            node_status?: string | null;
+            /** Session Status */
+            session_status?: ("passed" | "failed") | null;
             /** Summary */
             summary: string;
         };
@@ -2788,6 +2845,8 @@ export interface components {
             detail?: string | null;
             /** Label */
             label: string;
+            /** Maintenance Reason */
+            maintenance_reason?: string | null;
             state: components["schemas"]["DeviceLifecyclePolicySummaryState"];
         };
         /**
@@ -3450,6 +3509,63 @@ export interface components {
         EventCatalogRead: {
             /** Events */
             events: components["schemas"]["EventCatalogEntryRead"][];
+        };
+        /** ExportBundle */
+        ExportBundle: {
+            /** Devices */
+            devices: components["schemas"]["ExportedDevice"][];
+            /**
+             * Exported At
+             * Format: date-time
+             */
+            exported_at: string;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: 1;
+            /** Source Instance */
+            source_instance?: string | null;
+        };
+        /** ExportedDevice */
+        ExportedDevice: {
+            /**
+             * Auto Manage
+             * @default true
+             */
+            auto_manage: boolean;
+            /** Connection Target */
+            connection_target?: string | null;
+            connection_type: components["schemas"]["ConnectionType"];
+            /** Device Config */
+            device_config?: {
+                [key: string]: unknown;
+            };
+            device_type: components["schemas"]["DeviceType"];
+            /** Identity Scheme */
+            identity_scheme: string;
+            /**
+             * Identity Scope
+             * @enum {string}
+             */
+            identity_scope: "global" | "host";
+            /** Identity Value */
+            identity_value: string;
+            /** Name */
+            name: string;
+            original_host: components["schemas"]["OriginalHost"];
+            /** Pack Id */
+            pack_id: string;
+            /** Platform Id */
+            platform_id: string;
+            /** Tags */
+            tags?: {
+                [key: string]: string;
+            };
+            /** Test Data */
+            test_data?: {
+                [key: string]: unknown;
+            };
         };
         /** FeatureActionOut */
         FeatureActionOut: {
@@ -4172,6 +4288,16 @@ export interface components {
          * @enum {string}
          */
         HostStatus: "online" | "offline" | "pending";
+        /** HostSuggestion */
+        HostSuggestion: {
+            /** Hostname */
+            hostname: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** HostToolStatusRead */
         HostToolStatusRead: {
             /** Go Ios */
@@ -4183,6 +4309,93 @@ export interface components {
             /** Node Provider */
             node_provider?: string | null;
         };
+        /** ImportCommitCreatedRow */
+        ImportCommitCreatedRow: {
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            /** Index */
+            index: number;
+        };
+        /** ImportCommitFailedRow */
+        ImportCommitFailedRow: {
+            /** Index */
+            index: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ImportCommitRequest */
+        ImportCommitRequest: {
+            bundle: components["schemas"]["ExportBundle"];
+            /** Bundle Hash */
+            bundle_hash: string;
+            /** Mappings */
+            mappings: components["schemas"]["ImportMapping"][];
+        };
+        /** ImportCommitResult */
+        ImportCommitResult: {
+            /** Created */
+            created: components["schemas"]["ImportCommitCreatedRow"][];
+            /** Failed */
+            failed: components["schemas"]["ImportCommitFailedRow"][];
+            /** Skipped */
+            skipped: components["schemas"]["ImportCommitSkippedRow"][];
+        };
+        /** ImportCommitSkippedRow */
+        ImportCommitSkippedRow: {
+            /** Index */
+            index: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ImportMapping */
+        ImportMapping: {
+            /** Index */
+            index: number;
+            /**
+             * Target Host Id
+             * Format: uuid
+             */
+            target_host_id: string;
+        };
+        /** ImportPreview */
+        ImportPreview: {
+            /** Available Hosts */
+            available_hosts: components["schemas"]["HostSuggestion"][];
+            /** Bundle Hash */
+            bundle_hash: string;
+            /**
+             * Exported At
+             * Format: date-time
+             */
+            exported_at: string;
+            /** Rows */
+            rows: components["schemas"]["ImportPreviewRow"][];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: 1;
+            /** Source Instance */
+            source_instance?: string | null;
+        };
+        /** ImportPreviewRow */
+        ImportPreviewRow: {
+            device: components["schemas"]["ExportedDevice"];
+            host_suggestion?: components["schemas"]["HostSuggestion"] | null;
+            /** Index */
+            index: number;
+            /** Issues */
+            issues?: string[];
+            status: components["schemas"]["ImportRowStatus"];
+        };
+        /**
+         * ImportRowStatus
+         * @enum {string}
+         */
+        ImportRowStatus: "valid_new" | "conflict_skip" | "duplicate_in_bundle" | "invalid";
         /** IntakeCandidateRead */
         IntakeCandidateRead: {
             /**
@@ -4238,6 +4451,11 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * InventoryFormat
+         * @enum {string}
+         */
+        InventoryFormat: "csv" | "json";
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
             /** Items */
@@ -4332,6 +4550,13 @@ export interface components {
          * @enum {string}
          */
         OSType: "linux" | "macos";
+        /** OriginalHost */
+        OriginalHost: {
+            /** Host Id */
+            host_id?: string | null;
+            /** Hostname */
+            hostname: string;
+        };
         /** PackCatalog */
         PackCatalog: {
             /** Packs */
@@ -7565,6 +7790,266 @@ export interface operations {
             };
         };
     };
+    export_devices_api_devices_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportBundle"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    import_commit_api_devices_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportCommitResult"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_validate_api_devices_import_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExportBundle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPreview"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inventory_api_devices_inventory_get: {
+        parameters: {
+            query?: {
+                format?: components["schemas"]["InventoryFormat"];
+                columns?: string | null;
+                pack_id?: string | null;
+                platform_id?: string | null;
+                status?: ("available" | "busy" | "offline" | "maintenance" | "reserved" | "verifying") | null;
+                host_id?: string | null;
+                identity_value?: string | null;
+                connection_target?: string | null;
+                device_type?: components["schemas"]["DeviceType"] | null;
+                connection_type?: components["schemas"]["ConnectionType"] | null;
+                os_version?: string | null;
+                os_version_display?: string | null;
+                search?: string | null;
+                hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
+                hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
+                needs_attention?: boolean | null;
+                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "hold" | "created_at";
+                sort_dir?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_device_verification_job_api_devices_verification_jobs_post: {
         parameters: {
             query?: never;
@@ -10187,64 +10672,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    host_capabilities_api_hosts_capabilities_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: boolean;
-                    };
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

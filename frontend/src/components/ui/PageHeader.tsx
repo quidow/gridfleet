@@ -69,7 +69,7 @@ export default function PageHeader({ title, subtitle, updatedAt, summary, action
   const description = renderDescription(subtitle, updatedLabel);
 
   return (
-    <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 className="heading-page">{title}</h1>
         {description && <p className="mt-1 text-xs text-text-2">{description}</p>}

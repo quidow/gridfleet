@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { ConfirmDialog, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
-import DriverPackPanel from '../components/settings/DriverPackPanel';
+import BackupRestorePanel from '../components/settings/BackupRestorePanel';
 import PluginRegistryPanel from '../components/settings/PluginRegistryPanel';
 import SettingsCategoryPanel from '../components/settings/SettingsCategoryPanel';
 import WebhookRegistryPanel from '../components/settings/WebhookRegistryPanel';
@@ -15,15 +15,15 @@ const TABS = [
   { id: 'devices', label: 'Device Defaults', section: 'System' },
   { id: 'reservations', label: 'Reservations', section: 'System' },
   { id: 'retention', label: 'Data Retention', section: 'System' },
+  { id: 'backup', label: 'Backup & Restore', section: 'System' },
   { id: 'notifications', label: 'Notifications', section: 'Integrations' },
   { id: 'webhooks', label: 'Webhooks', section: 'Integrations' },
   { id: 'plugins', label: 'Appium Plugins', section: 'Extensions' },
-  { id: 'driver-packs', label: 'Drivers', section: 'Extensions' },
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);
 const REGISTRY_TABS = new Set(['plugins', 'webhooks']);
-const CUSTOM_PANEL_TABS = new Set(['driver-packs']);
+const CUSTOM_PANEL_TABS = new Set(['backup']);
 
 export default function Settings() {
   usePageTitle('Settings');
@@ -51,7 +51,7 @@ export default function Settings() {
         ) : null}
         {tab === 'plugins' ? <PluginRegistryPanel /> : null}
         {tab === 'webhooks' ? <WebhookRegistryPanel /> : null}
-        {tab === 'driver-packs' ? <DriverPackPanel /> : null}
+        {tab === 'backup' ? <BackupRestorePanel /> : null}
       </div>
 
       <ConfirmDialog

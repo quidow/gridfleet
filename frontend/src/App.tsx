@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
@@ -29,6 +29,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="devices" element={<Devices />} />
+          <Route path="devices/import" element={<Navigate to="/settings?tab=backup" replace />} />
           <Route path="devices/:id" element={<DeviceDetail />} />
           <Route path="hosts" element={<Hosts />} />
           <Route path="hosts/:id" element={<HostDetail />} />

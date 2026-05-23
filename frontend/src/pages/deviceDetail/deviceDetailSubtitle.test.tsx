@@ -71,21 +71,7 @@ describe('buildDeviceDetailSubtitleNode', () => {
     expect(screen.queryByTestId('emulator-state-badge')).not.toBeInTheDocument();
   });
 
-  it('renders the ReservationPill when reservation is set', () => {
-    render(
-      <MemoryRouter>
-        <p>{buildDeviceDetailSubtitleNode(
-          baseDevice({
-            reservation: { run_id: 'r1', run_name: 'n1', excluded: false } as DeviceDetail['reservation'],
-          }),
-          'host-01',
-        )}</p>
-      </MemoryRouter>,
-    );
-    expect(screen.getByRole('link', { name: /Reserved by n1/ })).toBeInTheDocument();
-  });
-
-  it('omits the ReservationPill when reservation is null', () => {
+  it('does not render reservation info in subtitle (moved to triage card)', () => {
     render(
       <MemoryRouter>
         <p>{buildDeviceDetailSubtitleNode(baseDevice(), 'host-01')}</p>

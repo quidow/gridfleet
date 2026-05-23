@@ -65,12 +65,23 @@ async def write_desired_state(
     transition_deadline: datetime | None = None,
     actor: str | None = None,
     reason: str | None = None,
+    transition_token_natural_clear: bool = False,
 ) -> None:
-    """Write desired Appium state on an already locked node row. Caller commits."""
+    """Write desired Appium state on an already locked node row. Caller commits.
+
+    ``transition_token_natural_clear`` opts callers out of the
+    ``APPIUM_TRANSITION_TOKEN_OVERRIDDEN`` metric for the case where an
+    expired transition token is being cleared by the reconciler — the old
+    token was not contended for by a competing writer, the deadline simply
+    elapsed. Counting that as an override pollutes the override dashboard
+    once per reconciler tick that lands on an expired deadline.
+    """
     if target == AppiumDesiredState.stopped and desired_port is not None:
         raise ValueError("desired_port must be None when target=stopped")
     if transition_token is not None and transition_deadline is None:
         raise ValueError("transition_deadline is required when transition_token is set")
+    if transition_token_natural_clear and transition_token is not None:
+        raise ValueError("transition_token_natural_clear requires transition_token to be None")
 
     old_state = node.desired_state
     old_token = node.transition_token
@@ -80,7 +91,7 @@ async def write_desired_state(
     if old_state == target and old_token == transition_token and old_port == new_port:
         return
 
-    if old_token is not None and old_token != transition_token:
+    if old_token is not None and old_token != transition_token and not transition_token_natural_clear:
         losing_source = await _lookup_token_source(db, node.device_id, old_token)
         metrics_recorders.APPIUM_TRANSITION_TOKEN_OVERRIDDEN.labels(
             losing_source=losing_source,

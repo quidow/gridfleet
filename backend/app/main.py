@@ -50,7 +50,6 @@ from app.grid import service as grid_service
 from app.grid.event_bus_loop import event_bus_subscriber_loop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
-from app.hosts import router_terminal as host_terminal
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.jobs import queue as job_queue
@@ -312,6 +311,14 @@ app.include_router(appium_node_routers.admin.router, dependencies=[Depends(auth_
 app.include_router(
     device_routers.bulk.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )  # Must be before devices.router for /api/devices/bulk/* route precedence
+app.include_router(
+    device_routers.portability.router,
+    dependencies=[Depends(auth_dependencies.require_any_auth)],
+)  # Must be before catalog for /api/devices/export route precedence over /{device_id}
+app.include_router(
+    device_routers.inventory.router,
+    dependencies=[Depends(auth_dependencies.require_any_auth)],
+)  # Must be before catalog for /api/devices/inventory route precedence over /{device_id}
 app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(
     device_routers.diagnostics.router,
@@ -322,7 +329,6 @@ app.include_router(
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(host_terminal.router)  # WebSocket-only; auth handled inside the WS handler
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

@@ -430,14 +430,14 @@ test.describe('Settings Page', () => {
     for (const label of [
       'General',
       'Appium & Grid',
-      'Notifications',
-      'Device Defaults',
       'Agent',
+      'Device Defaults',
       'Reservations',
       'Data Retention',
-      'Appium Plugins',
-      'Drivers',
+      'Backup & Restore',
+      'Notifications',
       'Webhooks',
+      'Appium Plugins',
     ]) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
@@ -486,9 +486,8 @@ test.describe('Settings Page', () => {
     await page.getByRole('button', { name: 'Data Retention' }).click();
     await expect(page.locator('input[name="retention.sessions_days"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Drivers' }).click();
-    await expect(page.getByText('Driver packs are now managed from their own section.')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'View All Driver Packs' })).toHaveAttribute('href', '/drivers');
+    await page.getByRole('button', { name: 'Backup & Restore' }).click();
+    await expect(page.getByText('Export configuration')).toBeVisible();
 
     await page.getByRole('button', { name: 'Webhooks' }).click();
     await expect(page.getByRole('button', { name: 'Add Webhook' })).toBeVisible();
@@ -562,9 +561,9 @@ test.describe('Settings Page', () => {
   });
 
   test('settings tab is URL-addressable and restores on reload', async ({ page }) => {
-    await page.goto('/settings?tab=driver-packs');
+    await page.goto('/settings?tab=backup');
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('Driver packs are now managed from their own section.')).toBeVisible();
+    await expect(page.getByText('Export configuration')).toBeVisible();
 
     // Switch to Webhooks and URL should update
     await page.getByRole('button', { name: 'Webhooks', exact: true }).click();

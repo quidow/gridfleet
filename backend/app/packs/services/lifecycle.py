@@ -63,14 +63,31 @@ async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dic
 
 
 async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
-    pack = await session.get(DriverPack, pack_id)
+    # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
+    # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
+    # blocks here until any in-flight ``create_run`` transaction that
+    # observed ``state=enabled`` either commits its reservation or aborts.
+    # Once we acquire the lock, the recount below sees any reservation
+    # those transactions just committed.
+    locked_stmt = (
+        select(DriverPack).where(DriverPack.id == pack_id).with_for_update().execution_options(populate_existing=True)
+    )
+    pack = (await session.execute(locked_stmt)).scalar_one_or_none()
     if pack is None:
         raise LookupError(f"pack {pack_id!r} not found")
     if pack.state != PackState.draining:
         return pack
     counts = await count_active_work_for_pack(session, pack_id)
     if counts["active_runs"] == 0 and counts["live_sessions"] == 0:
-        pack.state = PackState.disabled
+        # Recount immediately before the state write. ``count_active_work_for_pack``
+        # reads ``DeviceReservation``/``Session`` without locking those rows,
+        # so under READ COMMITTED each statement in this transaction sees a
+        # fresh snapshot — the recount surfaces any reservations committed
+        # after the first count (defensive backstop for paths that did not
+        # take the ``FOR SHARE`` lock).
+        recheck = await count_active_work_for_pack(session, pack_id)
+        if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
+            pack.state = PackState.disabled
     return pack
 
 
