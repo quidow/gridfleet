@@ -1,6 +1,6 @@
-import { useState } from "react";
-
-import type { ExportBundle } from "../../api/devicesPortability";
+import { useState } from 'react';
+import SectionHeader from '../ui/SectionHeader';
+import type { ExportBundle } from '../../api/devicesPortability';
 
 interface Props {
   onBundle: (bundle: ExportBundle) => void;
@@ -26,20 +26,33 @@ export function ImportUploadStep({ onBundle }: Props) {
 
   return (
     <div className="space-y-3">
-      <label className="block text-sm font-medium" htmlFor="import-bundle">
-        Device bundle (JSON)
-      </label>
-      <input
-        id="import-bundle"
-        type="file"
-        accept="application/json"
-        aria-label="bundle"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void handleFile(file);
-        }}
+      <SectionHeader
+        level={3}
+        title="Step 1 · Upload bundle"
+        description="Select a portability bundle exported from another GridFleet instance."
       />
-      {error && <p className="text-sm text-danger-foreground">{error}</p>}
+      <label className="grid gap-1 text-sm" htmlFor="import-bundle">
+        <span className="font-medium text-text-2">Device bundle (JSON)</span>
+        <input
+          id="import-bundle"
+          type="file"
+          accept="application/json"
+          aria-label="bundle"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleFile(file);
+          }}
+          className="rounded border border-border bg-surface-2 px-2 py-1 text-sm text-text-1 file:mr-2 file:rounded file:border-0 file:bg-accent file:px-2 file:py-0.5 file:text-xs file:font-medium file:text-accent-on hover:file:bg-accent-hover"
+        />
+      </label>
+      {error && (
+        <p
+          role="alert"
+          className="rounded border border-danger-foreground bg-danger-soft px-3 py-2 text-sm text-danger-foreground"
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }
