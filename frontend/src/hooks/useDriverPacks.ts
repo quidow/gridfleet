@@ -5,6 +5,7 @@ import {
   fetchHostDriverPacks,
   setDriverPackState,
 } from '../api/driverPacks';
+import { shouldThrowOnError } from '../queryDefaults';
 import type { DriverPack } from '../types/driverPacks';
 
 function platformKey(packId: string, platformId: string): string {
@@ -37,6 +38,7 @@ export function buildPlatformIdLabelMap(packs: DriverPack[]): Map<string, string
 const fallbackQueryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      throwOnError: shouldThrowOnError,
       retry: false,
     },
   },

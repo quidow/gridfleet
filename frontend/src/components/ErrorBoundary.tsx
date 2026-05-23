@@ -89,13 +89,7 @@ class ErrorBoundaryImpl extends Component<ErrorBoundaryProps, ErrorBoundaryState
 type BoundaryWrapperProps = Omit<ErrorBoundaryProps, 'level' | 'onReset'>;
 
 export function PageErrorBoundary(props: BoundaryWrapperProps) {
-  return (
-    <QueryErrorResetBoundary>
-      {({ reset }) => (
-        <ErrorBoundaryImpl {...props} level="page" onReset={reset} />
-      )}
-    </QueryErrorResetBoundary>
-  );
+  return <ErrorBoundaryImpl {...props} level="page" />;
 }
 
 export function SectionErrorBoundary(props: BoundaryWrapperProps) {
