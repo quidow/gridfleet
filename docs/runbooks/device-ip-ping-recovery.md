@@ -17,7 +17,7 @@ The check only activates when:
 
 - The device has a non-null `ip_address` (operator-set in Settings → Device → IP)
 - The device's pack manifest has `device_checks.ip_ping` enabled (opt-in via `applies_when`)
-- The device is not in `held` state or `auto_manage=False`
+- The device is not in `held` state
 
 ## Configuration Settings
 
@@ -134,7 +134,6 @@ Should show `0.0` again (or no row if the device recovered fully).
 
 **Fix:**
 - Raise `device_checks.ip_ping.consecutive_fail_threshold` to `5` or higher (requires more misses before flipping).
-- Or set the device's `auto_manage=False` to exclude it from automatic lifecycle policy enforcement.
 - Or disable IP ping entirely for that device by removing it from the pack manifest's `applies_when` rules.
 
 ### All USB devices flip offline when you run the smoke test

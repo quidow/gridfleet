@@ -195,9 +195,7 @@ sequenceDiagram
     else refused below threshold
         Process->>Pg: increment AppiumNode.consecutive_health_failures
         Process->>Pg: health_running false and mark_offline when count reaches max
-    else refused at threshold and auto_manage off
-        Process->>Pg: recovery_suppressed and node.state error
-    else refused at threshold and auto_manage on
+    else refused at threshold
         Process->>Restart: restart_node_via_agent
         Restart->>Agent: POST /agent/appium/stop
         alt stop acknowledged and start succeeds

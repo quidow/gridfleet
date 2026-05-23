@@ -105,7 +105,6 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | `POST` | `/api/devices/bulk/start-nodes` | Start nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/stop-nodes` | Stop nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/restart-nodes` | Restart nodes for many devices | `BulkDeviceIds` | `BulkOperationResult` |
-| `POST` | `/api/devices/bulk/set-auto-manage` | Toggle `auto_manage` in bulk | `BulkAutoManageUpdate` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/update-tags` | Merge or replace tags in bulk | `BulkTagsUpdate` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/delete` | Delete many devices | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/enter-maintenance` | Enter maintenance in bulk | `BulkMaintenanceEnter` | `BulkOperationResult` |

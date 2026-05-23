@@ -184,7 +184,7 @@ The public summary returned by `/api/devices` is computed by `app.services.devic
 ### Three rules the writers must obey
 
 1. **`update_device_checks` and `update_session_viability` take typed values.** `update_device_checks(healthy: bool, ...)` requires a real bool. Indeterminate probe results must short-circuit before the call. See `app.services.agent_probe_result.ProbeResult`.
-2. **Cross-link to operational state is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness, `auto_manage`, and node state allow. Writers use `set_operational_state` for these paths and never touch `hold`.
+2. **Cross-link to operational state is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness and node state allow. Writers use `set_operational_state` for these paths and never touch `hold`.
 3. **No public health KV.** The legacy health-summary and node-health counter namespaces no longer exist. `control_plane_state_store` still exists for ephemeral loop coordination and diagnostics, such as heartbeat failure counts, appium-process snapshots, connectivity "previously offline" markers, and session-viability in-progress state. Those entries are not the public device health source of truth.
 
 ### Health → operational-state cross-link
@@ -192,7 +192,7 @@ The public summary returned by `/api/devices` is computed by `app.services.devic
 Two cross-links exist intentionally:
 
 - `_mark_offline_for_failed_signal` — when a definitive failure arrives and the device is currently `available`, drop it to `offline` so the UI does not advertise an unhealthy device for allocation.
-- `_restore_available_for_healthy_signal` — when the derived health projection recovers (node running + checks healthy + readiness OK + auto_manage on) and the device is `offline`, lift it back to `available`.
+- `_restore_available_for_healthy_signal` — when the derived health projection recovers (node running + checks healthy + readiness OK) and the device is `offline`, lift it back to `available`.
 
 Both run under the device row lock and only act on `operational_state` (`available` only ↔ `offline`). They do not change `hold`, so operator/run intent is preserved.
 
