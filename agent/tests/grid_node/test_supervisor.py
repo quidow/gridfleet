@@ -160,32 +160,29 @@ async def test_supervisor_reports_errored_after_heartbeat_failure() -> None:
 
 
 class HeartbeatFlakyService(RecordingService):
-    """Heartbeat raises only on the FIRST run; subsequent restarts succeed."""
-
-    def __init__(self) -> None:
+    def __init__(self, *, fail_first_heartbeat: bool) -> None:
         super().__init__()
-        self.heartbeats_before_recovery = 1
-        self.restart_count_via_factory = 0
+        self._fail_first_heartbeat = fail_first_heartbeat
 
     async def run_heartbeat_once(self) -> None:
         self.heartbeat_calls += 1
-        if self.heartbeat_calls <= self.heartbeats_before_recovery:
+        if self._fail_first_heartbeat and self.heartbeat_calls == 1:
             raise RuntimeError("heartbeat flap")
 
 
 class HeartbeatFlakyServiceFactory:
+    """Mints a single failing service then healthy ones, so the supervisor
+    settles instead of cycling — used to assert single-flap recovery."""
+
     def __init__(self) -> None:
-        self.created = 0
         self.services: list[HeartbeatFlakyService] = []
 
+    @property
+    def created(self) -> int:
+        return len(self.services)
+
     def __call__(self) -> HeartbeatFlakyService:
-        self.created += 1
-        service = HeartbeatFlakyService()
-        if self.created > 1:
-            # The freshly-spawned service is the post-restart instance; let
-            # its heartbeats succeed so the supervisor settles into steady
-            # state instead of cycling indefinitely.
-            service.heartbeats_before_recovery = 0
+        service = HeartbeatFlakyService(fail_first_heartbeat=not self.services)
         self.services.append(service)
         return service
 
@@ -201,7 +198,8 @@ async def test_supervisor_restarts_service_when_heartbeat_raises() -> None:
     exhausted within the window.
     """
     factory = HeartbeatFlakyServiceFactory()
-    handle = start_grid_node_supervisor(factory=factory, clock=FakeClock(), config=_config(heartbeat_sec=0.01))
+    clock = FakeClock()
+    handle = start_grid_node_supervisor(factory=factory, clock=clock, config=_config(heartbeat_sec=0.01))
     await handle.start()
     await handle.wait_until_running()
     for _ in range(200):
@@ -211,6 +209,12 @@ async def test_supervisor_restarts_service_when_heartbeat_raises() -> None:
     assert factory.created >= 2, "supervisor did not respawn service after heartbeat failure"
     assert factory.services[0].stop_called is True, "supervisor did not stop dead service before restart"
     assert handle.errored is False
+    # Backoff must space restart attempts to prevent a tight crash loop — a
+    # regression that drops ``await self._clock.sleep(backoff.next_delay())``
+    # from the heartbeat-fail path would skip this entry entirely.
+    assert any(delay >= 1.0 for delay in clock.sleeps), (
+        f"supervisor did not honor backoff sleep before restart; recorded sleeps: {clock.sleeps}"
+    )
     await handle.stop()
 
 
