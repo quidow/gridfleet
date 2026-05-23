@@ -20,7 +20,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     host_id: 'host-1',
     operational_state: 'available', hold: null,
     tags: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,

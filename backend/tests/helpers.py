@@ -66,7 +66,6 @@ async def create_device_record(
     manufacturer: str | None = None,
     model: str | None = None,
     tags: dict[str, Any] | None = None,
-    auto_manage: bool = True,
     ip_address: str | None = None,
     roku_password: str | None = None,
     test_data: dict[str, Any] | None = None,
@@ -126,7 +125,6 @@ async def create_device_record(
         manufacturer=manufacturer,
         model=model,
         tags=tags,
-        auto_manage=auto_manage,
         device_config=device_config,
         test_data=resolved_test_data,
     )

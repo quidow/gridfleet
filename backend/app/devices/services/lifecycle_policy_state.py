@@ -152,10 +152,10 @@ def record_manual_recovered(next_state: dict[str, Any]) -> None:
 MAINTENANCE_HOLD_SUPPRESSION_REASON = "Device is in maintenance mode"
 
 # Recorded by ``attempt_auto_recovery`` when blocked by an active client
-# session. Unlike other suppression reasons (auto-manage disabled, maintenance,
-# cooldown, etc.) this one is transient by definition — the moment the session
-# ends, the blocker is gone. Held in a constant so ``handle_session_finished``
-# can clear it without re-stating the literal.
+# session. Unlike other suppression reasons (maintenance, cooldown, etc.)
+# this one is transient by definition — the moment the session ends, the
+# blocker is gone. Held in a constant so ``handle_session_finished`` can
+# clear it without re-stating the literal.
 CLIENT_SESSION_RUNNING_SUPPRESSION_REASON = "A client session is still running"
 
 

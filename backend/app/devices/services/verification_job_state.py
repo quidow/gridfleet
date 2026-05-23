@@ -38,11 +38,8 @@ def enum_value(value: object) -> object:
     return getattr(value, "value", value)
 
 
-def should_keep_verified_node_running(payload: dict[str, Any], *, existing_auto_manage: bool | None = None) -> bool:
-    auto_manage = payload.get("auto_manage")
-    if auto_manage is None:
-        return True if existing_auto_manage is None else existing_auto_manage
-    return bool(auto_manage)
+def should_keep_verified_node_running() -> bool:
+    return True
 
 
 def now_iso() -> str:

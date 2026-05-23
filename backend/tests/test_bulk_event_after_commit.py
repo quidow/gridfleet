@@ -13,21 +13,6 @@ from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-async def test_bulk_set_auto_manage_queues_summary(
-    db_session: AsyncSession,
-    event_bus_capture: list[tuple[str, dict[str, Any]]],
-) -> None:
-    _, device = await seed_host_and_device(db_session, identity="bulk-auto-1")
-    event_bus_capture.clear()
-
-    await bulk_service.bulk_set_auto_manage(db_session, [device.id], auto_manage=False)
-    await settle_after_commit_tasks()
-
-    summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
-    assert len(summary) == 1
-    assert summary[0]["operation"] == "set_auto_manage"
-
-
 async def test_bulk_update_tags_queues_summary(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],

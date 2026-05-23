@@ -236,18 +236,6 @@ async def test_string_setting_allowed_values(client: AsyncClient) -> None:
     await client.post("/api/settings/reset/notifications.toast_severity_threshold")
 
 
-async def test_bool_setting(client: AsyncClient) -> None:
-    resp = await client.put(
-        "/api/settings/devices.default_auto_manage",
-        json={"value": False},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["value"] is False
-
-    # Cleanup
-    await client.post("/api/settings/reset/devices.default_auto_manage")
-
-
 async def test_appium_session_override_setting_defaults_true_and_can_be_updated(client: AsyncClient) -> None:
     resp = await client.get("/api/settings/appium.session_override")
     assert resp.status_code == 200

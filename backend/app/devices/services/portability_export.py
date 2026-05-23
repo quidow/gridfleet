@@ -38,7 +38,6 @@ def _exported_device(d: Device) -> ExportedDevice:
         device_type=d.device_type,
         connection_type=d.connection_type,
         connection_target=d.connection_target,
-        auto_manage=d.auto_manage,
         tags=dict(d.tags or {}),
         device_config=dict(d.device_config or {}),
         test_data=dict(d.test_data or {}),

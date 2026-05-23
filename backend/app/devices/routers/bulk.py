@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.schemas.device import (
-    BulkAutoManageUpdate,
     BulkDeviceIds,
     BulkMaintenanceEnter,
     BulkOperationResult,
@@ -31,11 +30,6 @@ async def bulk_stop_nodes(body: BulkDeviceIds, db: DbDep) -> dict[str, Any]:
 @router.post("/restart-nodes", response_model=BulkOperationResult)
 async def bulk_restart_nodes(body: BulkDeviceIds, db: DbDep) -> dict[str, Any]:
     return await bulk_service.bulk_restart_nodes(db, body.device_ids)
-
-
-@router.post("/set-auto-manage", response_model=BulkOperationResult)
-async def bulk_set_auto_manage(body: BulkAutoManageUpdate, db: DbDep) -> dict[str, Any]:
-    return await bulk_service.bulk_set_auto_manage(db, body.device_ids, body.auto_manage)
 
 
 @router.post("/update-tags", response_model=BulkOperationResult)

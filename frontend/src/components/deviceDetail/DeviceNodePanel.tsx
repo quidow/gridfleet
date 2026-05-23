@@ -8,12 +8,11 @@ import {
   useRunDeviceLifecycleAction,
   useStartNode,
   useStopNode,
-  useToggleDeviceAutoManage,
 } from '../../hooks/useDevices';
 import { platformDescriptorForDeviceType, usePlatformDescriptor } from '../../hooks/usePlatformDescriptor';
 import {
   getPendingDeviceAction,
-  getPendingDeviceActionLabel,
+
 } from '../../lib/devicePendingAction';
 import type { DeviceDetail } from '../../types';
 import { Button } from '../ui/Button';
@@ -42,7 +41,6 @@ export function DeviceNodePanel({ device }: Props) {
   const restartNode = useRestartNode();
   const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
-  const toggleAutoManage = useToggleDeviceAutoManage();
   const lifecycleAction = useRunDeviceLifecycleAction();
   const baseDescriptor = usePlatformDescriptor(device.pack_id, device.platform_id);
   const descriptor = platformDescriptorForDeviceType(baseDescriptor, device.device_type);
@@ -53,11 +51,6 @@ export function DeviceNodePanel({ device }: Props) {
   const maintenanceLocked = device.hold === 'maintenance';
   const readinessLocked = device.readiness_state !== 'verified';
   const pendingAction = getPendingDeviceAction(device.id, [
-    {
-      action: 'updating-auto-manage',
-      isPending: toggleAutoManage.isPending,
-      deviceId: toggleAutoManage.variables?.id,
-    },
     {
       action: 'entering-maintenance',
       isPending: enterMaintenance.isPending,
@@ -90,13 +83,12 @@ export function DeviceNodePanel({ device }: Props) {
     },
   ]);
   const rowBusy = pendingAction !== null;
-  const pendingLabel = getPendingDeviceActionLabel(pendingAction);
 
   return (
     <div>
       <div className="mb-4">
         <h2 className="text-sm font-semibold text-text-1">Device Control</h2>
-        <p className="mt-1 text-xs text-text-2">Device registration, auto-management, and pack lifecycle controls.</p>
+        <p className="mt-1 text-xs text-text-2">Device registration and pack lifecycle controls.</p>
       </div>
       {node ? (
         <>
@@ -122,21 +114,6 @@ export function DeviceNodePanel({ device }: Props) {
               definition: <span className="block max-w-[min(28rem,55vw)] truncate font-medium">{String(value)}</span>,
             }))}
           />
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2">
-            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-text-2">
-              <input
-                type="checkbox"
-                checked={device.auto_manage}
-                onChange={(event) => toggleAutoManage.mutate({ id: device.id, autoManage: event.target.checked })}
-                disabled={rowBusy}
-                className="h-4 w-4 rounded border-border-strong text-accent focus:ring-accent"
-              />
-              Auto-manage
-            </label>
-            <span className="text-xs text-text-3">
-              {pendingLabel ?? (device.auto_manage ? 'Node will auto-restart on failure' : 'Manual control only')}
-            </span>
-          </div>
           <div className="mb-3 flex flex-wrap gap-2">
             {maintenanceLocked ? (
               <Button
@@ -215,21 +192,6 @@ export function DeviceNodePanel({ device }: Props) {
         </>
       ) : (
         <div>
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2">
-            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-text-2">
-              <input
-                type="checkbox"
-                checked={device.auto_manage}
-                onChange={(event) => toggleAutoManage.mutate({ id: device.id, autoManage: event.target.checked })}
-                disabled={rowBusy}
-                className="h-4 w-4 rounded border-border-strong text-accent focus:ring-accent"
-              />
-              Auto-manage
-            </label>
-            <span className="text-xs text-text-3">
-              {pendingLabel ?? (device.auto_manage ? 'Node will auto-restart on failure' : 'Manual control only')}
-            </span>
-          </div>
           <Button
             size="sm"
             onClick={() => startNode.mutate(device.id)}

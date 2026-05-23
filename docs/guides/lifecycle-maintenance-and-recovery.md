@@ -48,7 +48,7 @@ Current reconnect rules:
 - network-connected lanes only
 - device must have an IP address
 
-If reconnect succeeds and the device is auto-managed with a known node, the manager attempts a best-effort node restart afterward.
+If reconnect succeeds and the device has a known node, the manager attempts a best-effort node restart afterward.
 
 ## Lifecycle Recovery States
 
@@ -62,7 +62,7 @@ The lifecycle summary shown on Devices and triage surfaces uses these states:
 | `Excluded` | The device was excluded from an active run while the manager protects the run from an unhealthy member |
 | `Suppressed` | Automatic recovery is intentionally blocked, for example by maintenance or readiness problems |
 | `Recovery Eligible` | The device can be brought back automatically when the next checks succeed |
-| `Manual Recovery` | The device has recovery work remaining, but auto-manage is not allowed to bring it back automatically |
+| `Manual Recovery` | The device has recovery work remaining and requires operator intervention to bring it back |
 
 These are lifecycle summaries, not separate editable statuses.
 

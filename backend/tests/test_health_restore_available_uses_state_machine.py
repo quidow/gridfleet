@@ -32,7 +32,6 @@ async def _make_device(
     *,
     operational_state: DeviceOperationalState,
     identity_value: str,
-    auto_manage: bool = True,
     verified_at: datetime | None = None,
     device_checks_healthy: bool | None = None,
 ) -> Device:
@@ -51,7 +50,6 @@ async def _make_device(
             verified_at=verified_at,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
-            auto_manage=auto_manage,
             device_checks_healthy=device_checks_healthy,
         )
     db_session.add(device)
@@ -92,7 +90,6 @@ async def test_healthy_signal_on_offline_emits_connectivity_restored(
         db_host,
         operational_state=DeviceOperationalState.offline,
         identity_value="restore-avail-sm-001",
-        auto_manage=True,
         verified_at=datetime.now(UTC),
     )
     await _add_running_node(db_session, device)
@@ -150,7 +147,6 @@ async def test_healthy_signal_not_offline_emits_no_transition(
         db_host,
         operational_state=DeviceOperationalState.available,
         identity_value="restore-avail-sm-002",
-        auto_manage=True,
         verified_at=datetime.now(UTC),
     )
     await _add_running_node(db_session, device)
@@ -171,37 +167,6 @@ async def test_healthy_signal_not_offline_emits_no_transition(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_healthy_signal_auto_manage_false_emits_no_transition(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    """Guard: auto_manage=False — must short-circuit, no DeviceEvent."""
-    device = await _make_device(
-        db_session,
-        db_host,
-        operational_state=DeviceOperationalState.offline,
-        identity_value="restore-avail-sm-003",
-        auto_manage=False,
-        verified_at=datetime.now(UTC),
-    )
-    await _add_running_node(db_session, device)
-
-    loaded = await db_session.get(Device, device.id)
-    assert loaded is not None
-    await db_session.refresh(loaded, attribute_names=["appium_node"])
-
-    await _restore_available_for_healthy_signal(db_session, loaded)
-    await db_session.commit()
-
-    rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
-    assert len(rows) == 0, f"Expected no DeviceEvent rows (auto_manage=False); got {len(rows)}."
-
-    await db_session.refresh(loaded)
-    assert loaded.operational_state == DeviceOperationalState.offline
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
 async def test_healthy_signal_node_not_running_emits_no_transition(
     db_session: AsyncSession,
     db_host: Host,
@@ -212,7 +177,6 @@ async def test_healthy_signal_node_not_running_emits_no_transition(
         db_host,
         operational_state=DeviceOperationalState.offline,
         identity_value="restore-avail-sm-004",
-        auto_manage=True,
         verified_at=datetime.now(UTC),
     )
     # Add a node that is explicitly not running
@@ -254,7 +218,6 @@ async def test_healthy_signal_no_node_emits_no_transition(
         db_host,
         operational_state=DeviceOperationalState.offline,
         identity_value="restore-avail-sm-005",
-        auto_manage=True,
         verified_at=datetime.now(UTC),
     )
     # No node added.
@@ -285,7 +248,6 @@ async def test_healthy_signal_not_ready_emits_no_transition(
         db_host,
         operational_state=DeviceOperationalState.offline,
         identity_value="restore-avail-sm-006",
-        auto_manage=True,
         verified_at=None,  # not verified → is_ready_for_use_async returns False
     )
     await _add_running_node(db_session, device)
@@ -316,7 +278,6 @@ async def test_healthy_signal_allocation_not_allowed_emits_no_transition(
         db_host,
         operational_state=DeviceOperationalState.offline,
         identity_value="restore-avail-sm-007",
-        auto_manage=True,
         verified_at=datetime.now(UTC),
         device_checks_healthy=False,  # device_allows_allocation returns False
     )

@@ -16,7 +16,6 @@ vi.mock('../../hooks/useDevices', () => ({
   useRunDeviceLifecycleAction: () => mutation,
   useStartNode: () => mutation,
   useStopNode: () => mutation,
-  useToggleDeviceAutoManage: () => mutation,
   useClearAppiumNodeTransition: () => mutation,
 }));
 
@@ -45,7 +44,6 @@ function makeDevice(): DeviceDetail {
     model: 'Pixel 9',
     model_number: null,
     software_versions: null,
-    auto_manage: true,
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '192.168.1.254',

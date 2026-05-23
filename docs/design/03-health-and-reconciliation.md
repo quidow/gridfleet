@@ -163,9 +163,7 @@ flowchart TD
     B -- refused --> E["increment counter"]
     E --> F{"count >= max_failures?"}
     F -- no --> G["health_running false, keep lifecycle running"]
-    F -- yes --> H{"auto_manage on?"}
-    H -- no --> I["lifecycle recovery_suppressed, node.state error, offline"]
-    H -- yes --> J["restart_node_via_agent"]
+    F -- yes --> J["restart_node_via_agent"]
     J --> K{"restart succeeded?"}
     K -- yes --> L["lifecycle auto_recovered, clear health override"]
     K -- no --> M["lifecycle recovery_failed, node.state error, offline"]
@@ -178,7 +176,7 @@ Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general
 - **Demo freeze.** `GRIDFLEET_FREEZE_BACKGROUND_LOOPS=1` skips loop spawning entirely. The compose `docker-compose.demo.yml` sets this so seeded state never changes.
 - **Non-leader workers.** Workers that lose the advisory lock race never spawn leader-owned loops. They only run the watcher. Only one process runs maintenance work even with N replicas.
 - **`node_health` skip cases.** The loop polls every `AppiumNode` row whose `pid` and `active_connection_target` are populated; nodes that have been stopped (pid cleared) or never started are skipped. There are no per-platform exclusions — the `/status` probe is platform-agnostic.
-- **`device_connectivity` skip cases.** The connectivity loop skips a host when `/agent/pack/devices` is indeterminate. For disconnected devices, it suppresses lifecycle action when the device is in maintenance or `auto_manage=false`; endpoint-health platforms can still report healthy through `/agent/pack/devices/{ct}/health` even when the device target is absent from the generic pack-device list.
+- **`device_connectivity` skip cases.** The connectivity loop skips a host when `/agent/pack/devices` is indeterminate. For disconnected devices, it suppresses lifecycle action when the device is in maintenance; endpoint-health platforms can still report healthy through `/agent/pack/devices/{ct}/health` even when the device target is absent from the generic pack-device list.
 
 ## What a new loop must implement
 

@@ -518,23 +518,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/devices/bulk/set-auto-manage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Bulk Set Auto Manage */
-        post: operations["bulk_set_auto_manage_api_devices_bulk_set_auto_manage_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/devices/bulk/start-nodes": {
         parameters: {
             query?: never;
@@ -2455,13 +2438,6 @@ export interface components {
             /** Tarball */
             tarball: string;
         };
-        /** BulkAutoManageUpdate */
-        BulkAutoManageUpdate: {
-            /** Auto Manage */
-            auto_manage: boolean;
-            /** Device Ids */
-            device_ids: string[];
-        };
         /** BulkDeviceIds */
         BulkDeviceIds: {
             /** Device Ids */
@@ -2556,8 +2532,6 @@ export interface components {
         /** DeviceDetail */
         DeviceDetail: {
             appium_node?: components["schemas"]["AppiumNodeRead"] | null;
-            /** Auto Manage */
-            auto_manage: boolean;
             /** Battery Level Percent */
             battery_level_percent: number | null;
             /** Battery Temperature C */
@@ -2872,8 +2846,6 @@ export interface components {
         };
         /** DevicePatch */
         DevicePatch: {
-            /** Auto Manage */
-            auto_manage?: boolean | null;
             /** Connection Target */
             connection_target?: string | null;
             /** Device Config */
@@ -2903,8 +2875,6 @@ export interface components {
         };
         /** DeviceRead */
         DeviceRead: {
-            /** Auto Manage */
-            auto_manage: boolean;
             /** Battery Level Percent */
             battery_level_percent: number | null;
             /** Battery Temperature C */
@@ -3096,11 +3066,6 @@ export interface components {
         };
         /** DeviceVerificationCreate */
         DeviceVerificationCreate: {
-            /**
-             * Auto Manage
-             * @default true
-             */
-            auto_manage: boolean;
             /** Connection Target */
             connection_target?: string | null;
             connection_type?: components["schemas"]["ConnectionType"] | null;
@@ -3173,8 +3138,6 @@ export interface components {
         };
         /** DeviceVerificationUpdate */
         DeviceVerificationUpdate: {
-            /** Auto Manage */
-            auto_manage?: boolean | null;
             /** Connection Target */
             connection_target?: string | null;
             connection_type?: components["schemas"]["ConnectionType"] | null;
@@ -3529,11 +3492,6 @@ export interface components {
         };
         /** ExportedDevice */
         ExportedDevice: {
-            /**
-             * Auto Manage
-             * @default true
-             */
-            auto_manage: boolean;
             /** Connection Target */
             connection_target?: string | null;
             connection_type: components["schemas"]["ConnectionType"];
@@ -7388,75 +7346,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BulkDeviceIds"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BulkOperationResult"];
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    bulk_set_auto_manage_api_devices_bulk_set_auto_manage_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BulkAutoManageUpdate"];
             };
         };
         responses: {

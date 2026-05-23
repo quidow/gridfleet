@@ -59,7 +59,7 @@ async def build_lifecycle_policy(
     elif policy.get("recovery_suppressed_reason"):
         recovery_state = "suppressed"
     elif policy.get("excluded_from_run") or device.operational_state == DeviceOperationalState.offline:
-        recovery_state = "eligible" if device.auto_manage else "manual"
+        recovery_state = "eligible"
     else:
         recovery_state = "idle"
 

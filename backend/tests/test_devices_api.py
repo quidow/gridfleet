@@ -83,7 +83,6 @@ _KNOWN_DEVICE_PAYLOAD_KEYS = frozenset(
         "identity_scope",
         "os_version",
         "tags",
-        "auto_manage",
         "device_type",
         "connection_type",
         "ip_address",
@@ -111,7 +110,6 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         identity_scope=str(payload["identity_scope"]),
         os_version=str(payload["os_version"]),
         tags=payload.get("tags"),
-        auto_manage=payload.get("auto_manage", True),
         device_type=payload.get("device_type", "real_device"),
         connection_type=payload.get("connection_type"),
         ip_address=payload.get("ip_address"),
@@ -804,13 +802,12 @@ async def test_update_device(client: AsyncClient, db_session: AsyncSession, defa
 
     resp = await client.patch(
         f"/api/devices/{device_id}",
-        json={"name": "Updated Name", "tags": {"owner": "qa"}, "auto_manage": False},
+        json={"name": "Updated Name", "tags": {"owner": "qa"}},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "Updated Name"
     assert data["tags"]["owner"] == "qa"
-    assert data["auto_manage"] is False
     assert data["lifecycle_policy_summary"]["state"] == "idle"
 
 

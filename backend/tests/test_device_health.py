@@ -340,7 +340,6 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
 
     locked = SimpleNamespace(
         operational_state=DeviceOperationalState.offline,
-        auto_manage=True,
         appium_node=SimpleNamespace(pid=1, active_connection_target="dev", health_running=True),
     )
     monkeypatch.setattr(svc, "is_ready_for_use_async", AsyncMock(return_value=False))

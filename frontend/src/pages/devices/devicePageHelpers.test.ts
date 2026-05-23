@@ -19,7 +19,6 @@ const device = {
   tags: {},
   manufacturer: 'Roku',
   model: 'Ultra',
-  auto_manage: true,
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.55',

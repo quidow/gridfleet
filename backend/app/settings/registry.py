@@ -35,7 +35,6 @@ CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
     "grid": "Appium & Grid",
     "notifications": "Notifications",
-    "devices": "Device Defaults",
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
@@ -522,14 +521,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         default="warning",
         description="Minimum severity for toasts: info, warning, error",
         allowed_values=["info", "warning", "error"],
-    ),
-    # ── Device Defaults ──
-    SettingDefinition(
-        key="devices.default_auto_manage",
-        category="devices",
-        setting_type="bool",
-        default=True,
-        description="Default auto_manage value for newly discovered devices",
     ),
     # ── Agent ──
     SettingDefinition(

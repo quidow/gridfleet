@@ -18,8 +18,8 @@ import pytest
 if TYPE_CHECKING:
     from httpx import AsyncClient
 
-EXPECTED_PATH_COUNT: int | None = 155
-EXPECTED_FINGERPRINT: str | None = "ab1274ce103006a897c1fab4defe081e73f313f8995742e469b220edb72ed625"
+EXPECTED_PATH_COUNT: int | None = 154
+EXPECTED_FINGERPRINT: str | None = "77dc093450a98999316a65e93d9e1faf2f61005451f9dbe39a40a1ab1bf67eda"
 
 
 def _fingerprint(triples: list[tuple[str, str, str]]) -> str:

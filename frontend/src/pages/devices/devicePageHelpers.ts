@@ -92,7 +92,6 @@ export function buildUpdatePayload(
 ): DevicePatch {
   const payload: DevicePatch = {
     name: form.name ?? device.name,
-    auto_manage: form.auto_manage ?? device.auto_manage,
     tags,
   };
 

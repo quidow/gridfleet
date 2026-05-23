@@ -328,7 +328,7 @@ async def validate_create_request(
             save_payload=payload,
             save_device_id=saved_device.id,
             host=host,
-            keep_running_after_verify=should_keep_verified_node_running(payload),
+            keep_running_after_verify=should_keep_verified_node_running(),
         ),
         None,
     )
@@ -377,7 +377,6 @@ async def validate_update_request(
         "model": payload.get("model", existing.model),
         "model_number": payload.get("model_number", existing.model_number),
         "software_versions": payload.get("software_versions", existing.software_versions),
-        "auto_manage": payload.get("auto_manage", existing.auto_manage),
         "device_type": payload.get("device_type", existing.device_type),
         "connection_type": payload.get("connection_type", existing.connection_type),
         "ip_address": payload.get("ip_address", existing.ip_address),
@@ -441,10 +440,7 @@ async def validate_update_request(
             existing_device=existing,
             save_device_id=existing.id,
             host=host,
-            keep_running_after_verify=should_keep_verified_node_running(
-                verification_payload,
-                existing_auto_manage=existing.auto_manage,
-            ),
+            keep_running_after_verify=should_keep_verified_node_running(),
         ),
         None,
     )

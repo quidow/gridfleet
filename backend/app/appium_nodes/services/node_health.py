@@ -37,7 +37,7 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
-from app.events import queue_device_crashed_event, queue_event_for_session
+from app.events import queue_event_for_session
 from app.grid import service as grid_service
 from app.settings import settings_service
 
@@ -273,68 +273,6 @@ async def _process_node_health(
 
     if count >= max_failures:
         locked_node.consecutive_health_failures = 0
-
-        if not device.auto_manage:
-            logger.info(
-                "Node for device %s reached max failures but auto_manage is off — marking error without restart",
-                device.name,
-            )
-            # Do not release parallel-resource claims here. A health failure
-            # does not prove the Appium process is gone, so freeing ports here
-            # can race a still-listening process. Confirmed stop paths release;
-            # node deletion cascades managed claims.
-            await lifecycle_policy.record_control_action(
-                db,
-                device,
-                action="recovery_suppressed",
-                failure_source="node_health",
-                failure_reason="Max node health failures reached",
-                recovery_suppressed_reason="Auto-manage is disabled",
-            )
-            queue_event_for_session(
-                db,
-                "node.crash",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "error": "Max health check failures",
-                    "will_restart": False,
-                },
-                severity=None,  # will_restart=False → default critical
-            )
-            queue_device_crashed_event(
-                db,
-                device_id=str(device.id),
-                device_name=device.name,
-                source="health_check_fail",
-                reason="Max health check failures",
-                will_restart=False,
-                process=None,
-                severity=None,  # will_restart=False → default critical
-            )
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.node_crash,
-                {"error": "Max health check failures", "will_restart": False},
-            )
-            await record_lifecycle_incident(
-                db,
-                device,
-                DeviceEventType.lifecycle_recovery_suppressed,
-                summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-                reason="Auto-manage is disabled",
-                detail="Node restart was suppressed after repeated health check failures",
-                source="node_health",
-            )
-            await device_health.apply_node_state_transition(
-                db,
-                device,
-                health_running=False,
-                health_state="error",
-                mark_offline=True,
-            )
-            return
 
         logger.error("Node for device %s reached max failures, attempting restart", device.name)
         await _attempt_node_restart(db, device=device)

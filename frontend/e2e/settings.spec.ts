@@ -91,15 +91,6 @@ function createSettingsState(): MockSetting[] {
       validation: { min: 0, max: 60 },
     },
     {
-      key: 'devices.default_auto_manage',
-      category: 'devices',
-      type: 'bool',
-      description: 'Default auto_manage value for newly discovered devices',
-      default_value: true,
-      value: true,
-      validation: null,
-    },
-    {
       key: 'agent.min_version',
       category: 'agent',
       type: 'string',
@@ -473,9 +464,6 @@ test.describe('Settings Page', () => {
     await expect(page.locator('input[name="notifications.toast_auto_dismiss_sec"]')).toBeVisible();
     await expect(page.getByLabel('run.expired')).toBeVisible();
     await expect(page.getByLabel('device.health_changed')).toHaveCount(0);
-
-    await page.getByRole('button', { name: 'Device Defaults' }).click();
-    await expect(page.getByText('Default auto_manage value for newly discovered devices')).toBeVisible();
 
     await page.getByRole('button', { name: 'Agent' }).click();
     await expect(page.locator('input[name="agent.min_version"]')).toBeVisible();

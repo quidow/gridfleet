@@ -42,7 +42,6 @@ def _reconnect_device(**overrides: object) -> SimpleNamespace:
         "host_id": uuid.uuid4(),
         "connection_target": "10.0.0.20:5555",
         "identity_value": "stable",
-        "auto_manage": True,
         "appium_node": SimpleNamespace(observed_running=True),
     }
     values.update(overrides)

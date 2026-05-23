@@ -15,7 +15,6 @@ from app.devices.services.identity import host_scoped_clause, is_host_scoped_ide
 from app.devices.services.identity_conflicts import ensure_device_payload_identity_available
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -304,7 +303,6 @@ def _build_discovery_create_request(discovered: DiscoveredDevice, host: Host) ->
         model=discovered.model or None,
         model_number=discovered.model_number or None,
         software_versions=discovered.software_versions or None,
-        auto_manage=settings_service.get("devices.default_auto_manage"),
         device_type=discovered.device_type or None,
         connection_type=discovered.connection_type or None,
         ip_address=discovered.ip_address or None,
