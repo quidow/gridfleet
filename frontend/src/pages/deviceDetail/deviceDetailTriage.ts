@@ -1,14 +1,11 @@
-import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorRunning, isEmulatorStopped } from '../../lib/emulatorState';
 import {
   HARDWARE_HEALTH_STATUS_LABELS,
   HARDWARE_TELEMETRY_STATE_LABELS,
 } from '../../lib/hardwareTelemetry';
-import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import type { DeviceDetail, DeviceHealth } from '../../types';
-import { formatDateTime } from '../../utils/dateFormatting';
 
-export type DeviceDetailTriageTone = 'ok' | 'warn' | 'error' | 'neutral';
+export type DeviceDetailTriageTone = 'ok' | 'warn' | 'error' | 'neutral' | 'info';
 
 export type DeviceDetailTriageActionKind =
   | 'verify'
@@ -16,10 +13,7 @@ export type DeviceDetailTriageActionKind =
   | 'launch-emulator'
   | 'boot-simulator'
   | 'start-node'
-  | 'open-control'
   | 'open-hardware-filter'
-  | 'test-session'
-  | 'enter-maintenance'
   | 'exit-maintenance'
   | 'none';
 
@@ -29,29 +23,23 @@ export interface DeviceDetailTriageAction {
   to?: string;
 }
 
-export interface DeviceDetailTriageEvidence {
-  label: string;
-  value: string;
-  tone?: DeviceDetailTriageTone;
+export interface DeviceDetailTriageTitleLink {
+  text: string;
+  to: string;
 }
 
 export interface DeviceDetailTriage {
   tone: DeviceDetailTriageTone;
   eyebrow: string;
   title: string;
+  titleLink?: DeviceDetailTriageTitleLink;
   detail: string;
   action: DeviceDetailTriageAction;
-  evidence: DeviceDetailTriageEvidence[];
 }
 
 type Options = {
   health?: DeviceHealth;
-  canTestSession: boolean;
 };
-
-function readable(value: string | null | undefined, fallback = '-'): string {
-  return value && value.trim() ? value : fallback;
-}
 
 function virtualDeviceStopped(device: DeviceDetail): boolean {
   if (device.device_type !== 'emulator' && device.device_type !== 'simulator') {
@@ -82,19 +70,21 @@ function failedHealthDetail(device: DeviceDetail, health?: DeviceHealth): string
   if (typeof checkDetail === 'string' && checkDetail) {
     return checkDetail;
   }
-  if (device.health_summary.summary) {
-    return device.health_summary.summary;
-  }
+  const parts: string[] = [];
+  const hs = device.health_summary;
+  if (hs.connectivity_status === 'failed') parts.push('Connectivity failed');
+  if (hs.node_status && hs.node_status !== 'running') parts.push(`Node ${hs.node_status}`);
+  if (hs.session_status === 'failed') parts.push('Session probe failed');
+  if (parts.length > 0) return parts.join('. ') + '.';
   return 'Device health checks are failing.';
 }
 
 export function deriveDeviceDetailTriage(
   device: DeviceDetail,
-  { health, canTestSession }: Options,
+  { health }: Options,
 ): DeviceDetailTriage {
   const reservation = device.reservation;
   const node = device.appium_node;
-  const status = deviceChipStatus(device);
 
   if (device.review_required) {
     return {
@@ -104,13 +94,7 @@ export function deriveDeviceDetailTriage(
       detail:
         device.review_reason ||
         'Automated recovery hit the failure threshold. Restart the node, re-verify, or exit maintenance to release the device back into the recovery loop.',
-      action: { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` },
-      evidence: [
-        { label: 'Reason', value: device.review_reason || 'Recovery failures exceeded threshold', tone: 'error' },
-        ...(device.review_set_at
-          ? [{ label: 'Shelved at', value: formatDateTime(device.review_set_at), tone: 'neutral' as const }]
-          : []),
-      ],
+      action: { kind: 'none', label: '' },
     };
   }
 
@@ -121,10 +105,6 @@ export function deriveDeviceDetailTriage(
       title: 'Excluded from reserved run',
       detail: reservation.exclusion_reason || 'This device is held out of the active run.',
       action: { kind: 'open-run', label: 'Open Run', to: `/runs/${reservation.run_id}` },
-      evidence: [
-        { label: 'Run', value: reservation.run_name, tone: 'warn' },
-        { label: 'Reason', value: reservation.exclusion_reason || 'Excluded', tone: 'warn' },
-      ],
     };
   }
 
@@ -140,83 +120,65 @@ export function deriveDeviceDetailTriage(
         kind: isSimulator ? 'boot-simulator' : 'launch-emulator',
         label: isSimulator ? 'Boot Simulator' : 'Launch Emulator',
       },
-      evidence: [
-        { label: 'Target', value: readable(device.connection_target), tone: 'neutral' },
-        { label: 'State', value: readable(device.emulator_state, 'offline'), tone: 'error' },
-      ],
     };
   }
 
   if (!node || node.effective_state !== 'running') {
     const inMaintenance = device.hold === 'maintenance';
+    const connectivityFailed = device.health_summary.connectivity_status === 'failed';
 
     let nodeAction: DeviceDetailTriageAction;
     if (inMaintenance) {
       nodeAction = { kind: 'exit-maintenance', label: 'Take out of maintenance' };
-    } else if (reservation) {
-      nodeAction = { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` };
+    } else if (connectivityFailed || reservation) {
+      nodeAction = { kind: 'none', label: '' };
     } else {
       nodeAction = { kind: 'start-node', label: 'Start Node' };
     }
 
     let tone: DeviceDetailTriageTone;
     let eyebrow: string;
+    let title: string;
+    let titleLink: DeviceDetailTriageTitleLink | undefined;
+    let detail: string;
+
     if (inMaintenance) {
+      const maintenanceReason = device.lifecycle_policy_summary.maintenance_reason;
       tone = 'neutral';
       eyebrow = 'Maintenance';
+      title = 'In maintenance';
+      detail = maintenanceReason || 'Device is in maintenance mode.';
+    } else if (connectivityFailed) {
+      tone = 'error';
+      eyebrow = 'Connectivity';
+      title = reservation ? 'Device connectivity lost — reserved by' : 'Device connectivity lost';
+      titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
+      detail = failedHealthDetail(device, health);
     } else if (!node) {
       tone = 'neutral';
       eyebrow = 'Node idle';
+      title = reservation ? 'No Appium node configured — reserved by' : 'No Appium node configured';
+      titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
+      detail = 'Start the node to register this device with Selenium Grid.';
     } else {
       tone = 'warn';
       eyebrow = 'Device control';
+      title = reservation ? 'Appium node is stopped — reserved by' : 'Appium node is stopped';
+      titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
+      detail = 'Start the node to register this device with Selenium Grid.';
     }
 
-    const evidence: DeviceDetailTriageEvidence[] = [
-      { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'neutral' },
-      { label: 'Node state', value: node?.effective_state ?? 'none', tone: node ? 'warn' : 'neutral' },
-    ];
-
-    const maintenanceReason = device.lifecycle_policy_summary.maintenance_reason;
-    if (inMaintenance && maintenanceReason) {
-      evidence.unshift({
-        label: 'Reason',
-        value: maintenanceReason,
-        tone: 'neutral',
-      });
-    }
-
-    return {
-      tone,
-      eyebrow,
-      title: inMaintenance
-        ? 'In maintenance'
-        : node ? 'Appium node is stopped' : 'No Appium node configured',
-      detail: inMaintenance
-        ? (maintenanceReason || 'Device is in maintenance mode.')
-        : 'Start the node to register this device with Selenium Grid.',
-      action: nodeAction,
-      evidence,
-    };
+    return { tone, eyebrow, title, titleLink, detail, action: nodeAction };
   }
 
   if (health?.healthy === false || device.health_summary.healthy === false) {
     return {
       tone: 'error',
       eyebrow: 'Health check',
-      title: 'Device health check failed',
+      title: reservation ? 'Device health check failed — reserved by' : 'Device health check failed',
+      titleLink: reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined,
       detail: failedHealthDetail(device, health),
-      action: { kind: 'open-control', label: 'Review Control', to: `/devices/${device.id}?tab=control` },
-      evidence: [
-        { label: 'Connectivity', value: device.health_summary.summary || 'Unhealthy', tone: 'error' },
-        {
-          label: 'Last checked',
-          value: device.health_summary.last_checked_at
-            ? formatDateTime(device.health_summary.last_checked_at)
-            : '-',
-          tone: 'neutral',
-        },
-      ],
+      action: { kind: 'none', label: '' },
     };
   }
 
@@ -235,15 +197,56 @@ export function deriveDeviceDetailTriage(
         label: 'View Affected Devices',
         to: hardwareFilterTarget(device),
       },
-      evidence: [
-        { label: 'Health', value: HARDWARE_HEALTH_STATUS_LABELS[device.hardware_health_status], tone: hardwareIssueTone },
-        { label: 'Telemetry', value: HARDWARE_TELEMETRY_STATE_LABELS[device.hardware_telemetry_state], tone: hardwareIssueTone },
-      ],
+    };
+  }
+
+  if (reservation) {
+    const busy = device.operational_state === 'busy';
+    return {
+      tone: busy ? 'warn' : 'info',
+      eyebrow: busy ? 'Busy' : 'Reserved',
+      title: busy ? 'Running a session — reserved by' : 'Reserved by',
+      titleLink: { text: reservation.run_name, to: `/runs/${reservation.run_id}` },
+      detail: busy
+        ? 'Device is actively serving a test session for this run.'
+        : 'Device is held for this run. Available and waiting for sessions.',
+      action: { kind: 'none', label: '' },
+    };
+  }
+
+  if (device.hold === 'maintenance') {
+    const mr = device.lifecycle_policy_summary.maintenance_reason;
+    const draining = device.operational_state === 'busy';
+    return {
+      tone: draining ? 'warn' : 'neutral',
+      eyebrow: draining ? 'Draining' : 'Maintenance',
+      title: draining ? 'Session active — maintenance pending' : 'In maintenance',
+      detail: mr || 'Device is in maintenance mode.',
+      action: { kind: 'exit-maintenance', label: 'Take out of maintenance' },
+    };
+  }
+
+  if (device.operational_state === 'verifying') {
+    return {
+      tone: 'warn',
+      eyebrow: 'Verifying',
+      title: 'Verification in progress',
+      detail: 'A device verification job is running.',
+      action: { kind: 'none', label: '' },
+    };
+  }
+
+  if (device.operational_state === 'busy') {
+    return {
+      tone: 'warn',
+      eyebrow: 'Busy',
+      title: 'Running a session',
+      detail: 'Device is actively serving a test session.',
+      action: { kind: 'none', label: '' },
     };
   }
 
   const telemetryNotReported = device.hardware_telemetry_state === 'unsupported';
-
   return {
     tone: 'ok',
     eyebrow: 'Ready',
@@ -251,14 +254,6 @@ export function deriveDeviceDetailTriage(
     detail: telemetryNotReported
       ? 'Readiness, availability, lifecycle, and connectivity are clear. Battery telemetry is not reported by this host.'
       : 'Readiness, availability, lifecycle, and telemetry are clear.',
-    action: canTestSession
-      ? { kind: 'test-session', label: 'Test Session' }
-      : { kind: 'open-control', label: 'View Control', to: `/devices/${device.id}?tab=control` },
-    evidence: [
-      { label: 'Availability', value: DEVICE_STATUS_LABELS[status], tone: 'ok' },
-      ...(telemetryNotReported
-        ? [{ label: 'Telemetry', value: HARDWARE_TELEMETRY_STATE_LABELS.unsupported, tone: 'neutral' as const }]
-        : []),
-    ],
+    action: { kind: 'none', label: '' },
   };
 }

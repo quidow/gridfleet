@@ -6,10 +6,8 @@ import {
   useDevice,
   useDeviceHealth,
   useDeviceLogs,
-  useEnterDeviceMaintenance,
   useExitDeviceMaintenance,
   useRunDeviceLifecycleAction,
-  useRunDeviceSessionTest,
   useStartNode,
   useDeviceCapabilities,
 } from '../hooks/useDevices';
@@ -26,8 +24,6 @@ import DeviceHealthPanel from '../components/deviceDetail/DeviceHealthPanel';
 import DeviceLifecyclePolicyPanel from '../components/deviceDetail/DeviceLifecyclePolicyPanel';
 import DeviceHardwareTelemetryCard from '../components/deviceDetail/DeviceHardwareTelemetryCard';
 import DeviceInfoPanel from '../components/deviceDetail/DeviceInfoPanel';
-import DeviceStatStrip from '../components/deviceDetail/DeviceStatStrip';
-import { buildDeviceStatSummary } from '../components/deviceDetail/deviceStatStripSummary';
 import DeviceLogsPanel from '../components/deviceDetail/DeviceLogsPanel';
 import DeviceNodePanel from '../components/deviceDetail/DeviceNodePanel';
 import DeviceSessionOutcomeHeatmapPanel from '../components/deviceDetail/DeviceSessionOutcomeHeatmapPanel';
@@ -60,11 +56,12 @@ const TABS = [
 
 const TAB_IDS = TABS.map((t) => t.id);
 
-const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'critical' | 'neutral'> = {
+const TRIAGE_BADGE_TONE: Record<DeviceDetailTriageTone, 'success' | 'warning' | 'critical' | 'neutral' | 'info'> = {
   ok: 'success',
   warn: 'warning',
   error: 'critical',
   neutral: 'neutral',
+  info: 'info',
 };
 
 function actionLinkClass(tone: DeviceDetailTriageTone): string {
@@ -83,8 +80,6 @@ function TriageHero({
   onVerify,
   onLifecycleBoot,
   onStartNode,
-  onTestSession,
-  onEnterMaintenance,
   onExitMaintenance,
   pending,
   verificationLabel,
@@ -93,13 +88,10 @@ function TriageHero({
   onVerify: () => void;
   onLifecycleBoot: () => void;
   onStartNode: () => void;
-  onTestSession: () => void;
-  onEnterMaintenance: () => void;
   onExitMaintenance: () => void;
   pending: {
     lifecycleBoot: boolean;
     startNode: boolean;
-    testSession: boolean;
   };
   verificationLabel?: string;
 }) {
@@ -124,19 +116,13 @@ function TriageHero({
     if (action.kind === 'start-node') {
       return <Button onClick={onStartNode} loading={pending.startNode} leadingIcon={<Play size={15} />}>{action.label}</Button>;
     }
-    if (action.kind === 'test-session') {
-      return <Button onClick={onTestSession} loading={pending.testSession} leadingIcon={<Play size={15} />}>{action.label}</Button>;
-    }
-    if (action.kind === 'enter-maintenance') {
-      return <Button onClick={onEnterMaintenance}>{action.label}</Button>;
-    }
     if (action.kind === 'exit-maintenance') {
       return <Button onClick={onExitMaintenance}>{action.label}</Button>;
     }
     return null;
   })();
 
-  const showVerifySecondary = Boolean(verificationLabel) && action.kind !== 'verify';
+  const showVerifySecondary = Boolean(verificationLabel) && action.kind === 'start-node';
 
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
@@ -144,7 +130,12 @@ function TriageHero({
         <div className="flex items-start gap-3 sm:items-center">
           <Badge tone={TRIAGE_BADGE_TONE[triage.tone]} dot>{triage.eyebrow}</Badge>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-text-1">{triage.title}</h2>
+            <h2 className="text-sm font-semibold text-text-1">
+              {triage.title}
+              {triage.titleLink ? (
+                <>{' '}<Link to={triage.titleLink.to} className="text-accent underline hover:text-accent-hover">{triage.titleLink.text}</Link></>
+              ) : null}
+            </h2>
             {triage.detail ? <p className="mt-0.5 text-xs text-text-2">{triage.detail}</p> : null}
           </div>
         </div>
@@ -186,9 +177,7 @@ export default function DeviceDetail() {
   const deleteDevice = useDeleteDevice();
   const lifecycleAction = useRunDeviceLifecycleAction();
   const startNode = useStartNode();
-  const enterMaintenance = useEnterDeviceMaintenance();
   const exitMaintenance = useExitDeviceMaintenance();
-  const runSessionTest = useRunDeviceSessionTest();
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'triage');
   const [setupRequest, setSetupRequest] = useState<{
     title: string;
@@ -206,11 +195,10 @@ export default function DeviceDetail() {
   const verificationAction = device ? getVerificationAction(device.readiness_state) : null;
   const hostLabel = device ? (hostMap.get(device.host_id) ?? device.host_id) : null;
   const canTestSession = !!device && !reservationLocked && !readinessLocked && deviceChipStatus(device) === 'available';
-  const triage = device ? deriveDeviceDetailTriage(device, { health, canTestSession }) : null;
+  const triage = device ? deriveDeviceDetailTriage(device, { health }) : null;
   const triagePending = {
     lifecycleBoot: lifecycleAction.isPending && lifecycleAction.variables?.action === 'boot',
     startNode: startNode.isPending,
-    testSession: runSessionTest.isPending,
   };
   if (!device && isLoading) {
     return (
@@ -252,9 +240,27 @@ export default function DeviceDetail() {
         summary={<DeviceDetailStatusPills device={device} />}
       />
 
-      <div className="mb-6">
-        <DeviceStatStrip summary={buildDeviceStatSummary(device.sessions)} />
-      </div>
+      {triage ? (
+        <div className="mb-2">
+          <TriageHero
+            triage={triage}
+            pending={triagePending}
+            verificationLabel={verificationAction?.buttonLabel}
+            onVerify={() => {
+              if (!verificationAction) {
+                return;
+              }
+              setSetupRequest({
+                title: verificationAction.title,
+                handoffMessage: verificationAction.handoffMessage,
+              });
+            }}
+            onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
+            onStartNode={() => startNode.mutate(device.id)}
+            onExitMaintenance={() => exitMaintenance.mutate(device.id)}
+          />
+        </div>
+      ) : null}
 
       <Tabs
         tabs={TABS as unknown as { id: string; label: string }[]}
@@ -266,28 +272,6 @@ export default function DeviceDetail() {
       <div className="fade-in-stagger flex flex-col gap-6">
         {tab === 'triage' ? (
           <>
-            {triage ? (
-              <TriageHero
-                triage={triage}
-                pending={triagePending}
-                verificationLabel={verificationAction?.buttonLabel}
-                onVerify={() => {
-                  if (!verificationAction) {
-                    return;
-                  }
-                  setSetupRequest({
-                    title: verificationAction.title,
-                    handoffMessage: verificationAction.handoffMessage,
-                  });
-                }}
-                onLifecycleBoot={() => lifecycleAction.mutate({ id: device.id, action: 'boot' })}
-                onStartNode={() => startNode.mutate(device.id)}
-                onTestSession={() => runSessionTest.mutate(device.id)}
-                onEnterMaintenance={() => enterMaintenance.mutate({ id: device.id })}
-                onExitMaintenance={() => exitMaintenance.mutate(device.id)}
-              />
-            ) : null}
-
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
               <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
                 <SectionErrorBoundary scope="device-info-panel">
