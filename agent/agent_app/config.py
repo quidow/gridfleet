@@ -99,7 +99,6 @@ class RuntimeSettings(BaseSettings):
     runtime_root: str = "/opt/gridfleet-agent/runtimes"
     appium_port_range_start: int = 4723
     appium_port_range_end: int = 4823
-    adb_reconnect_port: int = 5555
 
 
 class AgentSettings:

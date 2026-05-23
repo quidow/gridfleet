@@ -61,8 +61,6 @@ KNOWN_VIOLATIONS: set[tuple[str, str]] = {
     ("agent_app/appium/process.py", "simulator"),
     ("agent_app/appium/process.py", "booting"),
     ("agent_app/appium/process.py", "booted"),
-    # config.py — dead ADB setting (audit 1.3)
-    ("agent_app/config.py", "config:adb_reconnect_port"),
     # tools/manager.py — go_ios probing (audit 1.8)
     ("agent_app/tools/manager.py", "go_ios"),
     # host/capabilities.py — hardcoded tool checks (audit 1.9)
