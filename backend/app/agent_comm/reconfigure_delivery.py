@@ -29,12 +29,29 @@ ABANDONED_REASON_HOST_MISSING = "host missing"
 INLINE_AGENT_CALL_TIMEOUT_SEC = 5.0
 
 
+class InlineReconfigureDeliveryFailedError(Exception):
+    """Raised by ``deliver_agent_reconfigures`` when an inline caller asked
+    to be told about delivery failures.
+
+    Background callers (loops) intentionally swallow failures and retry.
+    Inline callers (e.g. the testkit ``cooldown_device`` HTTP handler) need
+    a signal because the client treats a 200 response as "the agent applied
+    the reconfigure" — proceeding to next steps under that assumption is
+    unsafe if the drain never landed.
+    """
+
+    def __init__(self, message: str, *, cause: BaseException | None = None) -> None:
+        super().__init__(message)
+        self.__cause__ = cause
+
+
 async def deliver_agent_reconfigures(
     db: AsyncSession,
     device_id: object,
     *,
     limit: int = DELIVERY_BATCH_SIZE,
     agent_call_timeout: float | None = None,
+    raise_on_failure: bool = False,
 ) -> None:
     await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
@@ -104,9 +121,14 @@ async def deliver_agent_reconfigures(
                     grid_run_id=row.grid_run_id,
                     timeout=agent_call_timeout,
                 )
-        except (AgentUnreachableError, AgentResponseError):
+        except (AgentUnreachableError, AgentResponseError) as exc:
             _record_delivery_failure(row)
             await db.commit()
+            if raise_on_failure:
+                raise InlineReconfigureDeliveryFailedError(
+                    f"agent reconfigure delivery failed for device {row.device_id} on port {row.port}",
+                    cause=exc,
+                ) from exc
             continue
         row.delivered_at = datetime.now(UTC)
         await db.commit()

@@ -248,7 +248,19 @@ async def cooldown_device(
         # next ``device_intent_reconciler_loop`` tick (default 5 s) drains
         # the outbox, and testkit can re-pick the same device during that
         # window.
-        await deliver_agent_reconfigures(db, device.id, agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC)
+        #
+        # ``raise_on_failure=True`` surfaces an unreachable / responding-
+        # with-error agent back to the testkit as a non-2xx response (see
+        # ``cooldown_device_endpoint``). Without it the HTTP handler would
+        # return 200 — testkit would assume the drain landed, immediately
+        # request another session, and the next request would land on the
+        # very device that was supposed to be on cooldown.
+        await deliver_agent_reconfigures(
+            db,
+            device.id,
+            agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
+            raise_on_failure=True,
+        )
         return excluded_until, cooldown_count_after, False, threshold
 
     # Escalation path
@@ -282,6 +294,13 @@ async def cooldown_device(
     # Maintenance escalation also flips ``accepting_new_sessions=False`` via
     # the maintenance intents. Push the reconfigure inline for the same
     # reason as the non-escalate branch above — without it the Grid hub keeps
-    # routing to the relay until the next reconciler tick.
-    await deliver_agent_reconfigures(db, device.id, agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC)
+    # routing to the relay until the next reconciler tick. ``raise_on_failure``
+    # mirrors the non-escalate branch: signal delivery failure to testkit so
+    # it does not assume the device is safely out of rotation.
+    await deliver_agent_reconfigures(
+        db,
+        device.id,
+        agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
+        raise_on_failure=True,
+    )
     return None, cooldown_count_after, True, threshold
