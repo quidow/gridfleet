@@ -115,12 +115,21 @@ class RecordingGridNodeHandle:
         self.stop_called = False
         self.wait_until_running_called = False
         self.snapshot_payload = {"status": "up"}
+        self.errored = False
         # ``_start_grid_node_service`` accesses ``handle.service`` after the
         # supervisor reports running so it can drain a relay launched with
         # ``accepting_new_sessions=False``. The bare recording handle does
         # not run a real service, so leave it as None and let the drain
         # path no-op.
         self.service: object | None = None
+        # ``reconfigure`` rejects calls into a supervisor that hasn't reached
+        # the running state — preventing the dead-handle bug where the agent
+        # would invoke ``GridNodeService.reregister_with_caps_update`` on a
+        # stopped instance and raise ``called before start()``. Stub handles
+        # plug straight into a manager without going through ``start()``, so
+        # default to "running" and let individual tests flip it to exercise
+        # the mid-restart guard.
+        self._is_running_override = True
 
     async def start(self) -> None:
         self.start_called = True
@@ -132,7 +141,7 @@ class RecordingGridNodeHandle:
         self.stop_called = True
 
     def is_running(self) -> bool:
-        return self.start_called and not self.stop_called
+        return self._is_running_override and not self.stop_called
 
     def snapshot(self) -> dict[str, object]:
         return dict(self.snapshot_payload)
@@ -669,6 +678,66 @@ async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
             stop_pending=False,
             grid_run_id=None,
         )
+
+
+async def test_reconfigure_errored_supervisor_raises_device_not_found() -> None:
+    """When the supervisor has exhausted its restart budget the handle still
+    holds a reference to the stopped ``GridNodeService``; invoking
+    ``reregister_with_caps_update`` on it would raise ``called before
+    start()`` and surface as an unhandled 500 to the backend, which triggers
+    a port-bumping forced restart. The reconfigure guard converts the
+    terminal-error case to ``DeviceNotFoundError`` so the backend treats it
+    as a missing relay and schedules a clean fresh start.
+    """
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService()
+    handle = ReconfigurableGridNodeHandle(service)
+    handle.errored = True
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=123,
+        connection_target="device-1",
+        platform_id="android_mobile",
+    )
+
+    with pytest.raises(DeviceNotFoundError, match="errored"):
+        await manager.reconfigure(
+            4723,
+            accepting_new_sessions=True,
+            stop_pending=False,
+            grid_run_id=uuid4(),
+        )
+    assert service.calls == [], "reconfigure must not touch the dead service"
+
+
+async def test_reconfigure_during_restart_raises_device_not_found() -> None:
+    """Mid-restart window between supervisor heartbeat failure and the next
+    ``service.start()`` completing: ``handle.service`` is non-None but the
+    underlying service has ``_started=False``. ``reregister_with_caps_update``
+    would raise ``called before start()``; the guard short-circuits with a
+    404 so the backend retries without forcing a relay restart.
+    """
+    manager = AppiumProcessManager()
+    service = ReconfigurableGridNodeService()
+    handle = ReconfigurableGridNodeHandle(service)
+    handle._is_running_override = False
+    manager._grid_supervisors[4723] = cast("Any", handle)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=123,
+        connection_target="device-1",
+        platform_id="android_mobile",
+    )
+
+    with pytest.raises(DeviceNotFoundError, match="restarting"):
+        await manager.reconfigure(
+            4723,
+            accepting_new_sessions=True,
+            stop_pending=False,
+            grid_run_id=uuid4(),
+        )
+    assert service.calls == []
 
 
 async def test_stop_pending_drains_relay_and_blocks_auto_restart() -> None:
