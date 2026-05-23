@@ -120,8 +120,15 @@ function RunSessionsCard({ runId }: { runId: string }) {
         rows={sessionsData?.items ?? []}
         rowKey={(s) => s.id}
         loading={sessionsLoading}
-        emptyState={<p className="px-5 py-8 text-sm text-text-3 text-center">No sessions</p>}
+        emptyState={<p className="px-5 py-8 text-sm text-text-3 text-center">No sessions yet for this run.</p>}
       />
+      {sessionsData?.next_cursor && (
+        <div className="px-5 py-3 border-t border-border">
+          <Link to={`/sessions?run_id=${runId}`} className="text-sm text-accent hover:underline">
+            View all sessions in the Sessions explorer →
+          </Link>
+        </div>
+      )}
     </Card>
   );
 }
