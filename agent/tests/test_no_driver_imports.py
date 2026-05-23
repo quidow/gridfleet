@@ -251,3 +251,28 @@ def test_no_driver_specific_imports() -> None:
         lines.append("To fix: move driver-specific logic to driver-pack adapter.")
         lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
         raise AssertionError("\n".join(lines))
+
+
+def test_no_driver_specific_config() -> None:
+    """Fail if agent_app/config.py contains driver-specific field names."""
+    raw_violations = _collect_config_violations()
+
+    found: set[tuple[str, str]] = set()
+    details: dict[tuple[str, str], list[int]] = {}
+    for rel, key, lineno in raw_violations:
+        pair = (rel, key)
+        found.add(pair)
+        details.setdefault(pair, []).append(lineno)
+
+    config_known = {kv for kv in KNOWN_VIOLATIONS if kv[1].startswith("config:")}
+    new_violations = found - config_known
+
+    if new_violations:
+        lines = ["New driver-specific config field(s) found (not in KNOWN_VIOLATIONS):"]
+        for rel, key in sorted(new_violations):
+            linenos = ", ".join(str(ln) for ln in sorted(details[(rel, key)]))
+            lines.append(f"  {rel}:{linenos} — {key}")
+        lines.append("")
+        lines.append("To fix: remove driver-specific config from agent core.")
+        lines.append("To temporarily exempt: add entry to KNOWN_VIOLATIONS in test_no_driver_imports.py.")
+        raise AssertionError("\n".join(lines))
