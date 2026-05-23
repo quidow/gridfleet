@@ -14,10 +14,14 @@ from app.devices.models import (
     HardwareChargingState,
     HardwareHealthStatus,
 )
+from app.devices.services.readiness import ReadinessState
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
+
+VerificationJobStatus = Literal["pending", "running", "completed", "failed"]
+VerificationStageStatus = Literal["pending", "running", "failed", "passed"]
 
 DeviceTags = dict[str, str]
 
@@ -369,7 +373,7 @@ class DeviceRead(BaseModel):
     hardware_health_status: HardwareHealthStatus
     hardware_telemetry_reported_at: datetime | None
     hardware_telemetry_state: HardwareTelemetryState
-    readiness_state: str
+    readiness_state: ReadinessState
     missing_setup_fields: list[str]
     verified_at: datetime | None
     reservation: DeviceReservationRead | None = None
@@ -400,9 +404,9 @@ class DeviceDetail(DeviceRead):
 
 class DeviceVerificationJobRead(BaseModel):
     job_id: str
-    status: str
+    status: VerificationJobStatus
     current_stage: str | None = None
-    current_stage_status: str | None = None
+    current_stage_status: VerificationStageStatus | None = None
     detail: str | None = None
     error: str | None = None
     device_id: uuid.UUID | None = None
