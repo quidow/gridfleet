@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 
 _CHUNK = 200
 
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """Prefix a leading character that spreadsheets treat as a formula trigger with a single quote."""
+    if value and value[0] in _CSV_INJECTION_PREFIXES:
+        return "'" + value
+    return value
+
 
 def _column_value(device: Device, column: InventoryColumn) -> object:
     v = column.value
@@ -101,10 +110,13 @@ def _row_to_csv_values(device: Device, columns: list[InventoryColumn]) -> list[s
             out.append("")
             continue
         if isinstance(raw, (dict, list)):
-            out.append(json.dumps(raw, sort_keys=True, ensure_ascii=False))
+            out.append(_csv_safe(json.dumps(raw, sort_keys=True, ensure_ascii=False)))
             continue
         normalized = _normalize_scalar(raw)
-        out.append("" if normalized is None else str(normalized))
+        if normalized is None:
+            out.append("")
+            continue
+        out.append(_csv_safe(str(normalized)))
     return out
 
 

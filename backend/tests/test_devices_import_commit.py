@@ -262,6 +262,40 @@ async def test_import_endpoint_commits_valid_row(
 
 @pytest.mark.asyncio
 @pytest.mark.db
+async def test_commit_handles_session_commit_failure_after_savepoint_release(
+    db_session: AsyncSession, seeded_driver_packs: None
+) -> None:
+    """If session.commit() fails after savepoint.commit() succeeded, the per-row exception
+    handler must not crash trying to roll back an already-released savepoint."""
+    host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle([_device()])
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+    )
+
+    original_commit = db_session.__class__.commit
+    call_count = {"n": 0}
+
+    async def flaky_commit(self: AsyncSession) -> None:  # type: ignore[override]
+        call_count["n"] += 1
+        # First call (the per-row outer commit) fails; subsequent calls (e.g. test teardown) succeed.
+        if call_count["n"] == 1:
+            raise RuntimeError("outer commit failed")
+        return await original_commit(self)
+
+    with patch.object(db_session.__class__, "commit", flaky_commit):
+        result = await commit_import(db_session, request)
+
+    # The row is reported as failed with the outer commit error message, not an InvalidStateError.
+    assert result.created == []
+    assert len(result.failed) == 1
+    assert "outer commit" in result.failed[0].reason.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
 async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     """One created, one skipped (conflict), one failed (missing host)."""
     host = await seed_host_named(db_session, "lab-04")

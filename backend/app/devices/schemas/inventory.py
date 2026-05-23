@@ -66,7 +66,14 @@ def parse_columns_param(raw: str | None) -> list[InventoryColumn]:
     invalid = [t for t in tokens if t not in _VALID_VALUES]
     if invalid:
         raise ValueError(f"unknown columns: {invalid}")
-    return [InventoryColumn(t) for t in tokens]
+    seen: set[str] = set()
+    deduped: list[InventoryColumn] = []
+    for t in tokens:
+        if t in seen:
+            continue
+        seen.add(t)
+        deduped.append(InventoryColumn(t))
+    return deduped
 
 
 class InventoryFormat(enum.StrEnum):

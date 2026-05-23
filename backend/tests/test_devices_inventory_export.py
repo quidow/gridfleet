@@ -186,3 +186,30 @@ async def test_inventory_endpoint_filter_pack_id(client: AsyncClient, db_session
     response = await client.get("/api/devices/inventory", params={"pack_id": "no-such-pack"})
     assert response.status_code == 200
     assert response.json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_iter_inventory_csv_escapes_formula_injection(db_session: AsyncSession) -> None:
+    _, device = await seed_host_and_device(db_session, identity="INV-FORMULA")
+    device.name = "=CMD()"
+    device.tags = {"k": "=evil"}
+    await db_session.commit()
+
+    chunks: list[str] = []
+    async for chunk in iter_inventory_csv(
+        db_session,
+        columns=[InventoryColumn.NAME, InventoryColumn.TAGS],
+        filters=None,
+    ):
+        chunks.append(chunk)
+    body = "".join(chunks)
+    # Name cell should be defanged to '=CMD()
+    assert "'=CMD()" in body or '"\'=CMD()"' in body  # csv may quote the cell
+
+
+def test_parse_columns_param_deduplicates_preserving_order() -> None:
+    assert parse_columns_param("name,name,host.hostname,name") == [
+        InventoryColumn.NAME,
+        InventoryColumn.HOST_HOSTNAME,
+    ]

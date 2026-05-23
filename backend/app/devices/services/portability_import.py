@@ -13,6 +13,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import Device, DeviceOperationalState
@@ -251,21 +252,26 @@ async def commit_import(session: AsyncSession, request: ImportCommitRequest) -> 
             continue
 
         savepoint = await session.begin_nested()
+        savepoint_released = False
         try:
             payload = _build_create_payload(row.device, mapping.target_host_id)
             device = device_write.stage_device_record(session, payload)
             await session.flush()
             await _enqueue_verification(session, device)
             await savepoint.commit()
+            savepoint_released = True
             await session.commit()
             created.append(ImportCommitCreatedRow(index=idx, device_id=device.id))
+        except IntegrityError as exc:
+            if not savepoint_released:
+                await savepoint.rollback()
+            failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}"))
         except Exception as exc:  # noqa: BLE001
-            await savepoint.rollback()
+            if not savepoint_released:
+                await savepoint.rollback()
             reason = str(exc) or exc.__class__.__name__
             lower = reason.lower()
-            if "duplicate key" in lower or "unique" in lower:
-                failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {reason}"))
-            elif "verification" in lower or "create_job" in lower:
+            if "verification" in lower or "create_job" in lower:
                 failed.append(ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}"))
             else:
                 failed.append(ImportCommitFailedRow(index=idx, reason=reason))

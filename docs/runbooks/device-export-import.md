@@ -12,6 +12,8 @@ While the old instance is still running:
 
 The bundle is human-readable. You can hand-edit it before importing: strip rows, fix tags, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data only — runtime state (operational_state, holds, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
 
+> **Sensitive content.** The exported bundle includes per-device `test_data` and `device_config`. These may contain credentials, secrets, or other sensitive material your devices need at test time. Treat the bundle as a sensitive artifact — store it the same way you store other operator secrets, do not commit it to git, and rotate any embedded credentials if the file leaves operator hands.
+
 ## 2. Reinstall GridFleet
 
 Run the standard install playbook. Bring up the backend, frontend, and at least one device host so the agent registers.
