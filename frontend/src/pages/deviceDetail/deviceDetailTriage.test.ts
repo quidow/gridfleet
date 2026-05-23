@@ -181,7 +181,7 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('returns neutral tone with Maintenance eyebrow when device is in maintenance', () => {
+  it('returns neutral tone with Maintenance eyebrow and exit action when device is in maintenance', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({ operational_state: 'available', hold: 'maintenance', appium_node: null }),
       { canTestSession: false },
@@ -190,8 +190,31 @@ describe('deriveDeviceDetailTriage', () => {
     expect(triage).toMatchObject({
       tone: 'neutral',
       eyebrow: 'Maintenance',
-      action: { kind: 'open-control' },
+      title: 'In maintenance',
+      action: { kind: 'exit-maintenance', label: 'Take out of maintenance' },
     });
+  });
+
+  it('shows maintenance reason from lifecycle_policy_summary.detail as evidence', () => {
+    const triage = deriveDeviceDetailTriage(
+      makeDevice({
+        operational_state: 'offline',
+        hold: 'maintenance',
+        appium_node: null,
+        lifecycle_policy_summary: {
+          state: 'suppressed',
+          label: 'Suppressed',
+          detail: 'Cooldown escalation',
+          backoff_until: null,
+        },
+      }),
+      { canTestSession: false },
+    );
+
+    expect(triage.evidence).toContainEqual(
+      expect.objectContaining({ label: 'Reason', value: 'Cooldown escalation' }),
+    );
+    expect(triage.action.kind).toBe('exit-maintenance');
   });
 
   it('prioritizes unhealthy health snapshot after running node', () => {
